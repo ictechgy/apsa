@@ -8,7 +8,16 @@ from pathlib import Path
 from packaging.version import InvalidVersion, Version
 
 from . import __version__
-from .core import RULE_VERSION, finding, finding_identity, now, report_incomplete, severity_rank, uid
+from .core import (
+    RULE_VERSION,
+    canonical_json,
+    finding,
+    finding_identity,
+    now,
+    report_incomplete,
+    severity_rank,
+    uid,
+)
 from .engine import analyze_target
 from .intel import query_dependencies, source_health
 from .store import Store
@@ -156,7 +165,17 @@ def correlate(
                     "Observed OS version is in a published affected range: " + record["id"],
                     "high",
                     "version-affected",
-                    [entry],
+                    [
+                        {
+                            "id": entry["id"],
+                            "platform": platform,
+                            "component": entry["component"],
+                            "state": state,
+                            "basis": basis,
+                            "environment": entry["environment"],
+                            "advisory_branches": [entry],
+                        }
+                    ],
                     "Apply the vendor's fixed OS release. Review component applicability; this is version correlation, not exploit reproduction.",
                     "MASVS-CODE",
                     record.get("references", []),
@@ -183,7 +202,23 @@ def correlate(
             unique[key]["references"] = sorted(set(unique[key]["references"] + entry["references"]))
         else:
             unique[key] = entry
-    return list({f["id"]: f for f in findings}.values()), list(unique.values())
+    unique_findings = {}
+    for item in findings:
+        previous = unique_findings.get(item["id"])
+        if previous and item.get("scope") == "environment":
+            # Keep one location per platform/component for stable finding IDs
+            # and baselines, with every branch snapshot nested in its evidence.
+            branches = {
+                canonical_json(branch): branch
+                for branch in (
+                    previous["evidence"][0]["advisory_branches"] + item["evidence"][0]["advisory_branches"]
+                )
+            }
+            previous["evidence"][0]["advisory_branches"] = [branches[key] for key in sorted(branches)]
+            previous["references"] = sorted(set(previous["references"] + item["references"]))
+        else:
+            unique_findings[item["id"]] = item
+    return list(unique_findings.values()), list(unique.values())
 
 
 def summarize(report: dict) -> dict:

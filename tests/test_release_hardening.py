@@ -13,7 +13,7 @@ import pytest
 from mobile_audit import engine, inputs, jobs, mcp_server
 from mobile_audit._parser_worker import analyze
 from mobile_audit.audit import correlate, scan
-from mobile_audit.core import read_json
+from mobile_audit.core import finding_identity, read_json
 from mobile_audit.intel import normalize_kev, sync
 from mobile_audit.policy import evaluate, load_policy
 from mobile_audit.runtime import plan
@@ -343,6 +343,53 @@ def test_advisories_keep_each_branch_and_snapshot_provenance():
         next(entry for entry in advisories if entry["component"] == "System")["references"]
         == second["references"]
     )
+    assert records == before
+
+
+def test_affected_ios_finding_keeps_all_branches_and_stable_identity():
+    first = {
+        "id": "CVE-2026-12345",
+        "source": "apple",
+        "title": "issue",
+        "platform": "ios",
+        "component": "Kernel",
+        "fixed_release": "iOS 18.7",
+        "snapshot_hash": "a" * 64,
+        "references": ["https://support.apple.com/one"],
+    }
+    second = {
+        **first,
+        "fixed_release": "iOS 26.1",
+        "snapshot_hash": "b" * 64,
+        "references": ["https://support.apple.com/two"],
+    }
+    cve = {
+        "id": first["id"],
+        "source": "cve",
+        "title": "CNA",
+        "affected": [
+            {"product": "iOS", "versions": [{"version": "18.0", "lessThan": "18.7", "status": "affected"}]}
+        ],
+    }
+    inventory = {"dependencies": [], "platforms": ["ios"]}
+    environment = {"platform": "ios", "version": "18.6"}
+    records = [first, second, copy.deepcopy(first), cve]
+    before = copy.deepcopy(records)
+    findings, advisories = correlate(inventory, records, environment)
+    assert len(findings) == 1 and len(advisories) == 2
+    item = findings[0]
+    branches = item["evidence"][0]["advisory_branches"]
+    assert {branch["intel_snapshot_hash"] for branch in branches} == {"a" * 64, "b" * 64}
+    assert {branch["fixed_release"] for branch in branches} == {"iOS 18.7", "iOS 26.1"}
+    assert len(branches) == 2
+    assert item["references"] == sorted(first["references"] + second["references"])
+    assert item["id"] == finding_identity(
+        "OS-" + first["id"], [{"platform": "ios", "component": "Kernel"}], "environment"
+    )
+    assert finding_identity(item["rule_id"], item["evidence"], "environment") == item["id"]
+    assert correlate(inventory, list(reversed(records)), environment)[0] == findings
+    assert correlate(inventory, [first, cve], environment)[0][0]["id"] == item["id"]
+    assert correlate(inventory, records, {"platform": "ios", "version": "18.7"})[0] == []
     assert records == before
 
 
