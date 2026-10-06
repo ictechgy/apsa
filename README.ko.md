@@ -33,7 +33,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.0.3
+uv tool install --python 3.12 apsa==1.0.4
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo

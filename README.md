@@ -33,7 +33,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.0.3
+uv tool install --python 3.12 apsa==1.0.4
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
