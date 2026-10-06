@@ -85,8 +85,8 @@ def collect(output: Path, requirements: Path | None = None) -> dict:
                     "sha256": hashlib.sha256(raw).hexdigest(),
                 }
             )
-        expression = dist.metadata.get("License-Expression")
-        declared = dist.metadata.get("License")
+        expression = next(iter(dist.metadata.get_all("License-Expression", [])), None)
+        declared = next(iter(dist.metadata.get_all("License", [])), None)
         classifiers = [
             value for value in dist.metadata.get_all("Classifier", []) if value.startswith("License ::")
         ]
