@@ -2,7 +2,7 @@
 
 **근거 중심의 Android·iOS 보안 감사 도구.**
 
-[English](README.md) · [한국어](README.ko.md)
+[English](https://github.com/ictechgy/apsa/blob/main/README.md) · [한국어](https://github.com/ictechgy/apsa/blob/main/README.ko.md)
 
 영문 README가 원본입니다. 이 문서는 영문 원본을 기준으로 작성한 한국어 번역입니다.
 
@@ -24,11 +24,24 @@ APSA는 개발자와 보안팀이 자기 모바일 앱을 감사하는 도구입
 
 발견 항목은 `candidate`, `configuration-confirmed`, `version-affected`, `runtime-confirmed` 근거를 구분합니다. `coverage`와 경고가 실제 실행한 범위를 표시합니다. 서명 블록의 존재가 서명 진위를 증명하지 않으며, 영향을 받는 의존성 버전이라고 해서 악용 가능성이 입증된 것은 아닙니다. 발견 항목이 없더라도 앱 전체가 안전하다고 판단할 수 없습니다.
 
-OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증하거나 MASTG의 모든 테스트를 구현하지 않습니다. 공개 공지로 미공개 제로데이를 알아낼 수 없으며, 앱 파일만으로 실제 기기의 OS 패치 상태를 확정할 수 없습니다. 검증 범위와 한계는 [OWASP 대응 범위](docs/OWASP_COVERAGE.md)와 [지원 표](docs/SUPPORTED_MATRIX.md)를 참고하세요.
+OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증하거나 MASTG의 모든 테스트를 구현하지 않습니다. 공개 공지로 미공개 제로데이를 알아낼 수 없으며, 앱 파일만으로 실제 기기의 OS 패치 상태를 확정할 수 없습니다. 검증 범위와 한계는 [OWASP 대응 범위](https://github.com/ictechgy/apsa/blob/main/docs/OWASP_COVERAGE.md)와 [지원 표](https://github.com/ictechgy/apsa/blob/main/docs/SUPPORTED_MATRIX.md)를 참고하세요.
 
 ## 설치와 첫 실행
 
-**uv**를 설치하고 **macOS 또는 Linux**의 로컬 checkout을 사용합니다. APSA의 지원 대상은 **CPython 3.11과 3.12**이며, 모든 호스트·Python 조합을 테스트한 것은 아닙니다([지원 표](docs/SUPPORTED_MATRIX.md) 참고). 예제는 Python 3.12를 선택하고 필요하면 uv가 내려받습니다. 아래 명령은 공개 패키지 레지스트리가 아닌 checkout에서 설치합니다. 최초 의존성 설치는 네트워크를 사용할 수 있으며, 이후 검사는 로컬 입력과 캐시를 사용할 수 있습니다.
+**macOS 또는 Linux**에서 **uv**를 설치합니다. APSA의 지원 대상은 **CPython 3.11과 3.12**이며, 모든 호스트·Python 조합을 테스트한 것은 아닙니다([지원 표](https://github.com/ictechgy/apsa/blob/main/docs/SUPPORTED_MATRIX.md) 참고). 예제는 Python 3.12를 선택하고 필요하면 uv가 내려받습니다. 최초 설치는 네트워크를 사용할 수 있으며, 이후 검사는 로컬 입력과 캐시를 사용할 수 있습니다.
+
+[PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
+
+```sh
+uv tool install --python 3.12 apsa==1.0.3
+apsa --version
+apsa doctor --json
+apsa demo --out ./apsa-demo
+```
+
+패키지는 `apsa`와 호환 별칭 `quaygate`, `mobile-audit`를 제공합니다. 명령어를 찾을 수 없다면 `uv tool update-shell`을 실행하고 새 터미널을 여세요. [GitHub Releases](https://github.com/ictechgy/apsa/releases)에서는 wheel, 소스 패키지, 체크섬과 함께 고정 의존성 목록·라이선스 고지·빌드 manifest가 포함된 검증 번들을 제공합니다.
+
+개발하거나 저장소의 고정 의존성으로 설치하려면 checkout을 사용합니다.
 
 ```sh
 git clone https://github.com/ictechgy/apsa.git
@@ -40,7 +53,7 @@ uv run --locked apsa demo --out ./apsa-demo
 
 `doctor`는 파서, 선택적인 기기 도구, 오프라인 검사 준비 상태를 확인합니다. `demo`는 의도적으로 취약한 예제를 작성한 뒤 검사합니다. 새 출력 폴더를 지정하세요.
 
-PATH에 명령어를 등록하려면 다음을 실행합니다.
+checkout의 명령어를 PATH에 등록하려면 다음을 실행합니다.
 
 ```sh
 uv tool install --editable . --force --python 3.12 --constraints requirements-release.txt
@@ -109,7 +122,7 @@ apsa jobs status JOB_ID --json
 | `4` | 발견 항목이 설정한 CI 임계값 초과 |
 | `130` | 중단 |
 
-`--json`은 `ok`, `data` 또는 `error`, `exit_code`를 담은 envelope를 출력합니다. Watch는 주기마다 JSON envelope 하나를 출력합니다(NDJSON). `ok`는 코드 `0`과 `4`에서 `true`입니다. 코드 `4`는 평가 자체는 성공했지만 CI 임계값을 초과했다는 뜻입니다. CI는 `exit_code`와 정책 결과를 확인해야 합니다. 코드 `3`과 `4`에서도 보고서가 생성될 수 있습니다. 정책·백업·제한·문제 해결은 [CI 예제](docs/ci-example.yml)와 [운영 가이드](docs/OPERATIONS.md)를 참고하세요.
+`--json`은 `ok`, `data` 또는 `error`, `exit_code`를 담은 envelope를 출력합니다. Watch는 주기마다 JSON envelope 하나를 출력합니다(NDJSON). `ok`는 코드 `0`과 `4`에서 `true`입니다. 코드 `4`는 평가 자체는 성공했지만 CI 임계값을 초과했다는 뜻입니다. CI는 `exit_code`와 정책 결과를 확인해야 합니다. 코드 `3`과 `4`에서도 보고서가 생성될 수 있습니다. 정책·백업·제한·문제 해결은 [CI 예제](https://github.com/ictechgy/apsa/blob/main/docs/ci-example.yml)와 [운영 가이드](https://github.com/ictechgy/apsa/blob/main/docs/OPERATIONS.md)를 참고하세요.
 
 ## MCP와 스킬
 
@@ -146,9 +159,9 @@ MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 ro
 
 제공하는 리소스에는 `apsa://rules`와 `apsa://reports/{report_id}`가 있으며, 기존 `quaygate://`·`mobile-audit://` scheme도 호환됩니다.
 
-기본 서버는 런타임 계획 기능을 제공합니다. `runtime_execute`와 `runtime_start`는 서버 시작 시 `--allow-runtime`을 지정해야 등록됩니다. 두 도구는 기본적으로 시나리오를 미리보기하며 `execute=true`일 때 실행합니다. `runtime_start`는 취소 가능한 백그라운드 기기 작업을 시작합니다. 런타임 검사에는 승인받고 준비한 테스트 앱이 필요하며, 기본 감사는 기기를 부팅하거나 앱을 설치하지 않습니다. 시나리오 실행 전 [운영 가이드](docs/OPERATIONS.md)를 확인하세요.
+기본 서버는 런타임 계획 기능을 제공합니다. `runtime_execute`와 `runtime_start`는 서버 시작 시 `--allow-runtime`을 지정해야 등록됩니다. 두 도구는 기본적으로 시나리오를 미리보기하며 `execute=true`일 때 실행합니다. `runtime_start`는 취소 가능한 백그라운드 기기 작업을 시작합니다. 런타임 검사에는 승인받고 준비한 테스트 앱이 필요하며, 기본 감사는 기기를 부팅하거나 앱을 설치하지 않습니다. 시나리오 실행 전 [운영 가이드](https://github.com/ictechgy/apsa/blob/main/docs/OPERATIONS.md)를 확인하세요.
 
-`skill install`은 패키지의 [APSA 스킬](.agents/skills/apsa/SKILL.md)을 `~/.codex/skills/apsa`에 복사합니다. 다른 모델 런타임의 스킬 폴더에 직접 설치할 수도 있습니다.
+`skill install`은 패키지의 [APSA 스킬](https://github.com/ictechgy/apsa/blob/main/.agents/skills/apsa/SKILL.md)을 `~/.codex/skills/apsa`에 복사합니다. 다른 모델 런타임의 스킬 폴더에 직접 설치할 수도 있습니다.
 
 ```sh
 apsa skill install --name apsa --dest /path/to/runtime/skills/apsa
@@ -175,6 +188,8 @@ make release RELEASE_OUT=dist/apsa-local-release
 
 새 폴더나 비어 있는 릴리스 폴더를 지정하세요. 릴리스 검증은 uv **0.12.1**을 요구하며 wheel·sdist를 두 번 빌드해 해시를 비교합니다. checkout 밖의 새 환경에서 오프라인 소스·APK 검사, MCP, 스킬 설치를 확인합니다. 해시, SBOM, 의존성 고지, 릴리스 manifest를 작성하며 게시하지 않습니다. 최초 의존성 준비는 네트워크를 사용할 수 있습니다. 같은 호스트의 반복 빌드 검증은 다른 플랫폼 간 바이트 일치를 의미하지 않습니다.
 
-제품 검증 기록은 [RELEASE_READINESS.md](RELEASE_READINESS.md)에 있습니다. [선별한 벤치마크](benchmarks/README.md)(영문)는 회귀 검사 사례 모음이며 운영 앱 탐지율을 나타내지 않습니다. 구조와 보안 경계는 [통합 경계](docs/INTEGRATION.md)와 [위협 모델](docs/THREAT_MODEL.md)에서 확인할 수 있습니다. 과거 리뷰는 당시 스냅샷에만 적용됩니다.
+릴리스 태그의 배포는 GitHub Actions에서 지원 대상 CI 조합이 모두 통과한 뒤 검증된 패키지를 PyPI에 업로드합니다. 워크플로와 다운로드 구성은 [배포 안내](https://github.com/ictechgy/apsa/blob/main/docs/PUBLISHING.md)를 참고하세요.
 
-소스는 [GitHub](https://github.com/ictechgy/apsa)에 공개되어 있습니다. [LICENSE](LICENSE)는 원래 Quaygate의 MIT 고지를 보존합니다. 이번 공개는 통합 제품에 추가 라이선스를 선언하지 않습니다.
+제품 검증 기록은 [RELEASE_READINESS.md](https://github.com/ictechgy/apsa/blob/main/RELEASE_READINESS.md)에 있습니다. [선별한 벤치마크](https://github.com/ictechgy/apsa/blob/main/benchmarks/README.md)(영문)는 회귀 검사 사례 모음이며 운영 앱 탐지율을 나타내지 않습니다. 구조와 보안 경계는 [통합 경계](https://github.com/ictechgy/apsa/blob/main/docs/INTEGRATION.md)와 [위협 모델](https://github.com/ictechgy/apsa/blob/main/docs/THREAT_MODEL.md)에서 확인할 수 있습니다. 과거 리뷰는 당시 스냅샷에만 적용됩니다.
+
+소스는 [GitHub](https://github.com/ictechgy/apsa)에 공개되어 있습니다. [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE)는 원래 Quaygate의 MIT 고지를 보존합니다. 이번 공개는 통합 제품에 추가 라이선스를 선언하지 않습니다.

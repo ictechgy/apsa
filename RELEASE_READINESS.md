@@ -2,6 +2,8 @@
 
 공개 저장소: [ictechgy/apsa](https://github.com/ictechgy/apsa). 영문 README가 원본이며 한국어 README를 함께 제공합니다. 현재 공개 소스의 검증은 [GitHub Actions](https://github.com/ictechgy/apsa/actions)에서 확인할 수 있습니다.
 
+태그 배포 경로는 [PyPI](https://pypi.org/project/apsa/)와 [GitHub Releases](https://github.com/ictechgy/apsa/releases)입니다. `release.yml`은 `pypi` 환경의 Trusted Publisher를 사용하며, 태그·패키지 버전 일치, 지원 대상 CI 네 조합, 업로드할 패키지의 반복 빌드와 새 환경 설치 검증이 통과해야 업로드합니다. 다운로드와 체크섬 구성은 [배포 안내](docs/PUBLISHING.md)에 기록합니다. 이 배포 설정 변경은 새 보안 검토 승인을 의미하지 않습니다.
+
 아래는 로컬 개발 과정의 검증 이력입니다. 원본 감사 데이터, 검토 로그, 개인 설정, 스크린샷, 로컬 가상 환경과 배포 폴더는 공개 저장소에 포함하지 않습니다. 아래의 내부 증거 경로와 과거 배포 경로는 로컬 기록을 가리키며 공개 다운로드를 뜻하지 않습니다. 과거 외부 리뷰를 현재 공개 스냅샷에 대한 새 보안 승인으로 취급하지 않습니다. 로컬 배포 파일은 `make release`로 새 출력 폴더에 생성할 수 있습니다.
 
 ---
