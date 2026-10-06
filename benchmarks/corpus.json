@@ -1,0 +1,389 @@
+{
+  "schema_version": 1,
+  "name": "mobile-audit-curated-static-v1",
+  "label_scope": "case-rule-status presence for selected static evidence patterns",
+  "rules": [
+    "AST-WEBVIEW-UNTRUSTED-URL",
+    "AST-WEBVIEW-HOST-ALLOWLIST",
+    "AST-WEBVIEW-SSL-BYPASS",
+    "AST-WEBVIEW-JS-BRIDGE",
+    "BINARY-WEBVIEW-SSL-BYPASS",
+    "BINARY-WEBVIEW-FILE-ACCESS",
+    "BINARY-WEBVIEW-JS-BRIDGE",
+    "BINARY-WEBVIEW-DEBUGGING",
+    "BINARY-STORAGE-TOKEN-PREFS",
+    "BINARY-STORAGE-SENSITIVE-LOG"
+  ],
+  "cases": [
+    {
+      "id": "java-intent-vulnerable",
+      "kind": "source",
+      "path": "cases/java/intent-vulnerable.java",
+      "variant": "vulnerable",
+      "pair": "java-intent",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "Intent string extra flows through a local alias to a typed WebView."
+    },
+    {
+      "id": "java-intent-fixed",
+      "kind": "source",
+      "path": "cases/java/intent-fixed.java",
+      "variant": "fixed",
+      "pair": "java-intent",
+      "expected": [],
+      "rationale": "The same payload is parsed and constrained by exact HTTPS and complete-host checks."
+    },
+    {
+      "id": "java-documentation-irrelevant",
+      "kind": "source",
+      "path": "cases/java/documentation-irrelevant.java",
+      "variant": "irrelevant",
+      "pair": "java-documentation",
+      "expected": [],
+      "rationale": "Security API spellings are comments/literals; the actual WebView load is constant."
+    },
+    {
+      "id": "java-host-vulnerable",
+      "kind": "source",
+      "path": "cases/java/host-vulnerable.java",
+      "variant": "vulnerable",
+      "pair": "java-host",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+          "status": "candidate"
+        },
+        {
+          "rule_id": "AST-WEBVIEW-HOST-ALLOWLIST",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "Bare domain suffix permits lookalike hosts without a label boundary."
+    },
+    {
+      "id": "java-host-fixed",
+      "kind": "source",
+      "path": "cases/java/host-fixed.java",
+      "variant": "fixed",
+      "pair": "java-host",
+      "expected": [],
+      "rationale": "HTTPS plus a leading-dot hostname suffix constrains proper subdomains."
+    },
+    {
+      "id": "java-ssl-vulnerable",
+      "kind": "source",
+      "path": "cases/java/ssl-vulnerable.java",
+      "variant": "vulnerable",
+      "pair": "java-ssl",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-SSL-BYPASS",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "A typed SSL error callback proceeds rather than cancels."
+    },
+    {
+      "id": "java-ssl-fixed",
+      "kind": "source",
+      "path": "cases/java/ssl-fixed.java",
+      "variant": "fixed",
+      "pair": "java-ssl",
+      "expected": [],
+      "rationale": "The callback cancels the rejected certificate."
+    },
+    {
+      "id": "java-bridge-vulnerable",
+      "kind": "source",
+      "path": "cases/java/bridge-vulnerable.java",
+      "variant": "vulnerable",
+      "pair": "java-bridge",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+          "status": "candidate"
+        },
+        {
+          "rule_id": "AST-WEBVIEW-JS-BRIDGE",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "The same WebView enables JavaScript, registers a bridge, and loads platform input."
+    },
+    {
+      "id": "java-bridge-fixed",
+      "kind": "source",
+      "path": "cases/java/bridge-fixed.java",
+      "variant": "fixed",
+      "pair": "java-bridge",
+      "expected": [],
+      "rationale": "The registered interface is removed and input URL is constrained before load."
+    },
+    {
+      "id": "java-cross-function-irrelevant",
+      "kind": "source",
+      "path": "cases/java/cross-function-irrelevant.java",
+      "variant": "irrelevant",
+      "pair": "java-scope",
+      "expected": [],
+      "rationale": "Unrelated local variables share a name across methods; the load remains constant."
+    },
+    {
+      "id": "java-post-validation-mutation",
+      "kind": "source",
+      "path": "cases/java/post-validation-mutation.java",
+      "variant": "vulnerable",
+      "pair": "java-mutation",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "Appending after validating the original URL changes the value used at the sink."
+    },
+    {
+      "id": "java-other-client-irrelevant",
+      "kind": "source",
+      "path": "cases/java/other-client-irrelevant.java",
+      "variant": "irrelevant",
+      "pair": "java-types",
+      "expected": [],
+      "rationale": "Methods with the same spelling belong to non-WebView/non-SSL-handler objects."
+    },
+    {
+      "id": "kotlin-query-vulnerable",
+      "kind": "source",
+      "path": "cases/kotlin/query-vulnerable.kt",
+      "variant": "vulnerable",
+      "pair": "kotlin-query",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "An Activity link query item reaches WebView without destination checks."
+    },
+    {
+      "id": "kotlin-query-fixed",
+      "kind": "source",
+      "path": "cases/kotlin/query-fixed.kt",
+      "variant": "fixed",
+      "pair": "kotlin-query",
+      "expected": [],
+      "rationale": "The extracted destination is parsed and guarded with HTTPS and exact hostname."
+    },
+    {
+      "id": "kotlin-documentation-irrelevant",
+      "kind": "source",
+      "path": "cases/kotlin/documentation-irrelevant.kt",
+      "variant": "irrelevant",
+      "pair": "kotlin-documentation",
+      "expected": [],
+      "rationale": "Comments and API examples do not become executable sources/sinks."
+    },
+    {
+      "id": "kotlin-navigation-vulnerable",
+      "kind": "source",
+      "path": "cases/kotlin/navigation-vulnerable.kt",
+      "variant": "vulnerable",
+      "pair": "kotlin-navigation",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-HOST-ALLOWLIST",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "A host substring controls the callback branch explicitly allowing navigation."
+    },
+    {
+      "id": "kotlin-navigation-fixed",
+      "kind": "source",
+      "path": "cases/kotlin/navigation-fixed.kt",
+      "variant": "fixed",
+      "pair": "kotlin-navigation",
+      "expected": [],
+      "rationale": "Only exact HTTPS and hostname allow the navigation branch."
+    },
+    {
+      "id": "kotlin-ssl-vulnerable",
+      "kind": "source",
+      "path": "cases/kotlin/ssl-vulnerable.kt",
+      "variant": "vulnerable",
+      "pair": "kotlin-ssl",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-SSL-BYPASS",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "The typed Android SSL callback proceeds on error."
+    },
+    {
+      "id": "kotlin-ssl-fixed",
+      "kind": "source",
+      "path": "cases/kotlin/ssl-fixed.kt",
+      "variant": "fixed",
+      "pair": "kotlin-ssl",
+      "expected": [],
+      "rationale": "The typed callback cancels on error."
+    },
+    {
+      "id": "kotlin-unrelated-shadow",
+      "kind": "source",
+      "path": "cases/kotlin/unrelated-shadow.kt",
+      "variant": "irrelevant",
+      "pair": "kotlin-shadow",
+      "expected": [],
+      "rationale": "An inner shadow holds platform input only for audit recording; the outer load is constant."
+    },
+    {
+      "id": "swift-url-vulnerable",
+      "kind": "source",
+      "path": "cases/swift/url-vulnerable.swift",
+      "variant": "vulnerable",
+      "pair": "swift-url",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "An application URL callback feeds a URLRequest into WKWebView through an alias."
+    },
+    {
+      "id": "swift-url-fixed",
+      "kind": "source",
+      "path": "cases/swift/url-fixed.swift",
+      "variant": "fixed",
+      "pair": "swift-url",
+      "expected": [],
+      "rationale": "A guard exits the callback unless HTTPS and the exact host match."
+    },
+    {
+      "id": "swift-documentation-irrelevant",
+      "kind": "source",
+      "path": "cases/swift/documentation-irrelevant.swift",
+      "variant": "irrelevant",
+      "pair": "swift-documentation",
+      "expected": [],
+      "rationale": "Examples occur in literals/comments; the actual URLRequest is constant."
+    },
+    {
+      "id": "swift-navigation-vulnerable",
+      "kind": "source",
+      "path": "cases/swift/navigation-vulnerable.swift",
+      "variant": "vulnerable",
+      "pair": "swift-navigation",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-HOST-ALLOWLIST",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "A hostname prefix controls an explicit WKNavigationActionPolicy allow decision."
+    },
+    {
+      "id": "swift-navigation-fixed",
+      "kind": "source",
+      "path": "cases/swift/navigation-fixed.swift",
+      "variant": "fixed",
+      "pair": "swift-navigation",
+      "expected": [],
+      "rationale": "A parsed navigation URL must match HTTPS and the exact hostname."
+    },
+    {
+      "id": "swift-query-javascript-vulnerable",
+      "kind": "source",
+      "path": "cases/swift/query-javascript-vulnerable.swift",
+      "variant": "vulnerable",
+      "pair": "swift-query-javascript",
+      "expected": [
+        {
+          "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "A URL query item becomes the JavaScript program evaluated by WKWebView."
+    },
+    {
+      "id": "swift-query-javascript-fixed",
+      "kind": "source",
+      "path": "cases/swift/query-javascript-fixed.swift",
+      "variant": "fixed",
+      "pair": "swift-query-javascript",
+      "expected": [],
+      "rationale": "The query is recorded independently; the executed program is a constant."
+    },
+    {
+      "id": "swift-unrelated-shadow",
+      "kind": "source",
+      "path": "cases/swift/unrelated-shadow.swift",
+      "variant": "irrelevant",
+      "pair": "swift-shadow",
+      "expected": [],
+      "rationale": "An inner source-bearing shadow is not loaded; the outer constant survives the block."
+    },
+    {
+      "id": "dex-unsafe",
+      "kind": "binary",
+      "path": "../tests/fixtures/binary_analysis/unsafe.apk",
+      "variant": "vulnerable",
+      "pair": "dex-compiled",
+      "sha256": "c86b21ecec6d60702fe7ec69df8b650c77f10dbef1603c4afb11a050b8989002",
+      "expected": [
+        {
+          "rule_id": "BINARY-WEBVIEW-SSL-BYPASS",
+          "status": "candidate"
+        },
+        {
+          "rule_id": "BINARY-WEBVIEW-FILE-ACCESS",
+          "status": "candidate"
+        },
+        {
+          "rule_id": "BINARY-WEBVIEW-JS-BRIDGE",
+          "status": "candidate"
+        },
+        {
+          "rule_id": "BINARY-WEBVIEW-DEBUGGING",
+          "status": "candidate"
+        },
+        {
+          "rule_id": "BINARY-STORAGE-TOKEN-PREFS",
+          "status": "candidate"
+        },
+        {
+          "rule_id": "BINARY-STORAGE-SENSITIVE-LOG",
+          "status": "candidate"
+        }
+      ],
+      "rationale": "Real compiled DEX has unsafe WebView settings/calls and sensitive preference-to-log instructions; exploitability is not assumed."
+    },
+    {
+      "id": "dex-safe",
+      "kind": "binary",
+      "path": "../tests/fixtures/binary_analysis/safe.apk",
+      "variant": "fixed",
+      "pair": "dex-compiled",
+      "sha256": "e371bc19c8cdc8da18884eed34f35e1fb5c783d950a13d7424e57a3510d56e09",
+      "expected": [],
+      "rationale": "Real compiled DEX disables/cancels unsafe controls and logs unrelated theme values; literals and branch joins must not become confirmed constants."
+    },
+    {
+      "id": "dex-upstream-irrelevant",
+      "kind": "binary",
+      "path": "../tests/fixtures/Test-debug.apk",
+      "variant": "irrelevant",
+      "pair": "dex-upstream",
+      "sha256": "e79de7f2597a64b618984cbae941f20dbdd8bc4b97a9cc39165a98daa9181b89",
+      "expected": [],
+      "rationale": "The small licensed upstream APK contains real methods/instructions without these selected risky call patterns."
+    }
+  ]
+}

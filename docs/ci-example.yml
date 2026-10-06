@@ -1,0 +1,68 @@
+# apsa CI 레시피 — GitHub Actions 예시
+# 요구사항: Python 3.9+ (의존성 없음). 인증서 분석은 러너 기본 openssl 사용.
+# 주의: 검사 대상은 릴리스 빌드입니다. assembleDebug 산출물은 debuggable=true라
+# 게이트가 항상 실패합니다.
+
+name: apsa
+on:
+  push:
+  pull_request:
+
+permissions:
+  security-events: write   # code scanning SARIF 업로드에 필요
+  contents: read
+
+jobs:
+  apk-static-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install apsa
+        run: pip install .        # 저장소 내 소스 — 배포 후에는 pip install apsa
+
+      - name: Build release APK (예시 — 프로젝트에 맞게 수정)
+        run: ./gradlew assembleRelease
+
+      - name: Run apsa (게이트)
+        id: gate
+        # 종료 코드를 출력에 보존 — 이 단계 자체는 실패시키지 않는다(업로드 먼저).
+        run: |
+          set +e
+          apsa apk app/build/outputs/apk/release/app-release-unsigned.apk \
+            --sarif > apsa.sarif
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: apsa.sarif
+
+      - name: Enforce gate
+        if: always()
+        run: |
+          rc="${{ steps.gate.outputs.rc }}"
+          case "$rc" in
+            0) echo "apsa: 경고 이하만 통과" ;;
+            1) echo "::error::apsa 심각(fail) 발견 — code scanning SARIF 참고"; exit 1 ;;
+            *) echo "::error::apsa 도구/파일 오류(exit $rc) — 빌드 산출물 경로와 설치 확인"; exit 1 ;;
+          esac
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apsa-report
+          path: apsa.sarif

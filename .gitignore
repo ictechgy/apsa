@@ -1,0 +1,54 @@
+# Local environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.DS_Store
+
+# Build outputs and private working records
+dist/
+build/
+artifacts/
+.omx/
+/REVIEW_*.md
+/PLAN.md
+/shots/
+/MANIFEST.in
+
+# Local audit state, generated reports and demo inputs
+.mobile-audit/
+.quaygate/
+.apsa/
+.audit-home/
+/audit-home/
+/apsa-demo/
+/audit.json
+/audit.sarif
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
+# Environment settings, keys and app binaries
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.apk
+*.aab
+*.ipa
+*.dex
+*.dSYM/
+
+# Reviewed test APKs with documented provenance
+!tests/fixtures/Test-debug.apk
+!tests/fixtures/binary_analysis/safe.apk
+!tests/fixtures/binary_analysis/unsafe.apk

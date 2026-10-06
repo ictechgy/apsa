@@ -1,0 +1,16 @@
+{
+  "platform": "android",
+  "package": "com.example.yourapp",
+  "device": null,
+  "precondition": "EDIT: Account A is logged in and the unique canary is saved by the app. Replace the logout test URL with your actual test route or UI actions.",
+  "markers": {"account_a": "mobile-audit-account-A-20261004-unique"},
+  "steps": [
+    {"action": "snapshot", "label": "before_logout"},
+    {"action": "open_url", "url": "yourapp://test/logout"},
+    {"action": "wait", "seconds": 1},
+    {"action": "snapshot", "label": "after_logout"}
+  ],
+  "assertions": [
+    {"baseline": "before_logout", "snapshot": "after_logout", "marker": "account_a", "surface": "storage", "policy": "Account A canary must be removed from private storage after logout"}
+  ]
+}

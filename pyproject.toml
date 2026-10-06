@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "apsa"
+version = "1.0.3"
+description = "APSA (앱사): evidence-first security audits for Android and iOS"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28,<1",
+    "rich>=14,<15",
+    "textual>=6,<9",
+    "androguard>=4.1,<5",
+    "beautifulsoup4>=4.13,<5",
+    "defusedxml>=0.7,<1",
+    "packaging>=25",
+    "mcp>=1.20,<2",
+    "psutil==7.2.2",
+    "tree-sitter==0.25.2",
+    "tree-sitter-java==0.23.5",
+    "tree-sitter-kotlin==1.1.0",
+    "tree-sitter-swift==0.7.4",
+    "tree-sitter-json==0.24.8",
+    "cvss>=3.6,<4",
+    "loguru>=0.7,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=1", "ruff>=0.12", "pyright>=1.1.400"]
+
+[project.scripts]
+apsa = "apsa.cli:main"
+quaygate = "quaygate.cli:main"
+mobile-audit = "quaygate.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["apsa", "quaygate", "src/mobile_audit"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/apsa", "/quaygate", "/src", "/tests", "/benchmarks", "/scripts", "/docs", "/examples", "/.agents", "/.github", "/pyproject.toml", "/uv.lock", "/requirements-release.txt", "/Makefile", "/README.md", "/README.ko.md", "/NAMING.md", "/DESIGN.md", "/PRODUCT_REQUIREMENTS.md", "/THIRD_PARTY_NOTICES.md", "/LICENSE", "/RELEASE_READINESS.md"]
+exclude = ["**/__pycache__", "**/*.pyc"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]

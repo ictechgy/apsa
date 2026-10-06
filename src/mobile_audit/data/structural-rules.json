@@ -1,0 +1,280 @@
+[
+  {
+    "id": "AST-WEBVIEW-UNTRUSTED-URL",
+    "title": "Platform-controlled input reaches a WebView without a recognized local validation guard",
+    "mode": "ast",
+    "languages": [
+      "java",
+      "kotlin",
+      "swift"
+    ],
+    "severity": "high",
+    "status": "candidate",
+    "masvs": "MASVS-PLATFORM",
+    "remediation": "Parse the input and enforce an HTTPS scheme and an exact host allowlist before loading it. Avoid passing platform-controlled strings to JavaScript evaluation; use structured arguments.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/unsafe-uri-loading"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Function-scoped local def-use; runtime reachability and authentication are unverified."
+  },
+  {
+    "id": "AST-WEBVIEW-HOST-ALLOWLIST",
+    "title": "Partial string allowlist guards a WebView load",
+    "mode": "ast",
+    "languages": [
+      "java",
+      "kotlin",
+      "swift"
+    ],
+    "severity": "high",
+    "status": "candidate",
+    "masvs": "MASVS-PLATFORM",
+    "remediation": "Validate a parsed URI's scheme and complete hostname. A subdomain suffix must include the leading dot; review redirects and subsequent navigation separately.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/unsafe-uri-loading"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Function-scoped local def-use; runtime reachability and authentication are unverified."
+  },
+  {
+    "id": "AST-WEBVIEW-SSL-BYPASS",
+    "title": "SSL error callback proceeds with a rejected certificate",
+    "mode": "ast",
+    "languages": [
+      "java",
+      "kotlin"
+    ],
+    "severity": "high",
+    "status": "candidate",
+    "masvs": "MASVS-NETWORK",
+    "remediation": "Cancel the SSL error. Fix the server certificate or the application's trust configuration.",
+    "references": [
+      "https://developer.android.com/reference/android/webkit/WebViewClient#onReceivedSslError(android.webkit.WebView,%20android.webkit.SslErrorHandler,%20android.net.http.SslError)"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Function-scoped local def-use; runtime reachability and authentication are unverified."
+  },
+  {
+    "id": "AST-WEBVIEW-JS-BRIDGE",
+    "title": "A native JavaScript interface is present while platform-controlled content is loaded",
+    "mode": "ast",
+    "languages": [
+      "java",
+      "kotlin",
+      "swift"
+    ],
+    "severity": "high",
+    "status": "candidate",
+    "masvs": "MASVS-PLATFORM",
+    "remediation": "Remove native interfaces before loading untrusted content, restrict origins, and expose only the minimum necessary functionality. Validate redirects and subframes on the test build.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Function-scoped local def-use; runtime reachability and authentication are unverified."
+  },
+  {
+    "id": "BINARY-WEBVIEW-SSL-BYPASS",
+    "mode": "binary",
+    "platform": "android",
+    "title": "WebView TLS error bypass",
+    "severity": "high",
+    "masvs": "MASVS-NETWORK",
+    "remediation": "Cancel TLS errors. Validate the server certificate through the platform trust implementation.",
+    "references": [
+      "https://developer.android.com/reference/android/webkit/WebViewClient#onReceivedSslError(android.webkit.WebView,%20android.webkit.SslErrorHandler,%20android.net.http.SslError)"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0284"
+    ],
+    "maswe": [
+      "MASWE-0027"
+    ],
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "scope": "Actual DEX calls and same-basic-block constants; no runtime exploitability proof."
+  },
+  {
+    "id": "BINARY-WEBVIEW-FILE-ACCESS",
+    "mode": "binary",
+    "platform": "android",
+    "title": "WebView file-origin access enabled",
+    "severity": "high",
+    "masvs": "MASVS-PLATFORM",
+    "remediation": "Disable file-origin cross-origin access; use WebViewAssetLoader for local content.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/webview-unsafe-file-inclusion"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0335"
+    ],
+    "maswe": [],
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "scope": "Actual DEX calls and same-basic-block constants; no runtime exploitability proof."
+  },
+  {
+    "id": "BINARY-WEBVIEW-JS-BRIDGE",
+    "mode": "binary",
+    "platform": "android",
+    "title": "JavaScript-to-native bridge requires origin review",
+    "severity": "medium",
+    "masvs": "MASVS-PLATFORM",
+    "remediation": "Review loaded origins and exposed methods. Verify that untrusted content cannot invoke privileged native operations.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0334",
+      "MASTG-TEST-0376"
+    ],
+    "maswe": [
+      "MASWE-0033"
+    ],
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "scope": "Actual DEX calls and same-basic-block constants; no runtime exploitability proof."
+  },
+  {
+    "id": "BINARY-WEBVIEW-DEBUGGING",
+    "mode": "binary",
+    "platform": "android",
+    "title": "WebView debugging explicitly enabled",
+    "severity": "medium",
+    "masvs": "MASVS-RESILIENCE",
+    "remediation": "Disable WebView debugging in release builds.",
+    "references": [
+      "https://developer.android.com/reference/android/webkit/WebView#setWebContentsDebuggingEnabled(boolean)"
+    ],
+    "mastg_tests": [],
+    "maswe": [],
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "scope": "Actual DEX calls and same-basic-block constants; no runtime exploitability proof."
+  },
+  {
+    "id": "BINARY-STORAGE-TOKEN-PREFS",
+    "mode": "binary",
+    "platform": "android",
+    "title": "Potential credential in ordinary preferences",
+    "severity": "medium",
+    "masvs": "MASVS-STORAGE",
+    "remediation": "Review the data sensitivity and use platform-backed secure storage where required. Verify logout invalidation and deletion policy.",
+    "references": [
+      "https://mas.owasp.org/MASVS/controls/MASVS-STORAGE-1/"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0300"
+    ],
+    "maswe": [
+      "MASWE-0001"
+    ],
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "scope": "Actual DEX calls and same-basic-block constants; no runtime exploitability proof."
+  },
+  {
+    "id": "BINARY-STORAGE-SENSITIVE-LOG",
+    "mode": "binary",
+    "platform": "android",
+    "title": "Potential sensitive data in logs",
+    "severity": "high",
+    "masvs": "MASVS-STORAGE",
+    "remediation": "Remove or redact sensitive values and verify with a unique test canary in a release-equivalent test build.",
+    "references": [
+      "https://mas.owasp.org/MASVS/controls/MASVS-STORAGE-2/"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0231",
+      "MASTG-TEST-0297"
+    ],
+    "maswe": [
+      "MASWE-0005"
+    ],
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "scope": "Actual DEX calls and same-basic-block constants; no runtime exploitability proof."
+  },
+  {
+    "id": "BINARY-IOS-PIE",
+    "mode": "binary",
+    "platform": "ios",
+    "title": "Position-independent executable flag absent",
+    "severity": "medium",
+    "status": "configuration-confirmed",
+    "masvs": "MASVS-RESILIENCE",
+    "remediation": "Review build/linker hardening for this executable.",
+    "references": [
+      "https://github.com/apple-oss-distributions/xnu/blob/main/EXTERNAL_HEADERS/mach-o/loader.h"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Embedded executable metadata; signature authenticity is not verified."
+  },
+  {
+    "id": "BINARY-IOS-DEBUG-ENTITLEMENT",
+    "mode": "binary",
+    "platform": "ios",
+    "title": "Debug task entitlement present",
+    "severity": "medium",
+    "masvs": "MASVS-RESILIENCE",
+    "remediation": "Remove get-task-allow from the distribution build.",
+    "references": [
+      "https://github.com/apple-oss-distributions/xnu/blob/main/EXTERNAL_HEADERS/mach-o/loader.h"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Embedded XML entitlement observation; candidate when DER entitlements are also present; signature authenticity is not verified.",
+    "statuses": [
+      "configuration-confirmed",
+      "candidate"
+    ]
+  },
+  {
+    "id": "ANDROID-DEBUG",
+    "mode": "configuration",
+    "title": "Debuggable app configuration",
+    "masvs": "MASVS-RESILIENCE",
+    "mapping_scope": "partial",
+    "scope": "See per-report coverage and assertion evidence."
+  },
+  {
+    "id": "ANDROID-CLEARTEXT",
+    "mode": "configuration",
+    "title": "Cleartext traffic configuration",
+    "masvs": "MASVS-NETWORK",
+    "mapping_scope": "partial",
+    "scope": "See per-report coverage and assertion evidence."
+  },
+  {
+    "id": "IOS-ATS",
+    "mode": "configuration",
+    "title": "App Transport Security exceptions",
+    "masvs": "MASVS-NETWORK",
+    "mapping_scope": "partial",
+    "scope": "See per-report coverage and assertion evidence."
+  },
+  {
+    "id": "RUNTIME-RESIDUAL",
+    "mode": "runtime",
+    "title": "Canary persistence after an asserted state transition",
+    "masvs": "MASVS-STORAGE",
+    "mapping_scope": "partial",
+    "scope": "See per-report coverage and assertion evidence."
+  },
+  {
+    "id": "RUNTIME-UI-EXPOSURE",
+    "mode": "runtime",
+    "title": "Canary exposed in app-scoped UI",
+    "masvs": "MASVS-PLATFORM",
+    "mapping_scope": "partial",
+    "scope": "See per-report coverage and assertion evidence."
+  },
+  {
+    "id": "RUNTIME-AUTH-EXPOSURE",
+    "mode": "runtime",
+    "title": "Protected deep-link canary exposed after logout",
+    "masvs": "MASVS-AUTH",
+    "mapping_scope": "partial",
+    "scope": "See per-report coverage and assertion evidence."
+  }
+]

@@ -1,0 +1,43 @@
+name: Locked tests and local release verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        python: ["3.11.15", "3.12.13"]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: ${{ matrix.python }}
+          enable-cache: false
+      - name: Install exact interpreter and locked development environment
+        run: |
+          uv python install "${{ matrix.python }}"
+          uv venv --python "${{ matrix.python }}"
+          .venv/bin/python -c 'import pathlib, runpy; pathlib.Path("${{ runner.temp }}/requirements-build.txt").write_text(runpy.run_path("scripts/release.py")["BUILD_REQUIREMENTS"])'
+          uv pip install --python .venv/bin/python --require-hashes --only-binary :all: -r "${{ runner.temp }}/requirements-build.txt"
+          uv sync --locked --extra dev --no-build-isolation
+      - name: Tests, formatting, types, and standalone corpus
+        run: |
+          node --version
+          make test benchmark
+      - name: Repeated builds, hashes, attribution, and clean offline scan
+        run: uv run --locked --extra dev python scripts/release.py --out "${{ runner.temp }}/apsa-release"
+      # No registry publishing, artifact uploading, SDK installation, or device mutation.

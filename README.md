@@ -1,0 +1,180 @@
+# APSA
+
+**Evidence-first security audits for Android and iOS.**
+
+[English](README.md) · [한국어](README.ko.md)
+
+This English README is the source of truth. The Korean README follows it.
+
+APSA helps developers and security teams audit their own mobile apps. It inspects source code and APK/IPA builds, correlates public vulnerability information, and keeps evidence, coverage, and report history together. Use the CLI, terminal UI, or the same audit engine through MCP and reusable skills.
+
+Pronounced **“ap-sah”**; Korean name **앱사**. The name connects “app + audit” with **App Security Audit**. APSA combines the earlier Quaygate lint engine and Mobile Audit workflows in one package.
+
+## What it checks
+
+| Area | Available checks |
+| --- | --- |
+| Source code | Java/Kotlin/Swift AST analysis; WebView and deep-link patterns; Manifest, Info.plist, storage, and dependency inspection |
+| Android builds | DEX calls and constant flow; resources and network configuration; exported components/providers; signing-block and v1 certificate evidence; ELF hardening |
+| iOS builds | Mach-O headers; limited entitlement/configuration checks (embedded XML entitlements, ATS exceptions, provisioning indicators); PIE, canary, and string evidence |
+| Public intelligence | Apple/Android advisories, CVE, CISA KEV, OWASP guidance, and OSV dependency correlation |
+| Reports and CI | SQLite history, comparison and reassessment, JSON/Markdown/SARIF export, coverage requirements, and expiring waivers |
+| Runtime | Prepared scenarios for owned Android test apps and iOS simulator apps; physical iOS devices are unsupported |
+| Model integration | stdio MCP tools/resources and packaged skills, without a required model provider or LLM API key |
+
+Findings distinguish `candidate`, `configuration-confirmed`, `version-affected`, and `runtime-confirmed` evidence. `coverage` and warnings show what actually ran. A signing block does not prove signature authenticity, and an affected dependency version does not prove exploitability. A scan with no findings does not establish that the whole app is secure.
+
+OWASP mappings describe relevant checks; APSA does not certify MASVS compliance or implement every MASTG test. Public advisories cannot reveal undisclosed zero-days. App files alone cannot establish a device's OS patch state. See [OWASP coverage](docs/OWASP_COVERAGE.md) and the [support matrix](docs/SUPPORTED_MATRIX.md), both currently in Korean, for tested scope and limits.
+
+## Install and run
+
+Install **uv** and use a local checkout on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; not every host/Python combination has been tested (see the [support matrix](docs/SUPPORTED_MATRIX.md)). The examples select Python 3.12, which uv can download if needed. These instructions install from the checkout rather than a public package registry. Initial dependency installation can use the network; scans can then use local inputs and cached intelligence.
+
+```sh
+git clone https://github.com/ictechgy/apsa.git
+cd apsa
+uv sync --locked --python 3.12
+uv run --locked apsa doctor --json
+uv run --locked apsa demo --out ./apsa-demo
+```
+
+`doctor` checks parsers, optional device tools, and offline readiness. `demo` writes an intentionally vulnerable example and scans it; choose a new output directory.
+
+To register the commands on your PATH:
+
+```sh
+uv tool install --editable . --force --python 3.12 --constraints requirements-release.txt
+apsa --version
+```
+
+This registers `apsa` and the compatibility aliases `quaygate` and `mobile-audit`. `--force` replaces existing tools with those command names. An editable installation depends on this checkout; keep it in place. If the command is not found, run `uv tool update-shell` and open a new terminal. The examples below assume `apsa` is on PATH. Without a global installation, prefix them with `uv run --locked` from the checkout.
+
+```sh
+apsa scan /path/to/owned/mobile-project
+apsa scan /path/to/owned/app.apk
+apsa scan /path/to/owned/app.ipa --sbom /path/to/build.cdx.json
+apsa tui
+```
+
+Use a CycloneDX JSON SBOM from the actual build to improve dependency correlation. `tui`, or `apsa` without arguments, opens the terminal interface. Run `apsa COMMAND --help` for options.
+
+## Public intelligence and network use
+
+A default `scan` reads local files and cached intelligence without uploading source code or builds. Public-feed collection and OSV queries use the network:
+
+| Command | Network behavior |
+| --- | --- |
+| `apsa scan TARGET` | Uses local inputs and cached intelligence |
+| `apsa intel sync` | Fetches public vulnerability sources |
+| `apsa intel watch` | Polls public sources and reassesses saved inventories; does not reread app files or implicitly query OSV |
+| `apsa scan TARGET --online` | Sends discovered dependency names and versions to OSV |
+| `apsa intel watch --online` | Also sends saved dependency names and versions to OSV |
+
+```sh
+apsa intel sync
+apsa intel status
+apsa intel watch --interval 900
+apsa scan /path/to/owned/app --online
+```
+
+Watch polls every 900 seconds by default, with a 60-second minimum; it is not a push stream. It runs until interrupted unless `--cycles` sets a finite number of polls. Reassessment saves a new snapshot when findings, coverage, or intelligence state changes. Inspect feed freshness, failures, and pending CVE processing with `intel status`. Fetching a CVE document and completing its processing are separate states. The default pending-item policy allows no backlog; use `intel_max_pending` to set an explicit allowance.
+
+```sh
+apsa reports reassess latest
+apsa reports compare audit_BEFORE audit_AFTER
+apsa reports export latest --format sarif --out audit.sarif
+apsa reports verify
+```
+
+Reassessment applies current intelligence to a saved inventory; run `scan` again for changed files or new static checks. If connected to an AI client, that client may send report metadata to its model provider. APSA's MCP context excludes source excerpts, full source files, and screenshot bytes; client-side data handling still depends on the client.
+
+## CI and background jobs
+
+```sh
+apsa policy init --out apsa.toml
+apsa scan /path/to/owned/app --policy apsa.toml --out audit.json
+apsa scan /path/to/owned/app --fail-on high --include-candidates
+apsa scan /path/to/owned/app --background --json
+apsa jobs status JOB_ID --json
+```
+
+Severity gates exclude `candidate` findings by default. Opt in with `--include-candidates` or the policy's `allowed_statuses`. Required rules accept only `checked` or `not-applicable` coverage; partial execution and missing required checks do not pass. Waivers need a finding ID, a reason, and an expiry date. A background job being `completed` means it finished; check its `audit_incomplete` flag and report before treating the audit as complete.
+
+| Exit code | Meaning for the unified CLI |
+| --- | --- |
+| `0` | Command completed or policy passed |
+| `1` | Execution error |
+| `2` | Invalid arguments |
+| `3` | Incomplete audit or policy, failed report verification, or failed or partial intelligence synchronization |
+| `4` | Findings exceeded the configured CI threshold |
+| `130` | Interrupted |
+
+`--json` emits an envelope containing `ok`, `data` or `error`, and `exit_code`; watch emits one JSON envelope per cycle (NDJSON). `ok` is `true` for codes `0` and `4`; code `4` means evaluation succeeded but the CI threshold was exceeded. CI must check `exit_code` and the policy result. Reports may still be produced for codes `3` and `4`. See the [CI example](docs/ci-example.yml) and [operations guide](docs/OPERATIONS.md) (Korean) for policies, backup, limits, and troubleshooting.
+
+## MCP and skills
+
+```sh
+apsa integrations --root /absolute/path/to/owned-apps
+apsa mcp --root /absolute/path/to/owned-apps
+apsa skill install
+apsa context --report latest --json
+```
+
+Use `integrations` to generate a configuration with the installed executable path, or a `python -m apsa` fallback when no `apsa` executable is found. The shape below is illustrative; replace both absolute paths:
+
+```json
+{
+  "mcpServers": {
+    "apsa": {
+      "command": "/absolute/path/to/apsa",
+      "args": ["mcp", "--root", "/absolute/path/to/owned-apps"]
+    }
+  }
+}
+```
+
+MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. `integrations` defaults to the current directory when no root is supplied. Roots restrict audited targets and access to their reports and jobs. `--allow-any-root` explicitly removes that restriction. APSA does not change model-client configuration automatically; client authentication belongs to the client.
+
+| Purpose | MCP tools |
+| --- | --- |
+| Audits | `capabilities`, `audit_scan`, `audit_start`, `audit_reassess` |
+| Jobs | `jobs_list`, `jobs_status`, `jobs_cancel` |
+| Reports | `reports_list`, `reports_get`, `reports_compare` |
+| Intelligence | `intelligence_sync`, `intelligence_search`, `intelligence_get`, `dependency_check` |
+| Policy | `policy_evaluate` |
+| Runtime planning | `runtime_plan`, `runtime_devices` |
+
+Resources include `apsa://rules` and `apsa://reports/{report_id}`. The previous `quaygate://` and `mobile-audit://` resource schemes remain compatible.
+
+The default server exposes runtime planning. `runtime_execute` and `runtime_start` are registered only with `--allow-runtime` at server startup. Both preview a scenario by default; `execute=true` runs it. `runtime_start` starts a cancellable background device job. Runtime tests need an authorized, prepared test app; the default audit does not boot devices or install apps. See the [operations guide](docs/OPERATIONS.md) (Korean) before running a scenario.
+
+`skill install` copies the packaged [APSA skill](.agents/skills/apsa/SKILL.md) to `~/.codex/skills/apsa`. To install directly into another model runtime's skill directory:
+
+```sh
+apsa skill install --name apsa --dest /path/to/runtime/skills/apsa
+```
+
+Use `--name quaygate` or `--name mobile-audit` to update a skill installed under an older default name; custom edits are preserved unless `--force` is supplied. `integrations` reports skill status. For clients without MCP, `context` provides report context that excludes source excerpts, full source files, and screenshot bytes.
+
+## Compatibility and stored data
+
+`quaygate` and `mobile-audit` invoke the same unified CLI. Python entry points `python -m apsa`, `python -m quaygate`, and `python -m mobile_audit` remain available. Existing reports and `QG-*` rule IDs retain their identity.
+
+Data is stored by default in `~/.local/share/mobile-audit`. Path precedence is `--home` → `APSA_HOME` → `QUAYGATE_HOME` → `MOBILE_AUDIT_HOME` → that default. Renaming does not copy the database or move history. Existing MCP configurations must include an authorized `--root`.
+
+The legacy `apk`, `ipa`, and `device` subcommands retain quick lint output and exit codes `0/1/2`; they do not save unified audit history or correlate vulnerability intelligence. Use `scan` for the full workflow. Older cached OSV records without severity need a fresh `scan --online` or `intel watch --online`; reassessment alone cannot recover missing scores.
+
+## Development, validation, and licensing
+
+```sh
+uv sync --locked --extra dev --python 3.12
+make test benchmark
+make export-release
+make release RELEASE_OUT=dist/apsa-local-release
+```
+
+Choose a new or empty release directory. Release verification requires uv **0.12.1** and builds wheel/sdist twice, compares their hashes, and checks a clean installation outside the checkout with offline source/APK scans, MCP, and skill installation. It writes hashes, an SBOM, dependency notices, and a release manifest without publishing. Initial dependency preparation can use the network. The same-host repeat check does not claim byte-identical builds across platforms.
+
+Recorded product validation is in [RELEASE_READINESS.md](RELEASE_READINESS.md). The [curated benchmark](benchmarks/README.md) is a regression corpus, not a measure of production detection rates. [Integration boundaries](docs/INTEGRATION.md) and the [threat model](docs/THREAT_MODEL.md) are currently in Korean. Historical reviews remain tied to their original snapshots.
+
+The source is publicly available on [GitHub](https://github.com/ictechgy/apsa). [LICENSE](LICENSE) preserves the original Quaygate MIT notice. This publication does not declare an additional license for the combined product.
