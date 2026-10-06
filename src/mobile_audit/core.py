@@ -47,8 +47,11 @@ def code_excerpt(line: str) -> str:
     return redact(re.sub(r"""(["'])(?:\\.|(?!\1).)*?\1""", '"…"', line))[:240]
 
 
-def read_json(path: Path) -> Any:
-    return json.loads(read_bounded(path.expanduser().parent.resolve() / path.name).decode("utf-8"))
+def read_json(path: Path, *, authorized: bool = False) -> Any:
+    # A caller-bound path must keep its authorized spelling: resolving again
+    # would follow an ancestor replaced after the caller's root check.
+    source = path if authorized else path.expanduser().parent.resolve() / path.name
+    return json.loads(read_bounded(source).decode("utf-8"))
 
 
 def read_bounded(path: Path, limit: int = MAX_FILE) -> bytes:

@@ -58,7 +58,7 @@ def analyze(target: Path, sbom: Path | None) -> dict:
     from .inputs import inspect_target
     from .rules import static_checks
 
-    inventory, sources = inspect_target(target, sbom)
+    inventory, sources = inspect_target(target, sbom, authorized=True)
     findings, coverage = static_checks(inventory, sources)
     from .source_analysis import analyze_sources
 

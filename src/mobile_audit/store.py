@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -26,6 +27,24 @@ class Store:
     def __init__(self, home: Path | None = None):
         self.home = home or default_home()
         self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # SQLite derives newly created WAL/SHM modes from the database. Secure
+        # the main file before connecting, and repair sidecars from older runs.
+        for name in ("audit.sqlite3", "audit.sqlite3-wal", "audit.sqlite3-shm"):
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            if name == "audit.sqlite3":
+                flags |= os.O_CREAT
+            try:
+                descriptor = os.open(self.home / name, flags, 0o600)
+            except FileNotFoundError:
+                if name == "audit.sqlite3":
+                    raise
+                continue
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise ValueError("Audit database files must be regular files")
+                os.fchmod(descriptor, 0o600)
+            finally:
+                os.close(descriptor)
         self.db = sqlite3.connect(self.home / "audit.sqlite3", timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -104,7 +123,6 @@ class Store:
         except Exception:
             self.db.rollback()
             raise
-        (self.home / "audit.sqlite3").chmod(0o600)
 
     def close(self):
         self.db.close()

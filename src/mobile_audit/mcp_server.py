@@ -109,7 +109,7 @@ def create_server(
                 store,
                 authorized_target,
                 sbom=authorize(sbom) if sbom else None,
-                environment=read_json(authorize(device_info)) if device_info else None,
+                environment=read_json(authorize(device_info), authorized=True) if device_info else None,
                 expected_target=authorized_target,
             )
             return assistant_context(load_report(store, report["id"]))
@@ -132,7 +132,9 @@ def create_server(
                     "target": str(authorized_target),
                     "expected_target": str(authorized_target),
                     "sbom": str(authorize(sbom)) if sbom else None,
-                    "environment": read_json(authorize(device_info)) if device_info else None,
+                    "environment": read_json(authorize(device_info), authorized=True)
+                    if device_info
+                    else None,
                 },
             )
 
@@ -236,7 +238,7 @@ def create_server(
         policy_path: str, report_id: str = "latest", baseline_id: str | None = None
     ) -> dict[str, Any]:
         """Evaluate team thresholds, explicit coverage requirements and expiring waivers without changing reports."""
-        policy = load_policy(authorize(policy_path))
+        policy = load_policy(authorize(policy_path), authorized=True)
         with database() as store:
             return evaluate(
                 load_report(store, report_id),
@@ -259,7 +261,7 @@ def create_server(
         ) -> dict[str, Any]:
             """Preview an authorized scenario; execute=true starts a cancellable device job and changes app state."""
             path = authorize(scenario_path)
-            value = validate_scenario(read_json(path))
+            value = validate_scenario(read_json(path, authorized=True))
             with database() as store:
                 original = load_report(store, report_id)
                 if not execute:
@@ -276,6 +278,7 @@ def create_server(
                         "target": original["target"],
                         "report_id": original["id"],
                         "scenario": str(path),
+                        "scenario_value": value,
                     },
                 )
 
@@ -287,17 +290,17 @@ def create_server(
         ) -> dict[str, Any]:
             """Preview a local scenario. execute=true runs it on the authorized test app and changes device/app state."""
             path = authorize(scenario_path)
+            value = validate_scenario(read_json(path, authorized=True))
             with database() as store:
                 original = load_report(store, report_id)
                 if not execute:
-                    value = validate_scenario(read_json(path))
                     return {
                         "preview": True,
                         "platform": value["platform"],
                         "package": value["package"],
                         "step_count": len(value["steps"]),
                     }
-                report = run(store, path, original["id"])
+                report = run(store, path, original["id"], scenario=value)
                 context = assistant_context(report)
                 return {"report": context, "runtime": context["runtime"][-1]}
 

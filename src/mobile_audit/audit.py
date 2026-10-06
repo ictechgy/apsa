@@ -137,6 +137,9 @@ def correlate(
             "title": record["title"],
             "component": record.get("component", ""),
             "platform": platform,
+            "fixed_release": record.get("fixed_release", ""),
+            "fixed_patch_level": record.get("fixed_patch_level", ""),
+            "updated_aosp_versions": record.get("updated_aosp_versions", ""),
             "state": state,
             "known_exploited": record["id"] in known,
             "exploitation_reported": record.get("exploitation_reported", False),
@@ -163,10 +166,19 @@ def correlate(
                     reproduced=False,
                 )
             )
-    # A CVE can have several patched branches. Keep its advisory references together.
+    # Deduplicate only identical branch evidence; each snapshot owns its references.
     unique = {}
     for entry in advisories:
-        key = (entry["id"], entry["state"])
+        key = (
+            entry["id"],
+            entry["state"],
+            entry["platform"],
+            entry["component"],
+            entry["fixed_release"],
+            entry["fixed_patch_level"],
+            entry["updated_aosp_versions"],
+            entry["intel_snapshot_hash"],
+        )
         if key in unique:
             unique[key]["references"] = sorted(set(unique[key]["references"] + entry["references"]))
         else:

@@ -46,6 +46,7 @@ def analyze_target(target: Path, sbom: Path | None = None, expected_target: Path
         raise ValueError("Authorized input moved or became a symlink; audit refused")
     args = [
         sys.executable,
+        "-I",
         "-m",
         "mobile_audit._parser_worker",
         str(resolved),
@@ -54,7 +55,13 @@ def analyze_target(target: Path, sbom: Path | None = None, expected_target: Path
     ]
     with parser_lease(), tempfile.TemporaryDirectory(prefix="mobile-audit-work-") as directory:
         args.append(str(Path(directory).resolve()))
-        raw = command(args, timeout=PARSER_TIMEOUT, max_bytes=MAX_RESULT, max_rss=1024 * 1024 * 1024)
+        raw = command(
+            args,
+            timeout=PARSER_TIMEOUT,
+            max_bytes=MAX_RESULT,
+            max_rss=1024 * 1024 * 1024,
+            cwd=Path(directory).resolve(),
+        )
     try:
         result = json.loads(raw)
     except (ValueError, UnicodeError):

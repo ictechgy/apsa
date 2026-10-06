@@ -105,7 +105,9 @@ def start(store: Store, payload: dict) -> dict:
         from .core import read_json
         from .runtime import validate_scenario
 
-        payload["scenario_value"] = validate_scenario(read_json(Path(payload["scenario"])))
+        payload["scenario_value"] = validate_scenario(
+            payload["scenario_value"] if "scenario_value" in payload else read_json(Path(payload["scenario"]))
+        )
     initialize(store)
     if payload.get("kind") not in {"scan", "runtime"}:
         raise ValueError("Job kind must be scan or runtime")
@@ -139,11 +141,12 @@ def start(store: Store, payload: dict) -> dict:
         raise
     try:
         process = subprocess.Popen(
-            [sys.executable, "-m", "mobile_audit._job_worker", str(store.home.resolve()), job_id],
+            [sys.executable, "-I", "-m", "mobile_audit._job_worker", str(store.home.resolve()), job_id],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=os.name == "posix",
+            cwd=store.home.resolve(),
         )
         # The child sets its own identity before entering running state. The parent
         # returns immediately and never keeps pipe handles to long-running work.

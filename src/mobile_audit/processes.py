@@ -5,19 +5,29 @@ import selectors
 import signal
 import subprocess
 import time
+from pathlib import Path
 
 import psutil
 
 
 def command(
-    args: list[str], timeout: float = 30, max_bytes: int = 64 * 1024 * 1024, max_rss: int | None = None
+    args: list[str],
+    timeout: float = 30,
+    max_bytes: int = 64 * 1024 * 1024,
+    max_rss: int | None = None,
+    *,
+    cwd: Path | None = None,
 ) -> bytes:
     """Capture a command with finite output and wall time, including its descendants."""
     if timeout <= 0 or max_bytes <= 0:
         raise ValueError("Command limits must be positive")
     try:
         process = subprocess.Popen(
-            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=os.name == "posix"
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=os.name == "posix",
+            cwd=cwd,
         )
     except FileNotFoundError:
         raise ValueError(f"Required tool missing: {args[0]}. Run apsa doctor.") from None

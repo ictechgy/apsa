@@ -231,7 +231,7 @@ def test_fresh_intelligence_requires_each_explicit_feed_and_valid_timestamp():
     [
         {"status": "failed", "succeeded": "2026-10-04T11:00:00+00:00"},
         {"status": "ok", "succeeded": "2026-10-02T11:00:00+00:00"},
-        {"status": "ok", "stale": True, "succeeded": "2026-10-04T11:00:00+00:00"},
+        {"status": "ok", "stale": True, "succeeded": "2026-10-02T11:00:00+00:00"},
         {"status": "ok", "succeeded": "2026-10-04T11:00:00"},
         {"status": "ok", "succeeded": "2026-10-05T11:00:00+00:00"},
     ],

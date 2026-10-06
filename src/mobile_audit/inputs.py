@@ -294,8 +294,10 @@ def _outer_app_index(parts: tuple[str, ...]) -> int | None:
     return None
 
 
-def inspect_target(target: Path, sbom: Path | None = None) -> tuple[dict, list[tuple[str, str]]]:
-    target = target.expanduser().resolve()
+def inspect_target(
+    target: Path, sbom: Path | None = None, *, authorized: bool = False
+) -> tuple[dict, list[tuple[str, str]]]:
+    target = target if authorized else target.expanduser().resolve()
     if not target.exists():
         raise ValueError(f"Input not found: {target}")
     inventory = {
@@ -405,6 +407,10 @@ def inspect_target(target: Path, sbom: Path | None = None) -> tuple[dict, list[t
                     break
             if len(source_paths) > MAX_FILES:
                 break
+        if len(source_paths) > MAX_FILES:
+            inventory["warnings"].append("Source enumeration limit reached; coverage incomplete")
+            inventory["partial"] = True
+            inventory["fingerprint_complete"] = False
         if target.suffix.lower() == ".app":
             main = target / "Info.plist"
             if main.is_file() and main not in source_paths:

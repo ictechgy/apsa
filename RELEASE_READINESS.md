@@ -8,6 +8,16 @@
 
 ---
 
+# APSA (앱사) 1.0.4 리뷰 수정 — 2026-10-06
+
+작업 프로세스의 Python import 경로, 승인된 MCP sidecar·정책·시나리오·소스 경로의 재해석, 소스 열거 제한의 부분 검사 표시, SQLite DB/WAL/SHM 생성 권한을 보완합니다. 잘못된 KEV routing 필드는 기존 캐시를 보존하며 오류를 표시하고, 프로젝트별 인텔 유효 시간과 CVE의 component·patch·snapshot 분기를 보존합니다. CLI의 초기 부모 심볼릭 링크 처리와 기존 명령·데이터·발견 ID는 유지합니다.
+
+로컬 격리 사본에서 `make test benchmark`: **589개 pytest 통과**, Ruff check/format 통과, Pyright 오류 0건, 기존 수작업 corpus **31/31 일치**. 45개 회귀 사례는 두 worker의 cwd/PYTHONPATH 입력, 승인 후 경로 교체, 동결된 런타임 시나리오, 열거 제한, 공유 home의 DB 권한, malformed KEV, custom freshness, 분기 출처와 1.0.3 스킬 갱신을 검증합니다. 새 실기기 실행이나 상용 앱 탐지율 검증은 포함하지 않습니다.
+
+이 로컬 검사 결과는 독립 리뷰 또는 배포 완료를 뜻하지 않습니다. 최종 태그 스냅샷의 리뷰 기록은 별도로 바인딩하며, 업로드 전 CI 네 환경과 반복 패키지 빌드·깨끗한 설치 검증을 거칩니다. 실제 배포 완료·다운로드와 manifest는 [1.0.4 릴리스](https://github.com/ictechgy/apsa/releases/tag/v1.0.4)에서 확인하십시오.
+
+---
+
 # APSA (앱사) 1.0.3 리네이밍 — 2026-10-06
 
 제품 표기, `apsa` CLI·배포 패키지·Python 진입점·MCP URI·스킬을 새 이름으로 통일합니다. 기존 명령어·URI·환경 변수·감사 DB는 호환하며 이전 발견 ID와 lint provenance를 보존합니다. 과거 독립 보안 리뷰는 당시 스냅샷에만 적용됩니다. 현재 변경의 검증과 설치 근거는 `.omx/renames/` 아래에 별도로 기록합니다.

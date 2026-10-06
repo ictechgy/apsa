@@ -5,7 +5,7 @@ Brand: APSA, pronounced "ap-sah"; Korean name: 앱사. CLI, package and MCP iden
 The release objective is the user's request: **제품으로 낼 수 있을만큼 만들어줘**.
 APSA helps app developers and security teams audit their own Android and iOS apps. Source trees and APK/IPA builds are both supported. Models use the same engine through MCP or the reusable skill; model authentication stays with the client.
 
-The distribution assumption is a local application with CLI, TUI, and CI support. The user asked whether local analysis implied a closed-source product; the answer clarified that keeping inspected apps on the host and choosing an open-source license are separate decisions. No public license or external publication has been chosen. A later distribution choice can extend the product scope; it cannot silently remove the requirements below.
+The distribution assumption is a local application with CLI, TUI, and CI support. The user asked whether local analysis implied a closed-source product; the answer clarified that keeping inspected apps on the host and choosing an open-source license are separate decisions. The user authorized public distribution through GitHub and PyPI. A license for the combined product has not been selected; the retained Quaygate license and third-party notices describe their respective components. Distribution choices cannot silently remove the requirements below.
 
 ## Release requirements
 

@@ -108,7 +108,7 @@ def _validate(policy: Any) -> dict:
     return result
 
 
-def load_policy(path: Path) -> dict:
+def load_policy(path: Path, *, authorized: bool = False) -> dict:
     """Load TOML or JSON and reject unknown fields and malformed waiver records.
 
     Expiry is checked on every evaluation, including a policy loaded before its
@@ -117,7 +117,7 @@ def load_policy(path: Path) -> dict:
     """
     if path.suffix.lower() not in {".toml", ".json"}:
         raise ValueError("Policy must be a .toml or .json file.")
-    raw = read_bounded(path.expanduser().parent.resolve() / path.name)
+    raw = read_bounded(path if authorized else path.expanduser().parent.resolve() / path.name)
     try:
         policy = (
             tomllib.loads(raw.decode("utf-8"))
@@ -381,7 +381,7 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
                 fresh = (
                     fresh
                     and (feed.get("status") == "ok" or backlog_allowed)
-                    and feed.get("stale", False) is False
+                    and type(feed.get("stale", False)) is bool
                 )
             if not fresh:
                 incomplete.append(

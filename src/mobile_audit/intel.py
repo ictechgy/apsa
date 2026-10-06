@@ -156,6 +156,9 @@ def normalize_kev(value: dict) -> list[dict]:
             "requiredAction",
         ):
             _text(item.get(field, ""), f"KEV {field}")
+        for field in ("vendorProject", "product"):
+            if not item.get(field, "").strip():
+                raise ValueError(f"Missing or empty KEV {field}")
         if not re.fullmatch(r"CVE-\d{4}-\d{4,}", item.get("cveID", "")):
             raise ValueError("Missing or invalid KEV CVE ID")
         if not item.get("vulnerabilityName"):

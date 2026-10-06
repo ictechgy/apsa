@@ -1,5 +1,5 @@
 ---
-name: quaygate
+name: apsa
 description: Inspect Android or iOS source, APK or IPA with APSA (앱사); correlate public CVEs, inspect OWASP-aligned evidence, compare reports, and prepare authorized device tests through CLI or MCP.
 ---
 
@@ -7,7 +7,7 @@ APSA is pronounced "ap-sah"; its Korean name is 앱사. Use `apsa` for CLI, pack
 
 Use the installed `apsa` CLI or its MCP server for mobile app audits. Model/API authentication belongs to the invoking client; this tool needs no LLM key.
 
-Start with `apsa --json doctor`, or MCP `capabilities`. If the command is missing, locate the apsa project and follow its README installation instructions. Use `--json` for machine-readable CLI output. The result envelope is `{"ok":true,"data":...,"exit_code":0}`. A completed audit that exceeds the requested CI finding threshold has `ok:true` with `exit_code:4`; automation must check `exit_code`, not only `ok`. Exit 3 means partial execution with `ok:false` and `data`; execution/usage errors have `ok:false` and an `error` object.
+Start with `apsa --json doctor`, or MCP `capabilities`. If the command is missing, locate the apsa project and follow its README installation instructions. Use `--json` for machine-readable CLI output. The success envelope is `{"ok":true,"data":...,"exit_code":0}`; errors have `ok:false` and an `error` object. Exit 3 means partial execution; exit 4 means the requested CI finding threshold was exceeded.
 
 Use `scan` for the unified audit: APK/IPA run both bundled engines in one bounded parser and save one report. `apk`, `ipa`, and `device` retain legacy lint output/exits (0/1/2); they do not populate the shared audit history or correlate CVEs. Bundled lint string, canary and signature-block indicators remain candidates. A block is not cryptographic signature verification. Existing data defaults to `~/.local/share/mobile-audit`; `APSA_HOME` (legacy `QUAYGATE_HOME`/`MOBILE_AUDIT_HOME`) and `--home` can select another store. Reassessing an old report does not run new static rules; rescan when required.
 
@@ -35,4 +35,4 @@ apsa --json intel search WebView
 apsa --json reports compare audit_BEFORE audit_AFTER
 ```
 
-`apsa integrations --root /absolute/owned/project` prints portable MCP command/args with explicit roots. MCP requires `--root` unless unrestricted access is deliberately enabled by `--allow-any-root`. Install packaged instructions with `apsa skill install --name quaygate`. `apsa --json context --report latest` exports sanitized context for models without MCP. `intel request SOURCE --out FILE` is a read-only raw document escape hatch for the configured official sources; it does not accept arbitrary endpoints or execute payloads.
+`apsa integrations --root /absolute/owned/project` prints portable MCP command/args with explicit roots. MCP requires `--root` unless unrestricted access is deliberately enabled by `--allow-any-root`. Install packaged instructions with `apsa skill install --name apsa`. `apsa --json context --report latest` exports sanitized context for models without MCP. `intel request SOURCE --out FILE` is a read-only raw document escape hatch for the configured official sources; it does not accept arbitrary endpoints or execute payloads.
