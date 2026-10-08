@@ -5,7 +5,14 @@ import json
 
 import pytest
 
-from benchmarks.competitive import MobSF, apsa_observation, mobsf_observation, read_manifest, score
+from benchmarks.competitive import (
+    MobSF,
+    apsa_observation,
+    mobsf_observation,
+    observation_signature,
+    read_manifest,
+    score,
+)
 from benchmarks.competitive_cases import generate
 
 
@@ -53,6 +60,33 @@ def test_failed_risky_scan_is_not_silently_excluded_from_end_to_end_recall():
     assert result["failed"] == result["failed_risky"] == 1
     assert result["tn"] == 1
     assert score([negative], "apsa")["alert_precision"] is None
+
+
+@pytest.mark.parametrize("mutation", ["extra", "kind", "rehashed"])
+def test_sampling_unit_and_source_truth_cannot_be_rewritten_with_a_matching_hash(tmp_path, mutation):
+    import hashlib
+
+    root = tmp_path / "fixtures"
+    manifest = generate(root)
+    case = manifest["cases"][0]
+    if mutation == "extra":
+        manifest["cases"].append(case | {"id": "extra", "source_case": case["id"]})
+    elif mutation == "kind":
+        case["input_kind"] = "apk"
+    else:
+        path = root / case["input"]
+        path.write_bytes(b"replaced")
+        case["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises((ValueError, __import__("zipfile").BadZipFile)):
+        read_manifest(root)
+
+
+def test_same_rules_with_different_completion_state_are_not_stable():
+    observed = apsa_observation({"findings": [], "coverage": [], "summary": {"incomplete": False}})
+    changed = copy.deepcopy(observed)
+    changed["audit_incomplete"] = True
+    assert observation_signature(observed) != observation_signature(changed)
 
 
 def test_report_normalizers_keep_coverage_unknown_and_broad_alerts_visible():

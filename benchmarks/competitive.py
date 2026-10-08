@@ -23,7 +23,7 @@ import httpx
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from benchmarks.competitive_cases import MAPPING, MOBSF_COMMIT, SCHEMA, cases, generate
+from benchmarks.competitive_cases import MAPPING, MOBSF_COMMIT, SCHEMA, cases, generate, project_files
 
 
 def sha(path: Path) -> str:
@@ -170,12 +170,22 @@ def read_manifest(root: Path) -> dict:
     if manifest.get("schema") != SCHEMA or manifest.get("mapping") != MAPPING:
         raise ValueError("Benchmark schema or frozen mapping changed")
     truth = {c["id"]: c for c in cases()}
+    apk_ids = {key + "-apk": key for key, base in truth.items() if base["flags"].get("apk")}
     seen = set()
     for case in manifest["cases"]:
         if case["id"] in seen:
             raise ValueError("Duplicate benchmark sampling unit")
         seen.add(case["id"])
-        base = truth.get(case.get("source_case", case["id"]))
+        if case["id"] in truth:
+            if case.get("source_case") is not None or case["input_kind"] != "source-zip":
+                raise ValueError("Source sampling unit changed")
+            base = truth[case["id"]]
+        elif case["id"] in apk_ids:
+            if case.get("source_case") != apk_ids[case["id"]] or case["input_kind"] != "apk":
+                raise ValueError("APK sampling unit changed")
+            base = truth[apk_ids[case["id"]]]
+        else:
+            raise ValueError("Unexpected benchmark sampling unit")
         if base is None or any(
             case[key] != base[key]
             for key in ("language", "category", "variant", "risky", "flags", "reason", "reference")
@@ -185,8 +195,17 @@ def read_manifest(root: Path) -> dict:
             raise ValueError("Benchmark inputs must be regular generated files inside the fixture directory")
         if sha(root / case["input"]) != case["sha256"]:
             raise ValueError("Benchmark input changed after manifest freeze")
+        if case["input_kind"] == "source-zip":
+            expected = project_files(base)
+            with zipfile.ZipFile(root / case["input"]) as archive:
+                if sorted(archive.namelist()) != sorted(expected) or any(
+                    archive.read(name) != content for name, content in expected.items()
+                ):
+                    raise ValueError("Source bytes disagree with frozen generated ground truth")
     if not set(truth).issubset(seen):
         raise ValueError("Frozen benchmark cases were omitted")
+    if seen - set(truth) not in (set(), set(apk_ids)):
+        raise ValueError("Compiled benchmark must include exactly the six selected APKs")
     return manifest
 
 
@@ -238,7 +257,7 @@ def apsa_observation(report: dict) -> dict:
             for f in report["findings"]
         ],
         "coverage": [{"rule": c["rule_id"], "state": c["state"]} for c in report["coverage"]],
-        "warnings": report.get("inventory", {}).get("warnings", []),
+        "warnings": report.get("inventory", {}).get("warnings", []) + report.get("warnings", []),
         "audit_incomplete": report.get("summary", {}).get("incomplete"),
     }
 
@@ -297,15 +316,17 @@ class MobSF:
         )
 
     def wait(self):
+        last = "no response"
         for _ in range(120):
             try:
-                response = self.client.get("/api/v1/scans", params={"page_size": 1, "page": 1})
+                response = self.client.get("/api/v1/scans", params={"page_size": 1, "page": 1}, timeout=3)
                 if response.status_code == 200:
                     return
-            except httpx.HTTPError:
-                pass
+                last = f"HTTP {response.status_code}"
+            except httpx.HTTPError as error:
+                last = type(error).__name__
             time.sleep(2)
-        raise ValueError("Fresh MobSF service did not become ready")
+        raise ValueError(f"Fresh MobSF service did not become ready: {last}")
 
     def scan(self, target: Path) -> tuple[dict, float]:
         start = time.perf_counter()
@@ -367,6 +388,13 @@ def score(records: list[dict], tool: str, kind: str | None = None) -> dict:
     }
 
 
+def observation_signature(observation: dict) -> str:
+    return json.dumps(
+        {key: observation[key] for key in ("rules", "coverage", "warnings", "audit_incomplete")},
+        sort_keys=True,
+    )
+
+
 def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int) -> dict:
     if repeats not in range(1, 6):
         raise ValueError("Use 1..5 repetitions")
@@ -399,7 +427,7 @@ def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int
                     observations.append(observed)
                 except (ValueError, OSError, subprocess.TimeoutExpired, httpx.HTTPError) as error:
                     errors.append(f"{type(error).__name__}: {error}"[:700])
-            stable = len({tuple(o["rules"]) for o in observations}) <= 1
+            stable = len({observation_signature(o) for o in observations}) <= 1
             result = {
                 "state": "failed" if errors else "completed" if stable else "unstable",
                 "seconds": timings,

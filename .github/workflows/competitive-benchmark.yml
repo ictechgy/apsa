@@ -37,17 +37,23 @@ jobs:
           uv run --locked python benchmarks/competitive.py build-apks --fixtures "$RUNNER_TEMP/competitive-fixtures" --sdk "$ANDROID_HOME"
       - name: Start isolated fixed-release MobSF
         run: |
-          docker pull opensecurity/mobile-security-framework-mobsf:v4.5.3
-          docker image inspect opensecurity/mobile-security-framework-mobsf:v4.5.3 --format '{{json .RepoDigests}}' > "$RUNNER_TEMP/mobsf-image-digests.json"
-          echo "MOBSF_BENCHMARK_DIGEST=$(docker image inspect opensecurity/mobile-security-framework-mobsf:v4.5.3 --format '{{index .RepoDigests 0}}')" >> "$GITHUB_ENV"
+          docker pull opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c
+          docker image inspect opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c --format '{{json .RepoDigests}}' > "$RUNNER_TEMP/mobsf-image-digests.json"
+          echo "MOBSF_BENCHMARK_DIGEST=$(docker image inspect opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c --format '{{index .RepoDigests 0}}')" >> "$GITHUB_ENV"
           docker network create --internal apsa-synthetic-benchmark
-          docker run -d --name apsa-synthetic-mobsf --network apsa-synthetic-benchmark -p 127.0.0.1:8000:8000 --memory 4g --cpus 2 --security-opt no-new-privileges --cap-drop ALL -e MOBSF_API_KEY=synthetic-benchmark-only -e MOBSF_DISABLE_AUTHENTICATION=1 opensecurity/mobile-security-framework-mobsf:v4.5.3
+          docker run -d --name apsa-synthetic-mobsf --network apsa-synthetic-benchmark -p 127.0.0.1:8000:8000 --memory 4g --cpus 2 --security-opt no-new-privileges --cap-drop ALL -e MOBSF_API_KEY=synthetic-benchmark-only -e MOBSF_DISABLE_AUTHENTICATION=1 opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c
           docker exec apsa-synthetic-mobsf python -c 'import hashlib,pathlib; root=pathlib.Path("/home/mobsf/Mobile-Security-Framework-MobSF"); expected={"mobsf/StaticAnalyzer/views/android/rules/android_rules.yaml":"b5a2411ab48cec34a9743212aab300634f748cf4","mobsf/StaticAnalyzer/views/ios/rules/swift_rules.yaml":"f19571a3ac950bad02ecc4b8c44a9e91acfe889e"}; observed={name:hashlib.sha1(b"blob "+str(len(data)).encode()+b"\0"+data).hexdigest() for name in expected for data in [(root/name).read_bytes()]}; assert observed==expected, observed; print(observed)'
       - name: Compare actual scans with frozen labels
         env:
           MOBSF_BENCHMARK_KEY: synthetic-benchmark-only
         run: |
           uv run --locked python benchmarks/competitive.py run --fixtures "$RUNNER_TEMP/competitive-fixtures" --out "$RUNNER_TEMP/competitive-results" --mobsf-url http://127.0.0.1:8000 --repeats 3
+      - name: Record benchmark-only service diagnostics
+        if: failure()
+        run: |
+          docker inspect apsa-synthetic-mobsf --format '{{json .State}}' > "$RUNNER_TEMP/mobsf-synthetic-state.json" || true
+          docker logs --tail 80 apsa-synthetic-mobsf 2>&1 | sed 's/synthetic-benchmark-only/[SYNTHETIC KEY]/g' > "$RUNNER_TEMP/mobsf-synthetic-startup.txt" || true
+          cat "$RUNNER_TEMP/mobsf-synthetic-state.json" "$RUNNER_TEMP/mobsf-synthetic-startup.txt"
       - name: Preserve synthetic reports and input/compiler provenance
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -57,6 +63,8 @@ jobs:
             ${{ runner.temp }}/competitive-fixtures
             ${{ runner.temp }}/competitive-results
             ${{ runner.temp }}/mobsf-image-digests.json
+            ${{ runner.temp }}/mobsf-synthetic-state.json
+            ${{ runner.temp }}/mobsf-synthetic-startup.txt
           retention-days: 30
           if-no-files-found: error
       - name: Remove benchmark-only service
