@@ -130,3 +130,5 @@ DEX 분석의 기본 100,000개 메서드·1,000,000개 명령어와 파서 CPU�
 제품·CLI·배포 패키지·MCP·스킬의 기본 이름은 APSA/apsa입니다. `quaygate`와 `mobile-audit` 진입점, 이전 resource URI는 호환됩니다. `APSA_HOME` → `QUAYGATE_HOME` → `MOBILE_AUDIT_HOME` 순서로 명시한 데이터 경로를 선택합니다. 기본 `~/.local/share/mobile-audit` 경로를 유지하므로 리네이밍만으로 이력이 새 데이터베이스로 갈라지지 않습니다. 사용자 정책 파일 경로는 자동 변경하지 않으며 새 `policy init`의 기본 파일명만 `apsa.toml`입니다.
 
 `apsa skill install`은 새 기본 스킬을 설치합니다. 알려진 과거 기본 Quaygate/Mobile Audit 스킬도 `--name quaygate`/`--name mobile-audit`로 업데이트할 수 있으며 사용자 수정본은 보존합니다.
+
+격리된 CI에서 `APSA_PARSER_LOCK_DIR`와 `APSA_DEVICE_LOCK_DIR`를 새 private 임시 디렉터리로 지정할 수 있습니다. 동일한 호스트에서 동시 작업을 조율할 프로세스는 같은 잠금 경로를 사용해야 합니다. 기본 사용자 홈과 감사 데이터 위치는 바꾸지 않습니다.

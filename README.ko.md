@@ -10,6 +10,8 @@ APSA는 개발자와 보안팀이 자기 모바일 앱을 감사하는 도구입
 
 영어 발음은 **“ap-sah”**, 한글 이름은 **앱사**입니다. “앱 + 감사”를 연결한 이름이며 **App Security Audit**라는 의미도 담았습니다. 기존 Quaygate 린트 엔진과 Mobile Audit 작업 흐름을 한 패키지에 통합했습니다.
 
+APSA 1.0.6은 미지원 언어가 혼합된 소스와 잘린 패턴 결과를 불완전 검사로 표시합니다. Gradle 선언 버전은 실제 빌드에서 확인되기 전까지 후보이며, OS-CVE는 최근 공지 범위만 대조하므로 피드가 최신이어도 역사적 커버리지를 충족하지 않습니다. [릴리스 순서](docs/ROADMAP.md)를 참고하십시오.
+
 ## 검사 범위
 
 | 영역 | 제공하는 검사 |
@@ -33,7 +35,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.0.5
+uv tool install --python 3.12 apsa==1.0.6
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo

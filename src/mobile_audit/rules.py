@@ -37,6 +37,7 @@ def static_checks(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list
         source_files = [
             (path, text) for path, text in sources if PathSuffix(path) in rule.get("suffixes", [])
         ]
+        truncated = False
         if not applicable:
             state = "not-applicable"
         elif not source_files:
@@ -47,7 +48,11 @@ def static_checks(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list
                 cleaned = strip_comments(text)
                 if rule.get("requires") and not re.search(rule["requires"], cleaned):
                     continue
-                for match in islice(re.finditer(rule["pattern"], cleaned, re.I), 30):
+                for index, match in enumerate(islice(re.finditer(rule["pattern"], cleaned, re.I), 31)):
+                    if index == 30:
+                        state = "partial"
+                        truncated = True
+                        break
                     if len(findings) >= 2000:
                         state = "partial"
                         break
@@ -82,7 +87,13 @@ def static_checks(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list
                 "method": "source-pattern",
                 "mastg_tests": rule.get("mastg_tests", []),
                 "mapping_scope": rule.get("mapping_scope", "partial"),
-                "note": "Pattern check is not proof of exploitability or complete absence of defects.",
+                "truncated": truncated,
+                "note": "Pattern check is not proof of exploitability or complete absence of defects."
+                + (
+                    " Per-file finding limit reached; additional matching evidence was omitted."
+                    if truncated
+                    else ""
+                ),
             }
         )
     for config in inventory["android_config"]:

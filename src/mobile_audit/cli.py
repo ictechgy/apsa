@@ -251,7 +251,7 @@ def integration_config(home: Path, roots: list[Path] | None = None) -> dict:
 
     binary = shutil.which("apsa")
     command = binary or sys.executable
-    arguments = [] if binary else ["-m", "apsa"]
+    arguments = [] if binary else ["-I", "-m", "apsa"]
     arguments += ["--home", str(home.resolve()), "mcp"]
     for root in roots or [Path.cwd()]:
         arguments += ["--root", str(root.expanduser().resolve())]

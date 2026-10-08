@@ -1,68 +1,65 @@
-# apsa CI 레시피 — GitHub Actions 예시
-# 요구사항: Python 3.9+ (의존성 없음). 인증서 분석은 러너 기본 openssl 사용.
-# 주의: 검사 대상은 릴리스 빌드입니다. assembleDebug 산출물은 debuggable=true라
-# 게이트가 항상 실패합니다.
-
-name: apsa
+# Copy into an owned Android app repository and adapt the release build path.
+# APSA requires CPython 3.11+ and installs its dependencies from PyPI.
+name: APSA mobile audit
 on:
   push:
   pull_request:
-
 permissions:
-  security-events: write   # code scanning SARIF 업로드에 필요
   contents: read
-
+  security-events: write
 jobs:
-  apk-static-lint:
-    runs-on: ubuntu-latest
+  audit:
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Install apsa
-        run: pip install .        # 저장소 내 소스 — 배포 후에는 pip install apsa
-
-      - name: Build release APK (예시 — 프로젝트에 맞게 수정)
+      - name: Install a reviewed APSA release
+        run: python -m pip install 'apsa==1.0.6'
+      - name: Build the owned release APK
         run: ./gradlew assembleRelease
-
-      - name: Run apsa (게이트)
-        id: gate
-        # 종료 코드를 출력에 보존 — 이 단계 자체는 실패시키지 않는다(업로드 먼저).
+      - name: Audit and preserve the policy decision
+        id: audit
+        env:
+          APSA_HOME: ${{ runner.temp }}/apsa-home
         run: |
+          # Commit a reviewed apsa.toml; do not generate a permissive policy here.
+          # Public intelligence is a bounded recent window, not a historical catalog.
+          apsa intel sync --json > intel-status.json || exit "$?"
           set +e
-          apsa apk app/build/outputs/apk/release/app-release-unsigned.apk \
-            --sarif > apsa.sarif
+          apsa scan app/build/outputs/apk/release/app-release.apk \
+            --policy apsa.toml --format sarif --out apsa.sarif --json > audit-decision.json
           rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           exit 0
-
-      - name: Upload SARIF to code scanning
+      - name: Upload the audit and decision
         if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: apsa-audit
+          path: |
+            apsa.sarif
+            audit-decision.json
+            intel-status.json
+      - name: Upload SARIF
+        if: always() && hashFiles('apsa.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: apsa.sarif
-
-      - name: Enforce gate
+      - name: Enforce the unified exit code
         if: always()
+        env:
+          AUDIT_RC: ${{ steps.audit.outputs.rc }}
         run: |
-          rc="${{ steps.gate.outputs.rc }}"
-          case "$rc" in
-            0) echo "apsa: 경고 이하만 통과" ;;
-            1) echo "::error::apsa 심각(fail) 발견 — code scanning SARIF 참고"; exit 1 ;;
-            *) echo "::error::apsa 도구/파일 오류(exit $rc) — 빌드 산출물 경로와 설치 확인"; exit 1 ;;
+          case "$AUDIT_RC" in
+            0) echo 'APSA policy passed' ;;
+            3) echo '::error::Audit, intelligence, or required coverage is incomplete'; exit 1 ;;
+            4) echo '::error::Findings exceeded the policy threshold'; exit 1 ;;
+            1|2|130|'') echo '::error::APSA execution failed or was interrupted'; exit 1 ;;
+            *) echo '::error::Unexpected APSA exit code'; exit 1 ;;
           esac
-
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: apsa-report
-          path: apsa.sarif

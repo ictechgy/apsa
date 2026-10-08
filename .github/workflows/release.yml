@@ -3,6 +3,8 @@ name: Publish APSA to PyPI
 on:
   push:
     tags: ["v[0-9]*"]
+    branches: [main]
+    paths: [pyproject.toml]
   workflow_dispatch:
 
 permissions:
@@ -15,7 +17,7 @@ concurrency:
 jobs:
   validate:
     name: Check the release tag
-    if: github.repository == 'ictechgy/apsa'
+    if: github.repository == 'ictechgy/apsa' && (github.ref_type == 'tag' || startsWith(github.event.head_commit.message, 'Release APSA '))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -39,8 +41,8 @@ jobs:
           tag = f"v{version}"
           if project["name"] != "apsa" or not re.fullmatch(r"\d+\.\d+\.\d+", version):
               raise SystemExit("Expected the apsa package with a stable three-part version")
-          if os.environ["GITHUB_REF"] != f"refs/tags/{tag}":
-              raise SystemExit(f"Run this workflow on the {tag} tag, matching pyproject.toml")
+          if os.environ["GITHUB_REF"] not in (f"refs/tags/{tag}", "refs/heads/main"):
+              raise SystemExit(f"Run on the {tag} tag or an explicit Release APSA commit on main")
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               output.write(f"version={version}\ntag={tag}\n")
           PY
@@ -98,9 +100,34 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  tag:
+    name: Bind the verified version to an immutable tag
+    needs: [validate, verify, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Create the release tag or verify its existing commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          if gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" > tag.json 2> tag-error.txt; then
+            python3 - <<'PY'
+          import json, os
+          ref = json.load(open("tag.json"))["object"]
+          if ref["type"] != "commit" or ref["sha"] != os.environ["GITHUB_SHA"]:
+              raise SystemExit("Existing release tag does not match the verified commit; refusing to move it")
+          PY
+          else
+            grep -q 'HTTP 404' tag-error.txt || { cat tag-error.txt; exit 1; }
+            gh api --method POST "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA"
+          fi
+
   publish:
     name: Publish with the registered PyPI publisher
-    needs: [validate, verify, build]
+    needs: [validate, verify, build, tag]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:

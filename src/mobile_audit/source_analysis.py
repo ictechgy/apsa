@@ -843,6 +843,7 @@ def analyze_sources(sources: list[Any]) -> dict:
         if not language:
             if suffix in UNSUPPORTED_SOURCE:
                 unsupported.add(suffix)
+                skipped += 1
             continue
         seen_languages.add(language)
         size = len(text.encode("utf-8"))
@@ -904,11 +905,12 @@ def analyze_sources(sources: list[Any]) -> dict:
         {
             "rule_id": rule,
             "state": "not-applicable"
-            if rule.endswith(("SSL-BYPASS", "JS-BRIDGE")) and seen_languages == {"swift"}
+            if rule.endswith(("SSL-BYPASS", "JS-BRIDGE")) and seen_languages == {"swift"} and not unsupported
             else state,
             "method": "source-ast-local-flow",
             "mapping_scope": "partial",
             "languages": sorted(seen_languages),
+            "unsupported_languages": sorted(unsupported),
             "parsed_files": parsed,
             "skipped_files": skipped,
             "note": LIMITS_NOTE

@@ -8,6 +8,12 @@
 
 ---
 
+# APSA 1.0.6 evidence correctness
+
+Mixed unsupported source languages and per-file pattern truncation are incomplete. OS-CVE records explicitly report bounded recent-window correlation, without a historical-completeness claim. Dependency declarations produce candidates; exact inventory produces version-affected evidence. MCP fallback uses isolated Python startup. The adoption recipe uses unified scan, a reviewed project policy, current dependencies and exit codes. New regression checks use generated synthetic fixtures outside runtime data paths. Release validation and independent review are recorded for the final snapshot; older approvals do not apply.
+
+---
+
 # APSA (앱사) 1.0.5 검사 누락 수정 — 2026-10-08
 
 읽을 수 없는 소스 하위 디렉터리를 조용히 건너뛰던 열거 오류를 경고·partial·불완전한 fingerprint로 표시합니다. 열거한 파일의 상태 확인이나 읽기 실패도 같은 불완전 경로로 처리합니다. 지원하는 파일을 하나도 읽을 수 없으면 명시적인 실행 오류가 됩니다. 의도적인 제외 폴더와 심볼릭 링크 정책은 유지합니다.

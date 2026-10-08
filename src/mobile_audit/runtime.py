@@ -548,7 +548,11 @@ def device_lease(platform: str, device: str, directory: Path | None = None):
         raise ValueError("Runtime device leases currently require a macOS or Linux host")
     import fcntl
 
-    directory = directory or Path.home() / ".cache/mobile-audit/device-locks"
+    directory = directory or (
+        Path(os.environ["APSA_DEVICE_LOCK_DIR"])
+        if os.environ.get("APSA_DEVICE_LOCK_DIR")
+        else Path.home() / ".cache/mobile-audit/device-locks"
+    )
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = directory / f"{digest((platform + ':' + device).encode())}.lock"
     fd = os.open(path, os.O_CREAT | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)

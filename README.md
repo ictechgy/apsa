@@ -10,6 +10,8 @@ APSA helps developers and security teams audit their own mobile apps. It inspect
 
 Pronounced **“ap-sah”**; Korean name **앱사**. The name connects “app + audit” with **App Security Audit**. APSA combines the earlier Quaygate lint engine and Mobile Audit workflows in one package.
 
+APSA 1.0.6 marks mixed unsupported source languages and truncated pattern results as incomplete. Declared Gradle versions remain candidates until resolved-build evidence is supplied. OS-CVE correlation reports a bounded recent window, so feed freshness alone cannot satisfy historical coverage. See [release sequence](docs/ROADMAP.md).
+
 ## What it checks
 
 | Area | Available checks |
@@ -33,7 +35,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.0.5
+uv tool install --python 3.12 apsa==1.0.6
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo

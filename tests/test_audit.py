@@ -121,7 +121,7 @@ def test_osv_match_does_not_follow_different_dependency_version(demo):
         "references": [],
     }
     result, _ = correlate(inventory, [record])
-    assert result[0]["status"] == "version-affected"
+    assert result[0]["status"] == "candidate"
     assert result[0]["reachability"] == "unknown"
     inventory["dependencies"][0] = dict(dep, version="99.0.0")
     assert correlate(inventory, [record])[0] == []

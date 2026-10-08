@@ -60,6 +60,24 @@ def in_cve_range(version: str, affected: dict) -> bool | None:
     return None
 
 
+def os_cve_coverage(environment: dict | None, advisories: list[dict], feeds: list[dict]) -> dict:
+    """Correlation can run against a bounded cache without claiming catalog completeness."""
+    platform = (environment or {}).get("platform")
+    source = {"android": "android", "ios": "apple"}.get(platform or "")
+    feed = next((f for f in feeds if f["source"] == source), None)
+    observed = bool(environment) and any(a["platform"] == platform for a in advisories)
+    available = bool(feed and feed["status"] == "ok" and not feed["stale"])
+    return {
+        "rule_id": "OS-CVE",
+        "state": "partial" if environment and (observed or available) else "not-run",
+        "method": "vendor advisory/environment correlation",
+        "collection_scope": "bounded-recent-window",
+        "historical_backfill_complete": False,
+        "feed_status": feed["status"] if feed else "unavailable",
+        "note": "Correlation uses a bounded recent advisory cache, not a complete historical catalog. Feed freshness does not prove historical completeness. Not a platform exploit test; component/backport applicability may remain unknown.",
+    }
+
+
 def correlate(
     inventory: dict, records: list[dict], environment: dict | None = None
 ) -> tuple[list[dict], list[dict]]:
@@ -87,7 +105,7 @@ def correlate(
                             (record.get("severity") or "medium", "high" if record["id"] in known else "info"),
                             key=severity_rank,
                         ),
-                        "version-affected",
+                        "version-affected" if current.get("confidence") == "exact" else "candidate",
                         [
                             {
                                 "dependency": current,
@@ -304,16 +322,7 @@ def scan(
     if progress:
         progress("evidence-report", 85)
     findings.extend(intel_findings)
-    coverage.append(
-        {
-            "rule_id": "OS-CVE",
-            "state": "checked"
-            if environment and any(a["platform"] == environment.get("platform") for a in advisories)
-            else "not-run",
-            "method": "vendor advisory/environment correlation",
-            "note": "Not a platform exploit test. Component/backport applicability may remain unknown.",
-        }
-    )
+    coverage.append(os_cve_coverage(environment, advisories, feeds))
     if not records:
         warnings.append("No cached intelligence. Run intel sync; offline scan did not check current CVEs.")
     if any(f["stale"] or f["status"] != "ok" for f in feeds):
@@ -366,12 +375,7 @@ def refresh_report(store: Store, report_id: str, *, save=True) -> dict:
             feed = health.get(f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}")
             check["state"] = "checked" if feed and feed["status"] == "ok" and not feed["stale"] else "not-run"
         elif check["rule_id"] == "OS-CVE":
-            check["state"] = (
-                "checked"
-                if report.get("environment")
-                and any(a["platform"] == report["environment"].get("platform") for a in advisories)
-                else "not-run"
-            )
+            check.update(os_cve_coverage(report.get("environment"), advisories, report["intel_snapshot"]))
     report["warnings"] = [
         w
         for w in report["warnings"]

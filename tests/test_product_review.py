@@ -278,7 +278,7 @@ def test_mcp_configuration_uses_canonical_module_without_console_script(store, t
     monkeypatch.setattr("mobile_audit.cli.shutil.which", lambda command: None)
     server = integration_config(store.home, [tmp_path])["mcpServers"]["apsa"]
     assert server["command"] == sys.executable
-    assert server["args"][:2] == ["-m", "apsa"]
+    assert server["args"][:3] == ["-I", "-m", "apsa"]
     assert server["args"][-2:] == ["--root", str(tmp_path.resolve())]
 
 

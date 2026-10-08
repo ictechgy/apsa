@@ -19,7 +19,11 @@ def parser_lease(directory: Path | None = None):
         raise ValueError("Bounded parser execution currently supports macOS and Linux hosts")
     import fcntl
 
-    directory = directory or Path.home() / ".cache/mobile-audit/parser-locks"
+    directory = directory or (
+        Path(os.environ["APSA_PARSER_LOCK_DIR"])
+        if os.environ.get("APSA_PARSER_LOCK_DIR")
+        else Path.home() / ".cache/mobile-audit/parser-locks"
+    )
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor = None
     for index in range(2):

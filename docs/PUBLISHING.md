@@ -22,13 +22,15 @@ After PyPI accepts the release, another job creates the GitHub release and attac
 
 The manifest's `published: false` records that the local build script itself does not publish. The workflow's publishing result and the PyPI release page record whether uploading succeeded.
 
-For a new release, update the package version and documentation, run the checks, commit the inputs, then push the matching tag. For version 1.0.5:
+For a new release, update the package version and documentation, run the checks, commit the inputs, then push the matching tag. For version 1.0.6:
 
 ```sh
-git tag v1.0.5
-git push origin v1.0.5
+git tag v1.0.6
+git push origin v1.0.6
 ```
 
 PyPI rejects overwriting an existing release file. If publishing fails, inspect the workflow logs and PyPI's current file list before rerunning. A failed GitHub release attachment can be retried separately from package publication. Pending publishers create the PyPI project on first use; registration alone does not reserve the name.
 
 See [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/using-a-publisher/) and [pending publishers](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
+
+An explicit `Release APSA ...` commit on `main` that changes `pyproject.toml` also starts release verification. The workflow creates the version tag only after all checks pass, refuses a tag bound to different bytes, then uses the registered PyPI publisher. This supports source-only GitHub connector publishing without local network access. Ordinary commits do not publish packages.

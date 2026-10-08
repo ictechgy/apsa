@@ -797,6 +797,9 @@ def source_health(store: Store) -> list[dict]:
             )
         )
         feed["required"] = source in DEFAULT_SOURCES
+        if source in {"apple", "android", "cve"}:
+            feed["collection_scope"] = "bounded-recent-window"
+            feed["historical_backfill_complete"] = False
         if source == "cve":
             feed["pending"] = store.pending_count()
             feed["retrying"] = store.db.execute(
