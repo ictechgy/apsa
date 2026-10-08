@@ -59,15 +59,15 @@ def analyze(target: Path, sbom: Path | None, configuration: str | None = None) -
     from .rules import static_checks
 
     inventory, sources = inspect_target(target, sbom, authorized=True, configuration=configuration)
-    findings, coverage = static_checks(inventory, sources)
+    from .source_analysis import analyze_sources
+
+    structural = analyze_sources(sources)
+    findings, coverage = static_checks(inventory, sources, structural.get("pattern_exclusions"))
     if inventory.get("configuration_ambiguous"):
         for item in findings:
             if item["status"] == "configuration-confirmed":
                 item["status"] = "candidate"
                 item["configuration_scope"] = "ambiguous source configurations"
-    from .source_analysis import analyze_sources
-
-    structural = analyze_sources(sources)
     findings.extend(structural["findings"])
     coverage.extend(structural["coverage"])
     inventory["warnings"].extend(structural["warnings"])

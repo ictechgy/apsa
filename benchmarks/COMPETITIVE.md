@@ -42,7 +42,7 @@ scanner results in this benchmark.
 
 Use a fresh temporary directory outside any private app/runtime data. The GitHub
 workflow runs on a disposable Ubuntu host with `contents: read`, a fresh MobSF
-container, an internal Docker network, a loopback-only API port, and no app data
+container, an internal Docker network, an unpublished API reached through the inspected private container IPv4, and no app data
 from the user's machine. It uploads only the newly generated synthetic artifacts
 and removes the service afterward. It cannot publish APSA or modify repository
 contents.
@@ -75,3 +75,10 @@ kept separate from cases used to guide fixes.
 Record baseline results before changing APSA detection code. Keep the labels and
 inputs fixed when rerunning after a fix, and disclose that rerun as development
 corpus performance. Validate fixes additionally on cases outside this corpus.
+
+The hosted workflow uses Docker's inspected address for its fresh internal network
+(no published ports), with `--mobsf-docker-ip` requiring an exact RFC1918 IPv4
+and port 8000 match. The optional argument must never refer to an existing service.
+It also installs the immutable released baseline at commit
+`6d2216e8ade07208c0b0495507b81574dbb64c61` in a separate environment and scans
+the identical generated inputs three times before the candidate/MobSF comparison.

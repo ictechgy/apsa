@@ -116,3 +116,22 @@ def test_report_normalizers_keep_coverage_unknown_and_broad_alerts_visible():
 def test_benchmark_does_not_accept_remote_upload_services(url):
     with pytest.raises(ValueError, match="fresh local"):
         MobSF(url, "synthetic-only")
+
+
+@pytest.mark.parametrize(
+    "url,ip",
+    [
+        ("http://169.254.169.254:8000", "169.254.169.254"),
+        ("http://1.1.1.1:8000", "1.1.1.1"),
+        ("http://172.18.0.3:8000", "172.18.0.2"),
+        ("http://172.18.0.2:8001", "172.18.0.2"),
+    ],
+)
+def test_inspected_container_override_rejects_non_private_or_mismatched_targets(url, ip):
+    with pytest.raises(ValueError, match="inspected fresh"):
+        MobSF(url, "synthetic-only", ip)
+
+
+def test_exact_inspected_private_container_can_be_used_without_port_publication():
+    service = MobSF("http://172.18.0.2:8000", "synthetic-only", "172.18.0.2")
+    service.client.close()

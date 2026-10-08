@@ -27,7 +27,9 @@ def strip_comments(text: str) -> str:
     )
 
 
-def static_checks(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
+def static_checks(
+    inventory: dict, sources: list[tuple[str, str]], pattern_exclusions: dict | None = None
+) -> tuple[list[dict], list[dict]]:
     findings = []
     coverage = []
     for rule in rules():
@@ -53,6 +55,11 @@ def static_checks(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list
                         state = "partial"
                         truncated = True
                         break
+                    excluded = (pattern_exclusions or {}).get(path, {}).get(rule["id"], [])
+                    start = len(text[: match.start()].encode("utf-8"))
+                    end = len(text[: match.end()].encode("utf-8"))
+                    if any(item["start"] == start and end <= item["end"] for item in excluded):
+                        continue
                     if len(findings) >= 2000:
                         state = "partial"
                         break

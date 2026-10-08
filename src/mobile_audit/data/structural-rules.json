@@ -1,5 +1,44 @@
 [
   {
+    "id": "AST-CRYPTO-ECB",
+    "title": "An explicit AES/ECB transformation is selected",
+    "mode": "ast",
+    "languages": ["java", "kotlin"],
+    "severity": "high",
+    "status": "candidate",
+    "masvs": "MASVS-CRYPTO",
+    "remediation": "Use authenticated encryption such as AES-GCM with correctly managed keys and nonces.",
+    "references": ["https://developer.android.com/privacy-and-security/cryptography"],
+    "mapping_scope": "partial",
+    "scope": "Recognized framework static call and literal AES/ECB transformation only; variables, providers and runtime use remain unverified."
+  },
+  {
+    "id": "AST-CRYPTO-WEAK-HASH",
+    "title": "A weak digest primitive is used; review its security purpose",
+    "mode": "ast",
+    "languages": ["java", "kotlin", "swift"],
+    "severity": "medium",
+    "status": "candidate",
+    "masvs": "MASVS-CRYPTO",
+    "remediation": "Replace collision-sensitive uses of MD5 or SHA-1; a digest API alone does not prove a security-sensitive use.",
+    "references": ["https://developer.android.com/privacy-and-security/cryptography"],
+    "mapping_scope": "partial",
+    "scope": "Recognized MessageDigest literal selection or CommonCrypto MD5/SHA1 call; no security-purpose or exploitability proof."
+  },
+  {
+    "id": "AST-SQL-CONCAT",
+    "title": "Platform-controlled data reaches an Android raw SQL statement",
+    "mode": "ast",
+    "languages": ["java", "kotlin"],
+    "severity": "high",
+    "status": "candidate",
+    "masvs": "MASVS-CODE",
+    "remediation": "Keep the SQL statement constant and pass untrusted values as bound parameters.",
+    "references": ["https://developer.android.com/privacy-and-security/risks/sql-injection"],
+    "mapping_scope": "partial",
+    "scope": "Function-scoped known platform-input flow to SQLiteDatabase rawQuery/execSQL first argument; no method dispatch, arbitrary-parameter taint, helper sanitization or exploit proof."
+  },
+  {
     "id": "AST-WEBVIEW-UNTRUSTED-URL",
     "title": "Platform-controlled input reaches a WebView without a recognized local validation guard",
     "mode": "ast",

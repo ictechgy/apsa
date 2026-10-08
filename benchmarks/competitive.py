@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import platform
@@ -33,9 +34,10 @@ def sha(path: Path) -> str:
 def engine_metadata(python: str) -> dict:
     script = """import hashlib, importlib.metadata, json, pathlib
 import mobile_audit
+from mobile_audit.core import RULE_VERSION
 root = pathlib.Path(mobile_audit.__file__).parent
 files = sorted(root.rglob('*.py')) + sorted((root / 'data').glob('*.json'))
-print(json.dumps({'version': mobile_audit.__version__, 'source_sha256': {
+print(json.dumps({'version': mobile_audit.__version__, 'rule_version': RULE_VERSION, 'source_sha256': {
 str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
 'dependencies': {name: importlib.metadata.version(name) for name in
 ('androguard', 'tree-sitter', 'tree-sitter-java', 'tree-sitter-kotlin', 'tree-sitter-swift', 'psutil')}}))
@@ -307,9 +309,23 @@ def mobsf_observation(report: dict) -> dict:
 
 
 class MobSF:
-    def __init__(self, url: str, api_key: str):
+    def __init__(self, url: str, api_key: str, docker_ip: str | None = None):
         parsed = httpx.URL(url)
-        if parsed.scheme != "http" or parsed.host not in {"127.0.0.1", "localhost", "::1"}:
+        bridge = False
+        if docker_ip is not None:
+            address = ipaddress.ip_address(docker_ip)
+            bridge = (
+                address.version == 4
+                and any(
+                    address in net
+                    for net in map(ipaddress.ip_network, ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+                )
+                and parsed.host == docker_ip
+                and parsed.port == 8000
+            )
+            if not bridge:
+                raise ValueError("Expected the inspected fresh Docker container's private IPv4:8000")
+        if parsed.scheme != "http" or (not bridge and parsed.host not in {"127.0.0.1", "localhost", "::1"}):
             raise ValueError("Benchmark only supports a fresh local MobSF endpoint on the runner")
         self.client = httpx.Client(
             base_url=url, headers={"X-Mobsf-Api-Key": api_key}, timeout=180, trust_env=False
@@ -516,6 +532,9 @@ def main() -> int:
     parser.add_argument("--sdk", type=Path)
     parser.add_argument("--apsa-python", default=sys.executable)
     parser.add_argument("--mobsf-url")
+    parser.add_argument(
+        "--mobsf-docker-ip", help="Exact IPv4 inspected from the fresh internal Docker network"
+    )
     parser.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
     if args.action == "generate":
@@ -538,7 +557,11 @@ def main() -> int:
         if args.out is None:
             parser.error("--out is required")
         service = (
-            MobSF(args.mobsf_url, os.environ.get("MOBSF_BENCHMARK_KEY", "synthetic-benchmark-only"))
+            MobSF(
+                args.mobsf_url,
+                os.environ.get("MOBSF_BENCHMARK_KEY", "synthetic-benchmark-only"),
+                args.mobsf_docker_ip,
+            )
             if args.mobsf_url
             else None
         )

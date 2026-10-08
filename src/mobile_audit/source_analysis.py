@@ -31,6 +31,8 @@ BLOCKS = {"block", "statements", "function_body"}
 URI_REFERENCE = "https://developer.android.com/privacy-and-security/risks/unsafe-uri-loading"
 BRIDGE_REFERENCE = "https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges"
 SSL_REFERENCE = "https://developer.android.com/reference/android/webkit/WebViewClient#onReceivedSslError(android.webkit.WebView,%20android.webkit.SslErrorHandler,%20android.net.http.SslError)"
+CRYPTO_REFERENCE = "https://developer.android.com/privacy-and-security/cryptography"
+SQL_REFERENCE = "https://developer.android.com/privacy-and-security/risks/sql-injection"
 RULES = {
     "AST-WEBVIEW-UNTRUSTED-URL": (
         "Platform-controlled input reaches a WebView without a recognized local validation guard",
@@ -58,6 +60,24 @@ RULES = {
         "Remove native interfaces before loading untrusted content, restrict origins, and expose only "
         "the minimum necessary functionality. Validate redirects and subframes on the test build.",
         BRIDGE_REFERENCE,
+    ),
+    "AST-CRYPTO-ECB": (
+        "An explicit AES/ECB transformation is selected",
+        "high",
+        "Use an authenticated encryption construction such as AES-GCM with correctly managed keys and nonces.",
+        CRYPTO_REFERENCE,
+    ),
+    "AST-CRYPTO-WEAK-HASH": (
+        "A weak digest primitive is used; review its security purpose",
+        "medium",
+        "Replace collision-sensitive uses of MD5 or SHA-1. A digest API alone does not prove a security-sensitive use.",
+        CRYPTO_REFERENCE,
+    ),
+    "AST-SQL-CONCAT": (
+        "Platform-controlled data reaches an Android raw SQL statement",
+        "high",
+        "Keep the SQL statement constant and pass untrusted values as bound parameters. Review unknown helpers separately.",
+        SQL_REFERENCE,
     ),
 }
 LIMITS_NOTE = (
@@ -141,6 +161,11 @@ class Analyzer:
         self.field_types: dict[str, str] = {}
         self.parameter_types: dict[str, str] = {}
         self.activity_scope = False
+        self.imports: set[str] = set()
+        self.class_names: set[str] = set()
+        self.safe_local_types: set[str] = set()
+        self.defined_functions: set[str] = set()
+        self.pattern_exclusions: dict[str, set[tuple[int, int]]] = {}
 
     def text(self, node: Any) -> str:
         return self.raw[node.start_byte : node.end_byte].decode("utf-8", errors="replace") if node else ""
@@ -418,7 +443,13 @@ class Analyzer:
                 "candidate",
                 [evidence],
                 remediation,
-                "MASVS-NETWORK" if "SSL" in rule else "MASVS-PLATFORM",
+                "MASVS-CRYPTO"
+                if "CRYPTO" in rule
+                else "MASVS-CODE"
+                if "SQL" in rule
+                else "MASVS-NETWORK"
+                if "SSL" in rule
+                else "MASVS-PLATFORM",
                 [reference],
                 confidence="structural",
                 origin="source-analysis",
@@ -514,10 +545,17 @@ class Analyzer:
         self, call: Call, frame: Frame, guards: dict[int, set[str]], conditions: list[Any]
     ) -> None:
         receiver_key = self.key(call.receiver)
+        self.check_security_call(call, frame)
         if call.name == "proceed" and self.scope == "onReceivedSslError":
             if "SslErrorHandler" in self.value(call.receiver, frame).type_name:
                 self.emit(
                     "AST-WEBVIEW-SSL-BYPASS", call.node, sink="SslErrorHandler.proceed", callback=self.scope
+                )
+        if call.name == "proceed" and receiver_key.lower() in {"handler", "sslerrorhandler"}:
+            receiver_type = self.value(call.receiver, frame).type_name
+            if receiver_type in self.safe_local_types:
+                self.pattern_exclusions.setdefault("WEBVIEW-SSL-BYPASS", set()).add(
+                    (call.node.start_byte, call.node.end_byte)
                 )
         if call.name == "addJavascriptInterface" and self.is_webview(call.receiver, frame):
             bridge_name = self.literal(call.args[1]) if len(call.args) > 1 else None
@@ -591,6 +629,71 @@ class Analyzer:
                         ),
                         bridge_scope="same receiver and function; interface removal checked for literal names",
                     )
+
+    def framework_receiver(self, call: Call, frame: Frame, qualified: str) -> bool:
+        receiver = self.key(call.receiver)
+        simple = qualified.rsplit(".", 1)[-1]
+        if receiver.split(".")[0] in frame.values or receiver in frame.types or receiver in self.field_types:
+            return False
+        if receiver == qualified:
+            return True
+        return receiver == simple and qualified in self.imports and simple not in self.class_names
+
+    def check_security_call(self, call: Call, frame: Frame) -> None:
+        if call.name == "getInstance" and call.args:
+            algorithm = self.literal(call.args[0])
+            if algorithm:
+                if self.framework_receiver(call, frame, "javax.crypto.Cipher") and re.fullmatch(
+                    r"AES/ECB/[^/]+", algorithm, re.I
+                ):
+                    self.emit(
+                        "AST-CRYPTO-ECB", call.node, algorithm=algorithm, constant_scope="literal argument"
+                    )
+                if self.framework_receiver(
+                    call, frame, "java.security.MessageDigest"
+                ) and algorithm.upper() in {"MD5", "SHA-1", "SHA1"}:
+                    self.emit(
+                        "AST-CRYPTO-WEAK-HASH", call.node, algorithm=algorithm, security_purpose="unverified"
+                    )
+        if call.name in {"rawQuery", "execSQL"} and call.args and self.language in {"java", "kotlin"}:
+            receiver_type = self.value(call.receiver, frame).type_name
+            sdk_type = receiver_type == "android.database.sqlite.SQLiteDatabase" or (
+                receiver_type == "SQLiteDatabase"
+                and "android.database.sqlite.SQLiteDatabase" in self.imports
+                and "SQLiteDatabase" not in self.class_names
+            )
+            query = self.value(call.args[0], frame)
+            if sdk_type and query.traces:
+                self.emit(
+                    "AST-SQL-CONCAT",
+                    call.node,
+                    traces=query.traces,
+                    sink=call.name,
+                    statement_scope="first argument only; bound value arguments are not SQL syntax",
+                    unknown_helpers_are_sanitizers=False,
+                )
+        logging = (self.key(call.receiver) == "Log" and call.name in {"d", "i", "v", "e", "w"}) or (
+            call.receiver is None and call.name in {"print", "println", "NSLog"}
+        )
+        literals = [self.literal(argument) for argument in call.args]
+        # Only literal arguments can establish that the redacted value is all
+        # that gets logged. Dynamic values and throwable arguments retain alerts.
+        if logging and literals and all(value is not None and "$" not in value for value in literals):
+            sensitive = r"password|passwd|token|secret|authorization|credential|email|session"
+            redacted = re.compile(rf"(?:[\w -]*(?:{sensitive})[\w -]*\s*[:=]\s*)?\[REDACTED\]", re.I)
+            messages = [value for value in literals if value is not None]
+            # Android Log's first argument is a tag, not the payload. A
+            # redaction marker in a tag cannot establish that its message is safe.
+            payload_is_redacted = (
+                len(messages) == 2
+                and self.key(call.receiver) == "Log"
+                and redacted.fullmatch(messages[1])
+                and not re.search(sensitive, messages[0], re.I)
+            ) or (len(messages) == 1 and call.receiver is None and redacted.fullmatch(messages[0]))
+            if payload_is_redacted:
+                self.pattern_exclusions.setdefault("STORAGE-SENSITIVE-LOG", set()).add(
+                    (call.node.start_byte, call.node.end_byte)
+                )
 
     def visit(self, node: Any, frame: Frame, guards: dict[int, set[str]], conditions: list[Any]) -> None:
         if node.type in COMMENTS or node.type in FUNCTIONS:
@@ -755,6 +858,23 @@ class Analyzer:
         return fields
 
     def analyze(self, root: Any) -> None:
+        for node in _walk(root):
+            if node.type in {"import_declaration", "import_header", "import"}:
+                self.imports.add(re.sub(r"^import\s+|;\s*$", "", self.text(node)).strip())
+            if node.type == "class_declaration":
+                name = self.text(_field(node, "name"))
+                self.class_names.add(name)
+                if (
+                    name
+                    and not any(
+                        part.type in {"superclass", "super_interfaces", "delegation_specifiers"}
+                        for part in node.named_children
+                    )
+                    and not node.has_error
+                ):
+                    self.safe_local_types.add(name)
+            if node.type in FUNCTIONS:
+                self.defined_functions.add(self.text(_field(node, "name")))
         for function in _walk(root):
             if function.type not in FUNCTIONS or function.has_error:
                 continue
@@ -808,6 +928,23 @@ class Analyzer:
                 (node for node in function.named_children if node.type == "function_body"), None
             )
             if body:
+                # Primitive selection needs no closure dataflow model. Inspect
+                # Swift trailing closures syntactically without blessing guards.
+                if self.language == "swift" and "CommonCrypto" in self.imports:
+                    for node in _walk(body, descend_functions=False):
+                        call = self.call(node)
+                        if (
+                            call
+                            and call.name in {"CC_MD5", "CC_SHA1"}
+                            and call.receiver is None
+                            and call.name not in self.defined_functions
+                        ):
+                            self.emit(
+                                "AST-CRYPTO-WEAK-HASH",
+                                node,
+                                algorithm=call.name,
+                                security_purpose="unverified",
+                            )
                 self.visit(body, frame, {}, [])
 
 
@@ -825,6 +962,7 @@ def analyze_sources(sources: list[Any]) -> dict:
     parsed = skipped = total = 0
     seen_languages: set[str] = set()
     unsupported: set[str] = set()
+    pattern_exclusions: dict[str, dict[str, list[dict[str, int]]]] = {}
     for source in sources:
         if isinstance(source, dict):
             path, text = source.get("path"), source.get("text")
@@ -882,6 +1020,11 @@ def analyze_sources(sources: list[Any]) -> dict:
             analyzer = Analyzer(path, text, language)
             analyzer.analyze(tree.root_node)
             findings.extend(analyzer.findings)
+            if not tree.root_node.has_error:
+                pattern_exclusions[path] = {
+                    rule: [{"start": start, "end": end} for start, end in sorted(offsets)]
+                    for rule, offsets in analyzer.pattern_exclusions.items()
+                }
             parsed += 1
             if len(findings) >= MAX_AST_FINDINGS:
                 findings = findings[:MAX_AST_FINDINGS]
@@ -905,7 +1048,9 @@ def analyze_sources(sources: list[Any]) -> dict:
         {
             "rule_id": rule,
             "state": "not-applicable"
-            if rule.endswith(("SSL-BYPASS", "JS-BRIDGE")) and seen_languages == {"swift"} and not unsupported
+            if rule.endswith(("SSL-BYPASS", "JS-BRIDGE", "CRYPTO-ECB", "SQL-CONCAT"))
+            and seen_languages == {"swift"}
+            and not unsupported
             else state,
             "method": "source-ast-local-flow",
             "mapping_scope": "partial",
@@ -926,4 +1071,5 @@ def analyze_sources(sources: list[Any]) -> dict:
         "findings": list({item["id"]: item for item in findings}.values()),
         "coverage": coverage,
         "warnings": warnings,
+        "pattern_exclusions": pattern_exclusions,
     }
