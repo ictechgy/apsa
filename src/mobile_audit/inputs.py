@@ -398,9 +398,14 @@ def inspect_target(
 
     if target.is_dir():
 
-        def source_error(error: OSError, action: str = "enumerate source directory") -> None:
+        def source_error(
+            error: OSError, action: str = "enumerate source directory", relative: Path | None = None
+        ) -> None:
             try:
-                location = str(Path(error.filename).relative_to(target)) if error.filename else "."
+                if relative is not None:
+                    location = str(relative)
+                else:
+                    location = str(Path(error.filename).relative_to(target)) if error.filename else "."
             except (TypeError, ValueError):
                 location = "."
             inventory["warnings"].append(f"Could not {action}: {location} ({type(error).__name__})")
@@ -409,7 +414,17 @@ def inspect_target(
 
         source_paths = []
         for directory, dirs, names in os.walk(target, followlinks=False, onerror=source_error):
-            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not (Path(directory) / d).is_symlink())
+            kept = []
+            for name in sorted(dirs):
+                if name in SKIP_DIRS:
+                    continue
+                child = Path(directory) / name
+                try:
+                    if not child.is_symlink():
+                        kept.append(name)
+                except OSError as error:
+                    source_error(error, "inspect source directory", child.relative_to(target))
+            dirs[:] = kept
             for name in sorted(names):
                 path = Path(directory) / name
                 if path.suffix in TEXT_SUFFIXES or path.name in {"Podfile.lock", "Package.resolved"}:
@@ -434,7 +449,7 @@ def inspect_target(
             try:
                 metadata = path.lstat()
             except OSError as error:
-                source_error(error, "inspect source entry")
+                source_error(error, "inspect source entry", relative)
                 continue
             if (
                 stat.S_ISLNK(metadata.st_mode)
@@ -457,8 +472,8 @@ def inspect_target(
             try:
                 consume(str(relative), read_under(target, relative))
             except OSError as error:
-                source_error(error, "read source file")
-                break
+                source_error(error, "read source file", relative)
+                continue
             except ValueError as error:
                 inventory["warnings"].append(str(error))
                 inventory["partial"] = True

@@ -283,9 +283,12 @@ def scoped_android_ui(raw: bytes, package: str) -> bytes:
 
 
 def local_storage(root: Path) -> list[tuple[str, bytes]]:
-    def capture_error(error: OSError) -> NoReturn:
+    def capture_error(error: OSError, relative: Path | None = None) -> NoReturn:
         try:
-            location = str(Path(error.filename).relative_to(root)) if error.filename else "."
+            if relative is not None:
+                location = str(relative)
+            else:
+                location = str(Path(error.filename).relative_to(root)) if error.filename else "."
         except (TypeError, ValueError):
             location = "."
         raise ValueError(
@@ -295,13 +298,21 @@ def local_storage(root: Path) -> list[tuple[str, bytes]]:
     result = []
     total = 0
     for directory, dirs, names in os.walk(root, followlinks=False, onerror=capture_error):
-        dirs[:] = [d for d in dirs if not (Path(directory) / d).is_symlink()]
+        kept = []
+        for name in dirs:
+            child = Path(directory) / name
+            try:
+                if not child.is_symlink():
+                    kept.append(name)
+            except OSError as error:
+                capture_error(error, child.relative_to(root))
+        dirs[:] = kept
         for name in sorted(names):
             path = Path(directory) / name
             try:
                 metadata = path.lstat()
             except OSError as error:
-                capture_error(error)
+                capture_error(error, path.relative_to(root))
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
                 continue
             if len(result) >= MAX_SNAPSHOT_FILES or metadata.st_size > MAX_FILE:
@@ -309,7 +320,7 @@ def local_storage(root: Path) -> list[tuple[str, bytes]]:
             try:
                 raw = read_under(root, path.relative_to(root))
             except OSError as error:
-                capture_error(error)
+                capture_error(error, path.relative_to(root))
             total += len(raw)
             if total > MAX_CAPTURE:
                 raise ValueError("Storage snapshot exceeds total byte limit; coverage incomplete")

@@ -61,6 +61,7 @@ def test_source_unreadable_entries_are_incomplete(permission_guard, permission_p
         assert incomplete["files_scanned"] == 2
         assert incomplete["warnings"]
         assert str(permission_project) not in " ".join(incomplete["warnings"])
+        assert any(entry in warning for warning in incomplete["warnings"])
     finally:
         denied.chmod(mode)
 
@@ -193,6 +194,7 @@ def test_storage_unreadable_entries_cannot_pass_deletion(permission_guard, tmp_p
         )
         assert "owned-test-canary" not in json.dumps(after)
         assert str(root) not in after["surfaces"]["storage"]["reason"]
+        assert entry in after["surfaces"]["storage"]["reason"]
     finally:
         denied.chmod(mode)
     assert canary.read_text() == "owned-test-canary"
@@ -242,6 +244,50 @@ def test_storage_error_paths_redact_canary_markers(permission_guard, tmp_path):
         assert "owned-test-canary" not in json.dumps(result)
     finally:
         nested.chmod(0o700)
+
+
+@pytest.mark.parametrize("entry", ["A.java", "AndroidManifest.xml"])
+def test_unreadable_first_source_keeps_remaining_evidence(permission_guard, permission_project, entry):
+    denied = permission_project / entry
+    if entry == "A.java":
+        denied.write_text("class First {}")
+    total = inputs.inspect_target(permission_project)[0]["files_scanned"]
+    mode = stat.S_IMODE(denied.stat().st_mode)
+    try:
+        denied.chmod(0)
+        inventory, sources = inputs.inspect_target(permission_project)
+        assert inventory["partial"] and not inventory["fingerprint_complete"]
+        assert inventory["files_scanned"] == total - 1
+        assert any(path == "src/nested/Main.java" for path, text in sources)
+        assert any(entry in warning for warning in inventory["warnings"])
+    finally:
+        denied.chmod(mode)
+
+
+def test_source_directory_without_execute_permission_is_partial(permission_guard, permission_project):
+    denied = permission_project / "src"
+    try:
+        denied.chmod(0o444)
+        inventory, _ = inputs.inspect_target(permission_project)
+        assert inventory["partial"] and not inventory["fingerprint_complete"]
+        assert inventory["files_scanned"] == 2
+        assert any("src/nested" in warning for warning in inventory["warnings"])
+        assert str(permission_project) not in " ".join(inventory["warnings"])
+    finally:
+        denied.chmod(0o700)
+
+
+def test_storage_directory_without_execute_permission_is_not_run(permission_guard, tmp_path):
+    denied = tmp_path / "owned-container"
+    (denied / "nested").mkdir(parents=True)
+    try:
+        denied.chmod(0o444)
+        result = snapshot(LocalStorageAdapter(tmp_path), {"account_a": "owned-test-canary"})
+        assert result["surfaces"]["storage"]["state"] == "not-run"
+        assert "owned-container/nested" in result["surfaces"]["storage"]["reason"]
+        assert str(tmp_path) not in result["surfaces"]["storage"]["reason"]
+    finally:
+        denied.chmod(0o700)
 
 
 def test_storage_partial_capture_keeps_prior_runtime_evidence(permission_guard, store, demo, tmp_path):
