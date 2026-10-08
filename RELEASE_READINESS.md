@@ -1,5 +1,15 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## Published 1.0.6 and 1.1.0 — 2026-10-08
+
+The requested release sequence is complete through 1.1.0. [1.0.6](https://github.com/ictechgy/apsa/releases/tag/v1.0.6) is bound to source commit `2fbca30bfc03c8e5ef2b8dd0d16dd1ae720fc361`; [1.1.0](https://github.com/ictechgy/apsa/releases/tag/v1.1.0) is bound to `a2149c23288079e4e4dd57c7eda1bd822c9097d1`, whose tree exactly matches the independently reviewed local candidate. The tags were not moved. The successful tag-context workflows are [1.0.6](https://github.com/ictechgy/apsa/actions/runs/37794658338) and [1.1.0](https://github.com/ictechgy/apsa/actions/runs/37796258526). Each passed the four supported CI environments, verified package build, PyPI upload and release downloads. Local 1.1 validation also covered 648 pytest tests, Ruff/format/Pyright, corpus 31/31, repeated package hashes, clean offline installation and new-feature CLI/MCP smoke.
+
+Main-context publish attempts failed before publisher steps after the approved tags were created; their exact cause was not confirmed. User-authorized, independently reviewed recovery workflows dispatched only the fixed version/commit pair and were removed after use. Tag creation and source upload were not treated as package publication. One separately triggered macOS/Python 3.11 CI job failed on its first execution and passed on one operational retry; the release matrix and the final recovery source CI passed all four environments. No test or coverage gate was disabled.
+
+Code review approved the 1.1 snapshot; the architectural verdict is WATCH without source blockers. The documented tradeoffs remain numeric cursors scoped to report/section/filters, unsigned baseline approval with an externally pinned artifact hash, and declared source selection without Gradle/Xcode merging. These limits are not new analysis capabilities. AAB, IPA embedded binaries, Objective-C and parser OS sandbox remain later stages in [ROADMAP.md](docs/ROADMAP.md).
+
+The candidate and older entries below are historical validation notes. Registry publication is established by the linked release workflow and downloads, not by a local build manifest's `published` field.
+
 공개 저장소: [ictechgy/apsa](https://github.com/ictechgy/apsa). 영문 README가 원본이며 한국어 README를 함께 제공합니다. 현재 공개 소스의 검증은 [GitHub Actions](https://github.com/ictechgy/apsa/actions)에서 확인할 수 있습니다.
 
 태그 배포 경로는 [PyPI](https://pypi.org/project/apsa/)와 [GitHub Releases](https://github.com/ictechgy/apsa/releases)입니다. `release.yml`은 `pypi` 환경의 Trusted Publisher를 사용하며, 태그·패키지 버전 일치, 지원 대상 CI 네 조합, 업로드할 패키지의 반복 빌드와 새 환경 설치 검증이 통과해야 업로드합니다. 다운로드와 체크섬 구성은 [배포 안내](docs/PUBLISHING.md)에 기록합니다. 이 배포 설정 변경은 새 보안 검토 승인을 의미하지 않습니다.
