@@ -33,7 +33,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.0.4
+uv tool install --python 3.12 apsa==1.0.5
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -112,6 +112,8 @@ apsa jobs status JOB_ID --json
 ```
 
 심각도 기준 CI 판정은 기본적으로 `candidate`를 제외합니다. 포함하려면 `--include-candidates`나 정책의 `allowed_statuses`를 사용하세요. 필수 규칙은 `checked` 또는 `not-applicable` coverage만 인정하며, 부분 실행이나 필수 검사 누락은 통과시키지 않습니다. 예외에는 발견 ID, 이유, 만료일이 필요합니다. 백그라운드 작업의 `completed`는 작업이 끝났다는 뜻입니다. 감사가 완전한지 판단하려면 `audit_incomplete`와 보고서를 확인하세요.
+
+읽을 수 없는 소스 폴더와 파일은 경고와 불완전한 coverage로 남습니다. 지원하는 파일을 하나도 읽을 수 없는 소스 트리는 명시적인 실행 오류가 됩니다. 저장소 캡처 실패는 `not-run`으로 남으며 canary가 삭제됐다는 근거가 될 수 없습니다.
 
 | 종료 코드 | 통합 CLI에서의 의미 |
 | --- | --- |

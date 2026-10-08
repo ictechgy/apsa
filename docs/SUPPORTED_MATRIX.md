@@ -1,13 +1,13 @@
 # 지원 범위와 검증 상태
 
-2026-10-06 기준입니다. GitHub CI 실행 근거는 [1.0.3 릴리스 워크플로](https://github.com/ictechgy/apsa/actions/runs/37408584281)이며, 아래 CI 통과는 이 태그 스냅샷에 한정됩니다. 최종 버전·소스 스냅샷의 통과 여부는 릴리스 manifest와 `RELEASE_READINESS.md`를 확인하십시오. 아래에서 실행한 환경과 구성만 한 환경을 구분합니다.
+2026-10-08 기준입니다. GitHub CI 실행 근거는 [1.0.4 릴리스 워크플로](https://github.com/ictechgy/apsa/actions/runs/37463028232)이며, 아래 CI 통과는 이 태그 스냅샷에 한정됩니다. 최종 버전·소스 스냅샷의 통과 여부는 릴리스 manifest와 `RELEASE_READINESS.md`를 확인하십시오. 아래에서 실행한 환경과 구성만 한 환경을 구분합니다.
 
 | 호스트 / Python | 상태 | 검증 범위 |
 | --- | --- | --- |
 | macOS 27.0.1 / Apple Silicon / CPython 3.12.13 | 로컬 실행 | 단위·통합 검사, Java/Kotlin/Swift AST와 APK/IPA fixture, 독립 corpus, CLI/TUI/MCP 검사, 깨끗한 wheel 설치·오프라인 소스 smoke |
 | Debian 12 Docker / ARM64 / CPython 3.12.13 | 컨테이너 실행 | 245개 pytest, Ruff check/format, Pyright, 31개 corpus, 1.0.0 online 준비·offline 캐시 릴리스 반복 빌드와 깨끗한 설치 smoke 모두 통과. SDK·기기 검사 없음 |
-| GitHub `macos-15` / CPython 3.11.15 및 3.12.13 | 1.0.3 GitHub CI 통과 | 잠긴 테스트·corpus·wheel/sdist 반복 빌드·깨끗한 설치 smoke; 기기 검사 없음 |
-| GitHub `ubuntu-24.04` / CPython 3.11.15 및 3.12.13 | 1.0.3 GitHub CI 통과 | 동일한 정적·배포 검사; iOS 런타임 없음 |
+| GitHub `macos-15` / CPython 3.11.15 및 3.12.13 | 1.0.4 GitHub CI 통과 | 잠긴 테스트·corpus·wheel/sdist 반복 빌드·깨끗한 설치 smoke; 기기 검사 없음 |
+| GitHub `ubuntu-24.04` / CPython 3.11.15 및 3.12.13 | 1.0.4 GitHub CI 통과 | 동일한 정적·배포 검사; iOS 런타임 없음 |
 | Windows / Python 3.13 이상 / PyPy | 검증·지원 선언 없음 | 유한 파서와 런타임 잠금은 POSIX 전용 |
 
 macOS 로컬 릴리스 smoke는 현재 버전으로 실제 실행했습니다. 다른 OS의 설치 성공이나 호환성을 추정해서 통과로 표시하지 않습니다. CI는 전체 commit SHA로 `actions/checkout` v7.0.0과 `astral-sh/setup-uv` v10.2.0을 고정하고 uv 0.12.1, Python patch 버전, `uv.lock`을 사용합니다. 호스팅 runner 이미지·SDK는 이 잠금에 포함되지 않습니다. Python 핀은 검증 재현용이며 최신 보안 패치라는 선언이 아닙니다. 갱신은 재검증과 함께 수행합니다.

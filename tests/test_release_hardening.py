@@ -1,6 +1,7 @@
-"""Boundary and correctness regressions for the 1.0.4 product review."""
+"""Boundary and correctness regressions for the 1.0.4 and 1.0.5 reviews."""
 
 import copy
+import errno
 import json
 import os
 import stat
@@ -16,10 +17,292 @@ from mobile_audit.audit import correlate, scan
 from mobile_audit.core import finding_identity, read_json
 from mobile_audit.intel import normalize_kev, sync
 from mobile_audit.policy import evaluate, load_policy
-from mobile_audit.runtime import plan
+from mobile_audit.runtime import evaluate_assertions, local_storage, plan, run, snapshot
 from mobile_audit.skills import install_skill, skill_status
 from mobile_audit.store import Store
 from tests.test_jobs import terminal
+
+
+@pytest.fixture
+def permission_guard():
+    if os.name != "posix" or os.geteuid() == 0:
+        pytest.skip("Permission-denied controls require a non-root POSIX user")
+
+
+@pytest.fixture
+def permission_project(tmp_path):
+    project = tmp_path / "owned-project"
+    project.mkdir()
+    (project / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+        'package="com.example.owned"><application android:debuggable="false"/></manifest>'
+    )
+    (project / "Root.java").write_text("class Root {}")
+    nested = project / "src" / "nested"
+    nested.mkdir(parents=True)
+    fixture = Path(__file__).parent.parent / "benchmarks/cases/java/ssl-vulnerable.java"
+    (nested / "Main.java").write_bytes(fixture.read_bytes())
+    return project
+
+
+@pytest.mark.parametrize("entry", ["src", "src/nested", "src/nested/Main.java"])
+def test_source_unreadable_entries_are_incomplete(permission_guard, permission_project, entry):
+    denied = permission_project / entry
+    readable, _ = inputs.inspect_target(permission_project)
+    assert readable["files_scanned"] == 3
+    assert not readable["partial"] and readable["fingerprint_complete"]
+    mode = stat.S_IMODE(denied.stat().st_mode)
+    try:
+        denied.chmod(0)
+        with pytest.raises(PermissionError):
+            list(denied.iterdir()) if denied.is_dir() else denied.read_bytes()
+        incomplete, _ = inputs.inspect_target(permission_project)
+        assert incomplete["partial"] and not incomplete["fingerprint_complete"]
+        assert incomplete["files_scanned"] == 2
+        assert incomplete["warnings"]
+        assert str(permission_project) not in " ".join(incomplete["warnings"])
+    finally:
+        denied.chmod(mode)
+
+
+def test_source_unreadable_root_is_an_explicit_error(permission_guard, permission_project):
+    try:
+        permission_project.chmod(0)
+        with pytest.raises(ValueError, match="inspection incomplete"):
+            inputs.inspect_target(permission_project)
+    finally:
+        permission_project.chmod(0o700)
+
+
+def test_source_scan_unreadable_directory_cannot_pass_ci(
+    permission_guard, permission_project, tmp_path, capsys
+):
+    from mobile_audit.cli import main
+
+    arguments = [
+        "scan",
+        str(permission_project),
+        "--home",
+        str(tmp_path / "owned-home"),
+        "--fail-on",
+        "high",
+        "--include-candidates",
+        "--json",
+    ]
+    assert main(arguments) == 4
+    readable = json.loads(capsys.readouterr().out)["data"]
+    assert any(item["rule_id"] == "AST-WEBVIEW-SSL-BYPASS" for item in readable["findings"])
+    denied = permission_project / "src"
+    try:
+        denied.chmod(0)
+        assert main(arguments) == 3
+        value = json.loads(capsys.readouterr().out)
+        assert value["exit_code"] == 3 and value["ok"] is False
+        report = value["data"]
+        assert report["summary"]["incomplete"]
+        assert report["inventory"]["partial"]
+        assert not report["inventory"]["fingerprint_complete"]
+        assert not any(item["state"] == "checked" for item in report["coverage"])
+        assert evaluate(report, {"schema_version": 1})["exit_code"] == 3
+    finally:
+        denied.chmod(0o700)
+
+
+@pytest.mark.parametrize("failure", [PermissionError, FileNotFoundError])
+def test_source_stat_failure_after_enumeration_is_incomplete(permission_project, monkeypatch, failure):
+    lost = permission_project / "src/nested/Main.java"
+    original = Path.lstat
+
+    def unreadable(path, *args, **kwargs):
+        if path == lost:
+            raise failure(
+                errno.EACCES if failure is PermissionError else errno.ENOENT, "unavailable", str(path)
+            )
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", unreadable)
+    inventory, _ = inputs.inspect_target(permission_project)
+    assert inventory["partial"] and not inventory["fingerprint_complete"]
+    assert inventory["files_scanned"] == 2
+    assert any("src/nested/Main.java" in warning for warning in inventory["warnings"])
+
+
+@pytest.mark.parametrize("entry", ["node_modules", "linked-directory"])
+def test_source_intentional_exclusions_remain_complete(permission_guard, permission_project, tmp_path, entry):
+    excluded = tmp_path / "excluded"
+    excluded.mkdir()
+    (excluded / "Hidden.java").write_text("class Hidden {}")
+    if entry == "node_modules":
+        excluded.rename(permission_project / entry)
+        excluded = permission_project / entry
+    else:
+        (permission_project / entry).symlink_to(excluded, target_is_directory=True)
+    try:
+        excluded.chmod(0)
+        inventory, _ = inputs.inspect_target(permission_project)
+        assert inventory["files_scanned"] == 3
+        assert not inventory["partial"] and inventory["fingerprint_complete"]
+        assert not inventory["warnings"]
+    finally:
+        excluded.chmod(0o700)
+
+
+class LocalStorageAdapter:
+    def __init__(self, root):
+        self.root = root
+
+    def storage(self):
+        return local_storage(self.root)
+
+    def ui(self):
+        raise ValueError("This fixture captures storage only")
+
+    def logs(self):
+        raise ValueError("This fixture captures storage only")
+
+
+def storage_assertion():
+    return {"assertions": [{"baseline": "before", "snapshot": "after", "marker": "account_a"}]}
+
+
+@pytest.mark.parametrize("entry", [".", "private", "private/nested", "private/nested/canary.txt"])
+def test_storage_unreadable_entries_cannot_pass_deletion(permission_guard, tmp_path, entry):
+    root = tmp_path / "owned-storage"
+    nested = root / "private/nested"
+    nested.mkdir(parents=True)
+    canary = nested / "canary.txt"
+    canary.write_text("owned-test-canary")
+    adapter = LocalStorageAdapter(root)
+    markers = {"account_a": "owned-test-canary"}
+    before = snapshot(adapter, markers)
+    assert before["surfaces"]["storage"]["state"] == "captured"
+    unchanged = snapshot(adapter, markers)
+    assert (
+        evaluate_assertions(storage_assertion(), {"before": before, "after": unchanged})[0]["state"]
+        == "failed"
+    )
+    denied = root / entry
+    mode = stat.S_IMODE(denied.stat().st_mode)
+    try:
+        denied.chmod(0)
+        after = snapshot(adapter, markers)
+        assert after["surfaces"]["storage"]["state"] == "not-run"
+        assert (
+            evaluate_assertions(storage_assertion(), {"before": before, "after": after})[0]["state"]
+            == "not-run"
+        )
+        assert "owned-test-canary" not in json.dumps(after)
+        assert str(root) not in after["surfaces"]["storage"]["reason"]
+    finally:
+        denied.chmod(mode)
+    assert canary.read_text() == "owned-test-canary"
+
+
+@pytest.mark.parametrize("failure", [PermissionError, FileNotFoundError])
+def test_storage_stat_failure_is_not_a_successful_capture(tmp_path, monkeypatch, failure):
+    canary = tmp_path / "canary.txt"
+    canary.write_text("owned-test-canary")
+    original = Path.lstat
+
+    def unreadable(path, *args, **kwargs):
+        if path == canary:
+            raise failure(
+                errno.EACCES if failure is PermissionError else errno.ENOENT, "unavailable", str(path)
+            )
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", unreadable)
+    result = snapshot(LocalStorageAdapter(tmp_path), {"account_a": "owned-test-canary"})
+    assert result["surfaces"]["storage"]["state"] == "not-run"
+    assert str(tmp_path) not in result["surfaces"]["storage"]["reason"]
+
+
+def test_storage_observed_deletion_still_passes(tmp_path):
+    canary = tmp_path / "canary.txt"
+    canary.write_text("owned-test-canary")
+    adapter = LocalStorageAdapter(tmp_path)
+    markers = {"account_a": "owned-test-canary"}
+    before = snapshot(adapter, markers)
+    canary.unlink()
+    after = snapshot(adapter, markers)
+    assert after["surfaces"]["storage"]["state"] == "captured"
+    assert (
+        evaluate_assertions(storage_assertion(), {"before": before, "after": after})[0]["state"] == "passed"
+    )
+
+
+def test_storage_error_paths_redact_canary_markers(permission_guard, tmp_path):
+    nested = tmp_path / "owned-test-canary"
+    nested.mkdir()
+    try:
+        nested.chmod(0)
+        result = snapshot(LocalStorageAdapter(tmp_path), {"account_a": "owned-test-canary"})
+        assert result["surfaces"]["storage"]["state"] == "not-run"
+        assert "[CANARY:account_a]" in result["surfaces"]["storage"]["reason"]
+        assert "owned-test-canary" not in json.dumps(result)
+    finally:
+        nested.chmod(0o700)
+
+
+def test_storage_partial_capture_keeps_prior_runtime_evidence(permission_guard, store, demo, tmp_path):
+    report = scan(store, demo)
+    root = tmp_path / "owned-container"
+    nested = root / "private"
+    nested.mkdir(parents=True)
+    (nested / "canary.txt").write_text("owned-test-canary")
+    package = next(app["package"] for app in report["inventory"]["apps"] if app["platform"] == "ios")
+    scenario = {
+        "platform": "ios",
+        "package": package,
+        "precondition": "Owned local storage adapter with a known canary and logout marker",
+        "markers": {"account_a": "owned-test-canary", "logged_out": "owned-logout-marker"},
+        "steps": [
+            {"action": "snapshot", "label": "before"},
+            {"action": "open_url", "url": "owned://logout"},
+            {"action": "snapshot", "label": "after"},
+        ],
+        "assertions": [
+            {"baseline": "before", "snapshot": "after", "marker": "account_a"},
+            {
+                "baseline": "before",
+                "snapshot": "after",
+                "marker": "logged_out",
+                "expect": "present",
+                "purpose": "transition",
+            },
+        ],
+    }
+
+    class Container(LocalStorageAdapter):
+        def __init__(self, deny):
+            super().__init__(root)
+            self.deny = deny
+            (root / "state.txt").write_text("signed-in")
+
+        def environment(self):
+            return {"platform": "ios", "version": "27.0"}
+
+        def open_url(self, url):
+            (root / "state.txt").write_text("owned-logout-marker")
+            if self.deny:
+                nested.chmod(0)
+
+    retained = run(store, tmp_path / "frozen.json", report["id"], adapter=Container(False), scenario=scenario)
+    old_ids = {f["id"] for f in retained["findings"] if f["status"] == "runtime-confirmed"}
+    assert old_ids
+    try:
+        incomplete = run(
+            store, tmp_path / "frozen.json", retained["id"], adapter=Container(True), scenario=scenario
+        )
+        assert incomplete["runtime"][-1]["partial"]
+        assert all(result["state"] == "not-run" for result in incomplete["runtime"][-1]["assertions"])
+        assert old_ids <= {f["id"] for f in incomplete["findings"]}
+        assert (
+            evaluate(incomplete, {"schema_version": 1, "required_rules": ["RUNTIME-RESIDUAL"]})["exit_code"]
+            == 3
+        )
+    finally:
+        nested.chmod(0o700)
 
 
 @pytest.mark.parametrize("worker", ["parser", "job"])

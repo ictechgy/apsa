@@ -5,6 +5,7 @@ import json
 import os
 import plistlib
 import re
+import stat
 import tomllib
 import zipfile
 import zlib
@@ -396,8 +397,18 @@ def inspect_target(
             sources.append((name, raw.decode("utf-8", errors="replace")))
 
     if target.is_dir():
+
+        def source_error(error: OSError, action: str = "enumerate source directory") -> None:
+            try:
+                location = str(Path(error.filename).relative_to(target)) if error.filename else "."
+            except (TypeError, ValueError):
+                location = "."
+            inventory["warnings"].append(f"Could not {action}: {location} ({type(error).__name__})")
+            inventory["partial"] = True
+            inventory["fingerprint_complete"] = False
+
         source_paths = []
-        for directory, dirs, names in os.walk(target, followlinks=False):
+        for directory, dirs, names in os.walk(target, followlinks=False, onerror=source_error):
             dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not (Path(directory) / d).is_symlink())
             for name in sorted(names):
                 path = Path(directory) / name
@@ -418,10 +429,19 @@ def inspect_target(
             source_paths.sort(key=lambda path: path != main)
         for path in source_paths:
             relative = path.relative_to(target)
-            if path.is_symlink() or any(part in SKIP_DIRS for part in relative.parts):
+            if any(part in SKIP_DIRS for part in relative.parts):
                 continue
-            if not path.is_file() or (
-                path.suffix not in TEXT_SUFFIXES and path.name not in {"Podfile.lock", "Package.resolved"}
+            try:
+                metadata = path.lstat()
+            except OSError as error:
+                source_error(error, "inspect source entry")
+                continue
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISREG(metadata.st_mode)
+                or (
+                    path.suffix not in TEXT_SUFFIXES and path.name not in {"Podfile.lock", "Package.resolved"}
+                )
             ):
                 continue
             if inventory["files_scanned"] >= MAX_FILES:
@@ -429,14 +449,17 @@ def inspect_target(
                 inventory["partial"] = True
                 inventory["fingerprint_complete"] = False
                 break
-            if path.stat().st_size > MAX_FILE:
+            if metadata.st_size > MAX_FILE:
                 inventory["warnings"].append(f"Oversized source omitted: {relative}")
                 inventory["partial"] = True
                 inventory["fingerprint_complete"] = False
                 continue
             try:
                 consume(str(relative), read_under(target, relative))
-            except (ValueError, OSError) as error:
+            except OSError as error:
+                source_error(error, "read source file")
+                break
+            except ValueError as error:
                 inventory["warnings"].append(str(error))
                 inventory["partial"] = True
                 inventory["fingerprint_complete"] = False
@@ -576,5 +599,10 @@ def inspect_target(
     unique = {(d["ecosystem"], d["name"], d["version"], d["path"]): d for d in inventory["dependencies"]}
     inventory["dependencies"] = list(unique.values())
     if not inventory["files_scanned"]:
+        if inventory["partial"]:
+            raise ValueError(
+                "No supported source or configuration files found; inspection incomplete: "
+                + inventory["warnings"][0]
+            )
         raise ValueError("No supported source or configuration files found")
     return inventory, sources

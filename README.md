@@ -33,7 +33,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.0.4
+uv tool install --python 3.12 apsa==1.0.5
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -112,6 +112,8 @@ apsa jobs status JOB_ID --json
 ```
 
 Severity gates exclude `candidate` findings by default. Opt in with `--include-candidates` or the policy's `allowed_statuses`. Required rules accept only `checked` or `not-applicable` coverage; partial execution and missing required checks do not pass. Waivers need a finding ID, a reason, and an expiry date. A background job being `completed` means it finished; check its `audit_incomplete` flag and report before treating the audit as complete.
+
+Unreadable source directories and files leave warnings and incomplete coverage; a source tree with no readable supported files fails explicitly. Storage capture failures remain `not-run` and cannot establish that a canary was deleted.
 
 | Exit code | Meaning for the unified CLI |
 | --- | --- |

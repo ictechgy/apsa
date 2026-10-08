@@ -7,10 +7,12 @@ import os
 import plistlib
 import re
 import shlex
+import stat
 import tarfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NoReturn
 
 from defusedxml import ElementTree as ET
 
@@ -281,17 +283,33 @@ def scoped_android_ui(raw: bytes, package: str) -> bytes:
 
 
 def local_storage(root: Path) -> list[tuple[str, bytes]]:
+    def capture_error(error: OSError) -> NoReturn:
+        try:
+            location = str(Path(error.filename).relative_to(root)) if error.filename else "."
+        except (TypeError, ValueError):
+            location = "."
+        raise ValueError(
+            f"Storage capture failed: {location} ({type(error).__name__}); coverage incomplete"
+        ) from None
+
     result = []
     total = 0
-    for directory, dirs, names in os.walk(root, followlinks=False):
+    for directory, dirs, names in os.walk(root, followlinks=False, onerror=capture_error):
         dirs[:] = [d for d in dirs if not (Path(directory) / d).is_symlink()]
         for name in sorted(names):
             path = Path(directory) / name
-            if path.is_symlink() or not path.is_file():
+            try:
+                metadata = path.lstat()
+            except OSError as error:
+                capture_error(error)
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
                 continue
-            if len(result) >= MAX_SNAPSHOT_FILES or path.stat().st_size > MAX_FILE:
+            if len(result) >= MAX_SNAPSHOT_FILES or metadata.st_size > MAX_FILE:
                 raise ValueError("Storage snapshot exceeds limits; coverage incomplete")
-            raw = read_under(root, path.relative_to(root))
+            try:
+                raw = read_under(root, path.relative_to(root))
+            except OSError as error:
+                capture_error(error)
             total += len(raw)
             if total > MAX_CAPTURE:
                 raise ValueError("Storage snapshot exceeds total byte limit; coverage incomplete")
@@ -330,7 +348,10 @@ def snapshot(adapter, markers: dict[str, str]) -> dict:
                         )
             result["surfaces"][surface] = {"state": "captured", "files": len(entries)}
         except (ValueError, OSError, tarfile.TarError) as error:
-            result["surfaces"][surface] = {"state": "not-run", "reason": str(error)}
+            result["surfaces"][surface] = {
+                "state": "not-run",
+                "reason": redact(replace_markers(str(error), markers)),
+            }
     result["surfaces"]["clipboard"] = {
         "state": "not-run",
         "reason": "Clipboard is not captured by these device adapters.",
