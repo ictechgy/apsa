@@ -36,13 +36,23 @@ jobs:
         run: |
           uv run --locked python benchmarks/competitive.py generate --fixtures "$RUNNER_TEMP/competitive-fixtures"
           uv run --locked python benchmarks/competitive.py build-apks --fixtures "$RUNNER_TEMP/competitive-fixtures" --sdk "$ANDROID_HOME"
+      - name: Prepare MobSF's expected public JADX release
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip --output "$RUNNER_TEMP/jadx-1.5.0.zip"
+          test "$(stat --format %s "$RUNNER_TEMP/jadx-1.5.0.zip")" = 104967983
+          sha256sum "$RUNNER_TEMP/jadx-1.5.0.zip" > "$RUNNER_TEMP/jadx-provenance.txt"
+          echo "MOBSF_BENCHMARK_JADX_SHA256=$(sha256sum "$RUNNER_TEMP/jadx-1.5.0.zip" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
+          unzip -q "$RUNNER_TEMP/jadx-1.5.0.zip" -d "$RUNNER_TEMP/jadx-1.5.0"
+          chmod +x "$RUNNER_TEMP/jadx-1.5.0/bin/jadx"
+          "$RUNNER_TEMP/jadx-1.5.0/bin/jadx" --version
       - name: Start isolated fixed-release MobSF
         run: |
           docker pull opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c
           docker image inspect opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c --format '{{json .RepoDigests}}' > "$RUNNER_TEMP/mobsf-image-digests.json"
           echo "MOBSF_BENCHMARK_DIGEST=$(docker image inspect opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c --format '{{index .RepoDigests 0}}')" >> "$GITHUB_ENV"
           docker network create --internal apsa-synthetic-benchmark
-          docker run -d --name apsa-synthetic-mobsf --network apsa-synthetic-benchmark --memory 4g --cpus 2 --security-opt no-new-privileges --cap-drop ALL -e MOBSF_API_KEY=synthetic-benchmark-only -e MOBSF_DISABLE_AUTHENTICATION=1 opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c
+          docker run -d --name apsa-synthetic-mobsf --network apsa-synthetic-benchmark --memory 4g --cpus 2 --security-opt no-new-privileges --cap-drop ALL --mount "type=bind,source=$RUNNER_TEMP/jadx-1.5.0,target=/benchmark-jadx,readonly" -e MOBSF_JADX_BINARY=/benchmark-jadx/bin/jadx -e MOBSF_API_KEY=synthetic-benchmark-only -e MOBSF_DISABLE_AUTHENTICATION=1 opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c
+          docker exec apsa-synthetic-mobsf /benchmark-jadx/bin/jadx --version
           docker exec apsa-synthetic-mobsf python -c 'import hashlib,pathlib; root=pathlib.Path("/home/mobsf/Mobile-Security-Framework-MobSF"); expected={"mobsf/StaticAnalyzer/views/android/rules/android_rules.yaml":"b5a2411ab48cec34a9743212aab300634f748cf4","mobsf/StaticAnalyzer/views/ios/rules/swift_rules.yaml":"f19571a3ac950bad02ecc4b8c44a9e91acfe889e"}; observed={name:hashlib.sha1(b"blob "+str(len(data)).encode()+b"\0"+data).hexdigest() for name in expected for data in [(root/name).read_bytes()]}; assert observed==expected, observed; print(observed)'
           echo "MOBSF_BENCHMARK_IP=$(docker inspect apsa-synthetic-mobsf --format '{{(index .NetworkSettings.Networks "apsa-synthetic-benchmark").IPAddress}}')" >> "$GITHUB_ENV"
       - name: Install immutable released APSA baseline
@@ -74,6 +84,7 @@ jobs:
             ${{ runner.temp }}/competitive-results
             ${{ runner.temp }}/competitive-baseline
             ${{ runner.temp }}/mobsf-image-digests.json
+            ${{ runner.temp }}/jadx-provenance.txt
             ${{ runner.temp }}/mobsf-synthetic-state.json
             ${{ runner.temp }}/mobsf-synthetic-startup.txt
           retention-days: 30

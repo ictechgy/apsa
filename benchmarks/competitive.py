@@ -264,7 +264,20 @@ def apsa_observation(report: dict) -> dict:
     }
 
 
-def mobsf_observation(report: dict) -> dict:
+def mobsf_observation(report: dict, category: str | None = None) -> dict:
+    # MobSF can return HTTP 200 and an empty code payload after a swallowed
+    # decompiler failure. Configuration-only labels do not require code analysis.
+    failures = [
+        item.get("status", "")
+        for item in report.get("logs", [])
+        if isinstance(item, dict)
+        and (
+            item.get("status") in {"Failed to perform code analysis", "Some DEX files failed to decompile"}
+            or (item.get("exception") and "Decompil" in item.get("status", ""))
+        )
+    ]
+    if failures and category not in {"debug", "cleartext", "ats"}:
+        raise ValueError("MobSF selected code analysis is incomplete: " + "; ".join(failures))
     code = report.get("code_analysis")
     if not isinstance(code, dict) or not report.get("file_name"):
         raise ValueError("MobSF returned no source/binary analysis report")
@@ -438,7 +451,7 @@ def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int
                         assert mobsf is not None
                         report, elapsed = mobsf.scan(root / case["input"])
                         (location / "report.json").write_text(json.dumps(report) + "\n")
-                        observed = mobsf_observation(report)
+                        observed = mobsf_observation(report, case["category"])
                     timings.append(elapsed)
                     observations.append(observed)
                 except (ValueError, OSError, subprocess.TimeoutExpired, httpx.HTTPError) as error:
@@ -478,6 +491,7 @@ def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int
         "apsa_engine": engine_metadata(python),
         "source_revision": os.environ.get("GITHUB_SHA"),
         "mobsf_image_digest": os.environ.get("MOBSF_BENCHMARK_DIGEST"),
+        "mobsf_jadx_sha256": os.environ.get("MOBSF_BENCHMARK_JADX_SHA256"),
         "environment": {
             "platform": platform.platform(),
             "python": platform.python_version(),
@@ -504,6 +518,7 @@ def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int
             "apsa_engine",
             "source_revision",
             "mobsf_image_digest",
+            "mobsf_jadx_sha256",
             "mobsf_commit",
         )
     }

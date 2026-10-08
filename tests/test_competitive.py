@@ -135,3 +135,24 @@ def test_inspected_container_override_rejects_non_private_or_mismatched_targets(
 def test_exact_inspected_private_container_can_be_used_without_port_publication():
     service = MobSF("http://172.18.0.2:8000", "synthetic-only", "172.18.0.2")
     service.client.close()
+
+
+def test_http_success_with_failed_decompiler_is_not_a_clean_code_scan():
+    report = {
+        "file_name": "generated.apk",
+        "code_analysis": {"findings": {}},
+        "manifest_analysis": [{"rule": "app_is_debuggable"}],
+        "logs": [{"status": "Decompiling with JADX failed", "exception": "FileNotFoundError"}],
+    }
+    with pytest.raises(ValueError, match="incomplete"):
+        mobsf_observation(report, "ssl")
+    assert "manifest:app_is_debuggable" in mobsf_observation(report, "debug")["rules"]
+
+
+def test_successful_dex_fallback_after_an_apk_warning_is_not_treated_as_failure():
+    report = {
+        "file_name": "generated.apk",
+        "code_analysis": {"findings": {}},
+        "logs": [{"status": "Decompiling with JADX failed, attempting on all DEX files", "exception": None}],
+    }
+    assert mobsf_observation(report, "ssl")["rules"] == []
