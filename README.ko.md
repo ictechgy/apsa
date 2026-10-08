@@ -10,7 +10,9 @@ APSA는 개발자와 보안팀이 자기 모바일 앱을 감사하는 도구입
 
 영어 발음은 **“ap-sah”**, 한글 이름은 **앱사**입니다. “앱 + 감사”를 연결한 이름이며 **App Security Audit**라는 의미도 담았습니다. 기존 Quaygate 린트 엔진과 Mobile Audit 작업 흐름을 한 패키지에 통합했습니다.
 
-APSA 1.0.6은 미지원 언어가 혼합된 소스와 잘린 패턴 결과를 불완전 검사로 표시합니다. Gradle 선언 버전은 실제 빌드에서 확인되기 전까지 후보이며, OS-CVE는 최근 공지 범위만 대조하므로 피드가 최신이어도 역사적 커버리지를 충족하지 않습니다. [릴리스 순서](docs/ROADMAP.md)를 참고하십시오.
+APSA 1.1은 모델 보고서의 제한된 페이지 조회, 승인된 휴대형 기준선, 정책 판정 내보내기, 소스 모듈·설정 선택을 제공합니다. 계약과 예제는 영문 원본 [모델·팀 워크플로](docs/MODEL_WORKFLOWS.md), 이후 분석 단계는 [릴리스 순서](docs/ROADMAP.md)를 참고하십시오.
+
+미지원 언어가 혼합된 소스와 잘린 패턴 결과는 불완전 검사로 표시합니다. Gradle 선언 버전은 실제 빌드에서 확인되기 전까지 후보이며, OS-CVE는 최근 공지 범위만 대조하므로 피드가 최신이어도 역사적 커버리지를 충족하지 않습니다.
 
 ## 검사 범위
 
@@ -35,7 +37,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.0.6
+uv tool install --python 3.12 apsa==1.1.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -134,7 +136,7 @@ apsa jobs status JOB_ID --json
 apsa integrations --root /absolute/path/to/owned-apps
 apsa mcp --root /absolute/path/to/owned-apps
 apsa skill install
-apsa context --report latest --json
+apsa context --report latest --section findings --limit 20 --json
 ```
 
 `integrations`가 설치된 실행 파일 경로를 포함한 설정을 생성합니다. `apsa` 실행 파일을 찾지 못하면 `python -m apsa`를 사용하는 설정을 만듭니다. 아래는 형식을 보여주는 예제입니다. 두 절대 경로를 실제 경로로 바꾸세요.
@@ -156,12 +158,14 @@ MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 ro
 | --- | --- |
 | 감사 | `capabilities`, `audit_scan`, `audit_start`, `audit_reassess` |
 | 작업 | `jobs_list`, `jobs_status`, `jobs_cancel` |
-| 보고서 | `reports_list`, `reports_get`, `reports_compare` |
+| 보고서 | `reports_list`, `reports_get`, `reports_compare`, `reports_export_baseline` |
 | 취약점 정보 | `intelligence_sync`, `intelligence_search`, `intelligence_get`, `dependency_check` |
 | 정책 | `policy_evaluate` |
 | 런타임 계획 | `runtime_plan`, `runtime_devices` |
 
 제공하는 리소스에는 `apsa://rules`와 `apsa://reports/{report_id}`가 있으며, 기존 `quaygate://`·`mobile-audit://` scheme도 호환됩니다.
+
+보고서 context는 기본 20개 항목·64 KiB로 제한됩니다. `latest`를 한 번 조회한 뒤 반환된 보고서 ID와 `page.next_cursor`로 이어 읽고, section과 필터는 유지하세요. `partial_response`는 응답 페이지 상태, `audit_incomplete`는 감사 실행 상태입니다. 너무 큰 항목은 생략 사실을 표시하며 로컬 내보내기로 확인할 수 있습니다. 휴대형 기준선에는 명시적인 승인 정보와 검토된 CI 설정에 고정한 SHA-256이 필요합니다. [워크플로 예제](docs/MODEL_WORKFLOWS.md)를 참고하세요.
 
 기본 서버는 런타임 계획 기능을 제공합니다. `runtime_execute`와 `runtime_start`는 서버 시작 시 `--allow-runtime`을 지정해야 등록됩니다. 두 도구는 기본적으로 시나리오를 미리보기하며 `execute=true`일 때 실행합니다. `runtime_start`는 취소 가능한 백그라운드 기기 작업을 시작합니다. 런타임 검사에는 승인받고 준비한 테스트 앱이 필요하며, 기본 감사는 기기를 부팅하거나 앱을 설치하지 않습니다. 시나리오 실행 전 [운영 가이드](https://github.com/ictechgy/apsa/blob/main/docs/OPERATIONS.md)를 확인하세요.
 

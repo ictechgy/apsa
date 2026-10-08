@@ -12,6 +12,12 @@
 
 Mixed unsupported source languages and per-file pattern truncation are incomplete. OS-CVE records explicitly report bounded recent-window correlation, without a historical-completeness claim. Dependency declarations produce candidates; exact inventory produces version-affected evidence. MCP fallback uses isolated Python startup. The adoption recipe uses unified scan, a reviewed project policy, current dependencies and exit codes. New regression checks use generated synthetic fixtures outside runtime data paths. Release validation and independent review are recorded for the final snapshot; older approvals do not apply.
 
+# APSA 1.1 model and team workflows — candidate
+
+Bounded section/evidence pages preserve response omissions separately from audit completeness. Portable baselines require explicit approval provenance and an externally pinned byte hash; source selection is part of baseline identity. Policy decision exports preserve the normalized policy, report/policy hashes, baseline provenance and waiver decisions. Explicit module/configuration selection is shared by foreground and persistent audits without build-system variant merging. Packaged skills and both READMEs describe the contract; default 1.0.6 skill upgrades preserve user customizations.
+
+Local source validation: **648 pytest tests passed**, Ruff check/format passed, Pyright reported no errors, and the handcrafted corpus matched **31/31** cases. These are regression checks with synthetic inputs. The supported CI matrix, clean-release package checks, independent final-snapshot review and registry publication are separate gates. This entry records a candidate, not a completed publication. The requested release order remains 1.0.6, then 1.1, then the stages in [ROADMAP.md](docs/ROADMAP.md).
+
 ---
 
 # APSA (앱사) 1.0.5 검사 누락 수정 — 2026-10-08

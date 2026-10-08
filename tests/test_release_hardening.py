@@ -458,11 +458,11 @@ def test_mcp_runtime_uses_the_validated_scenario_value(store, demo, tmp_path, mo
     def run(database, source, identifier, *, scenario):
         path.write_text("replaced after validation")
         assert scenario == value
-        return {"frozen": True}
+        return {"frozen": True, "runtime": [{}]}
 
     monkeypatch.setattr(mcp_server.jobs, "start", start)
     monkeypatch.setattr(mcp_server, "run", run)
-    monkeypatch.setattr(mcp_server, "assistant_context", lambda result: {**result, "runtime": [{}]})
+    monkeypatch.setattr(mcp_server, "assistant_context", lambda result, **options: result)
     result = tool.fn(scenario_path=str(path), report_id=report["id"], execute=True)
     assert result["frozen"] if tool_name == "runtime_start" else result["report"]["frozen"]
 

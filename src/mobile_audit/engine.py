@@ -42,7 +42,12 @@ def parser_lease(directory: Path | None = None):
         os.close(descriptor)
 
 
-def analyze_target(target: Path, sbom: Path | None = None, expected_target: Path | None = None) -> dict:
+def analyze_target(
+    target: Path,
+    sbom: Path | None = None,
+    expected_target: Path | None = None,
+    configuration: str | None = None,
+) -> dict:
     caller_bound = expected_target is not None
     resolved = target.expanduser().resolve()
     expected_target = expected_target or resolved
@@ -59,6 +64,7 @@ def analyze_target(target: Path, sbom: Path | None = None, expected_target: Path
     ]
     with parser_lease(), tempfile.TemporaryDirectory(prefix="mobile-audit-work-") as directory:
         args.append(str(Path(directory).resolve()))
+        args.append(configuration or "")
         raw = command(
             args,
             timeout=PARSER_TIMEOUT,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -10,12 +11,15 @@ from mcp.types import ToolAnnotations
 
 from . import __version__, jobs
 from .audit import compare, refresh_report, scan
-from .core import read_json
+from .baselines import baseline_artifact, load_baseline
+from .core import digest, open_directory, read_json
 from .intel import fetch_record, query_dependencies, source_health, sync
-from .output import assistant_context, assistant_finding
+from .model_context import finding_context as assistant_finding
+from .model_context import report_context as assistant_context
 from .policy import evaluate, load_policy
 from .rules import rules
 from .runtime import devices, plan, run, validate_scenario
+from .selection import select_source_module
 from .store import Store
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
@@ -81,6 +85,19 @@ def create_server(
             "engines": ["mobile-audit", "quaygate-lint"],
             "inputs": ["source-folder", "apk", "ipa", "simulator-app", "CycloneDX-SBOM"],
             "runtime_execution_enabled": allow_runtime,
+            "report_response": {
+                "default_limit": 20,
+                "default_max_bytes": 65536,
+                "sections": [
+                    "findings",
+                    "coverage",
+                    "environment_advisories",
+                    "intel_snapshot",
+                    "runtime",
+                    "warnings",
+                ],
+                "cursor_scope": "immutable report ID, section and filters",
+            },
             "path_roots": [str(p) for p in allowed],
             "intelligence_sources": ["apple", "android", "cve", "kev", "owasp", "osv"],
             "states": [
@@ -101,9 +118,15 @@ def create_server(
         }
 
     @server.tool(annotations=LOCAL)
-    def audit_scan(target: str, sbom: str | None = None, device_info: str | None = None) -> dict[str, Any]:
+    def audit_scan(
+        target: str,
+        sbom: str | None = None,
+        device_info: str | None = None,
+        source_module: str | None = None,
+        configuration: str | None = None,
+    ) -> dict[str, Any]:
         """Inspect local source/APK/IPA using cached intelligence and save an evidence report. No network or device mutation."""
-        authorized_target = authorize(target)
+        authorized_target = select_source_module(authorize(target), source_module)
         with database() as store:
             report = scan(
                 store,
@@ -111,6 +134,8 @@ def create_server(
                 sbom=authorize(sbom) if sbom else None,
                 environment=read_json(authorize(device_info), authorized=True) if device_info else None,
                 expected_target=authorized_target,
+                configuration=configuration,
+                source_module=source_module,
             )
             return assistant_context(load_report(store, report["id"]))
 
@@ -121,9 +146,15 @@ def create_server(
             return sync(store, sources, limit)
 
     @server.tool(annotations=LOCAL)
-    def audit_start(target: str, sbom: str | None = None, device_info: str | None = None) -> dict[str, Any]:
+    def audit_start(
+        target: str,
+        sbom: str | None = None,
+        device_info: str | None = None,
+        source_module: str | None = None,
+        configuration: str | None = None,
+    ) -> dict[str, Any]:
         """Start a persistent offline audit; use jobs_status for progress and jobs_cancel to stop it."""
-        authorized_target = authorize(target)
+        authorized_target = select_source_module(authorize(target), source_module)
         with database() as store:
             return jobs.start(
                 store,
@@ -131,6 +162,8 @@ def create_server(
                     "kind": "scan",
                     "target": str(authorized_target),
                     "expected_target": str(authorized_target),
+                    "configuration": configuration,
+                    "source_module": source_module,
                     "sbom": str(authorize(sbom)) if sbom else None,
                     "environment": read_json(authorize(device_info), authorized=True)
                     if device_info
@@ -191,16 +224,37 @@ def create_server(
             return {"reports": store.reports(limit, roots=allowed)}
 
     @server.tool(annotations=READ)
-    def reports_get(report_id: str = "latest", finding_id: str | None = None) -> dict[str, Any]:
-        """Read grounded report context, or the exact evidence for one finding ID."""
+    def reports_get(
+        report_id: str = "latest",
+        finding_id: str | None = None,
+        section: str = "findings",
+        cursor: int = 0,
+        limit: int = 20,
+        max_bytes: int = 65536,
+        severity: str | None = None,
+        status: str | None = None,
+    ) -> dict[str, Any]:
+        """Read bounded context pages. Continue using the returned immutable report_id; finding_id pages its evidence. Oversized records remain in local exports."""
         with database() as store:
             report = load_report(store, report_id)
             if finding_id:
                 item = next((f for f in report["findings"] if f["id"] == finding_id), None)
                 if item is None:
                     raise ValueError("Finding ID not found in this report")
-                return assistant_finding(item)
-            return assistant_context(report)
+                if severity or status or section != "findings":
+                    raise ValueError("finding_id reads cannot use report section or finding filters")
+                return assistant_finding(
+                    item, report_id=report["id"], cursor=cursor, limit=limit, max_bytes=max_bytes
+                )
+            return assistant_context(
+                report,
+                section=section,
+                cursor=cursor,
+                limit=limit,
+                max_bytes=max_bytes,
+                severity=severity,
+                status=status,
+            )
 
     @server.tool(annotations=READ)
     def reports_compare(before: str, after: str) -> dict[str, Any]:
@@ -221,8 +275,17 @@ def create_server(
         with database() as store:
             report = load_report(store, report_id)
             _, errors = query_dependencies(store, report["inventory"]["dependencies"])
-            result = assistant_context(refresh_report(store, report["id"]))
-            result["dependency_query_errors"] = errors
+            result = assistant_context(refresh_report(store, report["id"]), max_bytes=49152)
+            result["dependency_query_errors"] = [
+                str(error).encode("utf-8")[:1024].decode("utf-8", errors="ignore") for error in errors[:8]
+            ]
+            result["dependency_query_error_count"] = len(errors)
+            result["dependency_query_errors_truncated"] = len(errors) > 8 or any(
+                len(str(error).encode("utf-8")) > 1024 for error in errors[:8]
+            )
+            result["partial_response"] |= result["dependency_query_errors_truncated"]
+            for _ in range(4):
+                result["response_bytes"] = len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
             return result
 
     @server.tool(annotations=READ)
@@ -235,16 +298,53 @@ def create_server(
 
     @server.tool(annotations=READ)
     def policy_evaluate(
-        policy_path: str, report_id: str = "latest", baseline_id: str | None = None
+        policy_path: str,
+        report_id: str = "latest",
+        baseline_id: str | None = None,
+        baseline_path: str | None = None,
+        baseline_sha256: str | None = None,
     ) -> dict[str, Any]:
         """Evaluate team thresholds, explicit coverage requirements and expiring waivers without changing reports."""
         policy = load_policy(authorize(policy_path), authorized=True)
+        if baseline_id and baseline_path:
+            raise ValueError("Choose baseline_id or baseline_path")
+        if bool(baseline_path) != bool(baseline_sha256):
+            raise ValueError("baseline_path requires an externally approved baseline_sha256")
         with database() as store:
             return evaluate(
                 load_report(store, report_id),
                 policy,
-                load_report(store, baseline_id) if baseline_id else None,
+                load_baseline(authorize(baseline_path), baseline_sha256 or "", authorized=True)
+                if baseline_path
+                else load_report(store, baseline_id)
+                if baseline_id
+                else None,
             )
+
+    @server.tool(annotations=LOCAL)
+    def reports_export_baseline(
+        report_id: str, output_path: str, approved_by: str, approval_reference: str
+    ) -> dict[str, Any]:
+        """Export an explicitly approved baseline inside configured roots. Do not invent approval; pin the returned artifact hash in reviewed CI configuration."""
+        path = authorize(output_path)
+        with database() as store:
+            artifact = baseline_artifact(load_report(store, report_id), approved_by, approval_reference)
+        encoded = (json.dumps(artifact, ensure_ascii=False, indent=2) + "\n").encode()
+        directory = open_directory(path.parent)
+        try:
+            descriptor = os.open(
+                path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory
+            )
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(encoded)
+        finally:
+            os.close(directory)
+        return {
+            "path": str(path),
+            "sha256": digest(encoded),
+            "report_id": report_id,
+            "approval": artifact["approval"],
+        }
 
     @server.tool(annotations=READ)
     def runtime_devices() -> dict[str, Any]:
@@ -301,8 +401,15 @@ def create_server(
                         "step_count": len(value["steps"]),
                     }
                 report = run(store, path, original["id"], scenario=value)
-                context = assistant_context(report)
-                return {"report": context, "runtime": context["runtime"][-1]}
+                context = assistant_context(
+                    report, section="runtime", cursor=len(report["runtime"]) - 1, limit=1, max_bytes=32768
+                )
+                return {
+                    "report": context,
+                    "runtime": context["runtime"][0]
+                    if context["runtime"]
+                    else {"id": report["runtime"][-1]["id"], "partial_response": True},
+                }
 
     @server.resource("apsa://rules")
     @server.resource("quaygate://rules")

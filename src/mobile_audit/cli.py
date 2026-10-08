@@ -13,12 +13,15 @@ from rich.table import Table
 
 from . import __version__, jobs
 from .audit import compare, refresh_report, scan
-from .core import read_json, redact, report_incomplete, severity_rank, write_json
+from .baselines import baseline_artifact, load_baseline
+from .core import canonical_json, digest, read_json, redact, report_incomplete, severity_rank, write_json
 from .intel import DEFAULT_SOURCES, Fetcher, fetch_record, source_health, sync
-from .output import assistant_context, markdown, sarif
+from .model_context import SECTIONS, report_context
+from .output import markdown, sarif
 from .policy import evaluate, load_policy, template
 from .rules import rules
 from .runtime import devices, plan, run, validate_scenario
+from .selection import select_source_module
 from .store import Store, default_home
 from .tools import android_sdks, resolve_tool
 
@@ -55,6 +58,14 @@ def parser() -> Parser:
     scan_parser.add_argument("--fail-on", choices=["low", "medium", "high", "critical"])
     scan_parser.add_argument("--policy", type=Path, help="Apply a project TOML/JSON CI policy")
     scan_parser.add_argument("--baseline", help="Baseline report ID for policy only_new")
+    scan_parser.add_argument("--baseline-file", type=Path)
+    scan_parser.add_argument("--baseline-sha256", help="Externally approved baseline artifact SHA-256")
+    scan_parser.add_argument("--decision-out", type=Path)
+    scan_parser.add_argument("--source-module", help="Relative source module directory")
+    scan_parser.add_argument(
+        "--configuration",
+        help="Relative manifest/Info.plist within selected source module; no build-system merge",
+    )
     scan_parser.add_argument(
         "--background", action="store_true", help="Return a persistent job ID and track it with jobs status"
     )
@@ -80,6 +91,9 @@ def parser() -> Parser:
     policy_gate.add_argument("report", nargs="?", default="latest")
     policy_gate.add_argument("--policy", type=Path, required=True)
     policy_gate.add_argument("--baseline")
+    policy_gate.add_argument("--baseline-file", type=Path)
+    policy_gate.add_argument("--baseline-sha256")
+    policy_gate.add_argument("--decision-out", type=Path)
     intel = commands.add_parser(
         "intel", help="Synchronize, search or monitor official vulnerability sources"
     ).add_subparsers(dest="action", required=True)
@@ -118,7 +132,9 @@ def parser() -> Parser:
     export = reports.add_parser("export")
     export.add_argument("id")
     export.add_argument("--out", type=Path, required=True)
-    export.add_argument("--format", choices=["json", "markdown", "sarif"], default="markdown")
+    export.add_argument("--format", choices=["json", "markdown", "sarif", "baseline"], default="markdown")
+    export.add_argument("--approved-by")
+    export.add_argument("--approval-reference")
     comparison = reports.add_parser("compare")
     comparison.add_argument("before")
     comparison.add_argument("after")
@@ -145,6 +161,12 @@ def parser() -> Parser:
     rules_cmd.add_argument("--id")
     explain = commands.add_parser("context", help="Export sanitized evidence context for any model")
     explain.add_argument("--report", default="latest")
+    explain.add_argument("--section", choices=SECTIONS, default="findings")
+    explain.add_argument("--cursor", type=int, default=0)
+    explain.add_argument("--limit", type=int, default=20)
+    explain.add_argument("--max-bytes", type=int, default=65536)
+    explain.add_argument("--severity")
+    explain.add_argument("--status")
     mcp = commands.add_parser("mcp", help="Serve tools/resources/prompts over MCP stdio")
     mcp.add_argument(
         "--allow-runtime",
@@ -287,6 +309,34 @@ def export_report(report: dict, path: Path, format_: str):
         write_json(path, sarif(report) if format_ == "sarif" else report)
 
 
+def policy_baseline(args, store: Store) -> dict | None:
+    if args.baseline and args.baseline_file:
+        raise UsageError("Choose --baseline or --baseline-file")
+    if bool(args.baseline_file) != bool(args.baseline_sha256):
+        raise UsageError("--baseline-file requires --baseline-sha256 and vice versa")
+    return (
+        load_baseline(args.baseline_file, args.baseline_sha256)
+        if args.baseline_file
+        else store.report(args.baseline)
+        if args.baseline
+        else None
+    )
+
+
+def decision_artifact(report: dict, gate: dict, baseline: dict | None, policy: dict) -> dict:
+    return {
+        "schema_version": 1,
+        "kind": "apsa-policy-decision",
+        "tool_version": __version__,
+        "report_id": report["id"],
+        "report_sha256": digest(canonical_json(report).encode()),
+        "policy": policy,
+        "policy_sha256": digest(canonical_json(policy).encode()),
+        "baseline_provenance": (baseline or {}).get("baseline_provenance"),
+        "gate": gate,
+    }
+
+
 def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, int]:
     cmd = args.command
     if cmd in {None, "tui"}:
@@ -307,11 +357,12 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 "path": str(args.out.resolve()),
                 "next_step": "Edit thresholds and required checks, then run policy evaluate",
             }, 0
-        gate = evaluate(
-            store.report(args.report),
-            load_policy(args.policy),
-            store.report(args.baseline) if args.baseline else None,
-        )
+        report = store.report(args.report)
+        baseline = policy_baseline(args, store)
+        policy = load_policy(args.policy)
+        gate = evaluate(report, policy, baseline)
+        if args.decision_out:
+            write_json(args.decision_out, decision_artifact(report, gate, baseline, policy))
         return gate, gate["exit_code"]
     if cmd == "jobs":
         if args.action == "list":
@@ -319,8 +370,10 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
         result = jobs.cancel(store, args.id) if args.action == "cancel" else jobs.get(store, args.id)
         return result, 3 if result["state"] in {"failed", "interrupted"} else 0
     if cmd == "scan":
-        if args.baseline and not args.policy:
-            raise UsageError("--baseline requires --policy")
+        if (
+            args.baseline or args.baseline_file or args.baseline_sha256 or args.decision_out
+        ) and not args.policy:
+            raise UsageError("Baseline and decision options require --policy")
         if args.policy and (args.fail_on or args.include_candidates):
             raise UsageError(
                 "Project policy defines evidence statuses and thresholds; remove --fail-on/--include-candidates"
@@ -334,26 +387,36 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 store,
                 {
                     "kind": "scan",
-                    "target": str(args.target),
+                    "target": str(select_source_module(args.target.resolve(), args.source_module)),
+                    "configuration": args.configuration,
+                    "source_module": args.source_module,
                     "online": args.online,
                     "sbom": str(args.sbom.resolve()) if args.sbom else None,
                     "environment": read_json(args.device_info) if args.device_info else None,
                 },
             ), 0
+        baseline = policy_baseline(args, store) if args.policy else None
+        policy = load_policy(args.policy) if args.policy else None
         result = scan(
             store,
-            args.target,
+            select_source_module(args.target.resolve(), args.source_module),
             args.online,
             args.sbom,
             read_json(args.device_info) if args.device_info else None,
+            configuration=args.configuration,
+            source_module=args.source_module,
         )
         if args.out:
             export_report(result, args.out, args.format)
-        if args.policy:
-            gate = evaluate(
-                result, load_policy(args.policy), store.report(args.baseline) if args.baseline else None
+        if policy is not None:
+            gate = evaluate(result, policy, baseline)
+            decision = decision_artifact(result, gate, baseline, policy)
+            decision_path = args.decision_out or (
+                args.out.with_name(args.out.name + ".decision.json") if args.out else None
             )
-            return {"report": result, "gate": gate}, gate["exit_code"]
+            if decision_path:
+                write_json(decision_path, decision)
+            return {"report": result, "gate": gate, "decision": decision}, gate["exit_code"]
         failing = args.fail_on and any(
             severity_rank(f["severity"]) >= severity_rank(args.fail_on)
             and (args.include_candidates or f["status"] != "candidate")
@@ -368,7 +431,15 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
         values = [r for r in rules() if not args.id or r["id"] == args.id]
         return {"rules": values}, 0
     if cmd == "context":
-        return assistant_context(store.report(args.report)), 0
+        return report_context(
+            store.report(args.report),
+            section=args.section,
+            cursor=args.cursor,
+            limit=args.limit,
+            max_bytes=args.max_bytes,
+            severity=args.severity,
+            status=args.status,
+        ), 0
     if cmd == "integrations":
         return integration_config(store.home, args.root), 0
     if cmd == "skill":
@@ -444,6 +515,17 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
         if args.action == "reassess":
             return refresh_report(store, args.id), 0
         if args.action == "export":
+            if args.format == "baseline":
+                artifact = baseline_artifact(
+                    store.report(args.id), args.approved_by or "", args.approval_reference or ""
+                )
+                write_json(args.out, artifact)
+                return {
+                    "path": str(args.out),
+                    "format": "baseline",
+                    "sha256": digest(args.out.read_bytes()),
+                    "approval": artifact["approval"],
+                }, 0
             export_report(store.report(args.id), args.out, args.format)
             return {"path": str(args.out), "format": args.format}, 0
     if cmd == "runtime":

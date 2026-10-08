@@ -47,6 +47,8 @@ def main() -> None:
                 environment=payload.get("environment"),
                 progress=progress,
                 expected_target=Path(row["target"]),
+                configuration=payload.get("configuration"),
+                source_module=payload.get("source_module"),
             )
         else:
             jobs.update(store, identifier, stage="device-scenario", progress=10)

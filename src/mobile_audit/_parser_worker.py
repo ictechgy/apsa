@@ -54,12 +54,17 @@ def stable_input(target: Path, scratch: Path | None = None):
         yield snapshot
 
 
-def analyze(target: Path, sbom: Path | None) -> dict:
+def analyze(target: Path, sbom: Path | None, configuration: str | None = None) -> dict:
     from .inputs import inspect_target
     from .rules import static_checks
 
-    inventory, sources = inspect_target(target, sbom, authorized=True)
+    inventory, sources = inspect_target(target, sbom, authorized=True, configuration=configuration)
     findings, coverage = static_checks(inventory, sources)
+    if inventory.get("configuration_ambiguous"):
+        for item in findings:
+            if item["status"] == "configuration-confirmed":
+                item["status"] = "candidate"
+                item["configuration_scope"] = "ambiguous source configurations"
     from .source_analysis import analyze_sources
 
     structural = analyze_sources(sources)
@@ -114,7 +119,11 @@ def main() -> None:
             raise ValueError("Authorized input moved or became a symlink; audit refused")
         scratch = Path(sys.argv[4]) if len(sys.argv) > 4 else None
         with stable_input(target, scratch) as snapshot:
-            result = analyze(snapshot, Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None)
+            result = analyze(
+                snapshot,
+                Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None,
+                sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None,
+            )
             result["inventory"]["target"] = str(target)
     except (ValueError, OSError, TypeError, KeyError) as error:
         result = {"error": f"Input analysis failed ({type(error).__name__}): {error}"}

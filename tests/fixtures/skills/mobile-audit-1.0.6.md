@@ -1,5 +1,5 @@
 ---
-name: quaygate
+name: mobile-audit
 description: Inspect Android or iOS source, APK or IPA with APSA (앱사); correlate public CVEs, inspect OWASP-aligned evidence, compare reports, and prepare authorized device tests through CLI or MCP.
 ---
 
@@ -35,10 +35,4 @@ apsa --json intel search WebView
 apsa --json reports compare audit_BEFORE audit_AFTER
 ```
 
-`apsa integrations --root /absolute/owned/project` prints portable MCP command/args with explicit roots. MCP requires `--root` unless unrestricted access is deliberately enabled by `--allow-any-root`. Install packaged instructions with `apsa skill install --name quaygate`. `apsa --json context --report latest` exports sanitized context for models without MCP. `intel request SOURCE --out FILE` is a read-only raw document escape hatch for the configured official sources; it does not accept arbitrary endpoints or execute payloads.
-
-For source app/variant scope, use scan --source-module MODULE --configuration RELATIVE_MANIFEST_OR_PLIST, or the corresponding MCP arguments. Configuration paths are relative to the selected module. Multiple configurations for the same platform are incomplete until selected; this does not merge Gradle/Xcode variants.
-
-Model report context is bounded and paginated. After resolving latest once, use the returned immutable report_id with reports_get section/cursor/limit/max_bytes, keeping filters unchanged. Follow page.next_cursor; inspect section_counts, audit_incomplete and coverage. partial_response describes the response page, not audit completeness. Oversized indices are explicit omissions; use a local export for the record. Finding evidence is paginated separately and omits source excerpts.
-
-Portable team baselines require explicit authorized approved_by and approval_reference metadata. Export with reports export --format baseline or MCP reports_export_baseline, then pin its returned SHA-256 in independently reviewed CI configuration. Evaluate with --baseline-file/--baseline-sha256 or MCP baseline_path/baseline_sha256; do not derive the expected hash from an untrusted artifact in CI. The hash proves integrity against the approved value, not approver identity or a digital signature. scan --policy with --out writes a separate .decision.json; --decision-out selects another path. The decision includes policy/report hashes, approval provenance and waiver details.
+`apsa integrations --root /absolute/owned/project` prints portable MCP command/args with explicit roots. MCP requires `--root` unless unrestricted access is deliberately enabled by `--allow-any-root`. Install packaged instructions with `apsa skill install --name mobile-audit`. `apsa --json context --report latest` exports sanitized context for models without MCP. `intel request SOURCE --out FILE` is a read-only raw document escape hatch for the configured official sources; it does not accept arbitrary endpoints or execute payloads.

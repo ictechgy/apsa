@@ -211,6 +211,12 @@ def _identity(item: dict) -> str:
 def _subject(report: dict) -> tuple:
     inventory = report.get("inventory", {})
     if isinstance(inventory, dict):
+        selection = inventory.get("source_selection", {})
+        scope = (
+            tuple((key, selection[key]) for key in ("module", "configuration") if selection.get(key))
+            if isinstance(selection, dict)
+            else ()
+        )
         apps = inventory.get("apps", [])
         if not isinstance(apps, list):
             apps = []
@@ -225,9 +231,9 @@ def _subject(report: dict) -> tuple:
             }
         )
         if known:
-            return ("apps", *known)
+            return ("apps", *known, *scope)
         if inventory.get("package") and isinstance(inventory.get("platforms"), list):
-            return ("apps", *((p, inventory["package"]) for p in sorted(inventory["platforms"])))
+            return ("apps", *((p, inventory["package"]) for p in sorted(inventory["platforms"])), *scope)
     return ("target", report["target"]) if report.get("target") else ()
 
 

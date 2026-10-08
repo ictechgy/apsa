@@ -17,3 +17,5 @@ MCP의 root 제한, 과거 canonical 대상 권한 확인, runtime opt-in, 메�
 MCP는 `--root PATH`를 요구하며 경로 제한 해제는 `--allow-any-root`로 명시합니다. `integrations`는 현재 디렉터리를 기본 허용 경로로 생성하고 스킬의 실제 설치 여부를 표시합니다. 휠에 세 스킬을 포함하며 `skill install --name apsa|quaygate|mobile-audit`로 설치할 수 있습니다. 사용자 수정본은 `--force` 없이는 덮어쓰지 않습니다.
 
 foreground scan, 정책, TUI·MCP 보고서 요약과 작업 상태는 같은 명시적 partial 판정 기준을 사용합니다. optional not-run은 계속 표시하며 필수 규칙은 정책으로 선택합니다. OSV 조회를 요청했는데 전송·파싱·예산 문제 또는 미해결/미지원 의존성 때문에 대조할 수 없으면 부분 결과로 처리합니다. 미지원 의존성도 요청한 검사 범위이므로 자동 통과시키지 않습니다.
+
+1.1의 모델 context는 제한된 section 페이지이며 `partial_response`와 `audit_incomplete`를 분리합니다. `latest` 조회 후 반환된 불변 보고서 ID를 유지하고 다음 cursor로 진행합니다. 휴대형 기준선은 승인 메타데이터·보고서 내부 해시·외부에서 고정한 artifact 해시를 확인하며, 다른 앱이나 소스 module/configuration에는 재사용하지 않습니다. `scan --policy --out`은 보고서와 별도 판정 파일을 저장합니다. 소스 설정 선택은 선언 파일 하나를 고르는 기능이며 Gradle/Xcode 빌드 설정을 병합하지 않습니다. 영문 계약과 예제는 [MODEL_WORKFLOWS.md](MODEL_WORKFLOWS.md)를 따릅니다.

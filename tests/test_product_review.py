@@ -43,7 +43,7 @@ from tests.test_runtime import Device
 )
 def test_foreground_scan_cannot_exit_zero_for_explicit_partial_work(store, capsys, monkeypatch, extra):
     report = {"inventory": {"partial": False}, "findings": [], "coverage": [], **extra}
-    monkeypatch.setattr("mobile_audit.cli.scan", lambda *args: report)
+    monkeypatch.setattr("mobile_audit.cli.scan", lambda *args, **kwargs: report)
     assert main(["--home", str(store.home), "--json", "scan", "unused.apk", "--fail-on", "high"]) == 3
     assert json.loads(capsys.readouterr().out)["exit_code"] == 3
     assert evaluate(report, {"schema_version": 1})["state"] == "incomplete"

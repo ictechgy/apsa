@@ -132,3 +132,11 @@ DEX 분석의 기본 100,000개 메서드·1,000,000개 명령어와 파서 CPU�
 `apsa skill install`은 새 기본 스킬을 설치합니다. 알려진 과거 기본 Quaygate/Mobile Audit 스킬도 `--name quaygate`/`--name mobile-audit`로 업데이트할 수 있으며 사용자 수정본은 보존합니다.
 
 격리된 CI에서 `APSA_PARSER_LOCK_DIR`와 `APSA_DEVICE_LOCK_DIR`를 새 private 임시 디렉터리로 지정할 수 있습니다. 동일한 호스트에서 동시 작업을 조율할 프로세스는 같은 잠금 경로를 사용해야 합니다. 기본 사용자 홈과 감사 데이터 위치는 바꾸지 않습니다.
+
+## 1.1 모델·팀 워크플로
+
+context와 MCP `reports_get`은 기본 20개 항목·64 KiB의 UTF-8 JSON 페이지를 반환합니다. CLI envelope와 MCP 전송 framing은 추가 크기입니다. 응답의 `partial_response`를 감사의 `audit_incomplete`와 혼동하지 마십시오. `latest`를 한 번 해석한 뒤 반환된 보고서 ID, section, 필터를 유지하고 `page.next_cursor`를 따라 읽습니다. 용량 때문에 생략된 인덱스는 표시하며 원본은 로컬 보고서 내보내기에 보존됩니다.
+
+`reports export --format baseline`에는 승인자와 승인 참조가 필요합니다. 반환된 SHA-256은 별도로 검토된 CI 설정에 고정하고 `--baseline-file`과 `--baseline-sha256`으로 사용합니다. CI에서 내려받은 파일 자체로 기대 해시를 계산하면 승인 근거가 되지 않습니다. 승인 정보는 기록된 주장이고 해시는 무결성 확인이며, 서명이나 승인자 인증을 제공하지 않습니다. MCP 내보내기는 허용 root 아래 이미 존재하는 부모 폴더에 새 파일만 생성하며 덮어쓰지 않습니다.
+
+`scan --policy --out`은 `<보고서 경로>.decision.json`에 정규화한 정책, 보고서·정책 해시, 기준선 승인 출처, 예외와 판정 사유를 저장합니다. `--decision-out`으로 별도 경로를 지정할 수 있습니다. 소스는 `--source-module`과 그 모듈 기준의 `--configuration`으로 명시하되 빌드 시스템의 variant 병합은 하지 않습니다. 자세한 계약은 영문 원본 [MODEL_WORKFLOWS.md](MODEL_WORKFLOWS.md)를 참고하십시오.

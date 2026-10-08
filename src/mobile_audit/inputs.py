@@ -296,7 +296,7 @@ def _outer_app_index(parts: tuple[str, ...]) -> int | None:
 
 
 def inspect_target(
-    target: Path, sbom: Path | None = None, *, authorized: bool = False
+    target: Path, sbom: Path | None = None, *, authorized: bool = False, configuration: str | None = None
 ) -> tuple[dict, list[tuple[str, str]]]:
     target = target if authorized else target.expanduser().resolve()
     if not target.exists():
@@ -324,11 +324,27 @@ def inspect_target(
     main_plists = set()
     app_archive = False
     source_input = target.is_dir() and target.suffix.lower() != ".app"
+    if configuration:
+        from .selection import relative_source_path
+
+        configuration = relative_source_path(configuration)
+        if not source_input or Path(configuration).name not in {"AndroidManifest.xml", "Info.plist"}:
+            raise ValueError(
+                "Configuration selection requires a source directory and a manifest or Info.plist"
+            )
+    inventory["source_selection"] = {
+        "configuration": configuration,
+        "configuration_semantics": "declared source file; no build-system merge",
+    }
     hasher = hashlib.sha256()
 
     def primary_android(name: str) -> bool:
         return (
-            (source_input and name.endswith("AndroidManifest.xml"))
+            (
+                source_input
+                and name.endswith("AndroidManifest.xml")
+                and (not configuration or name == configuration)
+            )
             or (target.suffix.lower() == ".apk" and name == "AndroidManifest.xml")
             or (target.suffix.lower() == ".aab" and name == "base/manifest/AndroidManifest.xml")
         )
@@ -340,7 +356,7 @@ def inspect_target(
         inventory["bytes_scanned"] += len(raw)
         hasher.update(name.encode() + b"\0" + raw)
         inventory["files_scanned"] += 1
-        if name.endswith((".gradle", ".gradle.kts")) and source_input:
+        if name.endswith((".gradle", ".gradle.kts")) and source_input and not configuration:
             text = raw.decode("utf-8", errors="replace")
             package_ids = re.findall(r"applicationId\s*(?:=|\()?\s*[\"']([A-Za-z0-9_.]+)[\"']", text)
             suffixes = re.findall(r"applicationIdSuffix\s*(?:=|\()?\s*[\"'](\.[A-Za-z0-9_.]+)[\"']", text)
@@ -360,6 +376,7 @@ def inspect_target(
                 android_manifest(raw, name, inventory)
             elif (
                 name.endswith("Info.plist")
+                and (not configuration or name == configuration)
                 and (target.is_dir() or target.suffix.lower() in {".ipa", ".zip"})
                 and (
                     source_input
@@ -613,6 +630,21 @@ def inspect_target(
         inventory[key] = sorted(set(inventory[key]))
     unique = {(d["ecosystem"], d["name"], d["version"], d["path"]): d for d in inventory["dependencies"]}
     inventory["dependencies"] = list(unique.values())
+    configurations = inventory["android_config"] + inventory["ios_config"]
+    if configuration and not any(c["path"] == configuration for c in configurations):
+        raise ValueError("Selected source configuration was absent, unreadable, excluded or invalid")
+    multiple_apps = any(
+        len({app["package"] for app in inventory["apps"] if app["platform"] == platform}) > 1
+        for platform in inventory["platforms"]
+    )
+    multiple_configurations = any(len(inventory[key]) > 1 for key in ("android_config", "ios_config"))
+    if source_input and not configuration and (multiple_configurations or multiple_apps):
+        inventory["configuration_ambiguous"] = True
+        inventory["partial"] = True
+        inventory["package"] = ""
+        inventory["warnings"].append(
+            "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed."
+        )
     if not inventory["files_scanned"]:
         if inventory["partial"]:
             raise ValueError(

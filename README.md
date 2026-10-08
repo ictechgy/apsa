@@ -10,7 +10,9 @@ APSA helps developers and security teams audit their own mobile apps. It inspect
 
 Pronounced **“ap-sah”**; Korean name **앱사**. The name connects “app + audit” with **App Security Audit**. APSA combines the earlier Quaygate lint engine and Mobile Audit workflows in one package.
 
-APSA 1.0.6 marks mixed unsupported source languages and truncated pattern results as incomplete. Declared Gradle versions remain candidates until resolved-build evidence is supplied. OS-CVE correlation reports a bounded recent window, so feed freshness alone cannot satisfy historical coverage. See [release sequence](docs/ROADMAP.md).
+APSA 1.1 adds bounded model report pages, portable approved baselines, exported policy decisions, and explicit source module/configuration selection. See [model and team workflows](docs/MODEL_WORKFLOWS.md) for the contract and [release sequence](docs/ROADMAP.md) for later analysis milestones.
+
+Mixed unsupported source languages and truncated pattern results are incomplete. Declared Gradle versions remain candidates until resolved-build evidence is supplied. OS-CVE correlation reports a bounded recent window, so feed freshness alone cannot satisfy historical coverage.
 
 ## What it checks
 
@@ -35,7 +37,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.0.6
+uv tool install --python 3.12 apsa==1.1.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -134,7 +136,7 @@ Unreadable source directories and files leave warnings and incomplete coverage; 
 apsa integrations --root /absolute/path/to/owned-apps
 apsa mcp --root /absolute/path/to/owned-apps
 apsa skill install
-apsa context --report latest --json
+apsa context --report latest --section findings --limit 20 --json
 ```
 
 Use `integrations` to generate a configuration with the installed executable path, or a `python -m apsa` fallback when no `apsa` executable is found. The shape below is illustrative; replace both absolute paths:
@@ -156,12 +158,14 @@ MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. 
 | --- | --- |
 | Audits | `capabilities`, `audit_scan`, `audit_start`, `audit_reassess` |
 | Jobs | `jobs_list`, `jobs_status`, `jobs_cancel` |
-| Reports | `reports_list`, `reports_get`, `reports_compare` |
+| Reports | `reports_list`, `reports_get`, `reports_compare`, `reports_export_baseline` |
 | Intelligence | `intelligence_sync`, `intelligence_search`, `intelligence_get`, `dependency_check` |
 | Policy | `policy_evaluate` |
 | Runtime planning | `runtime_plan`, `runtime_devices` |
 
 Resources include `apsa://rules` and `apsa://reports/{report_id}`. The previous `quaygate://` and `mobile-audit://` resource schemes remain compatible.
+
+Report context defaults to 20 records and 64 KiB. Resolve `latest` once, then page with the returned immutable report ID and `page.next_cursor`, keeping section/filters fixed. `partial_response` describes the page; `audit_incomplete` describes execution. Oversized records are explicitly omitted and remain available in local exports. Portable baselines require explicit approval provenance and a SHA-256 pinned in reviewed CI configuration. See [workflow examples](docs/MODEL_WORKFLOWS.md).
 
 The default server exposes runtime planning. `runtime_execute` and `runtime_start` are registered only with `--allow-runtime` at server startup. Both preview a scenario by default; `execute=true` runs it. `runtime_start` starts a cancellable background device job. Runtime tests need an authorized, prepared test app; the default audit does not boot devices or install apps. See the [operations guide](https://github.com/ictechgy/apsa/blob/main/docs/OPERATIONS.md) (Korean) before running a scenario.
 

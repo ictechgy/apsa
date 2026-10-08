@@ -263,6 +263,8 @@ def scan(
     environment: dict | None = None,
     progress: Callable[[str, int], None] | None = None,
     expected_target: Path | None = None,
+    configuration: str | None = None,
+    source_module: str | None = None,
 ) -> dict:
     if progress:
         progress("input-analysis", 5)
@@ -283,8 +285,12 @@ def scan(
                 "observed_at",
             }
         }
-    analyzed = analyze_target(target, sbom, expected_target)
+    analyzed = analyze_target(target, sbom, expected_target, configuration)
     inventory, findings, coverage = analyzed["inventory"], analyzed["findings"], analyzed["coverage"]
+    if source_module:
+        from .selection import relative_source_path
+
+        inventory.setdefault("source_selection", {})["module"] = relative_source_path(source_module)
     if progress:
         progress("dependency-intelligence" if online else "cached-intelligence", 50)
     warnings = inventory["warnings"].copy()

@@ -28,6 +28,10 @@ def markdown(report: dict) -> str:
         f"\nTarget: `{report['target']}`",
         f"\nInput SHA-256: `{inventory['fingerprint']}`",
         f"\nRule version: `{report['rule_version']}`",
+        "\nAudit execution: **"
+        + ("incomplete" if report_incomplete(report) else "complete for the stated scope")
+        + "**",
+        "\nSummary: " + json.dumps(report["summary"], ensure_ascii=False),
         f"\n{report['scope']}",
         "\n## Findings",
     ]
@@ -167,6 +171,7 @@ def assistant_context(report: dict) -> dict:
                 "package",
                 "fingerprint",
                 "fingerprint_complete",
+                "source_selection",
             )
         },
         "engines": report["inventory"].get("engines", ["mobile-audit"]),

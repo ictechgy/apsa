@@ -9,7 +9,7 @@ The PyPI project is `apsa`. Its GitHub Trusted Publisher uses these exact values
 | Workflow filename | `release.yml` |
 | GitHub environment | `pypi` |
 
-The workflow lives at [`.github/workflows/release.yml`](../.github/workflows/release.yml). It runs when a `v` release tag is pushed, or when a maintainer manually runs it on that tag. The tag must match the version in `pyproject.toml`; running it on a branch fails before building or publishing.
+The workflow lives at [`.github/workflows/release.yml`](../.github/workflows/release.yml). It runs when a `v` release tag is pushed, when a maintainer manually runs it on that tag, or for an explicit release commit on `main` described below. A tag invocation must match the version in `pyproject.toml`; other branches are rejected.
 
 Before publishing, the workflow runs the existing macOS/Linux and Python 3.11/3.12 CI matrix. A separate Ubuntu/Python 3.12 build creates the upload artifacts and verifies repeated wheel/sdist hashes, clean wheel installation, source/APK scans, MCP stdio, and packaged skills. The publishing job waits for all checks and downloads only the two distributions from that build. It uses PyPI Trusted Publishing and attestations; no long-lived PyPI API token is required. Only the publishing job receives `id-token: write`.
 
@@ -22,15 +22,24 @@ After PyPI accepts the release, another job creates the GitHub release and attac
 
 The manifest's `published: false` records that the local build script itself does not publish. The workflow's publishing result and the PyPI release page record whether uploading succeeded.
 
-For a new release, update the package version and documentation, run the checks, commit the inputs, then push the matching tag. For version 1.0.6:
+For a new release, update the package version and documentation, run the checks, commit the reviewed inputs, then push the matching tag. Derive the tag from the committed package metadata:
 
 ```sh
-git tag v1.0.6
-git push origin v1.0.6
+APSA_RELEASE_TAG="v$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+git tag "$APSA_RELEASE_TAG"
+git push origin "$APSA_RELEASE_TAG"
 ```
 
 PyPI rejects overwriting an existing release file. If publishing fails, inspect the workflow logs and PyPI's current file list before rerunning. A failed GitHub release attachment can be retried separately from package publication. Pending publishers create the PyPI project on first use; registration alone does not reserve the name.
 
 See [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/using-a-publisher/) and [pending publishers](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
 
-An explicit `Release APSA ...` commit on `main` that changes `pyproject.toml` also starts release verification. The workflow creates the version tag only after all checks pass, refuses a tag bound to different bytes, then uses the registered PyPI publisher. This supports source-only GitHub connector publishing without local network access. Ordinary commits do not publish packages.
+An explicit `Release APSA ...` commit on `main` that changes `pyproject.toml` also starts release verification. The workflow creates the version tag only after all checks pass and refuses a tag bound to different bytes. Its publishing job runs in the original invocation's ref context, so creating a tag does not turn a main-context invocation into a tag-context invocation. Ordinary commits do not publish packages.
+
+If the approved tag was created but the publishing job failed before its steps, inspect job summaries and the environment/publisher configuration. The cause must be verified separately. A maintainer can start the existing workflow on that exact tag without moving it:
+
+```sh
+gh workflow run release.yml --repo ictechgy/apsa --ref "$APSA_RELEASE_TAG"
+```
+
+This reruns the CI/build gates for the tagged source. A source-only connector may not expose workflow dispatch; do not treat a successful source upload or tag creation as registry publication. Any additional dispatch automation and its permissions require their own review and authorization. Keep the [release sequence](ROADMAP.md) stage gates: confirm 1.0.6 publication before advancing the 1.1 candidate.
