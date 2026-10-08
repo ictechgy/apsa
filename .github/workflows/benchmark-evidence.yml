@@ -1,0 +1,38 @@
+name: Inspect frozen synthetic benchmark evidence
+on:
+  push:
+    branches: ["benchmark/evidence-read"]
+    paths: [".github/workflows/benchmark-evidence.yml"]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37805967800
+          name: synthetic-competitive-benchmark
+          path: ${{ runner.temp }}/frozen-synthetic-evidence
+      - name: Inspect newly generated reports without rescanning
+        env:
+          SYNTHETIC_EVIDENCE_ROOT: ${{ runner.temp }}/frozen-synthetic-evidence
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['SYNTHETIC_EVIDENCE_ROOT']) / 'competitive-results'
+          selected = ['java-ssl-proceed-apk', 'java-file-true-apk', 'java-debug-true-apk', 'kotlin-ssl-proceed', 'kotlin-log-secret']
+          for case in selected:
+              report = json.loads((root / (case + '-mobsf-0') / 'report.json').read_text())
+              analysis = report['code_analysis']
+              findings = analysis.get('findings', analysis)
+              summary = {'case': case, 'report_keys': sorted(report), 'analysis_keys': sorted(analysis), 'findings': findings, 'api': analysis.get('api'), 'sbom': analysis.get('sbom'), 'logs': report.get('logs'), 'errors': report.get('errors')}
+              print('SYNTHETIC_ANALYSIS_EVIDENCE ' + json.dumps(summary))
+          candidate = json.loads((root / 'result.json').read_text())
+          incomplete = [{'id': c['id'], 'warnings': c['tools']['apsa']['observations'][0]['warnings'], 'coverage': c['tools']['apsa']['observations'][0]['coverage']} for c in candidate['cases'] if c['tools']['apsa']['observations'][0]['audit_incomplete']]
+          print('SYNTHETIC_APSA_INCOMPLETE ' + json.dumps(incomplete))
+          PY
