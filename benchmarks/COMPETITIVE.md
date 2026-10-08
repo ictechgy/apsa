@@ -57,6 +57,17 @@ The service must be a new benchmark-only instance. Do not point this driver at
 an existing MobSF instance or real app inputs. Without `--mobsf-url`, only APSA
 runs; that is not a completed competitor benchmark.
 
+For APK analysis the workflow provisions MobSF's expected public JADX 1.5.0
+release (upstream release asset 163283857), records its observed SHA-256, verifies
+the version inside the container, and mounts only this freshly downloaded public
+tool read-only. It does not give the container app data or network egress. Check
+the recorded JADX SHA against the prior run before making trend comparisons.
+
+An HTTP-success MobSF response can contain internal analysis failure logs. Fatal
+code-analysis/decompiler errors fail code-dependent sampling units; manifest/ATS
+labels remain scoped to their configuration evidence. A warning followed by a
+successful DEX fallback is not classified as a fatal failure.
+
 APSA timing covers a fresh CLI process and report store. MobSF timing covers
 upload and a forced rescan against an already started local service. Setup,
 package installation and image pull are excluded; these measurements do not

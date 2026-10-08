@@ -200,4 +200,9 @@ Tagged releases use GitHub Actions to publish the verified distributions to PyPI
 
 Recorded product validation is in [RELEASE_READINESS.md](https://github.com/ictechgy/apsa/blob/main/RELEASE_READINESS.md). The [curated benchmark](https://github.com/ictechgy/apsa/blob/main/benchmarks/README.md) is a regression corpus, not a measure of production detection rates. [Integration boundaries](https://github.com/ictechgy/apsa/blob/main/docs/INTEGRATION.md) and the [threat model](https://github.com/ictechgy/apsa/blob/main/docs/THREAT_MODEL.md) are currently in Korean. Historical reviews remain tied to their original snapshots.
 
+A reproducible [APSA/MobSF comparison](benchmarks/COMPETITIVE.md) and its
+[recorded results](benchmarks/COMPETITIVE_RESULTS.md) use freshly generated
+synthetic source projects and APKs. The improved rule set is an unreleased
+benchmark candidate; these results are not production accuracy estimates.
+
 The source is publicly available on [GitHub](https://github.com/ictechgy/apsa). [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE) preserves the original Quaygate MIT notice. This publication does not declare an additional license for the combined product.

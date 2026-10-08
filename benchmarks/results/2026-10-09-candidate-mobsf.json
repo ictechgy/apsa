@@ -1,0 +1,1505 @@
+{
+  "schema": "apsa-competitive-v1",
+  "manifest_sha256": "a0117b72ed166dda11f95d085806bd9cd36dbe7a94739d01a9985e55fb8b1682",
+  "environment": {
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "python": "3.12.13",
+    "apsa_python": "/home/runner/work/apsa/apsa/.venv/bin/python3",
+    "cpu_count": 4,
+    "repetitions": 3
+  },
+  "timing_scope": "APSA fresh CLI/store/process; MobSF warm local API upload+forced rescan. Setup/pull time excluded. Not an engine-only speed ranking.",
+  "summary": {
+    "apsa": {
+      "source-zip": {
+        "tp": 18,
+        "fp": 0,
+        "fn": 0,
+        "tn": 22,
+        "failed": 0,
+        "failed_risky": 0,
+        "unstable": 0,
+        "unmapped_risky": 0,
+        "cases": 40,
+        "alert_precision": 1,
+        "completed_case_recall": 1,
+        "end_to_end_recall": 1,
+        "median_elapsed_seconds": 0.2238244935000182
+      },
+      "apk": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "tn": 3,
+        "failed": 0,
+        "failed_risky": 0,
+        "unstable": 0,
+        "unmapped_risky": 0,
+        "cases": 6,
+        "alert_precision": 1,
+        "completed_case_recall": 1,
+        "end_to_end_recall": 1,
+        "median_elapsed_seconds": 0.3699430715000176
+      }
+    },
+    "mobsf": {
+      "source-zip": {
+        "tp": 12,
+        "fp": 4,
+        "fn": 6,
+        "tn": 18,
+        "failed": 0,
+        "failed_risky": 0,
+        "unstable": 0,
+        "unmapped_risky": 4,
+        "cases": 40,
+        "alert_precision": 0.75,
+        "completed_case_recall": 0.6666666666666666,
+        "end_to_end_recall": 0.6666666666666666,
+        "median_elapsed_seconds": 0.9982993130000182
+      },
+      "apk": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "tn": 3,
+        "failed": 0,
+        "failed_risky": 0,
+        "unstable": 0,
+        "unmapped_risky": 0,
+        "cases": 6,
+        "alert_precision": 1,
+        "completed_case_recall": 1,
+        "end_to_end_recall": 1,
+        "median_elapsed_seconds": 2.861272495999998
+      }
+    }
+  },
+  "limits": [
+    "Handcrafted local-pattern risk labels, not exploit proofs or production accuracy.",
+    "Swift/Kotlin projects are source-analysis fixtures; only the selected Java APKs are compiler-validated.",
+    "No dynamic/device tests, IPA binaries, AAB, obfuscation, CVE feed comparison, or cross-function flows.",
+    "Generic review alerts may count as alert false positives against these narrower labels."
+  ],
+  "apsa_engine": {
+    "version": "1.1.0",
+    "rule_version": "2026.10.09.apsa.111-dev",
+    "source_sha256": {
+      "__init__.py": "854f83bbd7efdb6e3418973565894d14c49aa8f1339fff99518763cb8dcf938b",
+      "__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+      "_job_worker.py": "3bb277a06bde2aae7bedf794d4052a83b4514a2f613fa01c0b116dc2dc984dae",
+      "_parser_worker.py": "868606f5d180bfb71ce6ceb21924c6208741758cc9158af8b30c07fdc71efc11",
+      "audit.py": "7b2f6b2449c976c24b5a501b7d84c15236dc759e5726bc519d2c3fbefc80bb97",
+      "baselines.py": "ab3749530bedf17c9f881a2c399d152633eb7e77017f90385ae4e666abaa658f",
+      "binary_analysis.py": "c22d5ab4aea1f1c2e31e27390b360a68412bd349ac95c69c5a309ca7f46ab874",
+      "cli.py": "8e9f3df0d4564578c4cc0cc9ab3b42a53ef1fd1375be63fc400b92a36dca5e40",
+      "core.py": "e790a250c39a4c7db32769147234fab848263379cd026b5556107f54b90e8309",
+      "engine.py": "517f78e080da4e54014e90ee902738f2828fa46fe7eb33aae562a56c37d7a11b",
+      "inputs.py": "a4aacf595b4a68941760255ab2cac090c4df1e5f3da2533d463cfd2c803fe1d1",
+      "intel.py": "efca6535a28caa79ab1d8c1cb76be849d936d190354f8abee35a3353db015657",
+      "jobs.py": "37028b194533f5d0ef3523730f31330f47e666fee3259853f7e14d2540f23963",
+      "mcp_server.py": "24c33d801f1e925d68e83a2d4000ed14c12625bcbba764e2f3d55141535cfb38",
+      "model_context.py": "e63cc5cc5fe5ca5766e28801739aaa715d1549cad5f30aa0980b12cb4a5212f8",
+      "output.py": "03fb4e391c57bb66ca94d0118127c46abce5a9137bc6e9686d4c03df0c7393cc",
+      "policy.py": "106f2244e59ae26bc34f0bd37a3ed48d5c656239571dcc078caf55c19f64c893",
+      "processes.py": "7b2f88e2175c02d0d4ec01eaafe6b939cea28e9c3abfe13e9d624c36022ffae6",
+      "quaygate_analysis.py": "d1d24dc1047b31bb42b66a1a05dd889420135343a3ad6ee832acabd1d4dea1ed",
+      "rules.py": "1ca0a0a2624ac21516867227b0d5a4c661b35bf38f9fe2ccc68c8df0a42bda36",
+      "runtime.py": "bc5972a7428f139e39d19613f3d425d7adfce22b78c99ad1abd5d98bf878a10d",
+      "selection.py": "f48006199d0cc4b5c8ae1a945835bb044275f300696d70fd2477733af8bce95d",
+      "skills.py": "ae8f0936cca86413378757e3ca71076f4a7976464bbbe840a616513c4d9074c0",
+      "source_analysis.py": "98c6aa8ceb758264ac6827c66e22b3b198df0d23648e4ec45050a6a74fb63377",
+      "store.py": "a3305315012dc6cfb6599a6696388e0cd15479f7b36f5bd42c4cc453990b65dd",
+      "tools.py": "904bce3cb1fbccc02598cfc847ce50015475800818d2b3b597e62c4f37c0f727",
+      "tui.py": "11d606ef79dac6f2deb4b3db7fc869d93ed9eea1dac6d04df09bfca2f6a4647e",
+      "watch.py": "98f84cf43369aaacfb0830c91df454a69f4c061608da8b7282fd2bda9e0409f1",
+      "data/rules.json": "9585922fc14c63a0f77697cba937477b2175cecf46b0f02707db4482198732b0",
+      "data/structural-rules.json": "86db1024e079ec425681278130935b02ef2d60c510cc34e7512172a850b851b3"
+    },
+    "dependencies": {
+      "androguard": "4.1.4",
+      "tree-sitter": "0.25.2",
+      "tree-sitter-java": "0.23.5",
+      "tree-sitter-kotlin": "1.1.0",
+      "tree-sitter-swift": "0.7.4",
+      "psutil": "7.2.2"
+    }
+  },
+  "source_revision": "43cafbafae6ff74ab65e5a1382b97f193b015d52",
+  "mobsf_image_digest": "opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c",
+  "mobsf_jadx_sha256": "c5a713fa4800cbb9e6df85ced1bef95ba329040c95cb87d54465f108483e4ef9",
+  "mobsf_commit": "d3869adc464b89db92a6a8a9e2dc13376f4a4c25",
+  "cases": [
+    {
+      "id": "java-url-direct",
+      "category": "url",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "AST-WEBVIEW-UNTRUSTED-URL"
+          ],
+          "seconds": [
+            0.2589405049999982,
+            0.2401401349999901,
+            0.2385870930000067
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            1.0278777460000015,
+            1.0081281490000151,
+            1.0718929500000058
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-url-guarded",
+      "category": "url",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.2376398510000115,
+            0.22786396100002548,
+            0.22218425500000194
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            1.0238174750000155,
+            1.0723125850000201,
+            1.008342273999972
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-url-suffix",
+      "category": "url",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "AST-WEBVIEW-HOST-ALLOWLIST",
+            "AST-WEBVIEW-UNTRUSTED-URL"
+          ],
+          "seconds": [
+            0.2305827409999779,
+            0.24288304800001015,
+            0.23946119600003613
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            1.012800346000006,
+            1.0717411669999706,
+            1.0094571469999778
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-url-constant",
+      "category": "url",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22321219299999484,
+            0.21931881299997258,
+            0.22080865999998878
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            1.1882018759999937,
+            1.10894272500002,
+            1.0970577109999908
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-ssl-proceed",
+      "category": "ssl",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "AST-WEBVIEW-SSL-BYPASS",
+            "WEBVIEW-SSL-BYPASS"
+          ],
+          "seconds": [
+            0.2215829749999898,
+            0.22124661600003037,
+            0.2268247890000339
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_webview_ignore_ssl"
+          ],
+          "seconds": [
+            1.0740699480000444,
+            1.0056477939999695,
+            1.0151150670000106
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-ssl-cancel",
+      "category": "ssl",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.23323036400000774,
+            0.2247524869999893,
+            0.28279067900001564
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            1.0847802139999771,
+            1.0021092270000054,
+            0.99072160999998
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-ssl-comment",
+      "category": "ssl",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22308043399999633,
+            0.22245852899999363,
+            0.2206496659999857
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            1.0695479370000385,
+            1.030524861999993,
+            1.0366533799999615
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-ssl-unrelated",
+      "category": "ssl",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.23301254900002277,
+            0.23055055899999388,
+            0.22965019299999767
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_webview_ignore_ssl"
+          ],
+          "seconds": [
+            1.0875343099999668,
+            1.0164148019999857,
+            1.0172713050000084
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-file-true",
+      "category": "file",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "WEBVIEW-FILE-ACCESS"
+          ],
+          "seconds": [
+            0.22939421799998172,
+            0.23198432199995977,
+            0.2257230029999846
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_webview_allow_file_from_url"
+          ],
+          "seconds": [
+            1.1242295229999968,
+            1.0015100720000305,
+            1.0224562569999875
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-file-false",
+      "category": "file",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22983621800000265,
+            0.2274114449999729,
+            0.2310834450000243
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            1.0661863369999764,
+            1.0222305809999739,
+            1.0797594770000387
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-log-secret",
+      "category": "log",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "STORAGE-SENSITIVE-LOG"
+          ],
+          "seconds": [
+            0.22916377100000318,
+            0.22510741199999984,
+            0.22252370100000007
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_logging"
+          ],
+          "seconds": [
+            1.0165922300000148,
+            1.0006599979999464,
+            1.0711149250000176
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-log-redacted",
+      "category": "log",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.2236968230000116,
+            0.22216761799995766,
+            0.21683820200001946
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_logging"
+          ],
+          "seconds": [
+            1.0023661500000003,
+            1.0255767630000037,
+            1.066144367999982
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-log-comment",
+      "category": "log",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.2304993430000195,
+            0.2345238409999979,
+            0.22279128799999626
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.9940250860000219,
+            1.0615844949999769,
+            0.9987834240000097
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-cipher-ecb",
+      "category": "ecb",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "AST-CRYPTO-ECB"
+          ],
+          "seconds": [
+            0.23332751799995322,
+            0.2243162039999902,
+            0.22144029999998338
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_aes_ecb"
+          ],
+          "seconds": [
+            1.0196194929999933,
+            0.9978152020000266,
+            1.0386348669999848
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-cipher-gcm",
+      "category": "ecb",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.21945579399999815,
+            0.21369464099996094,
+            0.2246031380000204
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.9886547890000088,
+            1.0644841220000103,
+            0.9900282069999662
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-digest-md5",
+      "category": "md5",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "AST-CRYPTO-WEAK-HASH"
+          ],
+          "seconds": [
+            0.22848329199996442,
+            0.2418428289999497,
+            0.22454480599998305
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_md5"
+          ],
+          "seconds": [
+            1.0238795500000037,
+            1.0497527940000282,
+            0.995470097000009
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-digest-sha-256",
+      "category": "md5",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22555737800001907,
+            0.21607497799999464,
+            0.2262679600000297
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            1.0179977619999931,
+            1.055336782999973,
+            1.0120859419999988
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-sql-concat",
+      "category": "sql",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "AST-SQL-CONCAT"
+          ],
+          "seconds": [
+            0.22564464700002418,
+            0.2234027590000096,
+            0.22615188200001057
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_sql_raw_query"
+          ],
+          "seconds": [
+            1.0818873680000252,
+            0.9993195729999798,
+            1.0037268689999905
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-sql-bound",
+      "category": "sql",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.2262763090000135,
+            0.231969203999995,
+            0.23747928799997453
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_sql_raw_query"
+          ],
+          "seconds": [
+            1.1001926129999902,
+            1.0110606469999652,
+            1.0255613369999992
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-debug-true",
+      "category": "debug",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "ANDROID-DEBUG"
+          ],
+          "seconds": [
+            0.235584523,
+            0.23755200699997658,
+            0.23267909200001213
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "manifest:app_is_debuggable"
+          ],
+          "seconds": [
+            1.1100605060000248,
+            1.0497630439999739,
+            1.0158278270000096
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-debug-false",
+      "category": "debug",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22269600500004572,
+            0.21690018399999644,
+            0.22122679800003198
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            1.0510317179999902,
+            0.9991836149999926,
+            0.9784791199999745
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-cleartext-true",
+      "category": "cleartext",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "ANDROID-CLEARTEXT"
+          ],
+          "seconds": [
+            0.22408232499998348,
+            0.22894337000002452,
+            0.21283389299998134
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "manifest:clear_text_traffic"
+          ],
+          "seconds": [
+            1.057159755999976,
+            0.9896316809999917,
+            0.9854870430000346
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-cleartext-false",
+      "category": "cleartext",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22300617599995576,
+            0.2215032189999988,
+            0.2227419850000274
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            1.0615231759999801,
+            1.0251691689999802,
+            1.0658656089999567
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "kotlin-ssl-proceed",
+      "category": "ssl",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "AST-WEBVIEW-SSL-BYPASS",
+            "WEBVIEW-SSL-BYPASS"
+          ],
+          "seconds": [
+            0.2232166299999676,
+            0.21939573499997778,
+            0.2222652009999706
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.8896576799999707,
+            0.8758008120000227,
+            0.953064473999973
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "kotlin-ssl-cancel",
+      "category": "ssl",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22926889899997605,
+            0.22591820899998538,
+            0.2252846680000289
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.9405442920000269,
+            0.8931560290000107,
+            0.9842883850000135
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "kotlin-url-direct",
+      "category": "url",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "AST-WEBVIEW-UNTRUSTED-URL"
+          ],
+          "seconds": [
+            0.22914501099995732,
+            0.219486924000023,
+            0.2170104150000043
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.8897264279999604,
+            0.9294884729999922,
+            0.9392056270000353
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "kotlin-url-guarded",
+      "category": "url",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22642492799997171,
+            0.22712463600004185,
+            0.22075211000003492
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.88734207899995,
+            0.8766839599999798,
+            0.9215015009999661
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "kotlin-log-secret",
+      "category": "log",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "STORAGE-SENSITIVE-LOG"
+          ],
+          "seconds": [
+            0.2327143549999846,
+            0.22500053300001355,
+            0.22211721400003626
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.8784188679999829,
+            0.9282287549999637,
+            0.8775031190000391
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "kotlin-log-redacted",
+      "category": "log",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.2221190580000325,
+            0.21686908200001653,
+            0.21490101700004516
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.8837253479999845,
+            0.9500815690000195,
+            0.8785548209999661
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-url-direct",
+      "category": "url",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "AST-WEBVIEW-UNTRUSTED-URL"
+          ],
+          "seconds": [
+            0.2294134849999523,
+            0.2263037250000366,
+            0.2215035120000266
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.3348449360000245,
+            0.3253808910000089,
+            0.31730669000000944
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-url-guarded",
+      "category": "url",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22445662100000163,
+            0.21490813999997727,
+            0.22054628300003287
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.33874063299998625,
+            0.38826778000003515,
+            0.3286187429999927
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-log-secret",
+      "category": "log",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "STORAGE-SENSITIVE-LOG"
+          ],
+          "seconds": [
+            0.2260874340000214,
+            0.21721417100002327,
+            0.2189321729999847
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "ios_swift_log"
+          ],
+          "seconds": [
+            0.33341556099998115,
+            0.32425772900000993,
+            0.31473328200002015
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-log-redacted",
+      "category": "log",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22091438100000005,
+            0.2253595520000431,
+            0.2194444440000325
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "ios_swift_log"
+          ],
+          "seconds": [
+            0.3255120199999624,
+            0.3252801090000048,
+            0.3218013960000121
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-log-comment",
+      "category": "log",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.21941941799997267,
+            0.2209505570000374,
+            0.21958747000002177
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.3308429339999748,
+            0.3297792590000199,
+            0.39883205599994653
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-keychain-always",
+      "category": "keychain",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "IOS-KEYCHAIN-ACCESS"
+          ],
+          "seconds": [
+            0.22395216400002482,
+            0.21750487600002089,
+            0.21828794199996082
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "ios_keychain_weak_accessibility_value"
+          ],
+          "seconds": [
+            0.33134006599999566,
+            0.31750161899998375,
+            0.3198284259999582
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-keychain-whenunlockedthisdeviceonly",
+      "category": "keychain",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22686252699998022,
+            0.22048495199999252,
+            0.22012567799998806
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.3273343999999838,
+            0.32007766100002755,
+            0.31822822399999495
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-digest-md5",
+      "category": "md5",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "AST-CRYPTO-WEAK-HASH"
+          ],
+          "seconds": [
+            0.22124599999995098,
+            0.21617335899998125,
+            0.21858253800002103
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "ios_swift_md5_collision"
+          ],
+          "seconds": [
+            0.34550039199996263,
+            0.3268134979999786,
+            0.3950503169999706
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-digest-sha256",
+      "category": "md5",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.223974314999964,
+            0.22023954099995535,
+            0.22360973100001047
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.33885973700000704,
+            0.3222539590000224,
+            0.32036982699997907
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-ats-true",
+      "category": "ats",
+      "risky": true,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "IOS-ATS"
+          ],
+          "seconds": [
+            0.22231578200000968,
+            0.22319677000001548,
+            0.21696947999998883
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "ats:App Transport Security AllowsArbitraryLoads is allowed"
+          ],
+          "seconds": [
+            0.3278320430000008,
+            0.32319184499999665,
+            0.327956142000005
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "swift-ats-false",
+      "category": "ats",
+      "risky": false,
+      "input_kind": "source-zip",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.22472909800001162,
+            0.2173049380000407,
+            0.22058850899998106
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.33689761200002977,
+            0.32296293299998524,
+            0.32305143599995745
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-ssl-proceed-apk",
+      "category": "ssl",
+      "risky": true,
+      "input_kind": "apk",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "BINARY-WEBVIEW-SSL-BYPASS"
+          ],
+          "seconds": [
+            0.5544693619999634,
+            0.3712831299999948,
+            0.3774703699999691
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_webview_ignore_ssl"
+          ],
+          "seconds": [
+            4.211541160999957,
+            2.87704671299997,
+            2.8711378430000423
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-ssl-cancel-apk",
+      "category": "ssl",
+      "risky": false,
+      "input_kind": "apk",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.3834344539999961,
+            0.38182317799999055,
+            0.36821036300000287
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            4.0508992759999956,
+            2.8346290979999935,
+            2.7698908999999503
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-file-true-apk",
+      "category": "file",
+      "risky": true,
+      "input_kind": "apk",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "BINARY-WEBVIEW-FILE-ACCESS"
+          ],
+          "seconds": [
+            0.37469514600002185,
+            0.3754783730000213,
+            0.3686030130000404
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "android_webview_allow_file_from_url"
+          ],
+          "seconds": [
+            4.0820337320000135,
+            2.6953059880000296,
+            2.857021395000004
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-file-false-apk",
+      "category": "file",
+      "risky": false,
+      "input_kind": "apk",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.3728660219999824,
+            0.36015619299996615,
+            0.38336132199998474
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            4.19068170700001,
+            2.749454034999985,
+            2.6710997939999856
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-debug-true-apk",
+      "category": "debug",
+      "risky": true,
+      "input_kind": "apk",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [
+            "ANDROID-DEBUG"
+          ],
+          "seconds": [
+            0.3658589119999647,
+            0.36350133100000903,
+            0.35908384700002216
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [
+            "manifest:app_is_debuggable"
+          ],
+          "seconds": [
+            3.9104530490000116,
+            2.865523596999992,
+            2.8163124839999796
+          ],
+          "errors": []
+        }
+      }
+    },
+    {
+      "id": "java-debug-false-apk",
+      "category": "debug",
+      "risky": false,
+      "input_kind": "apk",
+      "tools": {
+        "apsa": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            0.3633252469999775,
+            0.35344122899999775,
+            0.36817996400003494
+          ],
+          "errors": []
+        },
+        "mobsf": {
+          "state": "completed",
+          "matched": [],
+          "seconds": [
+            4.0401557669999875,
+            2.807753032999983,
+            2.785684645999993
+          ],
+          "errors": []
+        }
+      }
+    }
+  ]
+}

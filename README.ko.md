@@ -200,4 +200,8 @@ make release RELEASE_OUT=dist/apsa-local-release
 
 제품 검증 기록은 [RELEASE_READINESS.md](https://github.com/ictechgy/apsa/blob/main/RELEASE_READINESS.md)에 있습니다. [선별한 벤치마크](https://github.com/ictechgy/apsa/blob/main/benchmarks/README.md)(영문)는 회귀 검사 사례 모음이며 운영 앱 탐지율을 나타내지 않습니다. 구조와 보안 경계는 [통합 경계](https://github.com/ictechgy/apsa/blob/main/docs/INTEGRATION.md)와 [위협 모델](https://github.com/ictechgy/apsa/blob/main/docs/THREAT_MODEL.md)에서 확인할 수 있습니다. 과거 리뷰는 당시 스냅샷에만 적용됩니다.
 
+새로 생성한 합성 소스 프로젝트와 APK를 사용하는 [APSA/MobSF 비교](benchmarks/COMPETITIVE.md)(영문)와
+[측정 결과](benchmarks/COMPETITIVE_RESULTS.ko.md)를 제공합니다. 개선한 규칙은 아직 배포하지 않은
+벤치마크 후보이며, 이 결과는 운영 앱의 정확도를 나타내지 않습니다.
+
 소스는 [GitHub](https://github.com/ictechgy/apsa)에 공개되어 있습니다. [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE)는 원래 Quaygate의 MIT 고지를 보존합니다. 이번 공개는 통합 제품에 추가 라이선스를 선언하지 않습니다.
