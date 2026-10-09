@@ -240,3 +240,49 @@ def test_correlation_uses_resolved_exact_and_skips_superseded_candidates():
     assert findings == []
     findings, _ = correlate(inventory, [record("org.jsoup:jsoup", "3.4.0")])
     assert [f["status"] for f in findings] == ["candidate"]
+
+
+def test_module_roles_keep_tooling_test_and_test_support_declarations_out(tmp_path):
+    deps = project(
+        tmp_path,
+        'plugins { id("com.android.application") }\n'
+        "dependencies {\n"
+        "  implementation(projects.core.data)\n"
+        "  testImplementation(projects.core.testing)\n"
+        '  testImplementation(project(":core:fixtures"))\n'
+        "}\n",
+        {
+            "core/data/build.gradle.kts": "dependencies { implementation(libs.okhttp) }\n",
+            "core/testing/build.gradle.kts": (
+                'dependencies {\n  api(libs.junit)\n  implementation(project(":core:fixtures"))\n}\n'
+            ),
+            "core/fixtures/build.gradle.kts": "dependencies { implementation(libs.leakcanary) }\n",
+            "benchmarks/build.gradle.kts": (
+                "plugins { alias(libs.plugins.synthetic.android.test) }\n"
+                "dependencies { implementation(libs.androidx.core.ktx) }\n"
+            ),
+            "build-logic/convention/build.gradle.kts": (
+                "plugins { `kotlin-dsl` }\ndependencies { implementation(libs.jsoup) }\n"
+            ),
+            "buildSrc/build.gradle": "dependencies { implementation libs.okio }\n",
+        },
+    )
+    assert deps["com.squareup.okhttp3:okhttp"]["catalog_usage"]["state"] == "declared"
+    for name, state in [
+        ("junit:junit", "non-shipping-module"),
+        ("com.squareup.leakcanary:leakcanary-android", "non-shipping-module"),
+        ("androidx.core:core-ktx", "non-shipping-module"),
+        ("org.jsoup:jsoup", "build-tooling"),
+        ("com.squareup.okio:okio", "build-tooling"),
+    ]:
+        assert deps[name]["confidence"] == "unknown", name
+        assert deps[name]["catalog_usage"]["state"] == state, name
+
+
+def test_unreferenced_modules_remain_possible_applications(tmp_path):
+    deps = project(
+        tmp_path,
+        "dependencies { implementation(libs.okhttp) }\n",
+        {"wear/build.gradle.kts": "dependencies { implementation(libs.jsoup) }\n"},
+    )
+    assert deps["org.jsoup:jsoup"]["confidence"] == "declared"

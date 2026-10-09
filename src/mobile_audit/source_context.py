@@ -215,6 +215,113 @@ def _configuration_state(configuration: str, enclosing: list[str]) -> str:
     return "referenced-unclassified"
 
 
+def _declaration_state(
+    stream: list[tuple[str, str, int]], index: int, line: int, blocks: list[str]
+) -> tuple[str, str]:
+    """Classify the dependency configuration that encloses the expression at index."""
+    configuration = ""
+    platform = False
+    # Walk back over wrappers such as implementation(platform(libs.x)) or add("api", libs.x).
+    back = index - 1
+    while back >= 0 and stream[back][1] == "(":
+        callee = stream[back - 1] if back else None
+        if callee and callee[1] in {"platform", "enforcedPlatform"}:
+            platform = True
+            back -= 2
+            continue
+        if callee and callee[0] == "string":
+            configuration = callee[1][1:-1]
+        elif callee and callee[0] == "code" and re.fullmatch(r"[A-Za-z_]\w*", callee[1]):
+            configuration = callee[1]
+        break
+    if not configuration and back >= 3 and stream[back][1] == ",":
+        call = stream[back - 3 : back]
+        if [t[1] for t in call[:2]] == ["add", "("] and call[2][0] == "string":
+            configuration = call[2][1][1:-1]
+    if not configuration and back >= 0 and stream[back][0] == "code" and stream[back][2] == line:
+        # Groovy command syntax: implementation libs.foo
+        if re.fullmatch(r"[A-Za-z_]\w*", stream[back][1]):
+            configuration = stream[back][1]
+    if platform:
+        return "platform-only", configuration
+    if not configuration:
+        return "referenced-unclassified", configuration
+    return _configuration_state(configuration, blocks), configuration
+
+
+def _module_key(parts: list[str]) -> str:
+    return ".".join(re.sub(r"[-_]", "", part).lower() for part in parts if part)
+
+
+def _module_roles(sources: list[tuple[str, str]]) -> dict[str, str]:
+    """Return build-script directories whose declarations do not ship in an app.
+
+    Build tooling (buildSrc, kotlin-dsl or java-gradle-plugin builds) and Android
+    test modules never ship. A library module consumed by other modules only
+    through non-shipping configurations does not ship either; modules nothing
+    references remain possible applications and keep their declarations.
+    """
+    scripts = {
+        PurePosixPath(path).parent: text
+        for path, text in sources
+        if PurePosixPath(path).name in {"build.gradle", "build.gradle.kts"}
+    }
+    roles: dict[PurePosixPath, str] = {}
+    keys = {_module_key(list(directory.parts)): directory for directory in scripts}
+    edges: dict[PurePosixPath, list[tuple[PurePosixPath, str]]] = {}
+    for directory, text in scripts.items():
+        if "buildSrc" in directory.parts or re.search(r"`kotlin-dsl`|[\"']java-gradle-plugin[\"']", text):
+            roles[directory] = "build-tooling"
+        elif re.search(r"[\"']com\.android\.test[\"']|plugins\.(?:\w+\.)*android\.test\b", text):
+            roles[directory] = "non-shipping-module"
+        try:
+            stream = tokens(text)
+        except ValueError:
+            continue
+        blocks: list[str] = []
+        for index, (kind, value, line) in enumerate(stream):
+            if kind == "code" and value == "{":
+                blocks.append(" ".join(t[1] for t in stream[max(0, index - 6) : index] if t[2] == line))
+                continue
+            if kind == "code" and value == "}":
+                if blocks:
+                    blocks.pop()
+                continue
+            target = None
+            if kind == "code" and value == "projects" and not (index and stream[index - 1][1] == "."):
+                chain = []
+                cursor = index + 1
+                while (
+                    cursor + 1 < len(stream) and stream[cursor][1] == "." and stream[cursor + 1][0] == "code"
+                ):
+                    chain.append(stream[cursor + 1][1])
+                    cursor += 2
+                target = _module_key(chain)
+            elif (
+                kind == "code"
+                and value == "project"
+                and stream[index + 1 : index + 2] == [("code", "(", line)]
+            ):
+                argument = stream[index + 2] if index + 2 < len(stream) else None
+                if argument and argument[0] == "string":
+                    target = _module_key(argument[1][1:-1].split(":"))
+            if target and target in keys and keys[target] != directory:
+                state, _ = _declaration_state(stream, index, line, blocks)
+                edges.setdefault(keys[target], []).append((directory, state))
+    live = {directory for directory in scripts if directory not in roles}
+    changed = True
+    while changed:
+        changed = False
+        for directory, consumers in edges.items():
+            if directory in live and not any(
+                state == "declared" and consumer in live for consumer, state in consumers
+            ):
+                live.discard(directory)
+                roles.setdefault(directory, "non-shipping-module")
+                changed = True
+    return {directory.as_posix(): role for directory, role in roles.items()}
+
+
 def _catalog_references(path: str, text: str, names: set[str]) -> list[dict]:
     """Find catalog accessors in dependency declarations; other uses stay unclassified."""
     stream = tokens(text)
@@ -257,36 +364,7 @@ def _catalog_references(path: str, text: str, names: set[str]) -> list[dict]:
             kind_name, key = "library", ".".join(chain)
         else:
             continue
-        configuration = ""
-        platform = False
-        # Walk back over wrappers such as implementation(platform(libs.x)) or add("api", libs.x).
-        back = index - 1
-        while back >= 0 and stream[back][1] == "(":
-            callee = stream[back - 1] if back else None
-            if callee and callee[1] in {"platform", "enforcedPlatform"}:
-                platform = True
-                back -= 2
-                continue
-            if callee and callee[0] == "string":
-                configuration = callee[1][1:-1]
-            elif callee and callee[0] == "code" and re.fullmatch(r"[A-Za-z_]\w*", callee[1]):
-                configuration = callee[1]
-            break
-        if not configuration and back >= 3 and stream[back][1] == ",":
-            call = stream[back - 3 : back]
-            if [t[1] for t in call[:2]] == ["add", "("] and call[2][0] == "string":
-                configuration = call[2][1][1:-1]
-        if not configuration and back >= 0 and stream[back][0] == "code" and stream[back][2] == line:
-            # Groovy command syntax: implementation libs.foo
-            if re.fullmatch(r"[A-Za-z_]\w*", stream[back][1]):
-                configuration = stream[back][1]
-        state = (
-            "platform-only"
-            if platform
-            else _configuration_state(configuration, blocks)
-            if configuration
-            else "referenced-unclassified"
-        )
+        state, configuration = _declaration_state(stream, index, line, blocks)
         found.append(
             {
                 "kind": kind_name,
@@ -326,6 +404,11 @@ def resolve_catalog_usage(dependencies: list[dict], sources: list[tuple[str, str
         root = location.parent.parent if location.parent.name == "gradle" else location.parent
         names[dep["path"]] = (name, root)
     accessor_names = {name for name, _ in names.values() if name}
+    try:
+        roles = _module_roles(sources)
+    except ValueError as error:
+        roles = {}
+        warnings.append(f"Gradle module graph not resolved: {error}")
     references = []
     for path, text in sources:
         if not path.endswith((".gradle", ".gradle.kts", ".kt")) or not any(
@@ -333,9 +416,15 @@ def resolve_catalog_usage(dependencies: list[dict], sources: list[tuple[str, str
         ):
             continue
         try:
-            references.extend(_catalog_references(path, text, accessor_names))
+            found = _catalog_references(path, text, accessor_names)
         except ValueError as error:
             warnings.append(f"Catalog usage not resolved in {path}: {error}")
+            continue
+        role = roles.get(PurePosixPath(path).parent.as_posix()) if path.endswith(("gradle", ".kts")) else None
+        for ref in found:
+            if role and ref["state"] == "declared":
+                ref["state"] = role
+        references.extend(found)
     for dep in catalogs:
         name, root = names[dep["path"]]
         usage = {"state": "catalog-name-unresolved" if not name else "no-reference-found", "references": []}
@@ -356,6 +445,8 @@ def resolve_catalog_usage(dependencies: list[dict], sources: list[tuple[str, str
                 "declared",
                 "platform-only",
                 "non-shipping-configuration",
+                "non-shipping-module",
+                "build-tooling",
                 "referenced-unclassified",
             ):
                 if any(ref["state"] == state for ref in matched):
