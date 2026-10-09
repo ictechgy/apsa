@@ -1,0 +1,273 @@
+{
+  "schema": "apsa-fpfn-pairs-v1",
+  "labeled_on": "2026-10-09",
+  "labeler": "independent research agent; scanner not run or inspected",
+  "pairs": [
+    {
+      "id": "home-assistant-android-myactivity-webview-url",
+      "repository": "home-assistant/android",
+      "platform": "android",
+      "advisory": {"id": "CVE-2023-41898 / GHSA-jvpm-q3hq-86rg (GHSL-2023-142)", "url": "https://github.com/home-assistant/core/security/advisories/GHSA-jvpm-q3hq-86rg"},
+      "vulnerable_commit": "c11f2da26f29c57372929b2aa86e741b700947cf",
+      "fixed_commit": "201931b91e0ec9c53298543ae0550df0becdc955",
+      "category": "AST-WEBVIEW-UNTRUSTED-URL",
+      "expected_rules": ["AST-WEBVIEW-UNTRUSTED-URL"],
+      "vulnerable_locations": [
+        {"path": "app/src/main/java/io/homeassistant/companion/android/launch/my/MyActivity.kt", "function": "MyActivity.onCreate", "start_line": 37, "end_line": 72}
+      ],
+      "fixed_locations": [
+        {"path": "app/src/main/java/io/homeassistant/companion/android/launch/my/MyActivity.kt", "function": "MyActivity.onCreate", "note": "Lines 48-57 now finish() unless intent.data has scheme == \"https\", host == \"my.home-assistant.io\" (exact equality) and a path that starts with \"/redirect/\". The loadUrl call (now line 80) is reached only after that check. The startsWith applies to the path, not the host."}
+      ],
+      "evidence": "MyActivity is exported (VIEW filter, AndroidManifest line 279-280). At the vulnerable commit, onCreate took intent.data, only rejected URIs that already had mobile=1 (lines 43-47), added mobile=1 and called binding.webview.loadUrl(newUri) on a JavaScript-enabled WebView (line 70). Any app could therefore load an arbitrary URL (GHSL-2023-142 / CVE-2023-41898). Fix commit 201931b9 (#3826, first released in 2023.9.x, after the 2023.8.2 range named in the advisory) adds an exact scheme/host check and a path-prefix check before the load.",
+      "verified_by": "gh api repos/home-assistant/android/commits/{c11f2da2,201931b9} (201931b9's parent is c11f2da2). Fetched MyActivity.kt at both SHAs via contents?ref= and diffed. Fetched AndroidManifest.xml at c11f2da2 to confirm exported=true. compare 2023.8.2...201931b9 = ahead and 201931b9...2023.9.2 = ahead. gh api repos/home-assistant/core/security-advisories/GHSA-jvpm-q3hq-86rg."
+    },
+    {
+      "id": "element-x-android-call-intent-url-allowlist",
+      "repository": "element-hq/element-x-android",
+      "platform": "android",
+      "advisory": {"id": "CVE-2025-27599 / GHSA-m5px-pwq3-4p5m", "url": "https://github.com/element-hq/element-x-android/security/advisories/GHSA-m5px-pwq3-4p5m"},
+      "vulnerable_commit": "c0a1d8d586c8ae7d5beca7583ec74601e300a95e",
+      "fixed_commit": "dc058544d7e693c04298191c1aadd5b39c9be52e",
+      "category": "AST-WEBVIEW-UNTRUSTED-URL",
+      "expected_rules": ["AST-WEBVIEW-UNTRUSTED-URL"],
+      "vulnerable_locations": [
+        {"path": "features/call/impl/src/main/kotlin/io/element/android/features/call/impl/utils/CallIntentDataParser.kt", "function": "CallIntentDataParser.parse / getUrlParameter", "start_line": 16, "end_line": 43},
+        {"path": "features/call/impl/src/main/kotlin/io/element/android/features/call/impl/ui/ElementCallActivity.kt", "function": "ElementCallActivity.setCallType", "start_line": 203, "end_line": 207},
+        {"path": "features/call/impl/src/main/kotlin/io/element/android/features/call/impl/ui/CallScreenView.kt", "function": "CallWebView (AndroidView update lambda)", "start_line": 158, "end_line": 161}
+      ],
+      "fixed_locations": [
+        {"path": "features/call/impl/src/main/kotlin/io/element/android/features/call/impl/utils/CallIntentDataParser.kt", "function": "CallIntentDataParser.parse", "note": "Adds knownHosts = [\"call.element.io\"] and applies .takeIf { it.host in knownHosts } to every branch, including the element://call and io.element.call ?url= branches. Host matching is now exact."},
+        {"path": "features/call/impl/src/main/kotlin/io/element/android/features/call/impl/ui/ElementCallActivity.kt", "function": "ElementCallActivity.setCallType", "note": "Unchanged. intent.dataString is still parsed, but a non-allowlisted host now yields null."},
+        {"path": "features/call/impl/src/main/kotlin/io/element/android/features/call/impl/ui/CallScreenView.kt", "function": "CallWebView", "note": "Sink unchanged (webView.loadUrl(url.data)). It now only receives allowlisted URLs."}
+      ],
+      "evidence": "ElementCallActivity is exported with VIEW filters for https://call.element.io, element://call and io.element.call. setCallType passes intent.dataString to CallIntentDataParser.parse. For the custom schemes, parse returned the url query parameter after checking only that it was https with a non-empty host. The result became CallType.ExternalUrl and was loaded by webView.loadUrl in CallWebView (CallScreenView.kt line 160), which auto-granted mic/camera (CVE-2025-27599). Fix dc058544 ('Check validity of Element Call url host', released 25.04.2) applies the exact host allowlist to every branch. The flow is interprocedural across three files.",
+      "verified_by": "gh api repos/element-hq/element-x-android/security-advisories/GHSA-m5px-pwq3-4p5m. compare v25.04.1...v25.04.2 shows only c0a1d8d5 and dc058544. gh api commits/dc058544 (single parent c0a1d8d5) and its patch. Fetched CallIntentDataParser.kt, ElementCallActivity.kt, CallScreenView.kt and the call feature AndroidManifest.xml at c0a1d8d5."
+    },
+    {
+      "id": "element-x-ios-call-deeplink-wkwebview",
+      "repository": "element-hq/element-x-ios",
+      "platform": "ios",
+      "advisory": {"id": "CVE-2026-55644 / GHSA-54w7-rw44-49m7", "url": "https://github.com/element-hq/element-x-ios/security/advisories/GHSA-54w7-rw44-49m7"},
+      "vulnerable_commit": "dc26e9eb5c56024335340bb0c6e0e416b4d98ce5",
+      "fixed_commit": "63592e48c1a1e47f75693045efd85a7d4468ea84",
+      "category": "AST-WEBVIEW-UNTRUSTED-URL",
+      "expected_rules": ["AST-WEBVIEW-UNTRUSTED-URL"],
+      "vulnerable_locations": [
+        {"path": "ElementX/Sources/Application/Navigation/AppRoutes.swift", "function": "ElementCallURLParser.route(from:)", "start_line": 139, "end_line": 175},
+        {"path": "ElementX/Sources/Screens/CallScreen/View/CallScreen.swift", "function": "Coordinator.load(_:)", "start_line": 153, "end_line": 162}
+      ],
+      "fixed_locations": [
+        {"path": "ElementX/Sources/Application/Navigation/AppRoutes.swift", "function": "AppRouteURLParser (ElementCallURLParser removed)", "note": "ElementCallURLParser and AppRoute.genericCallLink are deleted. io.element.call:// links no longer produce a call route."},
+        {"path": "ElementX/Sources/Screens/CallScreen/View/CallScreen.swift", "function": "Coordinator.load(_:)", "note": "WKWebView.load sink still exists, but CallScreenViewModel now only gets URLs from the room-call widget driver with the configured Element Call base URL. GenericCallLinkWidgetDriver is deleted."}
+      ],
+      "evidence": "In the vulnerable ElementCallURLParser.route, the custom-scheme branch (lines 150-166) takes the 'url' query item from an io.element.call:// deep link and returns .genericCallLink(url:) after checking only callURL.scheme == \"https\". It never applies the knownHosts allowlist that the universal-link branch uses. That URL is loaded into the call WKWebView (CallScreen.swift line 159-160), which grants media capture (CVE-2026-55644). PR #5515 (commit 63592e48, shipped in 26.05.0) removes SPA call-link handling entirely. Note: line 169's knownHosts.contains(host) is Array membership (exact match), not substring matching.",
+      "verified_by": "gh api repos/element-hq/element-x-ios/security-advisories/GHSA-54w7-rw44-49m7 names PR #5515. gh api pulls/5515 gives merge_commit_sha 63592e48, whose single parent is dc26e9eb. compare 63592e48...release/26.05.0 = ahead. Fetched AppRoutes.swift and CallScreen.swift at dc26e9eb, and AppRoutes.swift at 63592e48 (0 occurrences of ElementCallURLParser/genericCallLink)."
+    },
+    {
+      "id": "smssync-twitter-oauth-ssl-proceed",
+      "repository": "ushahidi/SMSSync",
+      "platform": "android",
+      "advisory": {"id": null, "url": "https://github.com/ushahidi/SMSSync/pull/475"},
+      "vulnerable_commit": "d8746806d15ca37e0fa894115efe483f49ec1730",
+      "fixed_commit": "7ca81abea0064e842fbbf99b43676a9eb23f7e24",
+      "category": "WEBVIEW-SSL-BYPASS",
+      "expected_rules": ["AST-WEBVIEW-SSL-BYPASS", "WEBVIEW-SSL-BYPASS"],
+      "vulnerable_locations": [
+        {"path": "smssync/src/main/java/org/addhen/smssync/data/twitter/TwitterOAuthView.java", "function": "LocalWebViewClient.onReceivedSslError", "start_line": 805, "end_line": 808}
+      ],
+      "fixed_locations": [
+        {"path": "smssync/src/main/java/org/addhen/smssync/data/twitter/TwitterOAuthView.java", "function": "LocalWebViewClient (override removed)", "note": "The onReceivedSslError override that called handler.proceed() and the SslError/SslErrorHandler imports are deleted, so the WebViewClient default (cancel) applies."}
+      ],
+      "evidence": "The Twitter OAuth WebView's LocalWebViewClient overrode onReceivedSslError and called handler.proceed() unconditionally (lines 805-808), so any TLS certificate error was accepted during OAuth login. Commit 7ca81abe ('Removed onReceivedSslError override. In compliance with Google Play warnings about inherent security vulnerability', PR #475 'fix-local-web-client-ssl-error') deletes the override. No CVE. This is an explicit security-fix commit.",
+      "verified_by": "gh api repos/ushahidi/SMSSync/commits/7ca81abe (parent d8746806) and its patch. gh api pulls/475. Fetched TwitterOAuthView.java at both SHAs: proceed() is at line 807 in d8746806 and onReceivedSslError is absent in 7ca81abe. compare 7ca81abe...master = ahead."
+    },
+    {
+      "id": "openclaw-android-canvas-js-bridge",
+      "repository": "openclaw/openclaw",
+      "platform": "android",
+      "advisory": {"id": "CVE-2026-35643 / GHSA-cxmw-p77q-wchg", "url": "https://github.com/openclaw/openclaw/security/advisories/GHSA-cxmw-p77q-wchg"},
+      "vulnerable_commit": "94f397bc5fe3625b4dd44e3b4c0b550d5482bb38",
+      "fixed_commit": "8b02ef133275be96d8aac2283100016c8a7f32e5",
+      "category": "WEBVIEW-JS-BRIDGE",
+      "expected_rules": ["AST-WEBVIEW-JS-BRIDGE", "WEBVIEW-JS-BRIDGE"],
+      "vulnerable_locations": [
+        {"path": "apps/android/app/src/main/java/ai/openclaw/app/ui/CanvasScreen.kt", "function": "CanvasScreen (AndroidView factory: addJavascriptInterface)", "start_line": 125, "end_line": 126},
+        {"path": "apps/android/app/src/main/java/ai/openclaw/app/ui/CanvasScreen.kt", "function": "CanvasA2UIActionBridge.postMessage", "start_line": 150, "end_line": 156}
+      ],
+      "fixed_locations": [
+        {"path": "apps/android/app/src/main/java/ai/openclaw/app/ui/CanvasScreen.kt", "function": "CanvasScreen / CanvasA2UIActionBridge.postMessage", "note": "addJavascriptInterface is still present (now line 142), but the bridge takes an isTrustedPage() guard. postMessage returns early (line 174) unless the current page URL, snapshotted in onPageStarted/onPageFinished, passes the trust check. Fixed by guard, not by removal."},
+        {"path": "apps/android/app/src/main/java/ai/openclaw/app/node/CanvasActionTrust.kt", "function": "CanvasActionTrust.isTrustedCanvasActionUrl / isTrustedA2uiPage", "note": "New file. Trusts the bundled scaffold asset, or URLs whose scheme, host (exact equalsIgnoreCase) and port match a trusted A2UI URL, with a path prefix check."}
+      ],
+      "evidence": "The Canvas WebView enables JavaScript and navigates to agent/gateway-supplied URLs. It exposed CanvasA2UIActionBridge ('openclawCanvasA2UIAction') whose postMessage forwarded any payload to handleCanvasA2UIActionFromWebView, whatever the page origin. Any loaded page could therefore inject agent actions (CVE-2026-35643). Fix 8b02ef13 (#52722, shipped v2026.3.22) gates the bridge on a trusted-origin check. The interface registration is unchanged, so this pair tests whether the scanner recognizes an in-bridge origin guard.",
+      "verified_by": "gh api repos/openclaw/openclaw/security-advisories/GHSA-cxmw-p77q-wchg names fix commit 8b02ef13. gh api commits/8b02ef13 (parent 94f397bc) and its patch. Fetched CanvasScreen.kt at both SHAs and CanvasActionTrust.kt at 8b02ef13. CVE id taken from global advisory GHSA-cxmw-p77q-wchg (CVE-2026-35643). compare 8b02ef13...main = ahead."
+    },
+    {
+      "id": "tiddloid-editor-webview-file-url-access",
+      "repository": "donmor/Tiddloid",
+      "platform": "android",
+      "advisory": {"id": null, "url": "https://github.com/donmor/Tiddloid/issues/87"},
+      "vulnerable_commit": "e45f167c1e41c1c95bdeaff864d8f684736d8fea",
+      "fixed_commit": "80a0501eb5fd5e083ccce38c3d2fcd731b93a832",
+      "category": "WEBVIEW-FILE-ACCESS",
+      "expected_rules": ["WEBVIEW-FILE-ACCESS"],
+      "vulnerable_locations": [
+        {"path": "app/src/main/java/top/donmor/tiddloid/TWEditorWV.java", "function": "TWEditorWV.onCreate (setAllowFileAccessFromFileURLs(true), setAllowUniversalAccessFromFileURLs(true))", "start_line": 318, "end_line": 319}
+      ],
+      "fixed_locations": [
+        {"path": "app/src/main/java/top/donmor/tiddloid/TWEditorWV.java", "function": "TWEditorWV.onCreate", "note": "Both cross-origin file:// flags are removed: setAllowUniversalAccessFromFileURLs in c30c162c (PR #88) and setAllowFileAccessFromFileURLs in 80a0501e. wvs.setAllowFileAccess(true) and setAllowContentAccess(true) remain at lines 316-317 in BOTH commits. The app needs them to open local wiki files, and they are NOT part of this label."}
+      ],
+      "evidence": "The TiddlyWiki editor WebView runs JavaScript from user-imported .html wikis. It enabled setAllowFileAccessFromFileURLs(true) and setAllowUniversalAccessFromFileURLs(true) (lines 318-319), so script in a loaded file:// wiki could read other file:// and cross-origin resources. Security issue #87 reported this. Commit c30c162c (PR #88) dropped the universal flag, and 80a0501e ('Drop wvs.setAllowFileAccessFromFileURLs as well', changelog 'Dropped unnecessary access in WebView (#87)', v2.5.4) dropped the other. No CVE.",
+      "verified_by": "gh api repos/donmor/Tiddloid/commits/{c30c162c,80a0501e} and their patches (c30c162c's parent is e45f167c; 80a0501e's parent is c30c162c). gh api issues/87 and pulls/88. Fetched TWEditorWV.java at e45f167c (lines 316-319) and at 80a0501e (only 316-317 setAllow* remain). compare 80a0501e...master = identical."
+    },
+    {
+      "id": "nextcloud-android-filecontentprovider-sqli",
+      "repository": "nextcloud/android",
+      "platform": "android",
+      "advisory": {"id": "CVE-2021-43863 / GHSA-vjp2-f63v-w479 (GHSL-2021-1007)", "url": "https://github.com/nextcloud/android/security/advisories/GHSA-vjp2-f63v-w479"},
+      "vulnerable_commit": "07b4ac3d49ad804ffb9a8dc01f274e053833f3a6",
+      "fixed_commit": "627caba60e69e223b0fc89c4cb18eaa76a95db95",
+      "category": "AST-SQL-CONCAT",
+      "expected_rules": ["AST-SQL-CONCAT"],
+      "vulnerable_locations": [
+        {"path": "src/main/java/com/owncloud/android/providers/FileContentProvider.java", "function": "deleteDirectory", "start_line": 196, "end_line": 200},
+        {"path": "src/main/java/com/owncloud/android/providers/FileContentProvider.java", "function": "deleteSingleFile", "start_line": 218, "end_line": 220},
+        {"path": "src/main/java/com/owncloud/android/providers/FileContentProvider.java", "function": "query(SQLiteDatabase, Uri, String[], String, String[], String)", "start_line": 493, "end_line": 556}
+      ],
+      "fixed_locations": [
+        {"path": "src/main/java/com/owncloud/android/providers/FileContentProvider.java", "function": "deleteWithuri (new, called from deleteDirectory/deleteSingleFile)", "note": "The URI path segment is now bound as a parameter (_ID + \"=?\" with prependUriFirstSegmentToSelectionArgs). The caller-supplied 'where' is still concatenated, but delete() first validates it with VerificationUtils.verifyWhere for public URIs (line 137)."},
+        {"path": "src/main/java/com/owncloud/android/providers/FileContentProvider.java", "function": "query(SQLiteDatabase, ...)", "note": "appendWhere(column + \"=\" + uri.getPathSegments().get(1)) is replaced by appendWhere(idColumn + \"=?\") plus a bound argument (lines 560-564). selection and sortOrder are token-validated (verifyWhere/verifySortOrder) for public URIs."}
+      ],
+      "evidence": "FileContentProvider is exported (AndroidManifest line 224-228). At the vulnerable commit it concatenated caller-controlled content-URI path segments into SQL, in db.delete(... _ID + \"=\" + uri.getPathSegments().get(1) + \" AND (\" + where + \")\") and in SQLiteQueryBuilder.appendWhere(... + uri.getPathSegments().get(1)). It also passed caller-controlled selection/sortOrder through unvalidated, so other apps could inject SQL (GHSL-2021-1007, CVE-2021-43863). Fix merge 627caba6 ('Merge pull request from GHSA-vjp2-f63v-w479', stable-3.18, 3.18.1) parameterizes the URI segments and adds an SQLite tokenizer-based whitelist for where, sort and column names. Note: the sinks are SQLiteDatabase.delete and SQLiteQueryBuilder.appendWhere, not rawQuery/execSQL.",
+      "verified_by": "gh api repos/nextcloud/android/security-advisories/GHSA-vjp2-f63v-w479. gh api commits/627caba6 (merge; first parent 07b4ac3d) and its FileContentProvider.java patch. Fetched FileContentProvider.java at both SHAs, grepped getPathSegments().get(1) and appendWhere, and read lines 168-232 and 486-560 of the vulnerable file. Fetched AndroidManifest.xml at 07b4ac3d (exported=true). The fix is on branch stable-3.18; compare against master reports diverged."
+    },
+    {
+      "id": "element-android-verification-event-log-leak",
+      "repository": "element-hq/element-android",
+      "platform": "android",
+      "advisory": {"id": null, "url": "https://github.com/element-hq/element-android/pull/6706"},
+      "vulnerable_commit": "21e88efaffa0019883c1b6ef2e9d52e11192b714",
+      "fixed_commit": "cf247eafb7f66b9439748873834c4fc1aec70e87",
+      "category": "STORAGE-SENSITIVE-LOG",
+      "expected_rules": ["STORAGE-SENSITIVE-LOG"],
+      "vulnerable_locations": [
+        {"path": "matrix-sdk-android/src/main/java/org/matrix/android/sdk/internal/crypto/verification/VerificationMessageProcessor.kt", "function": "VerificationMessageProcessor.process", "start_line": 66, "end_line": 66}
+      ],
+      "fixed_locations": [
+        {"path": "matrix-sdk-android/src/main/java/org/matrix/android/sdk/internal/crypto/verification/VerificationMessageProcessor.kt", "function": "VerificationMessageProcessor.process", "note": "The template \"...age:$event.ageLocalTs ms\" becomes \"...age:${event.ageLocalTs} ms\", so only the timestamp is logged instead of the whole Event."}
+      ],
+      "evidence": "In process(event: Event), the outdated-request debug log used the Kotlin template '$event.ageLocalTs'. This interpolates event.toString() (a data class that includes the message 'content') followed by the literal '.ageLocalTs', so message content was written to the Timber/rageshake logs. PR #6706 'Fix cleartext leak in log' (changelog: 'Fix message content sometimes appearing in the log') changes it to '${event.ageLocalTs}'. No CVE. The sensitive value is the whole Event object, not a token/password-named variable.",
+      "verified_by": "gh api repos/element-hq/element-android/pulls/6706 (merge_commit_sha cf247eaf). gh api commits/cf247eaf (parents 21e88efa, 3845e143) and commits/3845e143 patch. Fetched VerificationMessageProcessor.kt at 21e88efa and cf247eaf (line 66 differs as described). Fetched Event.kt at 21e88efa: data class Event with no toString override. compare cf247eaf...develop = ahead."
+    },
+    {
+      "id": "openclaw-ios-share-relay-credentials-userdefaults",
+      "repository": "openclaw/openclaw",
+      "platform": "ios",
+      "advisory": {"id": "CVE-2026-100581 / GHSA-gcm4-fmcp-2f9r", "url": "https://github.com/openclaw/openclaw/security/advisories/GHSA-gcm4-fmcp-2f9r"},
+      "vulnerable_commit": "d699ed0198600648f888d870f6a4961e1f3d86a9",
+      "fixed_commit": "8862cc46b3a250c918567f8be2984e9c7c96a033",
+      "category": "STORAGE-TOKEN-PREFS",
+      "expected_rules": ["STORAGE-TOKEN-PREFS"],
+      "vulnerable_locations": [
+        {"path": "apps/shared/OpenClawKit/Sources/OpenClawKit/ShareGatewayRelaySettings.swift", "function": "ShareGatewayRelaySettings.saveConfig", "start_line": 64, "end_line": 67}
+      ],
+      "fixed_locations": [
+        {"path": "apps/shared/OpenClawKit/Sources/OpenClawKit/ShareGatewayRelaySettings.swift", "function": "ShareGatewayRelaySettings.saveConfig / commitConfig / saveCredentials / saveMetadata", "note": "saveConfig (line 101) now goes through commitConfig. saveCredentials (line 180) writes the token/password JSON to the Keychain via GenericPasswordKeychainStore (default kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly). saveMetadata (line 131) still writes JSON to App Group UserDefaults, but with token and password set to nil. Legacy UserDefaults records that hold secrets are migrated or scrubbed in loadConfig."}
+      ],
+      "evidence": "ShareGatewayRelayConfig has token and password fields. saveConfig JSON-encoded the whole struct and stored it with UserDefaults(suiteName: appGroup).set(data, forKey: \"share.gatewayRelay.config.v1\"), so gateway credentials sat in cleartext App Group preferences that unencrypted backups can recover (GHSA-gcm4-fmcp-2f9r / CVE-2026-100581, fixed in iOS 2026.8.11). Commit 8862cc46 'fix(ios): harden share relay persistence (#121900)' moves the secrets to the Keychain. The stored value is an encoded struct, not a variable named 'token'.",
+      "verified_by": "gh api repos/openclaw/openclaw/security-advisories/GHSA-gcm4-fmcp-2f9r. The global advisory GHSA-rf6v-wq4h-m8xh gives CVE-2026-100581. gh api 'commits?path=.../ShareGatewayRelaySettings.swift' identified 8862cc46 (2026-08-11, parent d699ed01). Fetched the file at both SHAs. Fetched GenericPasswordKeychainStore.swift at 8862cc46 (AfterFirstUnlockThisDeviceOnly). compare 8862cc46...main = ahead. The advisory names no fix commit, so the commit was matched by path history, date and content (medium-high confidence)."
+    },
+    {
+      "id": "amaze-filemanager-usescleartexttraffic",
+      "repository": "TeamAmaze/AmazeFileManager",
+      "platform": "android",
+      "advisory": {"id": null, "url": "https://github.com/TeamAmaze/AmazeFileManager/issues/4084"},
+      "vulnerable_commit": "7136ff3e796507310e7173308e60dab566691da4",
+      "fixed_commit": "21d7a7c66fcf495d7fa0e441f7211c00d81ab379",
+      "category": "ANDROID-CLEARTEXT",
+      "expected_rules": ["ANDROID-CLEARTEXT"],
+      "vulnerable_locations": [
+        {"path": "app/src/main/AndroidManifest.xml", "function": "<application android:usesCleartextTraffic=\"true\">", "start_line": 51, "end_line": 60}
+      ],
+      "fixed_locations": [
+        {"path": "app/src/main/AndroidManifest.xml", "function": "<application android:networkSecurityConfig=\"@xml/network_security_config\">", "note": "usesCleartextTraffic=\"true\" is removed (line 60 now references a network security config)."},
+        {"path": "app/src/main/res/xml/network_security_config.xml", "function": "<network-security-config>", "note": "New file. cleartextTrafficPermitted=\"true\" only inside a domain-config for 127.0.0.1 (includeSubdomains=false), used by the local media streamer. The base config does not permit cleartext. A scanner that flags any cleartextTrafficPermitted=\"true\" will flag this localhost-only exception."}
+      ],
+      "evidence": "The main manifest opted the whole app into cleartext HTTP (android:usesCleartextTraffic=\"true\", line 60). Issue #4084 (an F-Droid/IzzyOnDroid repo scanner flagged usesCleartextTraffic) led to commit 21d7a7c6 ('Switch to network-security-config instead of just opt-in for cleartext HTTP traffic everywhere', merged in PR #4085 'stricten cleartext traffic to local streamer only'), which limits cleartext to 127.0.0.1. No CVE. This is a hardening fix.",
+      "verified_by": "gh api repos/TeamAmaze/AmazeFileManager/commits/21d7a7c6 (parent 7136ff3e) and its patch. gh api commits/604c6800 (PR #4085 merge). gh api issues/4084. Fetched app/src/main/AndroidManifest.xml at both SHAs. Checked the other 4 manifests at 21d7a7c6 (no cleartext or debuggable attributes). compare 21d7a7c6...release/4.0 = ahead."
+    },
+    {
+      "id": "wikipedia-ios-ats-arbitrary-loads",
+      "repository": "wikimedia/wikipedia-ios",
+      "platform": "ios",
+      "advisory": {"id": null, "url": "https://github.com/wikimedia/wikipedia-ios/pull/2786"},
+      "vulnerable_commit": "b0c61684af9ed8d9d9c3e5f4c9d0c5b198071f84",
+      "fixed_commit": "8cb1e6f43e5a1d032e1e136239af71cc33f7bf58",
+      "category": "IOS-ATS",
+      "expected_rules": ["IOS-ATS"],
+      "vulnerable_locations": [
+        {"path": "Wikipedia/Wikipedia-Info.plist", "function": "NSAppTransportSecurity/NSAllowsArbitraryLoads=true", "start_line": 45, "end_line": 49},
+        {"path": "Wikipedia/Wikipedia Alpha-Info.plist", "function": "NSAppTransportSecurity/NSAllowsArbitraryLoads=true", "start_line": 45, "end_line": 49},
+        {"path": "Wikipedia/Wikipedia Beta-Info.plist", "function": "NSAppTransportSecurity/NSAllowsArbitraryLoads=true", "start_line": 45, "end_line": 49},
+        {"path": "Wikipedia/Wikipedia OSM-Info.plist", "function": "NSAppTransportSecurity/NSAllowsArbitraryLoads=true", "start_line": 45, "end_line": 49},
+        {"path": "Wikipedia/Wikipedia User Testing-Info.plist", "function": "NSAppTransportSecurity/NSAllowsArbitraryLoads=true", "start_line": 45, "end_line": 49}
+      ],
+      "fixed_locations": [
+        {"path": "Wikipedia/Wikipedia-Info.plist (and the 4 other build-variant plists)", "function": "NSAppTransportSecurity (removed)", "note": "The whole NSAppTransportSecurity dict is deleted from all 5 plists. At the fixed commit, none of the repo's 14 Info.plist files contains NSAllowsArbitraryLoads* or NSExceptionAllowsInsecureHTTPLoads."}
+      ],
+      "evidence": "Every Wikipedia iOS build-variant Info.plist disabled ATS globally with NSAllowsArbitraryLoads=true (lines 45-49). The app's local proxy server used plain HTTP and needed it. Commit 8cb1e6f4 'remove NSAllowsArbitraryLoads', part of PR #2786 'Remove proxy server, use WKURLSchemeHandler instead', deletes the exception and restores default ATS enforcement. No CVE. This is a hardening change.",
+      "verified_by": "gh api repos/wikimedia/wikipedia-ios/commits/8cb1e6f4 (parent b0c61684) and its patch. gh api commits/8cb1e6f4/pulls (#2786). Fetched all 5 plists at b0c61684 (keys at lines 45/47). Listed the git tree at 8cb1e6f4 and grepped all 14 *Info.plist files for ATS exception keys (0 hits). compare 8cb1e6f4...main = ahead."
+    },
+    {
+      "id": "fairemail-shared-attachment-path-traversal",
+      "repository": "M66B/FairEmail",
+      "platform": "android",
+      "advisory": {"id": "CVE-2026-68509 / GHSA-w92m-2v27-mvg9", "url": "https://github.com/M66B/FairEmail/security/advisories/GHSA-w92m-2v27-mvg9"},
+      "vulnerable_commit": "336367a356108120fda1b8278f3b95a34055c68b",
+      "fixed_commit": "538523dded741f7a8a76052de9a69806d357c0f4",
+      "category": "out-of-scope",
+      "expected_rules": [],
+      "vulnerable_locations": [
+        {"path": "app/src/main/java/eu/faircode/email/ActivityBase.java", "function": "ActivityBase.processUri", "start_line": 822, "end_line": 856}
+      ],
+      "fixed_locations": [
+        {"path": "app/src/main/java/eu/faircode/email/ActivityBase.java", "function": "ActivityBase.processUri", "note": "Adds fname = Helper.sanitizeFilename(fname) before new File(dir, fname), so a DocumentFile/URI-provided display name can no longer contain ../ path components."}
+      ],
+      "evidence": "processUri copied an EXTRA_STREAM URI shared by another app into files/shared using the provider-supplied display name or the last path segment, without sanitizing it. File(dir, fname) with '../' let a local app overwrite files in FairEmail's private data directory (CVE-2026-68509). Commit 538523dd ('Sanitize before process', 1.2325) sanitizes the name. Path traversal is not one of the scanner's source rule families.",
+      "verified_by": "gh api repos/M66B/FairEmail/security-advisories/GHSA-w92m-2v27-mvg9 names fix commit 538523dd. gh api commits/538523dd (parent 336367a3) and its patch. Fetched ActivityBase.java at both SHAs (processUri at line 822). compare 538523dd...master = ahead."
+    },
+    {
+      "id": "tasks-org-sharelink-file-uri-copy",
+      "repository": "tasks/tasks",
+      "platform": "android",
+      "advisory": {"id": "CVE-2022-39349 / GHSA-8x58-cg74-8jg8 (GHSL-2022-062)", "url": "https://github.com/tasks/tasks/security/advisories/GHSA-8x58-cg74-8jg8"},
+      "vulnerable_commit": "07bf02f9e5dc5d6b19d9ad4cca6f29d11d9037e4",
+      "fixed_commit": "23bf69d3f44b07e4bc62ea107f72103239f5d942",
+      "category": "out-of-scope",
+      "expected_rules": [],
+      "vulnerable_locations": [
+        {"path": "app/src/main/java/com/todoroo/astrid/activity/ShareLinkActivity.kt", "function": "ShareLinkActivity.copyAttachment / copyMultipleAttachments", "start_line": 91, "end_line": 113}
+      ],
+      "fixed_locations": [
+        {"path": "app/src/main/java/com/todoroo/astrid/activity/ShareLinkActivity.kt", "function": "ShareLinkActivity.copyAttachment / copyMultipleAttachments / copyAttachments", "note": "The new copyAttachments (line 100) filters the URIs to scheme == content whose authority is not the app's own FileProvider before calling FileHelper.copyToUri."}
+      ],
+      "evidence": "ShareLinkActivity copied any EXTRA_STREAM URI, including file:// paths into the app's internal storage, to the external attachments directory. A local app could exfiltrate private files this way (CVE-2022-39349, GHSL-2022-062). Commit 23bf69d3 ('Only accept content URIs in share activity', tag 12.7.1) restricts the accepted URIs. Intent-supplied file URIs and path validation are not covered by the scanner's source rule families.",
+      "verified_by": "gh api repos/tasks/tasks/security-advisories/GHSA-8x58-cg74-8jg8 names fix commit 23bf69d3. gh api commits/23bf69d3 (parent 07bf02f9) and its patch. Fetched ShareLinkActivity.kt at both SHAs. compare 12.7.1...23bf69d3 = identical."
+    }
+  ],
+  "rejected_candidates": [
+    {"repository": "Alfresco/alfresco-android-app", "reason": "CVE-2019-15566 (HistorySearchProvider SQLi, PR #547). The fix only adds setStrict(true) and a projection map. The URI path-segment concatenation in query() (appendWhere COLUMN_ID + \"=\" + uri.getLastPathSegment()) and in update() is unchanged, so the fix is partial."},
+    {"repository": "owncloud/android", "reason": "CVE-2023-23948/CVE-2023-24804 (GHSL-2022-059 FileContentProvider SQLi). GHSL reports the SQLi as not fixed in 3.0, and no fix commit could be identified."},
+    {"repository": "federicoiosue/Omni-Notes", "reason": "CVE-2023-33188 (GHSL-2022-065). Out-of-scope class, and neither the advisory nor GHSL names a fix commit."},
+    {"repository": "theengs/app", "reason": "d4c2cb3c removes android:debuggable=\"true\" from the main manifest, but the attribute was added and removed the same day (2026-05-16) and never shipped in a release. The removal was driven by lintVitalRelease rather than a security report, so it is too weak as a real-world ANDROID-DEBUG fix."},
+    {"repository": "nextcloud/talk-ios", "reason": "d514d5e1 cleanly removes NSAllowsArbitraryLoads (VideoCalls/Info.plist lines 53-57; parent 3fabce2b). The exception only existed in the very first development tag (v0.1, 2017-10-17), three days before removal and before v1.0.0, and there is no security rationale beyond the commit title. It would also duplicate the IOS-ATS family. Usable as a backup IOS-ATS pair."},
+    {"repository": "wireapp/wire-ios", "reason": "GHSA-p9pv-h29j-jvqm (auth-step values logged) is fixed in 9f5c2739/a1586104 by adding CustomStringConvertible descriptions. The log call sites are unchanged, so no code location can be labeled cleanly. GHSA-pj5p-96xx-hc7m (canOpenURL system logging) is similarly indirect."},
+    {"repository": "element-hq/element-x-android / element-hq/element-x-ios", "reason": "Rageshake backup-key exposure advisories (GHSA-42h8-mgpm-8gwv, GHSA-j9f4-49p7-x4cq): the bug and fix are in the matrix-rust-sdk dependency, not app code."},
+    {"repository": "openclaw/openclaw", "reason": "The 2-pairs-per-repo cap was reached. Other candidates were left out: GHSA-5j57-84cx-r295/CVE-2026-95815 (iOS deep-link URL with bearer key logged), GHSA-4p4f-fc8q-84m3 (iOS A2UI trust; fix is URL equality and trust plumbing, not a clean substring host-match change) and GHSA-83f3-hh45-vfw9 (Android ws:// accepted in code, not a manifest cleartext flag)."},
+    {"repository": "home-assistant/android", "reason": "Second GHSL-2023-142 issue (WebViewActivity 'path' extra -> UrlUtil.handle accepting absolute URLs, changed in b6687dc7). It is interprocedural, and the fix is bundled with feature changes ('Shortcut path input improvements'), so it was not added as a separate pair."},
+    {"repository": "hamza417/inure", "reason": "CVE-2024-0245 (task hijacking via taskAffinity). It is out-of-scope, and the fix only changes the application-level taskAffinity (activity-level affinities remain), so it was not used."},
+    {"repository": "M66B/FairEmail", "reason": "GHSA-r8ff-qr7g-pvw6 (AMP XSS) not used: the input is email HTML, not platform-controlled input, and the bug is an HTML sanitizer flaw. The same repo is used for the out-of-scope path traversal pair."},
+    {"repository": "mastodon/mastodon-ios", "reason": "GHSA-cx82-g79r-6v6w (OAuth token sent to the shared page host): no public fix commit identified, and the class is out of scope."},
+    {"repository": "AOSP packages/services/Telecomm", "reason": "'Remove android:debuggable from manifest' (2014) is only available through third-party forks (the aosp-mirror org is gone), and it is a platform component rather than a standalone app."},
+    {"repository": "(families with no pair)", "reason": "No well-documented app-level vulnerable/fixed pair was found for AST-CRYPTO-ECB, AST-CRYPTO-WEAK-HASH/OBJC-CRYPTO-WEAK-HASH, IOS-KEYCHAIN-ACCESS, AST-WEBVIEW-HOST-ALLOWLIST/WEBVIEW-HOST-MATCH (the best real example, Wikipedia Android endsWith, is in an excluded repo), ANDROID-DEBUG or OBJC-WEBVIEW-UNTRUSTED-REQUEST. Commit-message and advisory searches returned only libraries, SDKs or deprecation-warning cleanups."}
+  ]
+}
