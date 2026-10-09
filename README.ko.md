@@ -245,6 +245,11 @@ Semgrep 같은 다른 도구의 SARIF 2.1.0 결과를 새 보고서로 가져옵
 후보로 남고 APSA 검사 범위를 늘리지 않으며, 같은 위치의 관련 약점 APSA 발견과 서로 연결됩니다. 문구는
 정리 후 신뢰하지 않는 데이터로 다룹니다.
 
+`--format checklist --checklist masvs-v2`(또는 기관 점검 항목을 MASWE·APSA 규칙에 연결한 TOML)는 항목별
+관련 검사 상태와 발견을 정리하며 "통과"를 판정하지 않습니다. `reports history TARGET`은 발견 항목별
+최초·최종 관찰과 해소 시점을 점검·조치 이력으로 보여 줍니다. [국내 점검 기준과 함께 쓰기](https://github.com/ictechgy/apsa/blob/main/docs/KOREA.md)를
+참고하세요.
+
 `--format cyclonedx`는 APSA가 찾은 의존성의 CycloneDX 1.6 SBOM(package URL, 버전 근거 포함)을
 쓰고, 의존성 CVE 대조 결과를 VEX 항목으로 넣습니다. 각 항목에는 증거 상태, CISA KEV 여부, 해당
 대상에서 APSA가 처음 관찰한 시각이 있어 EU 사이버복원력법(CRA) 같은 취약점 처리 기한 관리에 쓸 수
@@ -292,7 +297,7 @@ MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 ro
 | --- | --- |
 | 감사 | `capabilities`, `audit_scan`, `audit_start`, `audit_reassess`, `verify_finding`, `specs_validate` |
 | 작업 | `jobs_list`, `jobs_status`, `jobs_cancel` |
-| 보고서 | `reports_list`, `reports_get`, `reports_compare`, `reports_export_baseline`, `reports_ingest_sarif` |
+| 보고서 | `reports_list`, `reports_get`, `reports_compare`, `reports_export_baseline`, `reports_ingest_sarif`, `reports_checklist`, `reports_history` |
 | 취약점 정보 | `intelligence_sync`, `intelligence_search`, `intelligence_get`, `dependency_check` |
 | 정책 | `policy_evaluate` |
 | 런타임 계획 | `runtime_plan`, `runtime_devices` |

@@ -269,6 +269,13 @@ Semgrep, into a new report. Imported results stay candidates with
 findings of a related weakness at the same location. Their text is sanitized
 and treated as untrusted.
 
+`--format checklist --checklist masvs-v2` (or a TOML file mapping your own
+inspection items to MASWE identifiers and APSA rules) lists, per item, the
+related checks' states and findings; statuses never claim an item passed.
+`reports history TARGET` lists when each finding was first and last observed
+and when a later report stopped observing it, as inspection and remediation
+records. See [using APSA with Korean inspection standards](https://github.com/ictechgy/apsa/blob/main/docs/KOREA.md) (Korean).
+
 `--format cyclonedx` writes a CycloneDX 1.6 SBOM of the dependencies APSA
 discovered, with package URLs and the evidence behind each version, and embeds
 APSA's dependency matches as VEX entries. Each entry carries the evidence
@@ -321,7 +328,7 @@ MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. 
 | --- | --- |
 | Audits | `capabilities`, `audit_scan`, `audit_start`, `audit_reassess`, `verify_finding`, `specs_validate` |
 | Jobs | `jobs_list`, `jobs_status`, `jobs_cancel` |
-| Reports | `reports_list`, `reports_get`, `reports_compare`, `reports_export_baseline`, `reports_ingest_sarif` |
+| Reports | `reports_list`, `reports_get`, `reports_compare`, `reports_export_baseline`, `reports_ingest_sarif`, `reports_checklist`, `reports_history` |
 | Intelligence | `intelligence_sync`, `intelligence_search`, `intelligence_get`, `dependency_check` |
 | Policy | `policy_evaluate` |
 | Runtime planning | `runtime_plan`, `runtime_devices` |

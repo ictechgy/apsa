@@ -16,8 +16,8 @@ what remains the client's or user's responsibility. It describes APSA 1.4.0.
 - `capabilities` returns `tool_manifest_sha256`, the SHA-256 of the served tool
   names, descriptions, input schemas and annotations (canonical JSON, sorted by
   name). For 1.4.0 it is
-  `e57801c6adb9348299891bb67cd20368ac95e5e1fa792fb99cc376c304868ae1` by default
-  and `dd07282ff7a17d4fe7c2619718c1887ae4cedcb864aac741655f71e65171f9eb` with
+  `c47c15d562e4a23a178bdf71782259d69d9b12318ccb26de7421fdb9a16b00fd` by default
+  and `b488d5fefc7605708a8a5fefb086f296867aba4a9e6fe6479f70a7fc2adba9db` with
   `--allow-runtime`. A test pins both values; any change to a tool's name,
   description, schema or annotation must update them deliberately.
 - Annotations: read-only tools are `readOnlyHint` and `idempotentHint`; tools

@@ -171,6 +171,23 @@ def create_server(
             }
 
     @server.tool(annotations=READ)
+    def reports_checklist(report_id: str = "latest", checklist: str = "masvs-v2") -> dict[str, Any]:
+        """Map a report onto a checklist: masvs-v2 (built in) or a checklist TOML inside an MCP root that maps items to MASWE identifiers and APSA rules. Statuses are findings, partial, no-findings-in-checked-scope, not-run or not-assessed; none is a pass."""
+        from .checklists import checklist_view, load_checklist
+
+        source = checklist if checklist == "masvs-v2" else str(authorize(checklist))
+        with database() as store:
+            return checklist_view(load_report(store, report_id), load_checklist(source))
+
+    @server.tool(annotations=READ)
+    def reports_history(target: str) -> dict[str, Any]:
+        """First and last observation of each finding across saved reports of one target, for inspection and remediation records. A finding no longer observed is not proof of remediation unless the same checks completed."""
+        from .checklists import timeline
+
+        with database() as store:
+            return timeline(store, str(authorize(target)))
+
+    @server.tool(annotations=READ)
     def specs_validate(path: str) -> dict[str, Any]:
         """Validate a project taint specification (TOML/JSON, version = 1) before audit_scan uses it. Sources name exact functions returning untrusted url/text; sinks name exact functions (kind webview-load or sql, argument index). Proposed specifications need human review before their findings enter a baseline."""
         return {"valid": True, **load_specs(authorize(path))}

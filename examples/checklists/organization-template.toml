@@ -1,0 +1,33 @@
+# Template for mapping your organization's inspection items to APSA evidence.
+# Replace the example items with the item IDs and titles from the guide you
+# are required to follow. APSA reports the related checks' states and findings
+# per item; it never marks an item passed.
+version = 1
+name = "Organization mobile app inspection items (template)"
+
+[[item]]
+id = "EX-STORAGE-01"
+title = "Credentials are not hard-coded in the app"
+maswe = ["MASWE-0004"]
+rules = ["SOURCE-HARDCODED-SECRET"]
+
+[[item]]
+id = "EX-NETWORK-01"
+title = "Network traffic is encrypted and certificates are validated"
+maswe = ["MASWE-0026", "MASWE-0027"]
+
+[[item]]
+id = "EX-PLATFORM-01"
+title = "Exported components and deep links validate their callers and input"
+maswe = ["MASWE-0018", "MASWE-0029"]
+
+[[item]]
+id = "EX-CODE-01"
+title = "Dependencies have no known vulnerabilities"
+maswe = ["MASWE-0044"]
+
+[[item]]
+id = "EX-RESILIENCE-01"
+title = "Root/jailbreak detection is implemented"
+maswe = ["MASWE-0051"]
+note = "APSA has no related static check; collect other evidence for this item."

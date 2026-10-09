@@ -164,13 +164,19 @@ def parser() -> Parser:
     export.add_argument("--out", type=Path, required=True)
     export.add_argument(
         "--format",
-        choices=["json", "markdown", "sarif", "maswe", "cyclonedx", "baseline"],
+        choices=["json", "markdown", "sarif", "maswe", "cyclonedx", "checklist", "baseline"],
         default="markdown",
     )
     export.add_argument(
         "--sarif-root",
         help="Repository-relative path of the scanned target, used for SARIF locations",
     )
+    export.add_argument(
+        "--checklist",
+        help="For --format checklist: masvs-v2 or a checklist TOML mapping items to MASWE/rules",
+    )
+    history = reports.add_parser("history", help="Finding first/last observation across reports of a target")
+    history.add_argument("target", type=Path)
     export.add_argument("--approved-by")
     export.add_argument("--approval-reference")
     ingest_parser = reports.add_parser(
@@ -624,6 +630,10 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             return compare(store, args.before, args.after), 0
         if args.action == "reassess":
             return refresh_report(store, args.id), 0
+        if args.action == "history":
+            from .checklists import timeline
+
+            return timeline(store, str(args.target.resolve())), 0
         if args.action == "ingest":
             from .ingest import ingest
 
@@ -651,6 +661,23 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                     "approval": artifact["approval"],
                 }, 0
             report = store.report(args.id)
+            if (args.format == "checklist") != bool(args.checklist):
+                raise UsageError(
+                    "--format checklist requires --checklist, and --checklist only applies to it"
+                )
+            if args.format == "checklist":
+                from .checklists import checklist_markdown, checklist_view, load_checklist
+
+                try:
+                    view = checklist_view(report, load_checklist(args.checklist))
+                except ValueError as error:
+                    raise UsageError(str(error)) from error
+                if args.out.suffix.lower() == ".md":
+                    args.out.parent.mkdir(parents=True, exist_ok=True)
+                    args.out.write_text(checklist_markdown(view), encoding="utf-8")
+                else:
+                    write_json(args.out, view)
+                return {"path": str(args.out), "format": args.format, "summary": view["summary"]}, 0
             if args.format == "cyclonedx":
                 from .sbom import cyclonedx
 
