@@ -211,4 +211,8 @@ snapshots, selected dependency/CVE units and OS advisory fixtures. It preserves
 extraction gaps, scanner failures and incomplete coverage; it does not measure
 whole-app security or general production accuracy.
 
+The subsequent [hardening rerun](benchmarks/HARDENING_RESULTS.md) completes all
+six source scans and closes four measured integration gaps. It reuses observed
+labels and reports remaining incomplete coverage; it is a development check.
+
 The source is publicly available on [GitHub](https://github.com/ictechgy/apsa). [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE) preserves the original Quaygate MIT notice. This publication does not declare an additional license for the combined product.

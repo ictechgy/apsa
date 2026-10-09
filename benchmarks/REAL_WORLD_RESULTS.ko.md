@@ -4,6 +4,9 @@
 [최초 결과 JSON](results/2026-10-09-public-real-world-initial.json) ·
 [입력·조회 및 진단 근거](results/2026-10-09-public-evidence.json).
 
+[이후 보강 재평가](HARDENING_RESULTS.ko.md)는 관찰한 입력에 대한 수정 결과다.
+아래 최초 결과와 점수는 그대로 유지했다.
+
 최초 평가에서 유효한 매칭과 구체적인 연동 누락을 확인했다. APSA는 공개 앱
 소스 6개 중 5개를 분석 완료했지만, 완료한 5개 모두 감사 범위가 불완전했다.
 독립 CVE 사례는 TP 7·FP 0·FN 1·TN 19였고, 버전 미확정 입력 5개는 올바르게

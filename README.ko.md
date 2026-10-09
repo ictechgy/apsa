@@ -210,4 +210,8 @@ make release RELEASE_OUT=dist/apsa-local-release
 불완전한 커버리지를 유지하며 앱 전체의 보안이나 일반적인 운영 정확도를
 측정하지 않습니다.
 
+이후 [보강 재평가](benchmarks/HARDENING_RESULTS.ko.md)에서 앱 소스 6개 모두 검사를
+완료하고 측정한 연동 누락 네 가지를 수정했습니다. 관찰한 정답을 재사용한
+개발 검증이며, 남아 있는 불완전한 커버리지를 함께 기록했습니다.
+
 소스는 [GitHub](https://github.com/ictechgy/apsa)에 공개되어 있습니다. [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE)는 원래 Quaygate의 MIT 고지를 보존합니다. 이번 공개는 통합 제품에 추가 라이선스를 선언하지 않습니다.

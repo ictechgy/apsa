@@ -1,0 +1,225 @@
+{
+  "baseline": {
+    "baseline_evidence_path": "benchmarks/results/2026-10-09-public-evidence.json",
+    "bytes": 164623,
+    "input_manifest_sha256": "190a6798ad094e3f2ff65c57e9d4cfa253db0cce28ab4d2e308d5cfb6d213e1e",
+    "inputs_and_labels_unchanged": true,
+    "mobSF_rerun": false,
+    "original_capture_count": 29,
+    "original_osv_manifest_sha256": "6e6fbb050eddfdf5c30b6a424e6d325946235ff18565695d3503e81f96c5fb10",
+    "path": "benchmarks/results/2026-10-09-public-real-world-initial.json",
+    "primary_spec_sha256": "dee900f64f18513d283c8a3581a86152f804910a535175e4198ff208573514fc",
+    "sha256": "a08769d89866515d3af1e772260cb944b970746f2599e77415a39c77747b2d32"
+  },
+  "ci": {
+    "checks": [
+      "unit and integration tests",
+      "ruff lint and format",
+      "pyright",
+      "standalone corpus",
+      "repeated source/wheel builds",
+      "attribution and distribution checks",
+      "clean offline install and scan",
+      "MCP and packaged skills"
+    ],
+    "conclusion": "success",
+    "distinct_test_count": 784,
+    "head_sha": "92cfcfddd7bd30ec20433da74baad58eb42bbb15",
+    "job_log_sha256": "7c7d9edb3ac919505dc34ab71023772946c58761f8c6a5ba69942519bc12de3b",
+    "jobs": [
+      {
+        "conclusion": "success",
+        "id": 113676092373,
+        "name": "ubuntu-24.04 / Python 3.12.13",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "id": 113676092473,
+        "name": "macos-15 / Python 3.11.15",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "id": 113676092621,
+        "name": "ubuntu-24.04 / Python 3.11.15",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "id": 113676093084,
+        "name": "macos-15 / Python 3.12.13",
+        "status": "completed"
+      }
+    ],
+    "redacted_scope": "new public CI run for APSA source only",
+    "run_id": 37886018706,
+    "status": "completed",
+    "test_count_evidence": "784 passed in the Linux Python 3.11 job; not summed across lanes",
+    "test_count_evidence_job_id": 113676092621,
+    "url": "https://github.com/ictechgy/apsa/actions/runs/37886018706"
+  },
+  "committed_result": {
+    "bytes": 164264,
+    "path": "benchmarks/results/2026-10-09-public-real-world-hardened.json",
+    "representation": "Exact emitted public job-log JSON parsed with Python and written sorted/indented with a trailing newline, matching harness formatting; this is a committed-file hash, not a directly downloaded artifact summary byte hash",
+    "sha256": "a52623cff0fefab268c56e2263beebab88ac92a90f04018373200874acc74eee"
+  },
+  "first_staged_attempt": {
+    "ci_cause": "Packaged skill text mismatch; Linux Python 3.11 had 777 passed and one failed parity test",
+    "ci_conclusion": "failure",
+    "ci_log_sha256": "fb01b3243af10ed2f2279741e23401adbf32f2743e912bb8dc2015b3c59aeca3",
+    "ci_run_id": 37885439950,
+    "common_tree": "183e2a3ddc4798b1a609bd545e578dcfe7370a74",
+    "local_head": "c40537e5447da31fc4ccabca22286e2190dd9f81",
+    "public_head": "d6c49234fedc2b68b7f086ed63aa35a6c215fff6",
+    "replay_cause": "Direct helper httpx response lacked a request for raise_for_status; supplement captured, but no app scans or scores produced",
+    "replay_conclusion": "failure",
+    "replay_job_id": 113674285081,
+    "replay_log_sha256": "0e7c1cc1db927c22fcc6beb0b77fbd2f24efe663119645d24008b7656639b5c1",
+    "replay_run_id": 37885440079,
+    "runtime_engine_unchanged_by_hosted_fix": true,
+    "supplement_artifact_digest": "sha256:702bc75b66943974adda7467ea67fb0a8be44bcbf50a04913f70e66efd6667ab",
+    "supplement_artifact_expires_at": "2026-11-08T04:46:41Z",
+    "supplement_artifact_id": 11596401157
+  },
+  "limits": [
+    "Labels already seen: development rerun, not an independent holdout",
+    "All six source audits remain incomplete",
+    "One separate-time supplemental feed capture for the newly extracted actual-app jsoup version",
+    "Original MobSF observations are not post-hardening comparisons",
+    "Firefox large PBX reference scan token budget exceeded and one referenced plist unavailable/invalid",
+    "Existing Swift/Kotlin syntax recovery, unsupported languages and Apple CNA branch gaps remain",
+    "No compiled build resolution, exploitability proof, actual device, AAB/IPA embedded binary, Objective-C depth or OS sandbox benchmark",
+    "GitHub artifacts expire; retain public input artifacts before expiration for full offline replay"
+  ],
+  "measurement": {
+    "actual_app_positive_status": "candidate; declared source version; unknown reachability; distinct supplement capture time",
+    "completed_apps": 6,
+    "incomplete_completed_apps": 6,
+    "independent_dependency_cve_score": {
+      "completed_recall": 1.0,
+      "correct_abstentions": 5,
+      "end_to_end_recall": 1.0,
+      "failed": 0,
+      "failed_affected": 0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "tn": 19,
+      "tp": 8,
+      "unknown": 5,
+      "unstable": 0
+    },
+    "ios_positive_matching_evaluated": false,
+    "os_state_count": 11,
+    "os_states_correct": 11,
+    "selected_actual_app_cve_score": {
+      "completed_recall": 1.0,
+      "correct_abstentions": 0,
+      "end_to_end_recall": 1.0,
+      "failed": 0,
+      "failed_affected": 0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "tn": 3,
+      "tp": 1,
+      "unknown": 0,
+      "unstable": 0
+    },
+    "selected_config_facts_correct": 6,
+    "selected_dependency_declaration_count": 10,
+    "selected_dependency_declarations_extracted": 10,
+    "total_apps": 6
+  },
+  "replay": {
+    "artifact": {
+      "archive_download_url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11596049073/zip",
+      "created_at": "2026-10-09T04:55:48Z",
+      "digest": "sha256:0589d7fb1bfc4f297389cc8b5f11c7443e557721f6e527d5e827f3aad55fe903",
+      "expired": false,
+      "expires_at": "2026-11-08T04:55:46Z",
+      "id": 11596049073,
+      "name": "public-hardening-replay",
+      "size_in_bytes": 16920323,
+      "updated_at": "2026-10-09T04:55:48Z",
+      "url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11596049073",
+      "workflow_run": {
+        "head_branch": "hardening/real-app-cve-v1",
+        "head_repository_id": 1406574335,
+        "head_sha": "92cfcfddd7bd30ec20433da74baad58eb42bbb15",
+        "id": 37886018674,
+        "repository_id": 1406574335
+      }
+    },
+    "capture_mode": "no new OSV captures in successful replay; original 29 plus one retained supplemental response",
+    "conclusion": "success",
+    "head_sha": "92cfcfddd7bd30ec20433da74baad58eb42bbb15",
+    "job_id": 113676092154,
+    "job_log_sha256": "7523cae8b4b69022d8f8cccbad4471400533e65cdad7ee23136602795d329d25",
+    "merged_osv_manifest_sha256": "f35c7459384896150a24f3dee8c9a68d52b83aea9e2b083b9fa6ba292c0ad145",
+    "provenance": {
+      "comparator": "APSA only; original MobSF observations were not rerun",
+      "kind": "development-rerun-after-labels-seen",
+      "original_input_manifest_sha256": "190a6798ad094e3f2ff65c57e9d4cfa253db0cce28ab4d2e308d5cfb6d213e1e",
+      "original_osv_manifest_sha256": "6e6fbb050eddfdf5c30b6a424e6d325946235ff18565695d3503e81f96c5fb10",
+      "original_run_id": 37879443007,
+      "original_source_revision": "5513aa0d4466f8ce0413c4720a3f2e470e417924",
+      "original_summary_sha256": "a08769d89866515d3af1e772260cb944b970746f2599e77415a39c77747b2d32",
+      "supplemental_capture_artifact_digest": "sha256:702bc75b66943974adda7467ea67fb0a8be44bcbf50a04913f70e66efd6667ab",
+      "supplemental_capture_artifact_id": 11596401157,
+      "supplemental_capture_run_id": 37885440079,
+      "supplemental_osv": {
+        "responses": [
+          {
+            "bytes": 10073,
+            "captured_at": "2026-10-09T04:46:41.465519+00:00",
+            "key": "d429018e216c29ba40a9279792fa0e0a0a859975e26ae931bd5e7d1f236582dd",
+            "payload": {
+              "package": {
+                "ecosystem": "Maven",
+                "name": "org.jsoup:jsoup"
+              },
+              "version": "1.15.1"
+            },
+            "sha256": "822b30c31a2b254704bf6f18a081a9709aff5106a4288c0668a90ae07b1a1678",
+            "status": 200
+          }
+        ],
+        "schema": "apsa-osv-http-snapshot-v1"
+      },
+      "supplemental_osv_manifest_sha256": "604ef9085abaca3dc460bd20bdcf3fb075b08efbd66256d86101fab6d0d3c5fe"
+    },
+    "run_id": 37886018674,
+    "status": "completed",
+    "url": "https://github.com/ictechgy/apsa/actions/runs/37886018674"
+  },
+  "review": {
+    "architecture": {
+      "artifact": "benchmarks/reviews/2026-10-09-hardening-architecture.md",
+      "sha256": "6846b12adb80a97e87eb8652a14349f1c34b3b9dbc185a7ba5a2bda8456364ce",
+      "verdict": "CLEAR"
+    },
+    "code_spec": {
+      "artifact": "benchmarks/reviews/2026-10-09-hardening-code.md",
+      "sha256": "a8779c545d3c8bf81bb83bad9a816d418d06f50b8348bb74e06d9db71c7e272a",
+      "verdict": "APPROVE"
+    },
+    "provider": "independent Codex reviewer lanes",
+    "snapshot_kind": "full implementation diff; later documentation-only closure is separate"
+  },
+  "runtime": {
+    "base_common_tree": "86af2d43f03155fa3952ed8e574b7a164d7b8791",
+    "common_tree": "464344032f1dc6da44242dd799a2f6cc7ee9d997",
+    "local_base": "62278bcb4ed0f4a262d1abb845258d41135b886f",
+    "local_head": "8ecc3f90dfbd5afe8e081a8707821b8c267fe4e7",
+    "package_metadata_version": "1.1.0",
+    "public_commit": "92cfcfddd7bd30ec20433da74baad58eb42bbb15",
+    "public_equivalent_base": "b7aa57153de6cac0d86e04b06853b4843b4566ea",
+    "rule_version": "2026.10.09.apsa.111-dev2",
+    "unreleased_candidate": true
+  },
+  "schema": "apsa-real-world-hardening-evidence-v1",
+  "scope": "development hardening branch; no main merge, release or registry publication"
+}

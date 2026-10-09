@@ -4,6 +4,9 @@ English is the source of truth. [한국어](REAL_WORLD_RESULTS.ko.md) ·
 [Protocol](REAL_WORLD.md) · [Initial machine-readable result](results/2026-10-09-public-real-world-initial.json) ·
 [Input/query and diagnostic evidence](results/2026-10-09-public-evidence.json).
 
+The [subsequent hardening rerun](HARDENING_RESULTS.md) records repairs against
+these observed inputs. The initial result and scores below remain unchanged.
+
 The initial evaluation found useful matching behavior and concrete integration
 gaps. APSA completed five of six public-source scans, with incomplete audits on
 all five. Selected independent CVE units produced 7 TP, 0 FP, 1 FN and 19 TN;
