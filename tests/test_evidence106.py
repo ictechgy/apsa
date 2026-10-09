@@ -13,10 +13,10 @@ from mobile_audit.source_analysis import analyze_sources
 
 
 def test_mixed_supported_and_unsupported_language_cannot_pass_required_ast():
-    result = analyze_sources([("App.swift", "func safe() {}"), ("Legacy.m", "@implementation Legacy\n@end")])
+    result = analyze_sources([("App.swift", "func safe() {}"), ("Legacy.mm", "@implementation Legacy\n@end")])
     check = next(c for c in result["coverage"] if c["rule_id"] == "AST-WEBVIEW-UNTRUSTED-URL")
     assert check["state"] == "partial" and check["skipped_files"] == 1
-    assert check["unsupported_languages"] == [".m"]
+    assert check["unsupported_languages"] == [".mm"]
     report = {"findings": [], "coverage": result["coverage"]}
     assert evaluate(report, {"schema_version": 1, "required_rules": [check["rule_id"]]})["exit_code"] == 3
 

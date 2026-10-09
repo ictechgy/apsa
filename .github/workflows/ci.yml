@@ -66,6 +66,22 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y bubblewrap
       - run: uv sync --locked --extra dev
+      - name: Capture synthetic sandbox startup diagnostics
+        run: |
+          uv run --locked python - <<'PY'
+          import json, os, subprocess, sys, tempfile
+          from pathlib import Path
+          from mobile_audit.parser_sandbox import sandbox_command
+          with tempfile.TemporaryDirectory() as directory:
+              root = Path(directory).resolve()
+              target, scratch = root / "input", root / "scratch"
+              target.mkdir(); scratch.mkdir()
+              (target / "Main.java").write_text("class Synthetic {}")
+              args, metadata = sandbox_command([sys.executable, "-I", "-B", "-c", "print('synthetic-ready')"], target, None, scratch, mode="required")
+              result = subprocess.run(args, capture_output=True, text=True, timeout=10, env={"PATH":"/usr/bin:/bin", "LANG":"C.UTF-8", "TMPDIR":str(scratch)})
+              print(json.dumps({"fixture":"fresh-synthetic-only", "isolation":metadata, "returncode":result.returncode, "stdout":result.stdout[:1000], "stderr":result.stderr[:3000]}))
+              assert result.returncode == 0
+          PY
       - name: Enforce isolation, synthetic denial probes and full parser regression suite
         env:
           APSA_PARSER_SANDBOX: required

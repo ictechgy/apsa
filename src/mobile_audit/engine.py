@@ -56,6 +56,8 @@ def analyze_target(
     expected_target = expected_target or resolved
     if resolved != expected_target:
         raise ValueError("Authorized input moved or became a symlink; audit refused")
+    if not resolved.exists():
+        raise ValueError(f"Input not found: {resolved}")
     sbom = (sbom if caller_bound else sbom.expanduser().resolve()) if sbom else None
     with parser_lease(), tempfile.TemporaryDirectory(prefix="mobile-audit-work-") as directory:
         root = Path(directory).resolve()

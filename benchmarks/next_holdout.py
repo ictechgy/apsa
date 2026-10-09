@@ -1,17 +1,15 @@
-"""First scan of independently labeled public snapshots; no app build or execution."""
+"""Replay the first independent public captures; no app build or execution."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import statistics
 import subprocess
 import sys
-import zipfile
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
-
-import httpx
+from pathlib import Path
 
 from benchmarks.competitive import apsa_observation, apsa_report, engine_metadata
 from benchmarks.real_world import (
@@ -20,9 +18,7 @@ from benchmarks.real_world import (
     app_signature,
     compact_apsa,
     dependency_inventory_score,
-    download,
     sha,
-    source_archive,
     write_json,
 )
 from mobile_audit.audit import correlate
@@ -71,80 +67,91 @@ def evaluate_cves(spec: dict, root: Path) -> list[dict]:
     return result
 
 
-def run(root: Path) -> dict:
+FIRST_SHA = "516ce3955c5d5702c3619c0a0f2e657041eeee13f256eba9858f7c6888616b03"
+
+
+def frozen_copy(path: Path, destination: Path, expected: str, limit: int):
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
+        raise ValueError("Frozen holdout input outside bounds")
+    if sha(path.read_bytes()) != expected:
+        raise ValueError("Frozen holdout input bytes changed")
+    shutil.copyfile(path, destination)
+
+
+def run(root: Path, captured: Path) -> dict:
     if sha(TRUTH.read_bytes()) != TRUTH_SHA:
         raise ValueError("Independent pre-scan truth bytes changed")
     spec = json.loads(TRUTH.read_text())
+    original = captured / "summary.json"
+    if (
+        original.is_symlink()
+        or original.stat().st_size > MAX_DOCUMENT
+        or sha(original.read_bytes()) != FIRST_SHA
+    ):
+        raise ValueError("First blind holdout summary changed")
+    first = json.loads(original.read_text())
     root.mkdir(exist_ok=False, parents=True)
     captures = []
     apps = []
-    with httpx.Client(timeout=90, headers={"User-Agent": "APSA-public-holdout"}) as client:
-        for doc in spec["documents"]:
-            captures.append(
-                {"id": doc["id"], **download(client, doc["url"], root / (doc["id"] + ".html"), MAX_DOCUMENT)}
-            )
-        for app in spec["apps"]:
-            upstream = root / (app["id"] + "-upstream.zip")
-            provenance = download(
-                client,
-                f"https://codeload.github.com/{app['repository']}/zip/{app['commit']}",
-                upstream,
-                MAX_DOWNLOAD,
-            )
-            # Source-only names independently check the reviewer's provisional absence label.
-            with zipfile.ZipFile(upstream) as archive:
-                plists = sorted(
-                    str(PurePosixPath(*PurePosixPath(i.filename).parts[1:]))
-                    for i in archive.infolist()
-                    if i.filename.endswith("/Info.plist")
-                )
-            target = root / (app["id"] + ".zip")
-            prepared = source_archive(upstream, target, app)
-            upstream.unlink()
-            signatures = []
-            reports = []
-            durations = []
-            for repeat in range(3):
-                report, duration = apsa_report(sys.executable, target, root / f"{app['id']}-{repeat}")
-                reports.append(report)
-                durations.append(duration)
-                signatures.append(sha(app_signature(apsa_observation(report), report).encode()))
-            report = reports[0]
-            dependencies = dependency_inventory_score(report, app["dependencies"])
-            label = app["config_label"]
-            if app["id"] == "tusky":
-                observed = [
-                    c.get("cleartext")
-                    for c in report["inventory"]["android_config"]
-                    if c["path"].endswith(label["path"])
-                ]
-                config = {"expected": False, "observed": observed, "correct": observed == ["false"]}
-            else:
-                config = {
-                    "expected": "absence-or-unknown",
-                    "checked_in_info_plists": plists,
-                    "absence_label_verified": not plists,
-                    "observed_configurations": report["inventory"].get("ios_config", []),
-                    "scored": False,
-                    "reason": "Prepass repository-search absence is provisional, not authoritative negative security truth.",
-                }
-            apps.append(
-                {
-                    **app,
-                    "input": prepared,
-                    "upstream": provenance,
-                    "config": config,
-                    "dependencies_scored": dependencies,
-                    "stable": len(set(signatures)) == 1,
-                    "repeat_signatures": signatures,
-                    "seconds": {"runs": durations, "median": statistics.median(durations)},
-                    "analysis": compact_apsa(report),
-                    "parser_isolation": report["inventory"].get("parser_isolation"),
-                }
-            )
+    for doc in spec["documents"]:
+        prior = next(d for d in first["vendor_captures"] if d["id"] == doc["id"])
+        frozen_copy(
+            captured / (doc["id"] + ".html"), root / (doc["id"] + ".html"), prior["sha256"], MAX_DOCUMENT
+        )
+        captures.append(prior)
+    for app in spec["apps"]:
+        prior = next(a for a in first["apps"] if a["id"] == app["id"])
+        target = root / (app["id"] + ".zip")
+        frozen_copy(captured / target.name, target, prior["input"]["sha256"], MAX_DOWNLOAD)
+        provenance = prior["upstream"]
+        plists = prior["config"].get("checked_in_info_plists", [])
+        prepared = prior["input"]
+        signatures = []
+        reports = []
+        durations = []
+        for repeat in range(3):
+            report, duration = apsa_report(sys.executable, target, root / f"{app['id']}-{repeat}")
+            reports.append(report)
+            durations.append(duration)
+            signatures.append(sha(app_signature(apsa_observation(report), report).encode()))
+        report = reports[0]
+        dependencies = dependency_inventory_score(report, app["dependencies"])
+        label = app["config_label"]
+        if app["id"] == "tusky":
+            observed = [
+                c.get("cleartext")
+                for c in report["inventory"]["android_config"]
+                if c["path"].endswith(label["path"])
+            ]
+            config = {"expected": False, "observed": observed, "correct": observed == ["false"]}
+        else:
+            config = {
+                "expected": "absence-or-unknown",
+                "checked_in_info_plists": plists,
+                "absence_label_verified": not plists,
+                "observed_configurations": report["inventory"].get("ios_config", []),
+                "scored": False,
+                "reason": "Prepass repository-search absence is provisional, not authoritative negative security truth.",
+            }
+        apps.append(
+            {
+                **app,
+                "input": prepared,
+                "upstream": provenance,
+                "config": config,
+                "dependencies_scored": dependencies,
+                "stable": len(set(signatures)) == 1,
+                "repeat_signatures": signatures,
+                "seconds": {"runs": durations, "median": statistics.median(durations)},
+                "analysis": compact_apsa(report),
+                "parser_isolation": report["inventory"].get("parser_isolation"),
+            }
+        )
     result = {
         "schema": "apsa-next-holdout-result-v1",
-        "kind": "first-scan-with-independent-pre-scan-labels",
+        "kind": "development-rerun-after-labels-seen",
+        "first_blind_summary_sha256": FIRST_SHA,
+        "first_blind_run": 37896002099,
         "truth_sha256": TRUTH_SHA,
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -164,7 +171,9 @@ def run(root: Path) -> dict:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
-    run(parser.parse_args().work)
+    parser.add_argument("--captured", type=Path, required=True)
+    args = parser.parse_args()
+    run(args.work, args.captured)
 
 
 if __name__ == "__main__":

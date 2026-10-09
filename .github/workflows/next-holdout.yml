@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   holdout:
@@ -23,10 +24,19 @@ jobs:
           python-version: "3.12.13"
           enable-cache: false
       - run: uv sync --locked --extra dev
-      - name: Capture public source and official bulletin bytes, then scan frozen truth
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: independent-next-holdout
+          run-id: 37896002099
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/first-blind-holdout
+      - name: Replay first public source and official bulletin bytes without recapture
         env:
           APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/holdout-parser-locks
-        run: uv run --locked python -m benchmarks.next_holdout --work "${{ runner.temp }}/next-holdout"
+        run: |
+          uv run --locked python -m benchmarks.next_holdout \
+            --work "${{ runner.temp }}/next-holdout" \
+            --captured "${{ runner.temp }}/first-blind-holdout"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

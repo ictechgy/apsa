@@ -367,6 +367,21 @@ def test_staging_growth_between_stat_checks_cannot_exceed_total_bytes(tmp_path, 
         input_snapshot.stage_input(target, tmp_path / "snapshot")
 
 
+def test_selected_demo_subtree_does_not_grant_report_store_sibling_access(tmp_path):
+    from mobile_audit.input_snapshot import stage_input
+
+    store = tmp_path / "store"
+    target = store / "demo" / "generated"
+    target.mkdir(parents=True)
+    (target / "Main.java").write_text("class Main {}")
+    (store / "private.json").write_text('{"synthetic":"secret"}')
+    staged = tmp_path / "snapshot"
+    metadata = stage_input(target, staged, hidden=(store,))
+    assert not metadata["warnings"] and metadata["files"] == 1
+    assert (staged / "Main.java").read_text() == "class Main {}"
+    assert not (staged / "private.json").exists()
+
+
 @pytest.mark.skipif(
     __import__("os").environ.get("APSA_SANDBOX_TEST") != "1",
     reason="Explicit disposable-runner staged input race test only",

@@ -21,6 +21,9 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
     from .inputs import SKIP_DIRS, TEXT_SUFFIXES
 
     started = time.monotonic()
+    # An explicitly selected source subtree (including generated demo inputs) does
+    # not grant sibling report access. Exclude report stores contained in the input.
+    hidden = tuple(path for path in hidden if path.is_relative_to(target))
     warnings = []
     counts = {"files": 0, "bytes": 0, "entries": 0}
 
