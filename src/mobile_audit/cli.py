@@ -111,6 +111,12 @@ def parser() -> Parser:
                 action="store_true",
                 help="Explicitly query OSV for latest saved targets; sends dependency names/versions",
             )
+    backfill_parser = intel.add_parser(
+        "backfill", help="Fetch an explicit month range of Android security bulletins"
+    )
+    backfill_parser.add_argument("--source", choices=["android"], default="android")
+    backfill_parser.add_argument("--since", required=True, help="First month, YYYY-MM (2015-08 or later)")
+    backfill_parser.add_argument("--until", help="Last month, YYYY-MM; defaults to the current month")
     intel.add_parser("status")
     search = intel.add_parser("search")
     search.add_argument("query", nargs="?", default="")
@@ -483,6 +489,14 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 return {"source": args.source, "path": str(args.out), "bytes": len(raw)}, 0
             finally:
                 fetcher.close()
+        if args.action == "backfill":
+            from .intel import backfill
+
+            try:
+                result = backfill(store, args.source, args.since, args.until)
+            except ValueError as error:
+                raise UsageError(str(error)) from None
+            return result, 3 if result["partial"] else 0
         if args.action == "sync":
             result = sync(store, args.sources.split(","), args.limit)
             return result, 3 if result["partial"] else 0

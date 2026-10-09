@@ -72,6 +72,17 @@ def in_cve_range(version: str, affected: dict) -> bool | None:
     return None
 
 
+SOC_VENDORS = {
+    "qualcomm": ("qualcomm", "qti", "snapdragon"),
+    "mediatek": ("mediatek", "mtk"),
+    "unisoc": ("unisoc", "spreadtrum"),
+    "nvidia": ("nvidia",),
+    "broadcom": ("broadcom",),
+    "google": ("google", "tensor"),
+    "samsung": ("samsung", "exynos"),
+}
+
+
 def os_cve_coverage(environment: dict | None, advisories: list[dict], feeds: list[dict]) -> dict:
     """Correlation can run against a bounded cache without claiming catalog completeness."""
     platform = (environment or {}).get("platform")
@@ -151,7 +162,18 @@ def correlate(
                 state = "simulator-only"
                 basis = "Simulator observations cannot establish the security patch state of physical iOS devices."
             elif platform == "android" and record.get("fixed_patch_level"):
-                actual = patch_date(environment.get("security_patch"))
+                scope = record.get("vendor_scope", "platform")
+                observed_soc = str(environment.get("soc_manufacturer") or "").lower()
+                soc_vendor = next(
+                    (
+                        vendor
+                        for vendor, words in SOC_VENDORS.items()
+                        if any(w in observed_soc for w in words)
+                    ),
+                    "",
+                )
+                vendor_patch = scope not in {"platform"} and environment.get("vendor_security_patch")
+                actual = patch_date(vendor_patch or environment.get("security_patch"))
                 fixed = patch_date(record.get("fixed_patch_level"))
                 versions = record.get("updated_aosp_versions", "")
                 release = str(environment.get("version", "")).split(".")[0]
@@ -163,6 +185,15 @@ def correlate(
                     else:
                         state = "applicability-unknown"
                     basis = "Observed Android security patch level; old patch level alone does not prove this component is vulnerable."
+                    if vendor_patch:
+                        basis = "Observed vendor security patch level for a chipset or kernel component; patch level alone does not prove this component is vulnerable."
+                if scope in SOC_VENDORS and soc_vendor and soc_vendor != scope:
+                    state = "chipset-vendor-mismatch"
+                    basis = (
+                        f"Bulletin component targets {scope} chipsets; the device reports a {soc_vendor} SoC. "
+                        "Connectivity or peripheral chips from that vendor can still be present, "
+                        "so this is not proof of non-applicability."
+                    )
             elif platform == "ios":
                 cve = next((r for r in records if r["id"] == record["id"] and r["source"] == "cve"), None)
                 decisions = []

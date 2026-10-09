@@ -299,6 +299,26 @@ def parse_apple(html: bytes, url: str, label: str) -> list[dict]:
     return records
 
 
+CHIP_VENDORS = {
+    "qualcomm": r"\bqualcomm\b",
+    "mediatek": r"\bmediatek\b",
+    "arm": r"\barm\b",
+    "imagination": r"\bimagination\b",
+    "unisoc": r"\bunisoc\b",
+    "nvidia": r"\bnvidia\b",
+    "broadcom": r"\bbroadcom\b",
+}
+
+
+def vendor_scope(component: str) -> str:
+    """Chipset vendor whose components a bulletin section covers; otherwise platform."""
+    lowered = component.lower()
+    for vendor, pattern in CHIP_VENDORS.items():
+        if re.search(pattern, lowered):
+            return vendor
+    return "kernel" if re.search(r"\bkernel\b", lowered) else "platform"
+
+
 def parse_android(html: bytes, url: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     records = []
@@ -338,6 +358,7 @@ def parse_android(html: bytes, url: str) -> list[dict]:
                     "title": f"Android {component.get_text(' ', strip=True) if component else 'component'}: {identifier}",
                     "platform": "android",
                     "component": component.get_text(" ", strip=True) if component else "",
+                    "vendor_scope": vendor_scope(component.get_text(" ", strip=True) if component else ""),
                     "fixed_patch_level": patch[0] if patch else "",
                     "updated_aosp_versions": mapping.get("updated aosp versions", ""),
                     "severity": mapping.get("severity", "unknown").lower(),
@@ -600,6 +621,82 @@ def sync(store: Store, sources: list[str] | None = None, limit=8, client: httpx.
         "scope": f"Most recent {limit} vendor advisories; first CVE sync bootstraps the last day of delta updates. Pending CVEs persist across polls; not the complete historical catalog.",
     }
     store.event("intel-sync", result)
+    return result
+
+
+ANDROID_BULLETIN = "https://source.android.com/docs/security/bulletin/{}-01"
+MAX_BACKFILL_MONTHS = 120
+
+
+def _months(since: str, until: str) -> list[str]:
+    match_since = re.fullmatch(r"(\d{4})-(\d{2})", since)
+    match_until = re.fullmatch(r"(\d{4})-(\d{2})", until)
+    if not match_since or not match_until:
+        raise ValueError("Backfill months must use YYYY-MM")
+    year, month = int(match_since[1]), int(match_since[2])
+    end = (int(match_until[1]), int(match_until[2]))
+    if not 1 <= month <= 12 or not 1 <= end[1] <= 12 or (year, month) > end or (year, month) < (2015, 8):
+        raise ValueError("Backfill range must be ordered and start no earlier than 2015-08")
+    months = []
+    while (year, month) <= end:
+        months.append(f"{year:04d}-{month:02d}")
+        if len(months) > MAX_BACKFILL_MONTHS:
+            raise ValueError(f"Backfill is limited to {MAX_BACKFILL_MONTHS} months per run")
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return months
+
+
+def backfill(
+    store: Store, source: str, since: str, until: str | None = None, client: httpx.Client | None = None
+) -> dict:
+    """Fetch an explicit range of monthly Android bulletins into the vendor cache.
+
+    Each month replaces only that bulletin's records. A month without a
+    published bulletin is reported as missing; fetch or parse failures leave the
+    range incomplete. Coverage still never claims the complete historical catalog.
+    """
+    if source != "android":
+        raise ValueError("Historical backfill supports the monthly Android bulletins")
+    months = _months(since, until or datetime.now(timezone.utc).strftime("%Y-%m"))
+    fetcher = Fetcher(client)
+    fetched, missing, failed, changed = [], [], [], []
+    records_total = 0
+    try:
+        for month in months:
+            url = ANDROID_BULLETIN.format(month)
+            fetcher.hashes.clear()
+            try:
+                html = fetcher.get(url)
+                records = [_provenance(r, url, fetcher.hashes[-1]) for r in parse_android(html, url)]
+                changed.extend(store.replace_vendor_documents("android", records, [url]))
+                records_total += len(records)
+                fetched.append(month)
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code == 404:
+                    missing.append(month)
+                else:
+                    failed.append({"month": month, "error": redact(f"HTTP {error.response.status_code}")})
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+                failed.append({"month": month, "error": redact(f"{type(error).__name__}: {error}")[:200]})
+    finally:
+        fetcher.close()
+    previous = json.loads(store.cursor("android-backfill") or "{}")
+    covered = sorted(set(previous.get("months", [])) | set(fetched))
+    store.set_cursor("android-backfill", json.dumps({"months": covered, "updated": now()}))
+    result = {
+        "source": "android",
+        "requested": [months[0], months[-1]],
+        "fetched": fetched,
+        "missing": missing,
+        "failed": failed,
+        "records": records_total,
+        "changed_ids": sorted(set(changed)),
+        "backfilled_months_total": len(covered),
+        "partial": bool(failed),
+        "historical_backfill_complete": False,
+        "scope": "Explicit monthly Android bulletin range; Pixel, OEM and chipset vendor bulletins and Apple history are not included.",
+    }
+    store.event("intel-backfill", result)
     return result
 
 

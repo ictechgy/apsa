@@ -101,6 +101,12 @@ class Android:
             "version": self.shell(["getprop", "ro.build.version.release"]).decode().strip(),
             "security_patch": self.shell(["getprop", "ro.build.version.security_patch"]).decode().strip(),
             "model": self.shell(["getprop", "ro.product.model"]).decode().strip(),
+            # Android 12+ properties; empty on older devices, never inferred.
+            "soc_manufacturer": self.shell(["getprop", "ro.soc.manufacturer"]).decode().strip(),
+            "soc_model": self.shell(["getprop", "ro.soc.model"]).decode().strip(),
+            "vendor_security_patch": self.shell(["getprop", "ro.vendor.build.security_patch"])
+            .decode()
+            .strip(),
             "observed_at": now(),
             "app": app,
             "device_id": self.prefix[-1],
