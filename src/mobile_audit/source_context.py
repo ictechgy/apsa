@@ -257,9 +257,10 @@ def _module_roles(sources: list[tuple[str, str]]) -> dict[str, str]:
     """Return build-script directories whose declarations do not ship in an app.
 
     Build tooling (buildSrc, kotlin-dsl or java-gradle-plugin builds) and Android
-    test modules never ship. A library module consumed by other modules only
-    through non-shipping configurations does not ship either; modules nothing
-    references remain possible applications and keep their declarations.
+    test modules never ship. A library module whose every consumer either uses an
+    explicitly non-shipping configuration or does not ship itself does not ship
+    either. Application modules, unreferenced modules and modules reached through
+    unclassified configurations remain possible shipped code.
     """
     scripts = {
         PurePosixPath(path).parent: text
@@ -267,6 +268,7 @@ def _module_roles(sources: list[tuple[str, str]]) -> dict[str, str]:
         if PurePosixPath(path).name in {"build.gradle", "build.gradle.kts"}
     }
     roles: dict[PurePosixPath, str] = {}
+    applications = set()
     keys = {_module_key(list(directory.parts)): directory for directory in scripts}
     edges: dict[PurePosixPath, list[tuple[PurePosixPath, str]]] = {}
     for directory, text in scripts.items():
@@ -274,6 +276,8 @@ def _module_roles(sources: list[tuple[str, str]]) -> dict[str, str]:
             roles[directory] = "build-tooling"
         elif re.search(r"[\"']com\.android\.test[\"']|plugins\.(?:\w+\.)*android\.test\b", text):
             roles[directory] = "non-shipping-module"
+        elif re.search(r"[\"']com\.android\.application[\"']|plugins\.(?:\w+\.)*application\b", text):
+            applications.add(directory)
         try:
             stream = tokens(text)
         except ValueError:
@@ -313,8 +317,13 @@ def _module_roles(sources: list[tuple[str, str]]) -> dict[str, str]:
     while changed:
         changed = False
         for directory, consumers in edges.items():
-            if directory in live and not any(
-                state == "declared" and consumer in live for consumer, state in consumers
+            if (
+                directory in live
+                and directory not in applications
+                and all(
+                    consumer not in live or state in {"non-shipping-configuration", "platform-only"}
+                    for consumer, state in consumers
+                )
             ):
                 live.discard(directory)
                 roles.setdefault(directory, "non-shipping-module")

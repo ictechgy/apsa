@@ -286,3 +286,20 @@ def test_unreferenced_modules_remain_possible_applications(tmp_path):
         {"wear/build.gradle.kts": "dependencies { implementation(libs.jsoup) }\n"},
     )
     assert deps["org.jsoup:jsoup"]["confidence"] == "declared"
+
+
+def test_applications_and_unclassified_consumers_keep_modules_shipping(tmp_path):
+    deps = project(
+        tmp_path,
+        "plugins { alias(libs.plugins.android.application) }\n"
+        "dependencies {\n  implementation(libs.okhttp)\n}\n",
+        {
+            "benchmark/build.gradle.kts": (
+                'plugins { id("com.android.test") }\ndependencies { testImplementation(projects.app) }\n'
+            ),
+            "coverage/build.gradle.kts": "dependencies { kover(projects.core.ui) }\n",
+            "core/ui/build.gradle.kts": "dependencies { implementation(libs.jsoup) }\n",
+        },
+    )
+    assert deps["com.squareup.okhttp3:okhttp"]["catalog_usage"]["state"] == "declared"
+    assert deps["org.jsoup:jsoup"]["catalog_usage"]["state"] == "declared"
