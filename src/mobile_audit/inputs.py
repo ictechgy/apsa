@@ -722,7 +722,11 @@ def inspect_target(
         # Positive usage evidence is valid even when other files were omitted;
         # a missing reference never becomes evidence that a library is unused.
         inventory["warnings"].extend(resolve_catalog_usage(inventory["dependencies"], sources))
-        supersede(inventory["dependencies"])
+        try:
+            supersede(inventory["dependencies"], sources)
+        except ValueError as error:
+            inventory["warnings"].append(f"Gradle module roles not resolved: {error}")
+            supersede(inventory["dependencies"])
         references, warnings = plist_references(sources)
         inventory["warnings"].extend(warnings)
         inventory["partial"] |= bool(warnings)

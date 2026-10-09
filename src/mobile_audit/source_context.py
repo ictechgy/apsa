@@ -328,7 +328,9 @@ def _module_roles(sources: list[tuple[str, str]]) -> dict[str, str]:
                 live.discard(directory)
                 roles.setdefault(directory, "non-shipping-module")
                 changed = True
-    return {directory.as_posix(): role for directory, role in roles.items()}
+    result = {directory.as_posix(): role for directory, role in roles.items()}
+    result.update({directory.as_posix(): "application" for directory in applications})
+    return result
 
 
 def _catalog_references(path: str, text: str, names: set[str]) -> list[dict]:
@@ -431,7 +433,7 @@ def resolve_catalog_usage(dependencies: list[dict], sources: list[tuple[str, str
             continue
         role = roles.get(PurePosixPath(path).parent.as_posix()) if path.endswith(("gradle", ".kts")) else None
         for ref in found:
-            if role and ref["state"] == "declared":
+            if role and role != "application" and ref["state"] == "declared":
                 ref["state"] = role
         references.extend(found)
     for dep in catalogs:
@@ -477,8 +479,26 @@ def superseded(dep: dict) -> bool:
     return (dep.get("resolution") or {}).get("state") == "superseded-by-resolved-build"
 
 
-def supersede(dependencies: list[dict]) -> None:
-    """Resolved Gradle coordinates replace declared candidates for the same package."""
+def supersede(dependencies: list[dict], sources: list[tuple[str, str]] | None = None) -> None:
+    """Resolved Gradle coordinates replace declared candidates for the same package.
+
+    Only an application module's lockfile records what that app ships. A library
+    module's lockfile is resolved in the library's own context, so once
+    application modules are recognized its coordinates remain candidates.
+    """
+    roles = _module_roles(sources) if sources else {}
+    applications = {path for path, role in roles.items() if role == "application"}
+    if applications:
+        for dep in dependencies:
+            module = PurePosixPath(dep["path"]).parent
+            if module.name == "dependency-locks":
+                module = module.parent.parent
+            if (
+                dep.get("version_source") == "gradle-lockfile-resolved"
+                and module.as_posix() not in applications
+            ):
+                dep["confidence"] = "declared"
+                dep["version_source"] = "gradle-lockfile-library-module"
     resolved: dict[str, set[str]] = {}
     for dep in dependencies:
         if dep.get("version_source") == "gradle-lockfile-resolved":

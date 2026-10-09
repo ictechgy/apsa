@@ -73,11 +73,16 @@ def catalog_score(truth: dict, dependencies: list[dict]) -> dict:
 
 def lockfile_score(truth: dict, dependencies: list[dict]) -> dict:
     expected = {(c["module"], v) for c in truth["shipped_coordinates"] for v in c["versions"]}
-    observed = {
-        (d["name"], d["version"])
+    exact = [
+        d
         for d in dependencies
         if d.get("version_source") == "gradle-lockfile-resolved" and d["confidence"] == "exact"
-    }
+    ]
+    observed = {(d["name"], d["version"]) for d in exact}
+    sources: dict[str, int] = {}
+    for d in exact:
+        if (d["name"], d["version"]) not in expected:
+            sources[d["path"]] = sources.get(d["path"], 0) + 1
     superseded = sum(
         1
         for d in dependencies
@@ -89,6 +94,10 @@ def lockfile_score(truth: dict, dependencies: list[dict]) -> dict:
         "observed": len(observed),
         "missing": sorted(map(list, expected - observed))[:50],
         "unexpected": sorted(map(list, observed - expected))[:50],
+        "unexpected_by_lockfile": sources,
+        "library_module_candidates": sum(
+            1 for d in dependencies if d.get("version_source") == "gradle-lockfile-library-module"
+        ),
         "superseded_catalog_entries": superseded,
     }
 
@@ -107,6 +116,7 @@ def evaluate(truth: dict, archive: Path, work: Path) -> dict:
     upstream_locks = sorted(str(p.relative_to(source)) for p in source.rglob("*.lockfile"))
     inventory, _ = inspect_target(source)
     catalog = catalog_score(truth, inventory["dependencies"])
+    committed = lockfile_score(truth, inventory["dependencies"]) if upstream_locks else None
     module_dir = source / truth["module"].strip(":").replace(":", "/")
     shutil.copyfile(lock, module_dir / "gradle.lockfile")
     locked, _ = inspect_target(source)
@@ -120,6 +130,7 @@ def evaluate(truth: dict, archive: Path, work: Path) -> dict:
         "catalog_without_lockfile": catalog,
         "baseline_1_2_0_declared": 0,
         "with_oracle_lockfile": lockfile_score(truth, locked["dependencies"]),
+        "as_committed_lockfiles": committed,
     }
 
 
