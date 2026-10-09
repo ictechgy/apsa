@@ -564,8 +564,8 @@ def test_activation_probe_is_input_free_and_auto_records_unavailable(monkeypatch
     _failed_probe(monkeypatch, probes)
     command, isolation = parser_sandbox.activate(wrapped, args, metadata, scratch)
     assert len(probes) == 1 and probes[0][0] == "/usr/bin/bwrap"
-    assert probes[0][-5:] == [sys.executable, "-I", "-B", "-c", "pass"]
-    assert "mobile_audit._parser_worker" not in probes[0]
+    assert probes[0][-6:] == [sys.executable, "-I", "-B", "-m", "mobile_audit._parser_worker", "--probe"]
+    assert str(target) not in probes[0][-6:]
     assert command == args
     assert isolation["state"] == "unavailable" and isolation["backend"] == "resource-limits-only"
     assert isolation["attempted_backend"] == "bubblewrap" and isolation["activation_probe"] == "failed"
@@ -611,6 +611,7 @@ def test_auto_audit_continues_with_limits_after_failed_probe(monkeypatch, tmp_pa
     assert len(launched) == 1 and launched[0][0] == sys.executable
     assert result["inventory"]["parser_isolation"]["state"] == "unavailable"
     assert result["inventory"]["parser_isolation"]["activation_probe"] == "failed"
+    assert any("parsed with resource limits only" in w for w in result["inventory"]["warnings"])
 
 
 def test_enforced_parser_failure_explains_sandbox_without_retry(monkeypatch, tmp_path):
@@ -757,3 +758,15 @@ def test_second_store_keeps_live_sqlite_wal_index_locks(tmp_path):
         assert result.stdout.strip() == "held", result
     finally:
         first.close()
+
+
+def test_parser_probe_loads_modules_without_input():
+    import subprocess
+
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-m", "mobile_audit._parser_worker", "--probe"],
+        capture_output=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == b""

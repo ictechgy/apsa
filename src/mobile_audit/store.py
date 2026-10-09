@@ -24,6 +24,8 @@ def _restrict(path: Path) -> None:
         raise OSError(errno.ELOOP, "Audit database files must not be symlinks", str(path))
     if not stat.S_ISREG(info.st_mode):
         raise ValueError("Audit database files must be regular files")
+    if stat.S_IMODE(info.st_mode) == 0o600:
+        return
     try:
         # macOS lchmod; glibc emulates this for regular files through O_PATH.
         os.chmod(path, 0o600, follow_symlinks=False)

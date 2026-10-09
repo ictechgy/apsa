@@ -19,12 +19,13 @@ them. Their path, declaration line and unavailable state remain in the inventory
 | Objective-C `.m` | CST calls to imported CommonCrypto weak digests; straight-line declared WKNavigationAction → NSURLRequest → WKWebView flow | Candidate evidence only, always partial. No macro evaluation, dynamic dispatch, swizzling, interprocedural validation, Objective-C++ `.mm` or complete callable inventory. |
 | Parser OS permissions | Parent stages bounded source/configuration bytes through stable directory/file descriptors, then system Seatbelt on macOS or bubblewrap on Linux grants staged input/SBOM and trusted runtime read-only access, fresh scratch read/write and no host network | Trusted runtime/system libraries are readable; macOS file metadata and exact parent-directory listings are visible. This isolates the parser process, not the parent CLI, MCP client, installation or device commands. |
 
-`APSA_PARSER_SANDBOX=auto` is the default. Before parsing, an input-free
-interpreter starts under the exact policy. If the system backend is absent or
+`APSA_PARSER_SANDBOX=auto` is the default. Before parsing, the parser modules
+and native extensions load without any input under the exact policy. If the system backend is absent or
 this activation probe fails (for example inside another Seatbelt sandbox or
 with blocked Linux user namespaces), the report explicitly records
-`unavailable`, the attempted backend and the probe reason, and parses with
-resource limits only. Set `APSA_PARSER_SANDBOX=required` to refuse such an
+`unavailable`, the attempted backend and the probe reason in
+`inventory.parser_isolation` and `inventory.warnings`, and parses with resource
+limits only. Set `APSA_PARSER_SANDBOX=required` to refuse such an
 audit, or `off` to request resource limits alone. Once the parser itself has
 launched under isolation, a failure aborts the audit; there is no unsandboxed
 retry. macOS framework Python builds may execute only their exact app-bundle
@@ -86,8 +87,8 @@ AAB 입력, IPA 내장 바이너리 메타데이터, Objective-C 후보와 파�
 | Objective-C `.m` | CommonCrypto 약한 해시 호출, 선언된 WKNavigationAction → NSURLRequest → WKWebView의 직선 흐름 | 후보·부분 분석만 제공. 매크로, 동적 dispatch, swizzling, 함수 간 검증, `.mm`, 전체 함수 목록 미지원 |
 | 파서 OS 권한 | 부모가 안정된 파일·디렉터리 descriptor로 소스·설정을 제한해 복사한 뒤 macOS Seatbelt·Linux bubblewrap으로 복사 입력·SBOM·신뢰 런타임 읽기, 새 scratch 읽기·쓰기, 호스트 네트워크 거부 | 신뢰 런타임·시스템 라이브러리, macOS 파일 메타데이터·지정한 부모 폴더 자체의 목록은 접근 가능. 부모 CLI·MCP·설치·기기 명령의 격리가 아님 |
 
-기본값 `APSA_PARSER_SANDBOX=auto`는 파싱 전에 입력 없는 인터프리터를 같은
-정책으로 시작해 봅니다. 시스템 백엔드가 없거나 이 활성화 검사가 실패하면(예: 다른
+기본값 `APSA_PARSER_SANDBOX=auto`는 파싱 전에 입력 없이 파서 모듈과 native
+확장을 같은 정책으로 불러와 봅니다. 시스템 백엔드가 없거나 이 활성화 검사가 실패하면(예: 다른
 Seatbelt sandbox 내부, Linux user namespace 차단) `unavailable`, 시도한 백엔드와
 실패 이유를 기록하고 자원 제한만 적용합니다. `required`는 OS 격리가 불가능하면
 감사를 거부하고, `off`는 자원 제한만 요청합니다. 파서가 격리 상태로 시작된 뒤 실패하면

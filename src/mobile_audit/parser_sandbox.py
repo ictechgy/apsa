@@ -169,7 +169,7 @@ def sandbox_command(
 
 
 def activate(command: list[str], args: list[str], metadata: dict, scratch: Path) -> tuple[list[str], dict]:
-    """Start an input-free interpreter under the exact policy before parsing.
+    """Load the parser, without any input, under the exact policy before parsing.
 
     The probe decides availability; it never runs the parser. In auto mode a
     backend that cannot start (nested Seatbelt, blocked user namespaces) is
@@ -178,14 +178,21 @@ def activate(command: list[str], args: list[str], metadata: dict, scratch: Path)
     """
     if metadata.get("state") != "enforced":
         return command, metadata
-    probe = command[: len(command) - len(args)] + [sys.executable, "-I", "-B", "-c", "pass"]
+    probe = command[: len(command) - len(args)] + [
+        sys.executable,
+        "-I",
+        "-B",
+        "-m",
+        "mobile_audit._parser_worker",
+        "--probe",
+    ]
     try:
         result = subprocess.run(
             probe,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
-            timeout=15,
+            timeout=30,
             cwd=scratch,
             env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TMPDIR": str(scratch)},
         )

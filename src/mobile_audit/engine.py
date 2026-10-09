@@ -100,7 +100,8 @@ def analyze_target(
             if isolation["state"] == "enforced" and str(error).startswith("Command failed"):
                 raise ValueError(
                     f"Sandboxed parser failed under {isolation['backend']}; the audit was not retried "
-                    f"without OS isolation. {error} APSA_PARSER_SANDBOX=off runs with resource limits only."
+                    f"without OS isolation. {error} If the backend is incompatible with this host, "
+                    "APSA_PARSER_SANDBOX=off runs with resource limits only."
                 ) from None
             raise
         if resolved.resolve() != expected_target or identity(resolved) != snapshot["identity"]:
@@ -114,6 +115,10 @@ def analyze_target(
     if not isinstance(result.get("inventory"), dict) or not isinstance(result.get("findings"), list):
         raise ValueError("Parser worker returned an invalid schema; audit incomplete")
     result["inventory"]["parser_isolation"] = isolation
+    if isolation.get("activation_probe") == "failed":
+        result["inventory"]["warnings"].append(
+            f"Parser OS isolation unavailable; parsed with resource limits only: {isolation['unavailable_reason']}"
+        )
     result["inventory"]["target"] = str(resolved)
     result["inventory"]["input_snapshot"] = {
         "kind": "parent-staged-descriptor-safe",
