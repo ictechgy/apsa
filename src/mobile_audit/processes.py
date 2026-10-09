@@ -25,8 +25,10 @@ def command(
     try:
         process = subprocess.Popen(
             args,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            close_fds=True,
             start_new_session=os.name == "posix",
             cwd=cwd,
             env=env,

@@ -77,10 +77,11 @@ jobs:
               target, scratch = root / "input", root / "scratch"
               target.mkdir(); scratch.mkdir()
               (target / "Main.java").write_text("class Synthetic {}")
-              args, metadata = sandbox_command([sys.executable, "-I", "-B", "-c", "print('synthetic-ready')"], target, None, scratch, mode="required")
-              result = subprocess.run(args, capture_output=True, text=True, timeout=10, env={"PATH":"/usr/bin:/bin", "LANG":"C.UTF-8", "TMPDIR":str(scratch)})
+              args, metadata = sandbox_command([sys.executable, "-I", "-B", "-m", "mobile_audit._parser_worker", str(target), "", str(target), str(scratch), ""], target, None, scratch, mode="required")
+              result = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10, env={"PATH":"/usr/bin:/bin", "LANG":"C.UTF-8", "TMPDIR":str(scratch)})
               print(json.dumps({"fixture":"fresh-synthetic-only", "isolation":metadata, "returncode":result.returncode, "stdout":result.stdout[:1000], "stderr":result.stderr[:3000]}))
               assert result.returncode == 0
+              assert "error" not in json.loads(result.stdout)
           PY
       - name: Enforce isolation, synthetic denial probes and full parser regression suite
         env:

@@ -420,6 +420,27 @@ else: raise AssertionError('Replacement input unexpectedly mounted')
     assert command(wrapped, timeout=10, cwd=scratch).strip() == b"replacement-denied"
 
 
+def test_parser_command_does_not_inherit_parent_input(monkeypatch, tmp_path):
+    from mobile_audit import processes
+
+    synthetic = tmp_path / "parent-input.txt"
+    synthetic.write_bytes(b"synthetic parent input")
+    original = processes.subprocess.Popen
+    with synthetic.open("rb") as stream:
+
+        def simulated_parent(args, **kwargs):
+            if kwargs.get("stdin") is None:
+                kwargs["stdin"] = stream
+            return original(args, **kwargs)
+
+        monkeypatch.setattr(processes.subprocess, "Popen", simulated_parent)
+        output = processes.command(
+            [sys.executable, "-I", "-B", "-c", "import sys; sys.stdout.write(sys.stdin.read(100))"],
+            timeout=5,
+        )
+    assert output == b""
+
+
 def test_macos_policy_maps_only_trusted_executable_roots(monkeypatch, tmp_path):
     target, scratch, runtime = (tmp_path / name for name in ("input", "scratch", "runtime"))
     for path in (target, scratch, runtime):
@@ -437,6 +458,8 @@ def test_macos_policy_maps_only_trusted_executable_roots(monkeypatch, tmp_path):
     assert str(target) not in rule and str(scratch) not in rule
     assert '(literal "/")' in (scratch / "parser.sb").read_text()
     assert '(subpath "/")' not in (scratch / "parser.sb").read_text()
+    assert '(literal "' + str(runtime.parent) + '")' in (scratch / "parser.sb").read_text()
+    assert '(subpath "' + str(runtime.parent) + '")' not in (scratch / "parser.sb").read_text()
 
 
 def test_os_sandbox_unavailable_is_reported_and_required_fails(monkeypatch, tmp_path):

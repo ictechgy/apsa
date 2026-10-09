@@ -73,8 +73,11 @@ def sandbox_command(
         def quoted(path):
             return json.dumps(str(path), ensure_ascii=True)
 
-        paths = [Path("/System"), Path("/usr/lib"), Path("/usr/share"), *reads]
+        paths = [Path("/System"), Path("/usr/lib"), Path("/usr/share"), scratch, *reads]
         executable_maps = [Path("/System"), Path("/usr/lib"), *_runtime_roots()]
+        # Python's editable-install finder lists the package parent directory.
+        # Grant only the directory itself, never sibling package contents.
+        runtime_parents = sorted({root.parent for root in _runtime_roots()})
         rules = [
             "(version 1)",
             "(deny default)",
@@ -82,10 +85,14 @@ def sandbox_command(
             "(allow sysctl-read)",
             "(allow process-exec (literal " + quoted(Path(sys.executable).resolve()) + "))",
             '(allow process-exec (literal "/usr/bin/openssl"))',
+            '(allow file-read* file-test-existence (literal "/usr/bin/openssl"))',
             "(allow file-read-metadata)",
             "(allow file-read* file-test-existence "
             + " ".join("(subpath " + quoted(path) + ")" for path in paths)
             + ' (literal "/"))',
+            "(allow file-read* file-test-existence "
+            + " ".join("(literal " + quoted(path) + ")" for path in runtime_parents)
+            + ")",
             "(allow file-map-executable "
             + " ".join("(subpath " + quoted(path) + ")" for path in executable_maps)
             + ' (literal "/usr/bin/openssl"))',
@@ -142,5 +149,5 @@ def sandbox_command(
         "network_denied_by_os": True,
         "filesystem_restricted_by_os": True,
         "policy_sha256": hashlib.sha256(policy_bytes).hexdigest(),
-        "scope": "authorized input/SBOM and trusted Python runtime read-only; scratch write; no host report-store mount",
+        "scope": "authorized input/SBOM and trusted Python runtime read-only; runtime-parent directory listing; scratch read/write; no host report-store mount",
     }
