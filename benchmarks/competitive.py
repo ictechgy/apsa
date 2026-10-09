@@ -36,10 +36,16 @@ def engine_metadata(python: str) -> dict:
 import mobile_audit
 from mobile_audit.core import RULE_VERSION
 root = pathlib.Path(mobile_audit.__file__).parent
+def version(name):
+    # Older released baselines lack later parser packages; record absence, not failure.
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 files = sorted(root.rglob('*.py')) + sorted((root / 'data').glob('*.json'))
 print(json.dumps({'version': mobile_audit.__version__, 'rule_version': RULE_VERSION, 'source_sha256': {
 str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
-'dependencies': {name: importlib.metadata.version(name) for name in
+'dependencies': {name: version(name) for name in
 ('androguard', 'tree-sitter', 'tree-sitter-java', 'tree-sitter-kotlin', 'tree-sitter-swift', 'tree-sitter-objc', 'psutil')}}))
 """
     return json.loads(command([python, "-I", "-c", script]).stdout)
