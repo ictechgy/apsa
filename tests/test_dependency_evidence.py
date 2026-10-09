@@ -458,3 +458,38 @@ def test_plugin_id_mentions_and_library_evidence_are_not_applications(tmp_path):
     entry = next(d for d in inventory["dependencies"] if d["name"] == "com.squareup.okhttp3:okhttp")
     assert entry["confidence"] == "declared"
     assert entry["version_source"] == "gradle-lockfile-non-application-module"
+
+
+def test_unparsed_project_reference_keeps_shared_declarations(tmp_path):
+    for name, build in [
+        ("a", 'plugins { id("com.android.application") }\ndependencies { implementation(projects.lib) }\n'),
+        (
+            "b",
+            'plugins { id("com.android.application") }\n'
+            'dependencies { implementation(project(mapOf("path" to ":lib"))) }\n',
+        ),
+        (
+            "lib",
+            'plugins { id("com.android.library") }\n'
+            'dependencies { implementation("com.squareup.okhttp3:okhttp:3.12.0") }\n',
+        ),
+    ]:
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "build.gradle.kts").write_text(build)
+    (tmp_path / "a/gradle.lockfile").write_text(
+        "com.squareup.okhttp3:okhttp:4.12.0=releaseRuntimeClasspath\n"
+    )
+    inventory, _ = inspect_target(tmp_path)
+    shared = next(d for d in inventory["dependencies"] if d["path"] == "lib/build.gradle.kts")
+    assert shared["confidence"] == "declared"
+    assert shared["resolution"]["state"] == "resolved-in-other-module"
+
+
+def test_chained_version_apply_false_is_not_applied(tmp_path):
+    (tmp_path / "build.gradle.kts").write_text(
+        'plugins { id("com.android.application").version("8.1.0").apply(false) }\n'
+    )
+    (tmp_path / "gradle.lockfile").write_text("org.example:root:1.0=runtimeClasspath\n")
+    inventory, _ = inspect_target(tmp_path)
+    root = next(d for d in inventory["dependencies"] if d["name"] == "org.example:root")
+    assert root["confidence"] == "declared"

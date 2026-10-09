@@ -271,7 +271,7 @@ LIBRARY = re.compile(
     r"|\bplugins\s*\.\s*(?:\w+\s*\.\s*)*library\b|\bkotlin\s*\(\s*[\"']jvm[\"']"
 )
 NOT_APPLIED = re.compile(
-    r"\s*\)?\s*(?:version\s*\(?\s*[\"'][^\"']*[\"']\s*\)?\s*)?"
+    r"\s*\)?\s*(?:\.?\s*version\s*\(?\s*[\"'][^\"']*[\"']\s*\)?\s*)?"
     r"(?:apply\s+false\b|\.\s*apply\s*\(\s*false\s*\))"
 )
 
@@ -305,6 +305,8 @@ class ModuleGraph:
         keys = {_module_key(list(directory.parts)): directory for directory in scripts}
         edges: dict[PurePosixPath, list[tuple[PurePosixPath, str]]] = {}
         complete = not partial
+        # An unreadable project reference may hide a consumer of any module.
+        self.unresolved_project_references = False
         for directory, text in scripts.items():
             try:
                 stream = tokens(text)
@@ -359,6 +361,10 @@ class ModuleGraph:
                         and argument[2][0] == "string"
                     ):
                         target = _module_key(argument[2][1][1:-1].split(":"))
+                    else:
+                        self.unresolved_project_references = True
+                if target and target not in keys:
+                    self.unresolved_project_references = True
                 if target and target in keys and keys[target] != directory:
                     state, _ = _declaration_state(stream, index, line, blocks)
                     edges.setdefault(keys[target], []).append((directory, state))
@@ -599,6 +605,10 @@ def supersede(dependencies: list[dict], graph: ModuleGraph | None) -> None:
         shippers = {
             root for module in declaring or [] for root, reach in graph.reach.items() if module in reach
         }
+        if graph.unresolved_project_references:
+            # A hidden consumer could ship a declaring module; only an app's own
+            # declarations are then covered by its lockfile.
+            shippers |= set(declaring or [])
         if declaring and shippers and shippers <= set(apps):
             dep["confidence"] = "unknown"
             dep["resolution"] = {"state": "superseded-by-resolved-build", "resolved_versions": versions}
