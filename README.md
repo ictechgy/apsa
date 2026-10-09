@@ -52,9 +52,11 @@ and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/
   candidates and can receive CVE matches again; unreferenced, test-only and
   build-tooling aliases stay unresolved. Application-module lockfile coordinates
   are exact, so their matches are `version-affected`, and the default policy
-  fails on high and critical ones. A declared candidate that every shipping
-  application resolved is superseded and leaves CVE correlation; library-module
-  lockfiles, partial inputs and unparsed project references never supersede.
+  fails on high and critical ones; other modules' lockfile coordinates stay
+  `declared` candidates. A declared candidate that every shipping application
+  resolved is superseded and leaves CVE correlation. Partial inputs keep every
+  candidate, and with unparsed project references only an application's own
+  declarations can be superseded.
 - Lockfile assumptions: APSA does not check that dependency locking is enabled
   or that the lockfile is current, and it merges the release runtime classpaths
   of every application module (flavors and wear, TV or automotive apps).
@@ -63,14 +65,17 @@ and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/
 - Baselines and waivers: a lockfile-resolved finding has a new location
   (`gradle.lockfile`) and status, so `only_new` treats it as new and waivers for
   the old finding ID no longer match. Re-approve baselines after upgrading.
-- `--online` sends catalog aliases used in shipped configurations and
-  transitive application-lockfile coordinates, including private group IDs, to
-  OSV; there is no exclusion list. One run queries at most 100 packages:
-  build-file declarations first, then lockfile coordinates in lockfile order.
-  Repeated runs query the same set. Measured application lockfiles hold 179–412
-  shipped coordinates, so the rest stay `not-run`, a required `DEPENDENCY-CVE`
-  rule cannot pass, the online audit is incomplete and the default
-  `fail_on_partial` policy exits 3.
+- `--online` sends catalog aliases used in shipped configurations and the
+  release-runtime lockfile coordinates of every module, transitive ones and
+  private group IDs included, to OSV; there is no exclusion list. One run
+  queries at most 100 packages: those without an OSV result from the last day
+  first, and among them build-file declarations before lockfile coordinates in
+  lockfile order. Measured application lockfiles hold 179–412 shipped
+  coordinates, so a single run leaves the rest `not-run`: a required
+  `DEPENDENCY-CVE` rule cannot pass, the online audit is incomplete and the
+  default `fail_on_partial` policy exits 3. Repeated runs within a day advance
+  through the remainder, and a package with an OSV result from the last day
+  counts as checked.
 - IPA reports gain `BINARY-IOS-CODE-INTEGRITY`. Consistent hashes do not prove
   authenticity, because a modified binary that was re-signed is consistent. A
   mismatch adds a warning, not a finding; App Store encrypted and unsigned
@@ -154,7 +159,7 @@ A default `scan` reads local files and cached intelligence without uploading sou
 | `apsa intel sync` | Fetches public vulnerability sources |
 | `apsa intel watch` | Polls public sources and reassesses saved inventories; does not reread app files or implicitly query OSV |
 | `apsa intel backfill --source android --since YYYY-MM` | Fetches an explicit, bounded range of monthly Android security bulletins |
-| `apsa scan TARGET --online` | Sends discovered dependency names and versions to OSV, including Gradle catalog aliases used in shipped configurations and transitive application-lockfile coordinates; at most 100 packages per run, build-file declarations first |
+| `apsa scan TARGET --online` | Sends discovered dependency names and versions to OSV, including Gradle catalog aliases used in shipped configurations and release-runtime lockfile coordinates of every module; at most 100 packages per run, unchecked build-file declarations first |
 | `apsa intel watch --online` | Also sends saved dependency names and versions to OSV, with the same budget |
 
 ```sh

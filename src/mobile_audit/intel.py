@@ -797,7 +797,7 @@ def query_dependencies(
         ):
             errors.append("Malformed dependency requires string ecosystem, name and version")
             continue
-        if dep.get("version_source") != "gradle-lockfile-resolved":
+        if not str(dep.get("version_source") or "").startswith("gradle-lockfile"):
             direct.add((dep["ecosystem"], dep["name"]))
         key = (dep["ecosystem"], dep["name"], dep["version"])
         rank = {"unknown": 0, "declared": 1, "exact": 2}
@@ -826,11 +826,19 @@ def query_dependencies(
         if len(unresolved) > 100:
             errors.append(f"{len(unresolved) - 100} more unresolved/unsupported dependencies not listed")
         skipped = {id(dep) for dep in unresolved}
-        # Superseded and unqueryable entries use no query budget. Packages declared in
-        # build files go first so transitive lockfile coordinates cannot crowd them out.
+        health = {feed["source"]: feed for feed in source_health(store)}
+
+        def fresh(dep: dict) -> bool:
+            feed = health.get(f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}")
+            return bool(feed and feed["status"] == "ok" and not feed["stale"])
+
+        # Superseded and unqueryable entries use no query budget. Packages without a
+        # fresh result go first, so repeated runs advance; within them, packages declared
+        # in build files precede lockfile coordinates so a lockfile cannot crowd them out.
         ordered = sorted(
             (dep for dep in candidates if id(dep) not in skipped),
             key=lambda dep: (
+                fresh(dep),
                 (dep["ecosystem"], dep["name"]) not in direct,
                 -rank.get(dep.get("confidence", "unknown"), 0),
             ),
@@ -890,9 +898,11 @@ def query_dependencies(
                 store.feed(
                     f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}", "error", error=errors[-1]
                 )
-        if len(ordered) > 100:
+        # Packages left out with a fresh earlier result are still checked.
+        unchecked = sum(not fresh(dep) for dep in ordered[100:])
+        if unchecked:
             errors.append(
-                f"Dependency query limit of 100 reached; {len(ordered) - 100} remaining packages not checked"
+                f"Dependency query limit of 100 reached; {unchecked} remaining packages not checked"
             )
     finally:
         fetcher.close()

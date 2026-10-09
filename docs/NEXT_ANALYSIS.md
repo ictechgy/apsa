@@ -126,22 +126,29 @@ in APSA 1.3.0. They are not part of APSA 1.2.0 or earlier packages.
 Compatibility and privacy notes:
 
 - `scan --online` and `intel watch --online` send catalog aliases used in
-  shipped configurations and transitive application-lockfile coordinates,
-  including private group IDs, to OSV; there is no exclusion list. The budget
-  stays at 100 package queries per run, as in 1.2.0. Packages declared in build
-  files (including declarations a lockfile superseded) are queried first, then
-  lockfile coordinates in lockfile order; unresolved or unsupported entries use
-  no budget. A typical application lockfile (179-412 shipped coordinates
-  measured) exceeds it, so the remaining packages stay `not-run`, the warning
-  states how many were skipped, repeated runs query the same set, a required
+  shipped configurations and the release-runtime lockfile coordinates of every
+  module (application coordinates exact, others declared candidates), including
+  transitive coordinates and private group IDs, to OSV; there is no exclusion
+  list. The budget stays at 100 package queries per run, as in 1.2.0.
+  Unresolved or unsupported entries use no budget. Packages without an OSV
+  result from the last day go first; among them, packages declared in build
+  files (including declarations a lockfile superseded) precede lockfile
+  coordinates in lockfile order. A typical application lockfile (179-412
+  shipped coordinates measured) exceeds one run's budget, so the remaining
+  packages stay `not-run`, the warning states how many, a required
   `DEPENDENCY-CVE` rule cannot pass and the online audit is incomplete (exit 3
-  under the default `fail_on_partial` policy). Batch querying would change the
+  under the default `fail_on_partial` policy). Repeated runs within a day
+  advance through the remainder; a package with an OSV result from the last day
+  counts as checked. Batch querying would change the
   recorded per-package OSV request format that the frozen replay depends on,
   so it is later work together with an exclusion control.
 - Lockfile matches are exact and therefore `version-affected`; the default
   policy fails on high and critical ones. Their finding identity includes the
   lockfile path, so `only_new` baselines treat them as new and waivers for the
   earlier declared finding no longer match.
+- An unrecognized `gradle.lockfile` line (for example a merge-conflict marker)
+  marks the inventory partial, which exits 3 under the default policy, and
+  `*.lockfile` files count toward the source read budget.
 - APSA does not check that dependency locking is enabled or that a lockfile is
   current. All release runtime classpaths of every application module are
   merged (flavors and wear, TV or automotive apps). `--source-module` scans
@@ -152,7 +159,9 @@ Compatibility and privacy notes:
 - `intel sync` refreshes only the recent Android bulletin window; older months
   need `intel backfill`. Records cached by 1.2.0 derive their vendor scope from
   the component name; entries outside chipset and kernel sections are evaluated
-  on the platform patch level only.
+  on the platform patch level only. Without a valid `vendor_security_patch`
+  (YYYY-MM-DD), chipset and kernel entries are also compared on the platform
+  level, and the advisory basis says so.
 
 Release evaluation: every harness (dependency oracle comparison, frozen
 replay, independent source pairs, competitive comparison, public real-world
@@ -243,12 +252,13 @@ OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 
   명시한 기간만 수집합니다. 칩셋·커널 항목은 플랫폼과 vendor 패치 수준 중 오래된 쪽을 쓰며,
   `chipset_vendor` 일치·불일치는 패치 수준 상태를 대체하지 않습니다. Apple 이력과
   Pixel/OEM/칩셋 vendor 공지는 소급하지 않습니다.
-- **호환성·개인정보.** `--online`은 catalog alias와 application lockfile의 전이 좌표(비공개
-  group ID 포함)를 OSV에 보내며 제외 목록은 없습니다. OSV 조회는 1.2.0과 같이 실행당 최대
-  100개이며, 빌드 파일에 선언된 패키지(lockfile로 대체된 선언 포함)를 먼저, 그다음 lockfile
-  좌표를 순서대로 조회합니다. 미확인·미지원 항목은 한도를 쓰지 않습니다. 나머지는 `not-run`으로
-  남고 경고에 건너뛴 개수를 표시하며, 반복 실행해도 같은 집합을 조회하므로 필수
-  `DEPENDENCY-CVE` 규칙은 통과할 수 없고 온라인 감사는 불완전합니다.
+- **호환성·개인정보.** `--online`은 catalog alias와 모든 모듈 lockfile의 release runtime
+  좌표(전이 좌표·비공개 group ID 포함)를 OSV에 보내며 제외 목록은 없습니다. OSV 조회는
+  1.2.0과 같이 실행당 최대 100개이고 미확인·미지원 항목은 한도를 쓰지 않습니다. 최근 하루 안의
+  OSV 결과가 없는 패키지를 먼저, 그중 빌드 파일에 선언된 패키지(lockfile로 대체된 선언 포함)를
+  lockfile 좌표보다 먼저 조회합니다. 한 번의 실행으로 남은 패키지는 `not-run`이며 경고에 개수를
+  표시하고, 필수 `DEPENDENCY-CVE` 규칙은 통과할 수 없으며 온라인 감사는 불완전합니다. 하루 안에
+  반복 실행하면 남은 패키지를 이어서 조회합니다.
 - **기준선·lockfile 전제.** lockfile 대조 결과는 위치가 바뀌어 `only_new`에서 새 항목이 되고
   이전 예외와 일치하지 않습니다. APSA는 dependency locking 활성화·lockfile 최신 여부를 확인하지
   않으며 모든 application 모듈의 release runtime classpath를 합칩니다. `--source-module`은 그

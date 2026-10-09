@@ -138,3 +138,17 @@ def test_records_cached_before_vendor_scopes_derive_scope_from_component():
     assert by_id["CVE-2024-00002"]["vendor_scope"] == "qualcomm"
     assert by_id["CVE-2024-00001"]["state"] == "vendor-patch-level-satisfied"
     assert by_id["CVE-2024-00001"]["vendor_scope"] == "platform"
+
+
+def test_chipset_entry_without_vendor_patch_says_only_platform_level_was_compared():
+    environment = {
+        "platform": "android",
+        "version": "14",
+        "security_patch": "2024-02-01",
+        "vendor_security_patch": "2025-01",
+    }
+    _, advisories = correlate({"platforms": ["android"], "dependencies": []}, records(), environment)
+    by_id = {a["id"]: a for a in advisories}
+    assert by_id["CVE-2024-00002"]["state"] == "vendor-patch-level-satisfied"
+    assert "only the platform level was compared" in by_id["CVE-2024-00002"]["basis"]
+    assert "only the platform level" not in by_id["CVE-2024-00001"]["basis"]

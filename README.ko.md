@@ -46,9 +46,10 @@ CodeDirectory의 페이지·entitlement 해시를 다시 계산하며, 더 많�
 - 출하 구성에서 참조하는 catalog alias는 `declared` 후보가 되어 다시 CVE를 대조할 수
   있습니다. 참조되지 않거나 테스트·빌드 도구용인 alias는 미확인으로 남습니다.
   application 모듈 lockfile 좌표는 정확한 버전이므로 대조 결과가 `version-affected`가
-  되며, 기본 정책은 high·critical 항목에서 실패합니다. 모든 출하 앱이 해결한 선언 후보는
-  대체(superseded)되어 CVE 대조에서 빠집니다. library 모듈 lockfile, 부분 입력, 해석하지
-  못한 project 참조는 대체 근거가 되지 않습니다.
+  되며, 기본 정책은 high·critical 항목에서 실패합니다. 다른 모듈의 lockfile 좌표는
+  `declared` 후보로 남습니다. 모든 출하 앱이 해결한 선언 후보는 대체(superseded)되어 CVE
+  대조에서 빠집니다. 부분 입력에서는 모든 후보를 유지하며, 해석하지 못한 project 참조가
+  있으면 application 자신의 선언만 대체될 수 있습니다.
 - lockfile 전제: APSA는 dependency locking 활성화나 lockfile 최신 여부를 확인하지 않으며,
   모든 application 모듈(flavor, wear·TV·automotive 앱 포함)의 release runtime classpath를
   합칩니다. `--source-module`은 해당 모듈 폴더만 검사하므로 그 밖의 루트 version catalog와
@@ -56,12 +57,14 @@ CodeDirectory의 페이지·entitlement 해시를 다시 계산하며, 더 많�
 - 기준선·예외: lockfile로 해결된 발견 항목은 위치(`gradle.lockfile`)와 상태가 바뀌므로
   `only_new`는 새 항목으로 보고, 이전 발견 ID에 대한 예외는 더 이상 일치하지 않습니다.
   업그레이드 후 기준선을 다시 승인하세요.
-- `--online`은 출하 구성에서 쓰는 catalog alias와 application lockfile의 전이 좌표(비공개
-  group ID 포함)를 OSV에 보내며 제외 목록은 없습니다. 한 번에 최대 100개 패키지를
-  조회하며, 빌드 파일 선언을 먼저, 그다음 lockfile 좌표를 lockfile 순서대로 조회합니다.
-  반복 실행해도 같은 집합을 조회합니다. 측정한 application lockfile은 출하 좌표가
-  179~412개였으므로 나머지는 `not-run`으로 남고, 필수 `DEPENDENCY-CVE` 규칙은 통과할 수
-  없으며, 온라인 감사는 불완전하고 기본 `fail_on_partial` 정책은 종료 코드 3을 반환합니다.
+- `--online`은 출하 구성에서 쓰는 catalog alias와 모든 모듈 lockfile의 release runtime
+  좌표(전이 좌표·비공개 group ID 포함)를 OSV에 보내며 제외 목록은 없습니다. 한 번에 최대
+  100개 패키지를 조회하며, 최근 하루 안의 OSV 결과가 없는 패키지를 먼저, 그중에서는 빌드
+  파일 선언을 lockfile 좌표보다 먼저 조회합니다. 측정한 application lockfile은 출하 좌표가
+  179~412개였으므로 한 번의 실행으로는 나머지가 `not-run`으로 남아, 필수 `DEPENDENCY-CVE`
+  규칙은 통과할 수 없고 온라인 감사는 불완전하며 기본 `fail_on_partial` 정책은 종료 코드 3을
+  반환합니다. 하루 안에 반복 실행하면 남은 패키지를 이어서 조회하며, 최근 하루 안의 OSV
+  결과가 있는 패키지는 검사된 것으로 봅니다.
 - IPA 보고서에 `BINARY-IOS-CODE-INTEGRITY`가 추가됩니다. 해시가 일치해도 진위를 증명하지
   않습니다. 수정 후 다시 서명한 바이너리도 일치하기 때문입니다. 불일치는 발견 항목이 아닌
   경고를 추가하며, App Store 암호화·서명 없는 실행 파일은 `not-run`입니다.
@@ -144,7 +147,7 @@ apsa tui
 | `apsa intel sync` | 공개 취약점 정보 수집 |
 | `apsa intel watch` | 공개 피드를 폴링하고 저장된 인벤토리를 재평가. 앱 파일을 다시 읽거나 OSV를 자동 조회하지 않음 |
 | `apsa intel backfill --source android --since YYYY-MM` | 지정한 제한된 기간의 월별 Android 보안 공지를 수집 |
-| `apsa scan TARGET --online` | 발견한 의존성 이름·버전을 OSV에 전송. 출하 구성에서 쓰는 Gradle catalog alias와 application lockfile의 전이 좌표를 포함하며 한 번에 최대 100개 패키지, 빌드 파일 선언 우선 |
+| `apsa scan TARGET --online` | 발견한 의존성 이름·버전을 OSV에 전송. 출하 구성에서 쓰는 Gradle catalog alias와 모든 모듈 lockfile의 release runtime 좌표를 포함하며 한 번에 최대 100개 패키지, 미검사 빌드 파일 선언 우선 |
 | `apsa intel watch --online` | 저장된 의존성 이름·버전도 같은 한도로 OSV에 전송 |
 
 ```sh

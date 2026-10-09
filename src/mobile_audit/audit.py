@@ -209,8 +209,10 @@ def correlate(
                     else:
                         state = "applicability-unknown"
                     basis = "Observed Android security patch level; old patch level alone does not prove this component is vulnerable."
-                    if vendor_patch:
+                    if patch_date(vendor_patch or None) is not None:
                         basis = "Observed vendor security patch level for a chipset or kernel component; patch level alone does not prove this component is vulnerable."
+                    elif scope != "platform":
+                        basis += " No valid vendor security patch level (YYYY-MM-DD) was observed for this chipset or kernel component, so only the platform level was compared."
                 if scope in SOC_VENDORS and soc_vendor:
                     # Recorded beside the patch-level state, never replacing it.
                     chipset = "match" if soc_vendor == scope else "mismatch"

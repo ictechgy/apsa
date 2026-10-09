@@ -560,6 +560,13 @@ def test_osv_budget_queries_declared_packages_before_transitive_lockfile_coordin
     )
     resolved = dep("com.squareup.okhttp3:okhttp", "exact", **lock)
     declared = dep("org.example:direct", "declared")
+    # A library-module lockfile coordinate is a transitive candidate, not a direct declaration.
+    library = dep(
+        "org.example:library",
+        "declared",
+        path="lib/gradle.lockfile",
+        version_source="gradle-lockfile-non-application-module",
+    )
     unresolved = [dep(f"org.example:catalog{index}", "unknown") for index in range(3)]
     queried = []
 
@@ -569,7 +576,7 @@ def test_osv_budget_queries_declared_packages_before_transitive_lockfile_coordin
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         _, errors = query_dependencies(
-            store, [*transitive, superseded, resolved, declared, *unresolved], client
+            store, [*transitive, superseded, resolved, declared, library, *unresolved], client
         )
     assert len(queried) == 100
     assert queried[:2] == ["com.squareup.okhttp3:okhttp", "org.example:direct"]
@@ -577,7 +584,8 @@ def test_osv_budget_queries_declared_packages_before_transitive_lockfile_coordin
     assert [e for e in errors if e.startswith("Unresolved/unsupported")] == [
         f"Unresolved/unsupported dependency: Maven {item['name']} 1.0" for item in unresolved
     ]
-    assert errors[-1] == "Dependency query limit of 100 reached; 22 remaining packages not checked"
+    assert "org.example:library" not in queried
+    assert errors[-1] == "Dependency query limit of 100 reached; 23 remaining packages not checked"
     health = {feed["source"]: feed for feed in store.feeds()}
     for item in transitive[98:]:
         assert dependency_coverage_state(item, health.get(f"osv:Maven:{item['name']}:1.0")) == "not-run"
@@ -622,3 +630,72 @@ def test_application_lockfile_keeps_library_declarations_within_the_osv_budget(t
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         query_dependencies(store, inventory["dependencies"], client)
     assert {"com.squareup.okhttp3:okhttp", "org.bouncycastle:bcprov-jdk18on"} <= set(queried[:2])
+
+
+def _osv_queries(store, deps):
+    import json
+
+    import httpx
+
+    from mobile_audit.intel import query_dependencies
+
+    queried = []
+
+    def handler(request):
+        queried.append(json.loads(request.content)["package"]["name"])
+        return httpx.Response(200, json={"vulns": []})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        _, errors = query_dependencies(store, deps, client)
+    return queried, errors
+
+
+def test_unsupported_ecosystems_do_not_consume_the_osv_budget(store):
+    maven = [
+        {
+            "ecosystem": "Maven",
+            "name": f"org.example:lib{index}",
+            "version": "1.0",
+            "path": "app/build.gradle",
+            "confidence": "declared",
+        }
+        for index in range(5)
+    ]
+    pods = [
+        {
+            "ecosystem": "CocoaPods",
+            "name": f"Pod{index:03}",
+            "version": "1.0",
+            "path": "Podfile.lock",
+            "confidence": "exact",
+        }
+        for index in range(120)
+    ]
+    queried, errors = _osv_queries(store, [*pods, *maven])
+    assert queried == [item["name"] for item in maven]
+    assert len([e for e in errors if e.startswith("Unresolved/unsupported")]) == 100
+    assert errors[-1] == "20 more unresolved/unsupported dependencies not listed"
+    assert not any("query limit" in error for error in errors)
+
+
+def test_repeated_online_runs_advance_past_fresh_results(store):
+    deps = [
+        {
+            "ecosystem": "Maven",
+            "name": f"androidx.lib:lib{index:03}",
+            "version": "1.0",
+            "path": "app/gradle.lockfile",
+            "confidence": "exact",
+            "version_source": "gradle-lockfile-resolved",
+        }
+        for index in range(250)
+    ]
+    first, errors = _osv_queries(store, deps)
+    assert first == [item["name"] for item in deps[:100]]
+    assert errors == ["Dependency query limit of 100 reached; 150 remaining packages not checked"]
+    second, errors = _osv_queries(store, deps)
+    assert second == [item["name"] for item in deps[100:200]]
+    assert errors == ["Dependency query limit of 100 reached; 50 remaining packages not checked"]
+    third, errors = _osv_queries(store, deps)
+    assert third[:50] == [item["name"] for item in deps[200:]] and len(third) == 100
+    assert errors == []
