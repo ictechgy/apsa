@@ -426,6 +426,28 @@ def compact_apsa(report: dict) -> dict:
     }
 
 
+def app_signature(observed: dict, report: dict | None = None) -> str:
+    """Include every APSA input to downstream selected-fact/CVE scoring."""
+    return json.dumps(
+        {
+            "observation": observation_signature(observed),
+            "inventory": {
+                key: report["inventory"].get(key, [])
+                for key in ("dependencies", "android_config", "ios_config")
+            }
+            if report is not None
+            else None,
+            "evidence": [
+                {"rule": finding["rule_id"], "evidence": finding.get("evidence", [])}
+                for finding in report["findings"]
+            ]
+            if report is not None
+            else None,
+        },
+        sort_keys=True,
+    )
+
+
 def run(root: Path, output: Path, python: str, repeats: int, mobsf: MobSF | None, capture_osv: bool) -> dict:
     if repeats not in range(1, 4):
         raise ValueError("Use one to three repetitions")
@@ -441,6 +463,7 @@ def run(root: Path, output: Path, python: str, repeats: int, mobsf: MobSF | None
         first_apsa = None
         for tool in ("apsa", "mobsf") if mobsf else ("apsa",):
             observations, summaries, elapsed, errors = [], [], [], []
+            signatures = []
             for iteration in range(repeats):
                 folder = output / f"{app['id']}-{tool}-{iteration}"
                 try:
@@ -473,11 +496,12 @@ def run(root: Path, output: Path, python: str, repeats: int, mobsf: MobSF | None
                             "request_wall_seconds": time.perf_counter() - before,
                         }
                     observations.append(observed)
+                    signatures.append(app_signature(observed, report if tool == "apsa" else None))
                     summaries.append(summary)
                     elapsed.append(seconds)
                 except (ValueError, OSError, httpx.HTTPError, subprocess.TimeoutExpired) as error:
                     errors.append(f"{type(error).__name__}: {error}"[:700])
-            stable = len({observation_signature(o) for o in observations}) <= 1
+            stable = len(set(signatures)) <= 1
             tools[tool] = {
                 "state": "failed" if errors else "completed" if stable else "unstable",
                 "seconds": elapsed,
@@ -485,6 +509,8 @@ def run(root: Path, output: Path, python: str, repeats: int, mobsf: MobSF | None
                 "errors": errors,
                 "summary": summaries[0] if summaries else None,
             }
+        apsa_state = tools["apsa"]["state"]
+        usable_apsa = first_apsa if apsa_state == "completed" else None
         item = {
             "id": app["id"],
             "repository": app["repository"],
@@ -493,14 +519,25 @@ def run(root: Path, output: Path, python: str, repeats: int, mobsf: MobSF | None
             "input_sha256": entry["sha256"],
             "source_entries": entry["source_entries"],
             "tools": tools,
-            "config_label": config_result(first_apsa, app["config_label"]) if first_apsa else None,
-            "dependency_labels": dependency_inventory_score(first_apsa, app["dependencies"])
-            if first_apsa
-            else app["dependencies"],
+            "config_label": {**config_result(usable_apsa, app["config_label"]), "state": apsa_state}
+            if usable_apsa
+            else {
+                **app["config_label"],
+                "state": apsa_state,
+                "covered": False,
+                "matched": False,
+                "correct": False,
+            },
+            "dependency_labels": [
+                {**label, "state": apsa_state}
+                for label in dependency_inventory_score(usable_apsa, app["dependencies"])
+            ]
+            if usable_apsa
+            else [{**label, "state": apsa_state, "extracted": False} for label in app["dependencies"]],
         }
         app_results.append(item)
-        if first_apsa:
-            inventories[app["id"]] = first_apsa["inventory"]["dependencies"]
+        if usable_apsa:
+            inventories[app["id"]] = usable_apsa["inventory"]["dependencies"]
         print(json.dumps({"app": app["id"], "tools": {k: v["state"] for k, v in tools.items()}}), flush=True)
     transport = OSVTransport(root / "osv", capture=capture_osv)
     dependency_results = []
@@ -535,7 +572,16 @@ def run(root: Path, output: Path, python: str, repeats: int, mobsf: MobSF | None
                     and d["ecosystem"] == label["ecosystem"]
                     and path_matches(d["path"], label["path"])
                 ]
-                if not actual:
+                app_state = next(
+                    item["tools"]["apsa"]["state"] for item in app_results if item["id"] == app["id"]
+                )
+                if app_state != "completed":
+                    observed = {
+                        "state": app_state,
+                        "matched": False,
+                        "errors": ["Selected real-app APSA scan did not complete stably"],
+                    }
+                elif not actual:
                     observed = {
                         "state": "failed",
                         "matched": False,

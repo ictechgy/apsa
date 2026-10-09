@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
+from copy import deepcopy
 
 import httpx
 import pytest
 
+from benchmarks import real_world
 from benchmarks.real_world import (
     OSVTransport,
     config_result,
@@ -226,3 +228,69 @@ def test_frozen_spec_keeps_positive_negative_and_unknown_groups_separate():
     assert sum(c["expected"] == "affected" for c in spec["dependency_cases"]) == 8
     assert sum(c["expected"] == "unaffected" for c in spec["dependency_cases"]) == 19
     assert sum(c["expected"] == "unknown" for c in spec["dependency_cases"]) == 5
+
+
+@pytest.mark.parametrize("later_state", ["failed", "unstable"])
+def test_app_failure_or_dependency_drift_invalidates_all_downstream_scores(
+    tmp_path, monkeypatch, later_state
+):
+    label = {"ecosystem": "Maven", "name": "org.jsoup:jsoup", "version": "1.15.1", "path": "build.gradle"}
+    app = {
+        "id": "antennapod",
+        "repository": "public/synthetic",
+        "commit": "0" * 40,
+        "platform": "android",
+        "config_label": {"path": "AndroidManifest.xml", "rule": "ANDROID-CLEARTEXT", "expected": False},
+        "dependencies": [label],
+    }
+    report = {
+        "inventory": {
+            "dependencies": [{**label, "confidence": "exact"}],
+            "android_config": [{"path": "AndroidManifest.xml"}],
+            "ios_config": [],
+            "files_scanned": 2,
+            "bytes_scanned": 10,
+            "partial": False,
+            "warnings": [],
+        },
+        "findings": [],
+        "coverage": [],
+        "summary": {"incomplete": False},
+        "warnings": [],
+    }
+    calls = 0
+
+    def scan(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 2 and later_state == "failed":
+            raise ValueError("New synthetic repetition failure")
+        value = deepcopy(report)
+        if calls == 2:
+            value["inventory"]["dependencies"][0]["version"] = "1.15.4"
+        return value, 0.01
+
+    monkeypatch.setattr(
+        real_world, "load_spec", lambda: {"apps": [app], "dependency_cases": [], "limits": {}}
+    )
+    monkeypatch.setattr(
+        real_world,
+        "read_prepared",
+        lambda root: {"apps": [{"input": "app.zip", "sha256": "x", "source_entries": 2}]},
+    )
+    monkeypatch.setattr(real_world, "apsa_report", scan)
+    monkeypatch.setattr(real_world, "engine_metadata", lambda python: {})
+    monkeypatch.setattr(real_world, "evaluate_os", lambda root: [])
+    monkeypatch.setattr(
+        real_world, "dependency_result", lambda *args: pytest.fail("Invalid app report was queried")
+    )
+    (tmp_path / "manifest.json").write_text("{}")
+    result = real_world.run(tmp_path, tmp_path / "result", "python", 2, None, True)
+    item = result["apps"][0]
+    assert item["tools"]["apsa"]["state"] == later_state
+    assert item["config_label"]["state"] == later_state and not item["config_label"]["correct"]
+    assert not item["dependency_labels"][0]["extracted"]
+    assert result["selected_real_app_cve_cases"][0]["result"]["state"] == later_state
+    score = result["selected_real_app_cve_score"]
+    assert score["tp"] == score["tn"] == 0
+    assert score["failed_affected"] == 1 and score["end_to_end_recall"] == 0
