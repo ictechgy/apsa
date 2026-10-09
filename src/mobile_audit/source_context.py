@@ -312,6 +312,8 @@ class ModuleGraph:
                 stream = tokens(text)
             except ValueError:
                 complete = False
+                # An unread script may hide a consumer of any module.
+                self.unresolved_project_references = True
                 self.warnings.append(f"Gradle module role not resolved: {directory.as_posix() or '.'}")
                 continue
             code = " ".join(value for _, value, _ in stream)

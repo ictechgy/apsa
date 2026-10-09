@@ -633,6 +633,7 @@ def _macho_slice(raw: bytes, offset: int, size: int) -> dict:
                 and page
                 and all(index * page < end and (index + 1) * page > start for index in pages)
                 and directory.get("entitlements_bound", True)
+                and directory.get("der_entitlements_bound", True)
             ):
                 # App Store encryption follows signing; the kernel checks decrypted pages.
                 directory["integrity"] = "unverifiable-encrypted-pages"

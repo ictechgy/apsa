@@ -303,3 +303,16 @@ def test_large_encrypted_region_is_unverifiable_not_modified():
     assert directory["pages_mismatched"] == 79 and len(directory["mismatched_pages"]) == 64
     assert directory["integrity"] == "unverifiable-encrypted-pages"
     assert signature["integrity"] == "unverifiable"
+
+
+def test_encrypted_ipa_leaves_code_integrity_not_run(tmp_path):
+    from mobile_audit.binary_analysis import analyze_binary
+    from mobile_audit.inputs import inspect_target
+    from tests.test_binary_analysis import _ipa
+
+    path = _ipa(tmp_path, large_signed_macho(80))
+    inventory, _ = inspect_target(path)
+    report = analyze_binary(path, inventory)
+    check = next(c for c in report["coverage"] if c["rule_id"] == "BINARY-IOS-CODE-INTEGRITY")
+    assert check["state"] == "not-run"
+    assert not any("changed after signing" in warning for warning in report["warnings"])

@@ -493,3 +493,42 @@ def test_chained_version_apply_false_is_not_applied(tmp_path):
     inventory, _ = inspect_target(tmp_path)
     root = next(d for d in inventory["dependencies"] if d["name"] == "org.example:root")
     assert root["confidence"] == "declared"
+
+
+def test_partial_inventory_and_refresh_keep_superseded_semantics(store, tmp_path):
+    from mobile_audit.audit import dependency_coverage_state
+    from mobile_audit.source_context import ModuleGraph, supersede
+
+    sources = [("app/build.gradle.kts", 'plugins { id("com.android.application") }')]
+    lock = {
+        "name": "com.squareup.okio:okio",
+        "version": "3.6.0",
+        "ecosystem": "Maven",
+        "path": "app/gradle.lockfile",
+        "confidence": "exact",
+        "version_source": "gradle-lockfile-resolved",
+    }
+    declared = {
+        "name": "com.squareup.okio:okio",
+        "version": "3.4.0",
+        "ecosystem": "Maven",
+        "path": "app/build.gradle.kts",
+        "confidence": "declared",
+    }
+    deps = [dict(lock), dict(declared)]
+    supersede(deps, ModuleGraph(sources), partial=True)
+    assert "resolution" not in deps[1] and deps[1]["confidence"] == "declared"
+    deps = [dict(lock), dict(declared)]
+    supersede(deps, ModuleGraph(sources))
+    assert deps[1]["resolution"]["state"] == "superseded-by-resolved-build"
+    health = {"status": "ok", "stale": False}
+    assert dependency_coverage_state(deps[1], health) == "not-applicable"
+    assert dependency_coverage_state(deps[0], health) == "checked"
+    assert dependency_coverage_state({**declared, "confidence": "unknown"}, health) == "not-run"
+
+
+def test_unreadable_build_script_counts_as_hidden_reference():
+    from mobile_audit.source_context import ModuleGraph
+
+    graph = ModuleGraph([("app/build.gradle.kts", "x " * 200_001), ("lib/build.gradle.kts", "")])
+    assert graph.unresolved_project_references and graph.warnings
