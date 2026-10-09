@@ -278,7 +278,8 @@ def _ats_exceptions(inventory: dict) -> tuple[list[dict], list[dict]]:
         reasons_by_domain: dict[str, list[str]] = {}
         if ats.get("NSAllowsArbitraryLoadsForMedia") is True:
             reasons_by_domain["(media)"] = ["NSAllowsArbitraryLoadsForMedia allows unencrypted media loads"]
-        domains = ats.get("NSExceptionDomains") if isinstance(ats.get("NSExceptionDomains"), dict) else {}
+        declared = ats.get("NSExceptionDomains")
+        domains: dict = declared if isinstance(declared, dict) else {}
         for domain, settings in domains.items():
             if not isinstance(settings, dict):
                 continue
