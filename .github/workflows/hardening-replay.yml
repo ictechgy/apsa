@@ -2,7 +2,7 @@ name: Replay frozen public evidence and coverage extension
 
 on:
   push:
-    branches: ["hardening/real-app-cve-v1"]
+    branches: ["hardening/real-app-cve-v1", "dev/dependency-evidence"]
     paths:
       - "src/**"
       - "benchmarks/hardening_replay.py"
