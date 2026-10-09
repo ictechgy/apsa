@@ -511,3 +511,27 @@ def test_pending_intent_flags_read_only_framework_literals():
     assert "Android 14+" in unknown_levels[12]["target_sdk_note"]
     # minSdk 31+ never runs where the default is mutable.
     assert set(found({"min": 31, "target": 34})) == {12}
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"),
+    [
+        ("201326592", None),  # FLAG_IMMUTABLE | FLAG_UPDATE_CURRENT as a magic number
+        ("0x04000000", None),
+        ("Intent.FLAG_ACTIVITY_CLEAR_TOP", None),  # shares FLAG_IMMUTABLE's bit
+        ("Intent.FLAG_ACTIVITY_FORWARD_RESULT", "FLAG_MUTABLE"),  # shares FLAG_MUTABLE's bit
+        ("Intent.FLAG_ACTIVITY_NEW_TASK", "default (no FLAG_IMMUTABLE)"),
+        ("FLAG_UPDATE_CURRENT", "default (no FLAG_IMMUTABLE)"),
+        ("Intent.FLAG_RECEIVER_FOREGROUND", None),  # no known value: not classified
+        ("PendingIntent.FLAG_ACTIVITY_NEW_TASK", None),
+    ],
+)
+def test_pending_intent_flags_are_decided_by_bit_value(flags, expected):
+    from mobile_audit.source_analysis import analyze_sources
+
+    source = (
+        "import android.app.PendingIntent\nimport android.content.Intent\nclass P {\n"
+        f'    fun a(c: android.content.Context) = PendingIntent.getActivity(c, 0, Intent("x"), {flags})\n}}\n'
+    )
+    findings = analyze_sources([("P.kt", source)])["findings"]
+    assert [f["evidence"][0]["mutability"] for f in findings] == ([expected] if expected else [])

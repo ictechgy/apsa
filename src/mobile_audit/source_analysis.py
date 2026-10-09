@@ -38,19 +38,43 @@ STRINGS = {"string_literal", "line_string_literal", "multi_line_string_literal",
 IDENTIFIERS = {"identifier", "simple_identifier"}
 BLOCKS = {"block", "statements", "function_body"}
 URI_REFERENCE = "https://developer.android.com/privacy-and-security/risks/unsafe-uri-loading"
-# Framework flag names a PendingIntent flags expression may contain, with optional class prefix.
-PENDING_INTENT_FLAGS = {
-    "FLAG_ONE_SHOT",
-    "FLAG_NO_CREATE",
-    "FLAG_CANCEL_CURRENT",
-    "FLAG_UPDATE_CURRENT",
-    "FLAG_IMMUTABLE",
-    "FLAG_MUTABLE",
-    "FLAG_ALLOW_UNSAFE_IMPLICIT_INTENT",
+# Framework flag values a PendingIntent flags expression may contain. Intent activity flags
+# share bits with PendingIntent flags (FLAG_ACTIVITY_CLEAR_TOP is FLAG_IMMUTABLE's bit), so
+# mutability is decided by value, not by name.
+PENDING_INTENT_IMMUTABLE = 0x04000000
+PENDING_INTENT_MUTABLE = 0x02000000
+FRAMEWORK_FLAG_VALUES = {
+    "PendingIntent": {
+        "FLAG_ONE_SHOT": 0x40000000,
+        "FLAG_NO_CREATE": 0x20000000,
+        "FLAG_CANCEL_CURRENT": 0x10000000,
+        "FLAG_UPDATE_CURRENT": 0x08000000,
+        "FLAG_IMMUTABLE": PENDING_INTENT_IMMUTABLE,
+        "FLAG_MUTABLE": PENDING_INTENT_MUTABLE,
+        "FLAG_ALLOW_UNSAFE_IMPLICIT_INTENT": 0x01000000,
+    },
+    "Intent": {
+        "FLAG_ACTIVITY_NO_HISTORY": 0x40000000,
+        "FLAG_ACTIVITY_SINGLE_TOP": 0x20000000,
+        "FLAG_ACTIVITY_NEW_TASK": 0x10000000,
+        "FLAG_ACTIVITY_MULTIPLE_TASK": 0x08000000,
+        "FLAG_ACTIVITY_CLEAR_TOP": 0x04000000,
+        "FLAG_ACTIVITY_FORWARD_RESULT": 0x02000000,
+        "FLAG_ACTIVITY_PREVIOUS_IS_TOP": 0x01000000,
+        "FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS": 0x00800000,
+        "FLAG_ACTIVITY_BROUGHT_TO_FRONT": 0x00400000,
+        "FLAG_ACTIVITY_RESET_TASK_IF_NEEDED": 0x00200000,
+        "FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY": 0x00100000,
+        "FLAG_ACTIVITY_NEW_DOCUMENT": 0x00080000,
+        "FLAG_ACTIVITY_NO_USER_ACTION": 0x00040000,
+        "FLAG_ACTIVITY_REORDER_TO_FRONT": 0x00020000,
+        "FLAG_ACTIVITY_NO_ANIMATION": 0x00010000,
+        "FLAG_ACTIVITY_CLEAR_TASK": 0x00008000,
+        "FLAG_ACTIVITY_TASK_ON_HOME": 0x00004000,
+    },
 }
 FRAMEWORK_FLAG = re.compile(
-    r"(?:(?:android\.app\.)?PendingIntent\.|(?:android\.content\.)?Intent\.)?"
-    r"(FLAG_(?:ACTIVITY|RECEIVER|GRANT)_[A-Z_]+|" + "|".join(sorted(PENDING_INTENT_FLAGS)) + ")"
+    r"(?:(?:android\.app\.)?(PendingIntent)\.|(?:android\.content\.)?(Intent)\.)?(FLAG_[A-Z_]+)"
 )
 FLAG_TOKEN = re.compile(r"[A-Za-z_][\w.]*|0[xX][0-9A-Fa-f]+|\d+|\S")
 UNKNOWN_INTENT = "Intent variable not built in this function; its target is unknown"
@@ -268,20 +292,30 @@ class Analyzer:
     def pending_intent_mutability(self, node: Any) -> str | None:
         """How a literal flags expression leaves a PendingIntent mutable; None when immutable or unknown.
 
-        Only framework flag names, integer literals, or/|/+ and parentheses are read; a
-        project constant or any other expression is a variable and is not followed.
+        Only framework flag names with known values, integer literals, or/|/+ and parentheses
+        are read, and their bits are combined; a project constant or any other expression is a
+        variable and is not followed.
         """
-        names = set()
+        value = 0
         for token in FLAG_TOKEN.findall(self.text(node)):
             flag = FRAMEWORK_FLAG.fullmatch(token)
             if flag:
-                names.add(flag[1])
-            elif not (re.fullmatch(r"0[xX][0-9A-Fa-f]+|\d+", token) or token in {"or", "|", "+", "(", ")"}):
+                owners = [flag[1] or flag[2]] if flag[1] or flag[2] else list(FRAMEWORK_FLAG_VALUES)
+                known = [
+                    FRAMEWORK_FLAG_VALUES[o][flag[3]] for o in owners if flag[3] in FRAMEWORK_FLAG_VALUES[o]
+                ]
+                if not known:
+                    return None
+                value |= known[0]
+            elif re.fullmatch(r"0[xX][0-9A-Fa-f]+|\d+", token):
+                value |= int(token, 0) if token[:2].lower() == "0x" else int(token)
+            elif token not in {"or", "|", "+", "(", ")"}:
                 return None
-        if "FLAG_MUTABLE" in names:
-            return "FLAG_MUTABLE"
-        if "FLAG_IMMUTABLE" in names:
+        if value & PENDING_INTENT_IMMUTABLE:
+            # Both bits together is rejected at creation; immutable alone is safe.
             return None
+        if value & PENDING_INTENT_MUTABLE:
+            return "FLAG_MUTABLE"
         # Without FLAG_IMMUTABLE a PendingIntent is mutable on Android 11 and lower; with
         # targetSdk 31+ creating it throws on Android 12+. minSdk 31+ rules out the old devices.
         minimum = self.android_levels.get("min")
