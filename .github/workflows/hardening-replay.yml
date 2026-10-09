@@ -7,6 +7,7 @@ on:
       - "src/**"
       - "benchmarks/hardening_replay.py"
       - "benchmarks/coverage_replay.py"
+      - "benchmarks/next_replay.py"
       - "benchmarks/ios_branch_cases.json"
       - "benchmarks/real_world.py"
       - ".github/workflows/hardening-replay.yml"
@@ -48,7 +49,7 @@ jobs:
           APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/parser-locks
           APSA_DEVICE_LOCK_DIR: ${{ runner.temp }}/device-locks
         run: |
-          uv run --locked python -m benchmarks.coverage_replay \
+          uv run --locked python -m benchmarks.next_replay \
             --artifact "${{ runner.temp }}/original-public-evidence" \
             --supplement-artifact "${{ runner.temp }}/captured-public-supplement" \
             --work "${{ runner.temp }}/hardening-inputs" \

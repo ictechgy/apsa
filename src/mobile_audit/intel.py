@@ -699,7 +699,12 @@ def query_dependencies(
         ):
             errors.append("Malformed dependency requires string ecosystem, name and version")
             continue
-        unique[(dep["ecosystem"], dep["name"], dep["version"])] = dep
+        key = (dep["ecosystem"], dep["name"], dep["version"])
+        rank = {"unknown": 0, "declared": 1, "exact": 2}
+        if key not in unique or rank.get(dep.get("confidence", "unknown"), 0) > rank.get(
+            unique[key].get("confidence"), 0
+        ):
+            unique[key] = dep
     try:
         for dep in list(unique.values())[:100]:
             if (

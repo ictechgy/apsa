@@ -89,11 +89,45 @@ def kotlin_tokens(raw: bytes) -> list[tuple[bytes, int, int]]:
     return result
 
 
+def _constructor_gaps(raw: bytes, stream: list[tuple[bytes, int, int]]) -> list[tuple[int, int]]:
+    gaps = []
+    for index, (value, _, _) in enumerate(stream[:-2]):
+        if value != b"class":
+            continue
+        name, _, end = stream[index + 1]
+        following, start, _ = stream[index + 2]
+        gap = raw[end:start]
+        if not re.fullmatch(rb"[A-Za-z_][A-Za-z_0-9]*", name) or b"\n" not in gap or not gap.isspace():
+            continue
+        cursor = index + 2
+        while cursor < len(stream) and stream[cursor][1] - end <= 4096:
+            token = stream[cursor][0]
+            if token == b"constructor" and cursor + 1 < len(stream) and stream[cursor + 1][0] == b"(":
+                gaps.append((end, start))
+                break
+            if token in {b"public", b"private", b"protected", b"internal"}:
+                cursor += 1
+            elif token == b"@" and cursor + 1 < len(stream):
+                cursor += 2
+                if cursor < len(stream) and stream[cursor][0] == b"(":
+                    depth = 1
+                    cursor += 1
+                    while cursor < len(stream) and depth:
+                        depth += (stream[cursor][0] == b"(") - (stream[cursor][0] == b")")
+                        cursor += 1
+                    if depth:
+                        break
+            else:
+                break
+    return gaps
+
+
 def adapted_source(raw: bytes, language: str, nodes: list[Any]) -> tuple[bytes, list[dict]]:
-    """Preserve bytes/newlines/offsets; callers keep adapted files explicitly partial."""
+    """Preserve byte offsets; callers use original line coordinates and retain partial coverage."""
     output = bytearray(raw)
     edits = 0
     kind = ""
+    additional = []
     if language == "swift":
         kind = "swift-nonisolated-unsafe-variable"
         for node in nodes:
@@ -107,6 +141,57 @@ def adapted_source(raw: bytes, language: str, nodes: list[Any]) -> tuple[bytes, 
                 start = node.start_byte
                 output[start : node.end_byte] = b" " * (node.end_byte - start)
                 edits += 1
+        async_edits = 0
+        cast_edits = 0
+        seen_casts = set()
+        for node in nodes:
+            if node.type != "ERROR":
+                continue
+            # Only an if-statement's leading await; local analysis does not model scheduling.
+            if node.parent and node.parent.type in {
+                "if_statement",
+                "catch_block",
+                "statements",
+                "function_body",
+            }:
+                fragment = raw[node.start_byte : node.end_byte]
+                if fragment.startswith(b"await "):
+                    output[node.start_byte : node.start_byte + 5] = b" " * 5
+                    async_edits += 1
+                elif fragment.startswith(b"if await "):
+                    output[node.start_byte + 3 : node.start_byte + 8] = b" " * 5
+                    async_edits += 1
+            # The grammar rejects this metatype, independently of its concurrency attribute.
+            # Replace only the type argument of the known stdlib cast, never its value argument.
+            args = node.parent
+            if not args or args.type != "value_arguments" or args.start_byte in seen_casts:
+                continue
+            call = args.parent
+            if call and call.type == "call_suffix":
+                call = call.parent
+            if not call or call.type != "call_expression" or not call.named_children:
+                continue
+            callee = call.named_children[0]
+            if raw[callee.start_byte : callee.end_byte] != b"unsafeBitCast":
+                continue
+            fragment = raw[args.start_byte : args.end_byte + 5]
+            match = re.search(
+                rb"\bto:\s*(\(@Sendable\s+\([A-Za-z_][A-Za-z_0-9.]*\)\s*->\s*Void\))\.self", fragment
+            )
+            if match:
+                start, end = (args.start_byte + offset for offset in match.span(1))
+                replacement = bytearray(b" " * (end - start))
+                replacement[:3] = b"Any"
+                for offset, byte in enumerate(raw[start:end]):
+                    if byte in (10, 13):
+                        replacement[offset] = byte
+                output[start:end] = replacement
+                cast_edits += 1
+                seen_casts.add(args.start_byte)
+        if async_edits:
+            additional.append({"kind": "swift-if-await", "edits": async_edits})
+        if cast_edits:
+            additional.append({"kind": "swift-sendable-cast-metatype", "edits": cast_edits})
     elif language == "kotlin":
         kind = "kotlin-open-identifier"
         try:
@@ -135,4 +220,9 @@ def adapted_source(raw: bytes, language: str, nodes: list[Any]) -> tuple[bytes, 
                 # Analyzer reads names and evidence from original bytes, not this placeholder.
                 output[start:end] = b"op_n"
                 edits += 1
-    return bytes(output), ([{"kind": kind, "edits": edits}] if edits else [])
+        gaps = _constructor_gaps(raw, stream)
+        for start, end in gaps:
+            output[start:end] = b" " * (end - start)
+        if gaps:
+            additional.append({"kind": "kotlin-primary-constructor-linebreak", "edits": len(gaps)})
+    return bytes(output), ([{"kind": kind, "edits": edits}] if edits else []) + additional

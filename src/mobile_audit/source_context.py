@@ -4,27 +4,32 @@ from __future__ import annotations
 
 import posixpath
 import re
+from collections.abc import Iterator
+from itertools import islice
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
 
 from .selection import relative_source_path
 
 
-def tokens(text: str) -> list[tuple[str, str, int]]:
+def _tokens(text: str) -> Iterator[tuple[str, str, int]]:
     """Keep strings opaque and discard comments; unknown syntax remains visible."""
     pattern = r'''//[^\n]*|/\*[\s\S]*?\*/|"""[\s\S]*?"""|\x27\x27\x27[\s\S]*?\x27\x27\x27|"(?:\\.|[^"\\])*"|\x27(?:\\.|[^\x27\\])*\x27|[A-Za-z_]\w*|[^\s]'''
-    result = []
     line, end = 1, 0
     for match in re.finditer(pattern, text):
         line += text[end : match.start()].count("\n")
         value = match.group()
         if not value.startswith(("//", "/*")):
             kind = "string" if value.startswith(('"', "'")) else "code"
-            result.append((kind, value, line))
-            if len(result) > 200_000:
-                raise ValueError("Source declaration token budget exceeded")
+            yield kind, value, line
         line += value.count("\n")
         end = match.end()
+
+
+def tokens(text: str) -> list[tuple[str, str, int]]:
+    result = list(islice(_tokens(text), 200_001))
+    if len(result) > 200_000:
+        raise ValueError("Source declaration token budget exceeded")
     return result
 
 
@@ -195,22 +200,32 @@ def plist_references(sources: list[tuple[str, str]]) -> tuple[dict[str, list[dic
     for path, text in sources:
         if not path.endswith(".xcodeproj/project.pbxproj"):
             continue
-        try:
-            stream = tokens(text)
-        except ValueError:
-            warnings.append(f"INFOPLIST_FILE token budget exceeded: {path}")
+        if len(text.encode("utf-8")) > 8 * 1024 * 1024:
+            warnings.append(f"INFOPLIST_FILE byte budget exceeded: {path}")
             continue
-        for index, (kind, key, line) in enumerate(stream):
+        stream = iter(_tokens(text))
+        declarations = 0
+        for kind, key, line in stream:
             if kind == "string" and key.strip('"').startswith("INFOPLIST_FILE["):
                 warnings.append(f"Unsupported conditional INFOPLIST_FILE declaration: {path}:{line}")
                 continue
             if kind != "code" or key != "INFOPLIST_FILE":
                 continue
-            end = index + 1
-            while end < len(stream) and stream[end][1] != ";":
-                end += 1
-            tail = stream[index + 1 : end]
-            if not tail or tail[0][1] != "=" or len(tail) < 2 or end == len(stream):
+            declarations += 1
+            if declarations > 4096:
+                warnings.append(f"INFOPLIST_FILE declaration budget exceeded: {path}")
+                break
+            tail = []
+            terminated = False
+            for token in islice(stream, 256):
+                if token[1] == ";":
+                    terminated = True
+                    break
+                tail.append(token)
+            if not terminated:
+                warnings.append(f"INFOPLIST_FILE value budget or terminator missing: {path}:{line}")
+                break
+            if not tail or tail[0][1] != "=" or len(tail) < 2:
                 warnings.append(f"Unsupported INFOPLIST_FILE declaration: {path}:{line}")
                 continue
             value = "".join(t[1] for t in tail[1:]).strip('"')

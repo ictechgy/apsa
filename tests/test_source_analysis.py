@@ -436,14 +436,14 @@ def test_unsupported_missing_and_malformed_parsers_are_reported(monkeypatch):
         [
             ("A.kt", "fun open() {}"),
             ("A.swift", "class A { let browser = WKWebView(); func broken( { browser.load("),
-            ("A.m", "[browser loadRequest:request];"),
+            ("A.mm", "[browser loadRequest:request];"),
             ("A.java", "class A { void open() {} }"),
         ]
     )
     assert report["findings"] == []
     assert any("grammar unavailable for kotlin" in warning for warning in report["warnings"])
     assert any("syntax recovery" in warning for warning in report["warnings"])
-    assert any(".m" in warning for warning in report["warnings"])
+    assert any(".mm" in warning for warning in report["warnings"])
     assert report["coverage"][0]["state"] == "partial"
 
 

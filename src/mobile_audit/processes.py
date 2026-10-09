@@ -17,6 +17,7 @@ def command(
     max_rss: int | None = None,
     *,
     cwd: Path | None = None,
+    env: dict[str, str] | None = None,
 ) -> bytes:
     """Capture a command with finite output and wall time, including its descendants."""
     if timeout <= 0 or max_bytes <= 0:
@@ -28,6 +29,7 @@ def command(
             stderr=subprocess.PIPE,
             start_new_session=os.name == "posix",
             cwd=cwd,
+            env=env,
         )
     except FileNotFoundError:
         raise ValueError(f"Required tool missing: {args[0]}. Run apsa doctor.") from None

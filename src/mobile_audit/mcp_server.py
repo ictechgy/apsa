@@ -83,7 +83,7 @@ def create_server(
             "version": __version__,
             "product": "apsa",
             "engines": ["mobile-audit", "quaygate-lint"],
-            "inputs": ["source-folder", "apk", "ipa", "simulator-app", "CycloneDX-SBOM"],
+            "inputs": ["source-folder", "apk", "aab", "ipa", "simulator-app", "CycloneDX-SBOM"],
             "runtime_execution_enabled": allow_runtime,
             "report_response": {
                 "default_limit": 20,

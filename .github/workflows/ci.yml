@@ -42,3 +42,33 @@ jobs:
       - name: Repeated builds, hashes, attribution, and clean offline scan
         run: uv run --locked --extra dev python scripts/release.py --out "${{ runner.temp }}/apsa-release"
       # No registry publishing, artifact uploading, SDK installation, or device mutation.
+
+  parser-isolation:
+    name: Parser OS isolation / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - name: Install namespace backend on disposable Linux runner
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+      - run: uv sync --locked --extra dev
+      - name: Enforce isolation, synthetic denial probes and full parser regression suite
+        env:
+          APSA_PARSER_SANDBOX: required
+          APSA_SANDBOX_TEST: "1"
+          APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/isolated-parser-locks
+        run: uv run --locked --extra dev pytest -q

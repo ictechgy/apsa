@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import re
 import warnings as python_warnings
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Any
@@ -21,9 +22,15 @@ MAX_AST_BYTES = 2 * 1024 * 1024
 MAX_AST_TOTAL = 32 * 1024 * 1024
 MAX_AST_NODES = 100_000
 MAX_AST_FINDINGS = 500
-LANGUAGES = {".java": "java", ".kt": "kotlin", ".kts": "kotlin", ".swift": "swift"}
-UNSUPPORTED_SOURCE = {".m", ".mm", ".dart", ".js", ".jsx", ".ts", ".tsx", ".cs"}
-FUNCTIONS = {"method_declaration", "constructor_declaration", "function_declaration"}
+LANGUAGES = {".java": "java", ".kt": "kotlin", ".kts": "kotlin", ".swift": "swift", ".m": "objc"}
+UNSUPPORTED_SOURCE = {".mm", ".dart", ".js", ".jsx", ".ts", ".tsx", ".cs"}
+FUNCTIONS = {
+    "method_declaration",
+    "constructor_declaration",
+    "function_declaration",
+    "method_definition",
+    "function_definition",
+}
 COMMENTS = {"comment", "line_comment", "block_comment", "multiline_comment"}
 STRINGS = {"string_literal", "line_string_literal", "multi_line_string_literal", "character_literal"}
 IDENTIFIERS = {"identifier", "simple_identifier"}
@@ -154,7 +161,8 @@ class Analyzer:
     def __init__(self, path: str, text: str, language: str):
         self.path = path
         self.raw = text.encode("utf-8")
-        self.lines = text.splitlines()
+        self.line_offsets = [0] + [match.end() for match in re.finditer(b"\n", self.raw)]
+        self.lines = text.split("\n")
         self.language = language
         self.findings: list[dict] = []
         self.scope = ""
@@ -172,10 +180,11 @@ class Analyzer:
         return self.raw[node.start_byte : node.end_byte].decode("utf-8", errors="replace") if node else ""
 
     def location(self, node: Any) -> dict:
+        row = bisect_right(self.line_offsets, node.start_byte) - 1
         return {
             "path": self.path,
-            "line": node.start_point.row + 1,
-            "column": node.start_point.column + 1,
+            "line": row + 1,
+            "column": node.start_byte - self.line_offsets[row] + 1,
             "offset": node.start_byte,
         }
 
@@ -421,14 +430,13 @@ class Analyzer:
         if len(self.findings) >= MAX_AST_FINDINGS:
             return
         title, severity, remediation, reference = RULES[rule]
+        row = self.location(node)["line"] - 1
         evidence = {
             **self.location(node),
             "basis": "source-ast-local-flow",
             "language": self.language,
             "function": self.scope,
-            "excerpt": code_excerpt(self.lines[node.start_point.row])
-            if node.start_point.row < len(self.lines)
-            else "",
+            "excerpt": code_excerpt(self.lines[row]) if row < len(self.lines) else "",
             **details,
         }
         if traces:
@@ -1066,14 +1074,23 @@ def analyze_sources(sources: list[Any]) -> dict:
                 skipped += 1
             elif adaptations:
                 skipped += 1
-            analyzer = Analyzer(path, text, language)
+            if language == "objc":
+                from .objc_analysis import ObjCAnalyzer
+
+                analyzer = ObjCAnalyzer(path, text)
+                skipped += 1  # Preprocessing, dynamic dispatch and unsupported flows remain partial.
+                metric["state"] = "partial"
+            else:
+                analyzer = Analyzer(path, text, language)
             analyzer.analyze(tree.root_node)
             metric["state"] = "partial" if tree.root_node.has_error or adaptations else "checked"
+            if language == "objc":
+                metric["state"] = "partial"
             metric["functions"] = analyzer.function_counts
             for name, value in analyzer.function_counts.items():
                 function_totals[name] += value
             findings.extend(analyzer.findings)
-            if not tree.root_node.has_error and not adaptations:
+            if not tree.root_node.has_error and not adaptations and language != "objc":
                 pattern_exclusions[path] = {
                     rule: [{"start": start, "end": end} for start, end in sorted(offsets)]
                     for rule, offsets in analyzer.pattern_exclusions.items()
@@ -1128,6 +1145,21 @@ def analyze_sources(sources: list[Any]) -> dict:
         }
         for rule in RULES
     ]
+    if "objc" in seen_languages:
+        from .objc_analysis import RULES as OBJC_RULES
+
+        coverage.extend(
+            {
+                "rule_id": rule,
+                "state": "partial"
+                if any(f["language"] == "objc" and f["functions"] is not None for f in file_metrics)
+                else "not-run",
+                "method": "objc-cst-local-flow",
+                "mapping_scope": "partial",
+                "note": "Known WebKit declared types and straight-line request flow; CommonCrypto direct calls. No preprocessing, ObjC++/dispatch/swizzling, interprocedural flow, guard or runtime proof.",
+            }
+            for rule in OBJC_RULES
+        )
     return {
         "findings": list({item["id"]: item for item in findings}.values()),
         "coverage": coverage,

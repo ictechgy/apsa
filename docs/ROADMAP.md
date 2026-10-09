@@ -8,7 +8,12 @@ Status on 2026-10-08: [1.0.6](https://github.com/ictechgy/apsa/releases/tag/v1.0
 2. **1.1.0 — model and team workflows.** Bounded/paginated model report context, portable integrity-checked baseline artifacts, exported policy decisions, and explicit source app/module selection. Release only after contract, authorization and clean-install validation.
 3. **Later milestones — analysis and parser isolation.** AAB protobuf manifests and module/split inventory; embedded IPA executables; Objective-C local-flow analysis; platform OS sandbox with explicit unavailable/failure behavior. Resource limits are not an OS permission sandbox.
 
-The historical CVE catalog, representative production accuracy, full interprocedural analysis, and physical iOS device tests remain separate work. The current handcrafted corpus is a regression check, not a production detection-rate claim.
+The later stages now have development implementations on `hardening/real-app-cve-v1`;
+see [scope and limits](NEXT_ANALYSIS.md). They remain outside the published 1.1.0
+package until snapshot reviews and hosted validation complete. The historical CVE
+catalog, representative production accuracy, full interprocedural analysis, and
+physical iOS device tests remain separate work. The current handcrafted corpus is
+a regression check, not a production detection-rate claim.
 
 ## Stage gates
 

@@ -1,0 +1,40 @@
+name: Fresh synthetic AAPT2 protobuf verification
+
+on:
+  push:
+    branches: ["hardening/real-app-cve-v1"]
+    paths: ["src/**", "scripts/verify_aab.py", ".github/workflows/generated-aab.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-aab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - run: uv sync --locked --extra dev
+      - name: Install only the pinned synthetic build tool inputs
+        run: sdkmanager "build-tools;35.0.0" "platforms;android-35"
+      - name: Create and independently dump a new synthetic protobuf manifest
+        run: |
+          uv run --locked python scripts/verify_aab.py \
+            --aapt2 "$ANDROID_HOME/build-tools/35.0.0/aapt2" \
+            --android "$ANDROID_HOME/platforms/android-35/android.jar" \
+            --work "${{ runner.temp }}/generated-aab"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: generated-synthetic-aab
+          path: ${{ runner.temp }}/generated-aab
+          retention-days: 30
+          if-no-files-found: error

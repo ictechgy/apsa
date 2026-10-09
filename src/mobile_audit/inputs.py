@@ -122,7 +122,9 @@ def parse_dependencies(path: str, raw: bytes) -> list[dict]:
             if isinstance(version, dict):
                 version = value.get("versions", {}).get(version.get("ref"), "")
             if isinstance(version, str) and version:
-                found.append(dependency(package, version, "Maven", path, "declared"))
+                catalog = dependency(package, version, "Maven", path, "unknown")
+                catalog["version_source"] = "catalog-declared-unresolved-usage"
+                found.append(catalog)
     elif name == "Package.resolved":
         value = json.loads(text)
         pins = value.get("pins", value.get("object", {}).get("pins", []))
@@ -412,6 +414,18 @@ def inspect_target(
                     inventory["platforms"].append("android")
         try:
             if primary_android(name):
+                if target.suffix.lower() == ".aab" and not raw.lstrip().startswith(b"<"):
+                    from .aab_manifest import decode_manifest
+
+                    raw, notes = decode_manifest(raw)
+                    inventory["warnings"].extend(notes)
+                    inventory["partial"] |= bool(notes)
+                    inventory["aab_manifest"] = {
+                        "path": name,
+                        "basis": "aapt2-protobuf",
+                        "resource_resolution": False,
+                        "unresolved_attributes": bool(notes),
+                    }
                 android_manifest(raw, name, inventory)
             elif (
                 (name.endswith("Info.plist") or (source_input and name == configuration))
@@ -629,8 +643,17 @@ def inspect_target(
                     inventory["files_scanned"] += 1
                     # DEX parsing and feature discovery belong to the bounded binary pass.
             if target.suffix.lower() == ".aab":
+                inventory["partial"] = True
+                inventory["archive_role"] = "android-app-bundle"
+                inventory["android_modules"] = sorted(
+                    {
+                        item.filename.split("/")[0]
+                        for item in items
+                        if re.fullmatch(r"[^/]+/manifest/AndroidManifest.xml", item.filename)
+                    }
+                )
                 inventory["warnings"].append(
-                    "AAB protobuf manifests are not decoded. Export an APK with bundletool."
+                    "AAB base manifest and declared module DEX are inspected; resource/device split merging and installed feature reachability are not established."
                 )
         if target.suffix.lower() == ".ipa":
             inventory["warnings"].append(
@@ -652,6 +675,7 @@ def inspect_target(
         references, warnings = plist_references(sources)
         inventory["warnings"].extend(warnings)
         inventory["partial"] |= bool(warnings)
+        inventory["configuration_references"] = []
         for name, origins in references.items():
             if configuration and name != configuration:
                 continue
@@ -667,6 +691,13 @@ def inspect_target(
                     inventory["partial"] = True
             if existing is not None:
                 existing["xcode_references"] = origins
+            inventory["configuration_references"].append(
+                {
+                    "path": name,
+                    "origins": origins,
+                    "state": "observed" if existing is not None else "unavailable",
+                }
+            )
     if not target.is_dir() and not inventory["platforms"]:
         raise ValueError("Archive has no readable Android manifest or main iOS Info.plist")
     if (

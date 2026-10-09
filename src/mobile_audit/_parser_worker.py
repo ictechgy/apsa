@@ -63,6 +63,10 @@ def analyze(target: Path, sbom: Path | None, configuration: str | None = None) -
 
     structural = analyze_sources(sources)
     findings, coverage = static_checks(inventory, sources, structural.get("pattern_exclusions"))
+    if inventory.get("aab_manifest", {}).get("unresolved_attributes"):
+        for check in coverage:
+            if check["rule_id"] == "ANDROID-CONFIG":
+                check["state"] = "partial"
     if inventory.get("configuration_ambiguous"):
         for item in findings:
             if item["status"] == "configuration-confirmed":
@@ -72,7 +76,7 @@ def analyze(target: Path, sbom: Path | None, configuration: str | None = None) -
     coverage.extend(structural["coverage"])
     inventory["warnings"].extend(structural["warnings"])
     inventory["source_analysis"] = structural["metadata"]
-    if target.suffix.lower() in {".apk", ".ipa"}:
+    if target.suffix.lower() in {".apk", ".ipa", ".aab"}:
         from .binary_analysis import analyze_binary
 
         binary = analyze_binary(target, inventory)
@@ -84,6 +88,7 @@ def analyze(target: Path, sbom: Path | None, configuration: str | None = None) -
             set(inventory["features"])
             | {feature for dex in binary["metadata"].get("dex", []) for feature in dex.get("features", [])}
         )
+    if target.suffix.lower() in {".apk", ".ipa"}:
         from .quaygate_analysis import analyze as analyze_lint
         from .quaygate_analysis import merge
 
@@ -114,7 +119,9 @@ def main() -> None:
         if not target.exists():
             raise ValueError(f"Input not found: {target}")
         if not target.is_dir() and target.suffix.lower() not in {".apk", ".ipa", ".zip", ".aab"}:
-            raise ValueError("Use a source folder, APK, IPA, simulator .app folder, or supported app ZIP")
+            raise ValueError(
+                "Use a source folder, APK, AAB, IPA, simulator .app folder, or supported app ZIP"
+            )
         expected = Path(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else target
         if target.resolve() != expected:
             raise ValueError("Authorized input moved or became a symlink; audit refused")

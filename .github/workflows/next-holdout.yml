@@ -1,0 +1,37 @@
+name: Independent public source and Apple CVE holdout
+
+on:
+  push:
+    branches: ["hardening/real-app-cve-v1"]
+    paths: ["src/**", "benchmarks/next*", "benchmarks/primary/**", ".github/workflows/next-holdout.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  holdout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - run: uv sync --locked --extra dev
+      - name: Capture public source and official bulletin bytes, then scan frozen truth
+        env:
+          APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/holdout-parser-locks
+        run: uv run --locked python -m benchmarks.next_holdout --work "${{ runner.temp }}/next-holdout"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: independent-next-holdout
+          path: ${{ runner.temp }}/next-holdout
+          retention-days: 30
+          if-no-files-found: error
+      # Only APSA executes. No upstream app build, backend, device, private data or publishing.

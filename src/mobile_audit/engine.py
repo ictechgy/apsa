@@ -7,6 +7,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from .input_snapshot import identity, stage_input
 from .processes import command
 
 PARSER_TIMEOUT = 90
@@ -47,31 +48,52 @@ def analyze_target(
     sbom: Path | None = None,
     expected_target: Path | None = None,
     configuration: str | None = None,
+    *,
+    report_home: Path | None = None,
 ) -> dict:
     caller_bound = expected_target is not None
     resolved = target.expanduser().resolve()
     expected_target = expected_target or resolved
     if resolved != expected_target:
         raise ValueError("Authorized input moved or became a symlink; audit refused")
-    args = [
-        sys.executable,
-        "-I",
-        "-m",
-        "mobile_audit._parser_worker",
-        str(resolved),
-        str(sbom if caller_bound else sbom.expanduser().resolve()) if sbom else "",
-        str(expected_target),
-    ]
+    sbom = (sbom if caller_bound else sbom.expanduser().resolve()) if sbom else None
     with parser_lease(), tempfile.TemporaryDirectory(prefix="mobile-audit-work-") as directory:
-        args.append(str(Path(directory).resolve()))
-        args.append(configuration or "")
+        root = Path(directory).resolve()
+        scratch = root / "work"
+        scratch.mkdir()
+        staged = root / "input" / resolved.name
+        hidden = (Path.home() / ".local/share/mobile-audit",) + (
+            (report_home.resolve(),) if report_home else ()
+        )
+        snapshot = stage_input(resolved, staged, hidden=hidden)
+        staged_sbom = root / "sbom" / "sbom.json" if sbom else None
+        if sbom and staged_sbom:
+            stage_input(sbom, staged_sbom, source=False)
+        args = [
+            sys.executable,
+            "-I",
+            "-B",
+            "-m",
+            "mobile_audit._parser_worker",
+            str(staged),
+            str(staged_sbom) if staged_sbom else "",
+            str(staged),
+            str(scratch),
+            configuration or "",
+        ]
+        from .parser_sandbox import sandbox_command
+
+        args, isolation = sandbox_command(args, staged, staged_sbom, scratch, report_home=report_home)
         raw = command(
             args,
             timeout=PARSER_TIMEOUT,
             max_bytes=MAX_RESULT,
             max_rss=1024 * 1024 * 1024,
-            cwd=Path(directory).resolve(),
+            cwd=scratch,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TMPDIR": str(scratch)},
         )
+        if resolved.resolve() != expected_target or identity(resolved) != snapshot["identity"]:
+            raise ValueError("Authorized input moved or became a symlink; audit refused")
     try:
         result = json.loads(raw)
     except (ValueError, UnicodeError):
@@ -80,4 +102,19 @@ def analyze_target(
         raise ValueError(result["error"])
     if not isinstance(result.get("inventory"), dict) or not isinstance(result.get("findings"), list):
         raise ValueError("Parser worker returned an invalid schema; audit incomplete")
+    result["inventory"]["parser_isolation"] = isolation
+    result["inventory"]["target"] = str(resolved)
+    result["inventory"]["input_snapshot"] = {
+        "kind": "parent-staged-descriptor-safe",
+        "files": snapshot["files"],
+        "bytes": snapshot["bytes"],
+        "partial": bool(snapshot["warnings"]),
+    }
+    if snapshot["warnings"]:
+        result["inventory"]["warnings"].extend(snapshot["warnings"])
+        result["inventory"]["partial"] = True
+        result["inventory"]["fingerprint_complete"] = False
+        for check in result.get("coverage", []):
+            if check["state"] == "checked":
+                check["state"] = "partial"
     return result

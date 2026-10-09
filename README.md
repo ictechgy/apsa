@@ -14,6 +14,11 @@ APSA 1.1 adds bounded model report pages, portable approved baselines, exported 
 
 Mixed unsupported source languages and truncated pattern results are incomplete. Declared Gradle versions remain candidates until resolved-build evidence is supplied. OS-CVE correlation reports a bounded recent window, so feed freshness alone cannot satisfy historical coverage.
 
+The unreleased hardening branch adds AAB base-manifest/module DEX analysis,
+embedded IPA metadata, bounded Objective-C candidates and optional parser OS
+isolation. See [development scope and limits](docs/NEXT_ANALYSIS.md); these
+features are not part of the published 1.1.0 installation below.
+
 ## What it checks
 
 | Area | Available checks |

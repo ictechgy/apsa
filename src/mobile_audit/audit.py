@@ -102,6 +102,8 @@ def correlate(
         dep = record.get("query_match")
         if dep:
             for current in inventory["dependencies"]:
+                if current.get("version_source") == "catalog-declared-unresolved-usage":
+                    continue
                 if (dep["name"], dep["ecosystem"], dep["version"]) != (
                     current["name"],
                     current["ecosystem"],
@@ -320,7 +322,7 @@ def scan(
                 "os_product",
             }
         }
-    analyzed = analyze_target(target, sbom, expected_target, configuration)
+    analyzed = analyze_target(target, sbom, expected_target, configuration, report_home=store.home)
     inventory, findings, coverage = analyzed["inventory"], analyzed["findings"], analyzed["coverage"]
     if source_module:
         from .selection import relative_source_path
@@ -344,7 +346,10 @@ def scan(
                 "rule_id": "DEPENDENCY-CVE",
                 "dependency": dep,
                 "state": "checked"
-                if health and health["status"] == "ok" and not health["stale"]
+                if dep.get("confidence") != "unknown"
+                and health
+                and health["status"] == "ok"
+                and not health["stale"]
                 else "not-run",
                 "method": "OSV exact package/version query",
                 "note": "Declared source versions may differ from the built artifact. Reachability is not inferred from version matching.",

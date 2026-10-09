@@ -1,6 +1,6 @@
 ---
 name: apsa
-description: Inspect Android or iOS source, APK or IPA with APSA (앱사); correlate public CVEs, inspect OWASP-aligned evidence, compare reports, and prepare authorized device tests through CLI or MCP.
+description: Inspect Android or iOS source, APK, AAB or IPA with APSA (앱사); correlate public CVEs, inspect OWASP-aligned evidence, compare reports, and prepare authorized device tests through CLI or MCP.
 ---
 
 APSA is pronounced "ap-sah"; its Korean name is 앱사. Use `apsa` for CLI, package and MCP identifiers.
@@ -11,7 +11,7 @@ Start with `apsa --json doctor`, or MCP `capabilities`. If the command is missin
 
 Use `scan` for the unified audit: APK/IPA run both bundled engines in one bounded parser and save one report. `apk`, `ipa`, and `device` retain legacy lint output/exits (0/1/2); they do not populate the shared audit history or correlate CVEs. Bundled lint string, canary and signature-block indicators remain candidates. A block is not cryptographic signature verification. Existing data defaults to `~/.local/share/mobile-audit`; `APSA_HOME` (legacy `QUAYGATE_HOME`/`MOBILE_AUDIT_HOME`) and `--home` can select another store. Reassessing an old report does not run new static rules; rescan when required.
 
-For a local audit, run `scan TARGET`. Source folders, APK and IPA are accepted. Supply a CycloneDX SBOM when binary dependency versions cannot be identified. Current intelligence requires `intel sync`; online dependency matching uses `scan --online` or MCP `dependency_check`. Report metadata shows collection times, stale sources, skipped checks and scope limits.
+For a local audit, run `scan TARGET`. Source folders, APK, AAB and IPA are accepted. Supply a CycloneDX SBOM when binary dependency versions cannot be identified. Current intelligence requires `intel sync`; online dependency matching uses `scan --online` or MCP `dependency_check`. Report metadata shows collection times, stale sources, skipped checks and scope limits.
 
 Use `scan TARGET --background` or MCP `audit_start` for long scans. Keep the returned job ID; poll `jobs status ID` / `jobs_status`, and use the corresponding cancel tool when requested. A completed job supplies a report ID. Failed, cancelled and interrupted jobs do not establish a successful audit. Closing the TUI or MCP client does not itself cancel persistent jobs.
 
@@ -44,3 +44,7 @@ Model report context is bounded and paginated. After resolving latest once, use 
 Portable team baselines require explicit authorized approved_by and approval_reference metadata. Export with reports export --format baseline or MCP reports_export_baseline, then pin its returned SHA-256 in independently reviewed CI configuration. Evaluate with --baseline-file/--baseline-sha256 or MCP baseline_path/baseline_sha256; do not derive the expected hash from an untrusted artifact in CI. The hash proves integrity against the approved value, not approver identity or a digital signature. scan --policy with --out writes a separate .decision.json; --decision-out selects another path. The decision includes policy/report hashes, approval provenance and waiver details.
 
 AST coverage reports recognized/analyzed/skipped/bodyless function declarations; errors and unsupported syntax can hide additional functions. Local exports retain per-file inventory.source_analysis metadata. Kotlin open identifiers and Swift nonisolated(unsafe) variable compatibility keep files partial and original evidence offsets. For Apple mobile device-info JSON, os_product=ipados explicitly selects iPadOS; default ios does not match iPadOS-only ranges. Apple custom ranges require CNA identity plus matching official bulletin branch/reference. Outside-published-affected-range does not prove patching; older CVE cache entries without identity need refetching.
+
+AAB analysis decodes the base AAPT2 protobuf manifest and reads module DEX with module provenance. Resource/feature-manifest merging and the installed split set remain unverified; bundle audits stay partial. IPA embedded framework, extension and dylib metadata retain separate roles and hashes without replacing the main identity. Native code paths and signature authenticity remain unverified. Objective-C .m has bounded CST navigation/weak-digest candidates, always partial; .mm, macros, dispatch and interprocedural flow remain unsupported.
+
+The parser reports inventory.parser_isolation. APSA_PARSER_SANDBOX=auto uses system Seatbelt/bubblewrap when available; required refuses unavailable isolation; off reports resource-limits-only. A failed OS sandbox launch never retries unsandboxed. Availability in doctor is not activation evidence. Only a successful worker launch records enforced isolation.

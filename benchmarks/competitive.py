@@ -40,7 +40,7 @@ files = sorted(root.rglob('*.py')) + sorted((root / 'data').glob('*.json'))
 print(json.dumps({'version': mobile_audit.__version__, 'rule_version': RULE_VERSION, 'source_sha256': {
 str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
 'dependencies': {name: importlib.metadata.version(name) for name in
-('androguard', 'tree-sitter', 'tree-sitter-java', 'tree-sitter-kotlin', 'tree-sitter-swift', 'psutil')}}))
+('androguard', 'tree-sitter', 'tree-sitter-java', 'tree-sitter-kotlin', 'tree-sitter-swift', 'tree-sitter-objc', 'psutil')}}))
 """
     return json.loads(command([python, "-I", "-c", script]).stdout)
 

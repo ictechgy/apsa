@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -222,12 +223,15 @@ def global_flags(argv: list[str]) -> tuple[list[str], bool, Path]:
 
 
 def doctor(store: Store) -> dict:
+    from .parser_sandbox import backend
+
     packages = {}
     missing = []
     for package in (
         "tree-sitter",
         "tree-sitter-java",
         "tree-sitter-kotlin",
+        "tree-sitter-objc",
         "tree-sitter-swift",
         "tree-sitter-json",
         "androguard",
@@ -247,6 +251,11 @@ def doctor(store: Store) -> dict:
         "home": str(store.home),
         "offline_ready": supported_host and not missing,
         "supported_host": supported_host,
+        "parser_os_sandbox": {
+            "mode": os.environ.get("APSA_PARSER_SANDBOX", "auto"),
+            "backend_path": backend(),
+            "availability_is_not_execution_proof": True,
+        },
         "parser_packages": packages,
         "missing_packages": missing,
         "auth_required": False,

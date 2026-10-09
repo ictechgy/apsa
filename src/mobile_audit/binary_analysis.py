@@ -591,7 +591,7 @@ def analyze_binary(path: Path, collected: dict) -> dict:
         "metadata": {"engine": "mobile-audit-binary-v1"},
     }
     kind = path.suffix.lower()
-    if kind not in {".apk", ".ipa"} or not path.is_file():
+    if kind not in {".apk", ".ipa", ".aab"} or not path.is_file():
         return result
     if path.stat().st_size > MAX_ARCHIVE_TOTAL:
         raise ValueError("Archive exceeds binary analysis size limit")
@@ -607,10 +607,29 @@ def analyze_binary(path: Path, collected: dict) -> dict:
             if name in names:
                 raise ValueError("Duplicate archive member path")
             names.add(name)
-        if kind == ".apk":
+        if kind in {".apk", ".aab"}:
             dex_items = [
-                item for item in items if re.fullmatch(r"classes(?:[2-9]\d*|1\d+)?.dex", item.filename)
+                item
+                for item in items
+                if re.fullmatch(
+                    (r"[^/]+/dex/" if kind == ".aab" else "") + r"classes(?:[2-9]\d*|1\d+)?.dex",
+                    item.filename,
+                )
             ]
+            undeclared = []
+            if kind == ".aab":
+                modules = {
+                    item.filename.split("/")[0]
+                    for item in items
+                    if re.fullmatch(r"[^/]+/manifest/AndroidManifest.xml", item.filename)
+                }
+                undeclared = [item for item in dex_items if item.filename.split("/")[0] not in modules]
+                dex_items = [item for item in dex_items if item.filename.split("/")[0] in modules]
+                result["metadata"]["undeclared_module_dex"] = [item.filename for item in undeclared][:128]
+                if undeclared:
+                    result["warnings"].append(
+                        "AAB DEX under undeclared module paths skipped; coverage partial"
+                    )
             metadata = []
             remaining = {"methods": MAX_METHODS, "instructions": MAX_INSTRUCTIONS, "findings": MAX_FINDINGS}
             byte_budget = MAX_BINARY_BYTES
@@ -621,6 +640,9 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                     raw = _read_member(archive, item, MAX_DEX_BYTES)
                     byte_budget -= len(raw)
                     analysis = _analyze_dex(raw, item.filename, remaining)
+                    if kind == ".aab":
+                        analysis["metadata"]["module"] = item.filename.split("/")[0]
+                        analysis["metadata"]["installation_state"] = "unknown"
                     result["findings"].extend(analysis["findings"])
                     result["warnings"].extend(analysis["warnings"])
                     metadata.append(analysis["metadata"])
@@ -629,7 +651,7 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                         f"DEX inspection incomplete for {item.filename}: {type(error).__name__}"
                     )
                     metadata.append({"path": item.filename, "complete": False, "error": type(error).__name__})
-            complete = bool(metadata) and all(entry["complete"] for entry in metadata)
+            complete = bool(metadata) and not undeclared and all(entry["complete"] for entry in metadata)
             result["metadata"]["dex"] = metadata
             for rule in DEX_RULES:
                 result["coverage"].append(
@@ -677,6 +699,7 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                     from .core import digest
 
                     app["executable_sha256"] = digest(raw)
+                    app["executable_bytes"] = len(raw)
                     app["slices"] = inspect_macho(raw)
                     for index, slice_ in enumerate(app["slices"]):
                         evidence = {
@@ -791,4 +814,31 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                 result["warnings"].append(
                     "IPA main executable declares encrypted code; code paths were not inspected"
                 )
+            from .ios_embedded import analyze_embedded
+
+            embedded = analyze_embedded(
+                archive,
+                apps,
+                names,
+                max(0, MAX_BINARY_BYTES - sum(app.get("executable_bytes", 0) for app in apps)),
+            )
+            result["metadata"]["embedded"] = embedded["metadata"]
+            result["findings"].extend(embedded["findings"])
+            result["warnings"].extend(embedded["warnings"])
+            result["coverage"].append(
+                _coverage(
+                    "BINARY-IOS-EMBEDDED-MACHO",
+                    "checked"
+                    if embedded["complete"] and embedded["metadata"]
+                    else "partial"
+                    if embedded["metadata"] or not embedded["complete"]
+                    else "not-run",
+                    "embedded-macho-metadata",
+                    "Declared nested app/appex/framework and Frameworks dylib headers only; no main identity replacement, native instructions, signature verification or installed reachability proof.",
+                )
+            )
+            if len(result["findings"]) > MAX_FINDINGS:
+                result["findings"] = result["findings"][:MAX_FINDINGS]
+                result["warnings"].append("IPA executable finding budget reached; coverage incomplete")
+                result["coverage"][-1]["state"] = "partial"
     return result
