@@ -50,7 +50,9 @@ are limited to trusted runtime/system code and the system OpenSSL helper.
 Gradle version catalog entries retain their declared names and versions with
 unresolved usage. An alias merely present in the catalog cannot establish a
 shipped dependency or satisfy exact CVE correlation; supply resolved build/SBOM
-evidence. DEX under an AAB module without a manifest path is skipped with partial
+evidence. Unreleased development work links aliases to the configurations that
+use them and reads Gradle lockfiles; see
+[dependency evidence results](../benchmarks/DEPENDENCY_RESULTS.md). DEX under an AAB module without a manifest path is skipped with partial
 coverage and listed separately.
 
 Validation uses new synthetic malformed/positive/negative fixtures, a fresh
@@ -113,7 +115,8 @@ OpenSSL에 한정합니다.
 
 Gradle catalog의 이름·버전은 사용 여부 미확인으로 보존합니다. catalog에만 있는
 alias는 포함된 의존성·정확한 CVE 매칭을 증명하지 못하므로 실제 빌드·SBOM 근거가
-필요합니다. 매니페스트 경로가 없는 AAB 모듈의 DEX는 건너뛰고 부분 범위와 별도
+필요합니다. 미배포 개발 작업은 alias를 사용하는 구성과 연결하고 Gradle lockfile을
+읽습니다. [의존성 근거 결과](../benchmarks/DEPENDENCY_RESULTS.ko.md)를 참고하세요. 매니페스트 경로가 없는 AAB 모듈의 DEX는 건너뛰고 부분 범위와 별도
 목록을 남깁니다.
 
 새 합성 양성·음성·손상 입력, AAPT2 생성 protobuf, 일회용 CI의 파일·네트워크
