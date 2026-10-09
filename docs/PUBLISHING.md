@@ -42,4 +42,4 @@ If the approved tag was created but the publishing job failed before its steps, 
 gh workflow run release.yml --repo ictechgy/apsa --ref "$APSA_RELEASE_TAG"
 ```
 
-This reruns the CI/build gates for the tagged source. A source-only connector may not expose workflow dispatch; do not treat a successful source upload or tag creation as registry publication. Any additional dispatch automation and its permissions require their own review and authorization. Keep the [release sequence](ROADMAP.md) stage gates: confirm 1.0.6 publication before advancing the 1.1 candidate.
+This reruns the CI/build gates for the tagged source. A source-only connector may not expose workflow dispatch; do not treat a successful source upload or tag creation as registry publication. Any additional dispatch automation and its permissions require their own review and authorization. Keep the [release sequence](ROADMAP.md) stage gates: confirm each published version before advancing the next candidate.

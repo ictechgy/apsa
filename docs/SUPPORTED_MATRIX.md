@@ -1,8 +1,9 @@
 # 지원 범위와 검증 상태
 
-이 표는 배포된 1.1.0의 범위입니다. 이후 개발 브랜치의 AAB·IPA 내장 바이너리,
-Objective-C `.m`·OS 격리는 [분석 확장](NEXT_ANALYSIS.md)과
-[별도 검증 결과](../benchmarks/NEXT_RESULTS.ko.md)에 기록합니다.
+이 표의 호스트·CI 행은 배포된 1.1.0의 검증 기록입니다. 1.2.0의 AAB·IPA 내장 바이너리,
+Objective-C `.m`·OS 격리 범위는 [분석 확장](NEXT_ANALYSIS.md)과
+[별도 검증 결과](../benchmarks/NEXT_RESULTS.ko.md)에 기록하며, 1.2.0 배포 확인은
+`RELEASE_READINESS.md`의 태그 워크플로 기록을 따릅니다.
 
 2026-10-08 기준입니다. 현재 GitHub CI 실행 근거는 [1.1.0 릴리스 워크플로](https://github.com/ictechgy/apsa/actions/runs/37796258526)이며, 아래 CI 통과는 태그 `v1.1.0`의 소스 스냅샷에 한정됩니다. 최종 버전·소스 스냅샷의 통과 여부는 릴리스 manifest와 `RELEASE_READINESS.md`를 확인하십시오. 아래에서 실행한 환경과 구성만 한 환경을 구분합니다. 새 실기기 검증을 수행했다는 뜻은 아닙니다.
 

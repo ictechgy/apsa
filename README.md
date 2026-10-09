@@ -6,7 +6,7 @@
 
 This English README is the source of truth. The Korean README follows it.
 
-APSA helps developers and security teams audit their own mobile apps. It inspects source code and APK/IPA builds, correlates public vulnerability information, and keeps evidence, coverage, and report history together. Use the CLI, terminal UI, or the same audit engine through MCP and reusable skills.
+APSA helps developers and security teams audit their own mobile apps. It inspects source code and APK/AAB/IPA builds, correlates public vulnerability information, and keeps evidence, coverage, and report history together. Use the CLI, terminal UI, or the same audit engine through MCP and reusable skills.
 
 Pronounced **“ap-sah”**; Korean name **앱사**. The name connects “app + audit” with **App Security Audit**. APSA combines the earlier Quaygate lint engine and Mobile Audit workflows in one package.
 
@@ -14,18 +14,19 @@ APSA 1.1 adds bounded model report pages, portable approved baselines, exported 
 
 Mixed unsupported source languages and truncated pattern results are incomplete. Declared Gradle versions remain candidates until resolved-build evidence is supplied. OS-CVE correlation reports a bounded recent window, so feed freshness alone cannot satisfy historical coverage.
 
-The unreleased hardening branch adds AAB base-manifest/module DEX analysis,
-embedded IPA metadata, bounded Objective-C candidates and optional parser OS
-isolation. See [development scope and limits](docs/NEXT_ANALYSIS.md); these
-features are not part of the published 1.1.0 installation below.
+APSA 1.2 adds AAB base-manifest/module DEX analysis, embedded IPA Mach-O
+metadata, bounded Objective-C `.m` candidates and optional parser OS isolation.
+Every AAB audit stays partial, and embedded IPA metadata does not authenticate
+signatures. See [analysis scope and limits](docs/NEXT_ANALYSIS.md) and the
+[independent holdout](benchmarks/NEXT_RESULTS.md).
 
 ## What it checks
 
 | Area | Available checks |
 | --- | --- |
-| Source code | Java/Kotlin/Swift AST analysis; WebView and deep-link patterns; Manifest, Info.plist, storage, and dependency inspection |
-| Android builds | DEX calls and constant flow; resources and network configuration; exported components/providers; signing-block and v1 certificate evidence; ELF hardening |
-| iOS builds | Mach-O headers; limited entitlement/configuration checks (embedded XML entitlements, ATS exceptions, provisioning indicators); PIE, canary, and string evidence |
+| Source code | Java/Kotlin/Swift AST analysis; bounded Objective-C `.m` candidates; WebView and deep-link patterns; Manifest, Info.plist, storage, and dependency inspection |
+| Android builds | DEX calls and constant flow; AAB base manifest and module DEX (always partial); resources and network configuration; exported components/providers; signing-block and v1 certificate evidence; ELF hardening |
+| iOS builds | Mach-O headers, including embedded framework/extension metadata; limited entitlement/configuration checks (embedded XML entitlements, ATS exceptions, provisioning indicators); PIE, canary, and string evidence |
 | Public intelligence | Apple/Android advisories, CVE, CISA KEV, OWASP guidance, and OSV dependency correlation |
 | Reports and CI | SQLite history, comparison and reassessment, JSON/Markdown/SARIF export, coverage requirements, and expiring waivers |
 | Runtime | Prepared scenarios for owned Android test apps and iOS simulator apps; physical iOS devices are unsupported |
@@ -42,7 +43,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.1.0
+uv tool install --python 3.12 apsa==1.2.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -207,8 +208,9 @@ Recorded product validation is in [RELEASE_READINESS.md](https://github.com/icte
 
 A reproducible [APSA/MobSF comparison](benchmarks/COMPETITIVE.md) and its
 [recorded results](benchmarks/COMPETITIVE_RESULTS.md) use freshly generated
-synthetic source projects and APKs. The improved rule set is an unreleased
-benchmark candidate; these results are not production accuracy estimates.
+synthetic source projects and APKs. They measure development candidates
+recorded before APSA 1.2.0, not the published package; these results are not
+production accuracy estimates.
 
 A separate [public-source and CVE evaluation](benchmarks/REAL_WORLD.md) records
 [initial results](benchmarks/REAL_WORLD_RESULTS.md) on six pinned app source

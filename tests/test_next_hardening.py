@@ -17,6 +17,7 @@ from mobile_audit._parser_worker import analyze
 from mobile_audit.aab_manifest import decode_manifest
 from mobile_audit.binary_analysis import analyze_binary
 from mobile_audit.inputs import inspect_target
+from mobile_audit.skills import install_skill, skill_status
 from mobile_audit.source_analysis import analyze_sources
 from mobile_audit.source_context import plist_references
 from tests.test_binary_analysis import FIXTURES, _macho
@@ -595,3 +596,30 @@ print(json.dumps(result))
         result = json.loads(command(wrapped, timeout=10, cwd=scratch))
     assert all(result.values()), result
     assert metadata["state"] == "enforced"
+
+
+@pytest.mark.parametrize("name", ["apsa", "quaygate", "mobile-audit"])
+def test_110_skills_upgrade_and_preserve_user_customizations(tmp_path, name):
+    old = (Path(__file__).parent / "fixtures/skills" / f"{name}-1.1.0.md").read_bytes()
+    destination = tmp_path / name
+    destination.mkdir()
+    path = destination / "SKILL.md"
+    path.write_bytes(old)
+    assert skill_status(name, destination) == "outdated"
+    assert install_skill(name, destination)["status"] == "installed"
+    assert skill_status(name, destination) == "current"
+    path.write_bytes(old + b"\nUser customization\n")
+    assert skill_status(name, destination) == "modified"
+    with pytest.raises(FileExistsError):
+        install_skill(name, destination)
+
+
+def test_every_released_skill_fixture_is_a_known_upgrade_source(tmp_path):
+    fixtures = sorted((Path(__file__).parent / "fixtures/skills").glob("*.md"))
+    assert fixtures
+    for fixture in fixtures:
+        name = fixture.name.rsplit("-", 1)[0]
+        destination = tmp_path / fixture.stem
+        destination.mkdir()
+        (destination / "SKILL.md").write_bytes(fixture.read_bytes())
+        assert skill_status(name, destination) == "outdated", fixture.name

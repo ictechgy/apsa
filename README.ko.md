@@ -6,12 +6,8 @@
 
 영문 README가 원본입니다. 이 문서는 영문 원본을 기준으로 작성한 한국어 번역입니다.
 
-APSA는 개발자와 보안팀이 자기 모바일 앱을 감사하는 도구입니다. 소스 코드와 APK·IPA 빌드를 검사하고, 공개 취약점 정보를 대조하며, 근거·검사 범위·보고서 이력을 함께 관리합니다. CLI, 터미널 UI, MCP, 재사용 가능한 스킬에서 같은 감사 엔진을 사용합니다.
+APSA는 개발자와 보안팀이 자기 모바일 앱을 감사하는 도구입니다. 소스 코드와 APK·AAB·IPA 빌드를 검사하고, 공개 취약점 정보를 대조하며, 근거·검사 범위·보고서 이력을 함께 관리합니다. CLI, 터미널 UI, MCP, 재사용 가능한 스킬에서 같은 감사 엔진을 사용합니다.
 
-미배포 hardening 브랜치에는 AAB base 매니페스트·모듈 DEX, IPA 내장 메타데이터,
-제한된 Objective-C 후보와 선택적 파서 OS 격리를 추가했습니다.
-[개발 범위와 한계](docs/NEXT_ANALYSIS.md)를 참고하세요. 아래의 배포된 1.1.0
-설치에는 이 기능이 포함되지 않습니다.
 
 영어 발음은 **“ap-sah”**, 한글 이름은 **앱사**입니다. “앱 + 감사”를 연결한 이름이며 **App Security Audit**라는 의미도 담았습니다. 기존 Quaygate 린트 엔진과 Mobile Audit 작업 흐름을 한 패키지에 통합했습니다.
 
@@ -19,13 +15,19 @@ APSA 1.1은 모델 보고서의 제한된 페이지 조회, 승인된 휴대형 
 
 미지원 언어가 혼합된 소스와 잘린 패턴 결과는 불완전 검사로 표시합니다. Gradle 선언 버전은 실제 빌드에서 확인되기 전까지 후보이며, OS-CVE는 최근 공지 범위만 대조하므로 피드가 최신이어도 역사적 커버리지를 충족하지 않습니다.
 
+APSA 1.2는 AAB base 매니페스트·모듈 DEX 분석, IPA 내장 Mach-O 메타데이터,
+제한된 Objective-C `.m` 후보와 선택적 파서 OS 격리를 추가합니다. AAB 감사는
+항상 부분 감사이며, IPA 내장 메타데이터는 서명 진위를 인증하지 않습니다.
+[분석 범위와 한계](docs/NEXT_ANALYSIS.md)와 [독립 holdout 결과](benchmarks/NEXT_RESULTS.ko.md)를
+참고하세요.
+
 ## 검사 범위
 
 | 영역 | 제공하는 검사 |
 | --- | --- |
-| 소스 코드 | Java·Kotlin·Swift AST 분석, WebView·딥링크 패턴, Manifest·Info.plist·저장소·의존성 검사 |
-| Android 빌드 | DEX 호출·상수 흐름, 리소스·네트워크 설정, exported 컴포넌트·provider, 서명 블록·v1 인증서 근거, ELF 하드닝 |
-| iOS 빌드 | Mach-O 헤더, 제한적인 entitlement·설정 검사(내장 XML entitlement, ATS 예외, provisioning 지표), PIE·카나리·문자열 근거 |
+| 소스 코드 | Java·Kotlin·Swift AST 분석, 제한된 Objective-C `.m` 후보, WebView·딥링크 패턴, Manifest·Info.plist·저장소·의존성 검사 |
+| Android 빌드 | DEX 호출·상수 흐름, AAB base 매니페스트·모듈 DEX(항상 부분 감사), 리소스·네트워크 설정, exported 컴포넌트·provider, 서명 블록·v1 인증서 근거, ELF 하드닝 |
+| iOS 빌드 | 내장 framework·확장 메타데이터를 포함한 Mach-O 헤더, 제한적인 entitlement·설정 검사(내장 XML entitlement, ATS 예외, provisioning 지표), PIE·카나리·문자열 근거 |
 | 공개 취약점 정보 | Apple·Android 공지, CVE, CISA KEV, OWASP 가이드, OSV 의존성 대조 |
 | 보고서와 CI | SQLite 이력, 비교·재평가, JSON·Markdown·SARIF 내보내기, 필수 검사 범위, 만료일이 있는 예외 |
 | 런타임 | 소유한 Android 테스트 앱과 iOS 시뮬레이터 앱의 준비된 시나리오. 실제 iOS 기기는 미지원 |
@@ -42,7 +44,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.1.0
+uv tool install --python 3.12 apsa==1.2.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -206,8 +208,8 @@ make release RELEASE_OUT=dist/apsa-local-release
 제품 검증 기록은 [RELEASE_READINESS.md](https://github.com/ictechgy/apsa/blob/main/RELEASE_READINESS.md)에 있습니다. [선별한 벤치마크](https://github.com/ictechgy/apsa/blob/main/benchmarks/README.md)(영문)는 회귀 검사 사례 모음이며 운영 앱 탐지율을 나타내지 않습니다. 구조와 보안 경계는 [통합 경계](https://github.com/ictechgy/apsa/blob/main/docs/INTEGRATION.md)와 [위협 모델](https://github.com/ictechgy/apsa/blob/main/docs/THREAT_MODEL.md)에서 확인할 수 있습니다. 과거 리뷰는 당시 스냅샷에만 적용됩니다.
 
 새로 생성한 합성 소스 프로젝트와 APK를 사용하는 [APSA/MobSF 비교](benchmarks/COMPETITIVE.md)(영문)와
-[측정 결과](benchmarks/COMPETITIVE_RESULTS.ko.md)를 제공합니다. 개선한 규칙은 아직 배포하지 않은
-벤치마크 후보이며, 이 결과는 운영 앱의 정확도를 나타내지 않습니다.
+[측정 결과](benchmarks/COMPETITIVE_RESULTS.ko.md)를 제공합니다. APSA 1.2.0 배포 전의
+개발 후보를 측정한 결과이며 배포 패키지의 측정이나 운영 앱의 정확도를 나타내지 않습니다.
 
 별도의 [공개 소스·CVE 평가](benchmarks/REAL_WORLD.ko.md)와
 [최초 결과](benchmarks/REAL_WORLD_RESULTS.ko.md)는 커밋을 고정한 앱 소스 6개,

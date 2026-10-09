@@ -2,18 +2,17 @@
 
 English is the source for this release plan.
 
-Status on 2026-10-08: [1.0.6](https://github.com/ictechgy/apsa/releases/tag/v1.0.6) and [1.1.0](https://github.com/ictechgy/apsa/releases/tag/v1.1.0) were published in that order. The later stages below remain planned; this status does not declare AAB, embedded binary, Objective-C or OS sandbox support.
+Status on 2026-10-09: [1.0.6](https://github.com/ictechgy/apsa/releases/tag/v1.0.6) and [1.1.0](https://github.com/ictechgy/apsa/releases/tag/v1.1.0) were published in that order. 1.2.0 packages bounded, partial implementations of the analysis and parser-isolation stages. Its publication is established only by the tag-context release workflow, the PyPI release and the GitHub release downloads.
 
 1. **1.0.6 — evidence correctness.** Isolated MCP Python fallback, incomplete mixed-language AST and truncated pattern coverage, bounded OS-advisory coverage, declared dependency candidates, and unified CI example. Release only after regression tests and independent snapshot-bound review.
 2. **1.1.0 — model and team workflows.** Bounded/paginated model report context, portable integrity-checked baseline artifacts, exported policy decisions, and explicit source app/module selection. Release only after contract, authorization and clean-install validation.
-3. **Later milestones — analysis and parser isolation.** AAB protobuf manifests and module/split inventory; embedded IPA executables; Objective-C local-flow analysis; platform OS sandbox with explicit unavailable/failure behavior. Resource limits are not an OS permission sandbox.
+3. **1.2.0 — bounded analysis and parser isolation.** AAB protobuf base manifest and module DEX inventory; embedded IPA executable metadata; Objective-C `.m` local candidates; platform OS sandbox with explicit unavailable/failure behavior. Resource limits are not an OS permission sandbox. See [scope and limits](NEXT_ANALYSIS.md) and the [independent holdout](../benchmarks/NEXT_RESULTS.md).
+4. **Later milestones.** Resolved Gradle/SBOM dependency evidence for catalog aliases; independently labeled FP/FN evaluation with truth frozen before scanning; AAB resource/feature/device split merging; IPA signature authentication and native flow; Objective-C preprocessing, dynamic dispatch and `.mm`; historical CVE backfill and amendments; authorized physical-device evidence.
 
-The later stages now have development implementations on `hardening/real-app-cve-v1`;
-see [scope and limits](NEXT_ANALYSIS.md). They remain outside the published 1.1.0
-package until snapshot reviews and hosted validation complete. The historical CVE
-catalog, representative production accuracy, full interprocedural analysis, and
-physical iOS device tests remain separate work. The current handcrafted corpus is
-a regression check, not a production detection-rate claim.
+The historical CVE catalog, representative production accuracy, full
+interprocedural analysis, and physical iOS device tests remain separate work.
+The current handcrafted corpus is a regression check, not a production
+detection-rate claim.
 
 ## Stage gates
 
@@ -21,7 +20,7 @@ Publish 1.0.6 before advancing the 1.1 release branch to public main. For each r
 
 1.1 adds section pagination with explicit omissions, independently pinned portable baselines, reviewable policy decision artifacts, and source module/configuration selection. Its baseline approval metadata does not authenticate a reviewer; an externally reviewed artifact hash is required. Its source selection does not merge build variants.
 
-After 1.1 publication, implement the following stages in order. Each gets separate fixtures, coverage states, documentation and independent review before declaring support:
+After 1.1 publication, the following stages were implemented in order for 1.2.0. Each received separate fixtures, coverage states, documentation and independent review before support was declared; the table remains the gate for extending them:
 
 | Stage | Deliverable | Required evidence and failure behavior |
 | --- | --- | --- |

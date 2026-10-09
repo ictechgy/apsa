@@ -11,6 +11,9 @@ development branch, not published PyPI APSA 1.1.0. The extension adds bounded
 AAB protobuf/module analysis, embedded IPA Mach-O metadata, narrow Objective-C
 candidates, descriptor-safe parser input staging and optional OS isolation.
 It does not establish whole-app exploitability or general production accuracy.
+APSA 1.2.0 packages this evaluated runtime with release version metadata and
+1.1.0 skill-upgrade hashes; the measurements below were not rerun under the
+`2026.10.09.apsa.120` rule version.
 
 ## Independently labeled first evaluation
 

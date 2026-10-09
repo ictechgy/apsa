@@ -1,7 +1,8 @@
-# Analysis extension in development
+# Analysis extension (APSA 1.2)
 
-English is the source of truth for this document. These changes belong to the
-`hardening/real-app-cve-v1` branch, not the published APSA 1.1.0 package.
+English is the source of truth for this document. These changes were developed
+on the `hardening/real-app-cve-v1` branch and ship in APSA 1.2.0. They are not
+part of APSA 1.1.0 or earlier packages.
 
 The extension adds bounded AAB input, embedded IPA metadata, Objective-C
 candidates and parser OS isolation. It also recovers selected Swift/Kotlin
@@ -62,10 +63,11 @@ installed patch safety, comprehensive production accuracy or OWASP certification
 The VLC repository-search absence claim is provisional and unscored; the full
 pinned archive independently records any checked-in Info.plist paths.
 
-# 개발 중인 분석 확장
+# 분석 확장 (APSA 1.2)
 
 영어가 원본이며 이 절은 번역입니다. 변경은 `hardening/real-app-cve-v1`
-브랜치에 속하고, 배포된 APSA 1.1.0 패키지에는 포함되지 않습니다.
+브랜치에서 개발했고 APSA 1.2.0에 포함됩니다. APSA 1.1.0 이하 패키지에는
+포함되지 않습니다.
 
 AAB 입력, IPA 내장 바이너리 메타데이터, Objective-C 후보와 파서 OS 격리를
 추가했습니다. 일부 Swift·Kotlin 구문 누락을 복구하고 큰 Xcode 프로젝트에서
