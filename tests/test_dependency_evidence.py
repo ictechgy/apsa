@@ -152,6 +152,7 @@ com.squareup.okio:okio:3.6.0=releaseRuntimeClasspath,releaseCompileClasspath
 com.squareup.okhttp3:okhttp:4.12.0=fossReleaseRuntimeClasspath
 junit:junit:4.13.2=testReleaseRuntimeClasspath,debugUnitTestRuntimeClasspath
 com.squareup.leakcanary:leakcanary-android:2.12=debugRuntimeClasspath
+com.android.tools:test-engine:1.0.1=unified-test-platform-gradle-work-action
 org.jetbrains:annotations:13.0=releaseCompileClasspath
 empty=annotationProcessor
 """

@@ -161,7 +161,7 @@ def parse_dependencies(path: str, raw: bytes) -> list[dict]:
             line = line.strip()
             if not line or line.startswith("#") or line.startswith("empty="):
                 continue
-            match = re.fullmatch(r"([^:=\s]+):([^:=\s]+):([^:=\s]+)(?:=([A-Za-z0-9_,]*))?", line)
+            match = re.fullmatch(r"([^:=\s]+):([^:=\s]+):([^:=\s]+)(?:=([^=\s]*))?", line)
             if not match:
                 raise ValueError("Unsupported Gradle lockfile entry")
             group, artifact, version, configurations = match.groups()

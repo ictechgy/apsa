@@ -41,13 +41,15 @@ jobs:
       - name: Let Gradle resolve and lock every configuration of the app module
         run: |
           cat > "$RUNNER_TEMP/lock-all.gradle" <<'GRADLE'
-          allprojects {
-              dependencyLocking { lockAllConfigurations() }
+          // Isolated-projects compatible (Gradle 8.8+): lock every configuration of every project.
+          gradle.lifecycle.beforeProject { project ->
+              project.dependencyLocking { lockAllConfigurations() }
           }
           GRADLE
           cd "$(find "$RUNNER_TEMP/oracle/source" -mindepth 1 -maxdepth 1 -type d)"
+          grep -h distributionUrl gradle/wrapper/gradle-wrapper.properties
           rm -f app/gradle.lockfile
-          ./gradlew --no-daemon --no-configuration-cache --init-script "$RUNNER_TEMP/lock-all.gradle" \
+          ./gradlew --no-daemon --init-script "$RUNNER_TEMP/lock-all.gradle" \
             :app:dependencies --write-locks > "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt" 2>&1 \
             || { tail -80 "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt"; exit 1; }
           java -version 2>&1 | head -1 > "$RUNNER_TEMP/oracle/${{ matrix.case }}.java.txt"

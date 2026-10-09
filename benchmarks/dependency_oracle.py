@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 HERE = Path(__file__).resolve().parent
 CASES = HERE / "dependency_cases.json"
 MAX_ARCHIVE = 512 * 1024 * 1024
-LINE = re.compile(r"([^:=\s]+):([^:=\s]+):([^:=\s]+)=([A-Za-z0-9_,]*)")
+LINE = re.compile(r"([^:=\s]+):([^:=\s]+):([^:=\s]+)=([^=\s]*)")
 
 
 def sha(data: bytes) -> str:
@@ -44,17 +44,25 @@ def fetch(spec: dict, out: Path) -> dict:
 
 
 def extract(archive: Path, destination: Path) -> Path:
+    """Extract regular members only; symlinks are skipped and listed, never followed."""
     with zipfile.ZipFile(archive) as bundle:
         roots = set()
+        regular = []
+        skipped = []
         for item in bundle.infolist():
             path = PurePosixPath(item.filename)
-            if path.is_absolute() or ".." in path.parts or stat.S_ISLNK(item.external_attr >> 16):
+            if path.is_absolute() or ".." in path.parts:
                 raise ValueError(f"Unsafe archive member: {item.filename}")
             roots.add(path.parts[0])
+            if stat.S_ISLNK(item.external_attr >> 16):
+                skipped.append(item.filename)
+            else:
+                regular.append(item)
         if len(roots) != 1:
             raise ValueError("Expected one top-level source directory")
-        bundle.extractall(destination)
+        bundle.extractall(destination, members=regular)
     root = destination / roots.pop()
+    (destination / "skipped-symlinks.json").write_text(json.dumps(sorted(skipped), indent=2) + "\n")
     gradlew = root / "gradlew"
     if gradlew.is_file():
         gradlew.chmod(0o755)
@@ -136,7 +144,7 @@ def main() -> None:
     archive = json.loads((args.work / f"{spec['id']}.archive.json").read_text())
     if sha(archive_path.read_bytes()) != archive["sha256"]:
         raise ValueError("Source archive changed after capture")
-    source = next((args.work / "source").iterdir())
+    source = next(p for p in (args.work / "source").iterdir() if p.is_dir())
     module_dir = source / spec["module"].strip(":").replace(":", "/")
     result = oracle(spec, source, module_dir / "gradle.lockfile", archive)
     (args.work / f"{spec['id']}.lockfile").write_bytes((module_dir / "gradle.lockfile").read_bytes())

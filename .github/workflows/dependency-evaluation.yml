@@ -1,0 +1,46 @@
+name: Catalog usage and lockfile evidence against the Gradle oracle
+
+on:
+  push:
+    branches: ["dev/dependency-evidence"]
+    paths: ["src/**", "benchmarks/dependency_eval.py", "benchmarks/dependency_truth.json", "benchmarks/dependency_locks/**", ".github/workflows/dependency-evaluation.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - run: uv sync --locked --extra dev
+      - name: Download the frozen oracle source archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID="$(python3 -c 'import json; print(json.load(open("benchmarks/dependency_truth.json"))["oracle_run"])')"
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'dependency-oracle-*' --dir "$RUNNER_TEMP/oracle"
+      - name: Scan pinned sources with APSA only; no Gradle or upstream code runs
+        env:
+          APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/dependency-parser-locks
+        run: |
+          uv run --locked python -m benchmarks.dependency_eval \
+            --archives "$RUNNER_TEMP/oracle" --work "$RUNNER_TEMP/eval-work" \
+            --out "$RUNNER_TEMP/dependency-evidence/results.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dependency-evidence-evaluation
+          path: ${{ runner.temp }}/dependency-evidence
+          retention-days: 90
+          if-no-files-found: error
