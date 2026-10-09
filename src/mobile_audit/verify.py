@@ -7,7 +7,6 @@ did not run there. Absence of an APSA finding is not evidence of absence.
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import PurePosixPath
 
@@ -48,24 +47,21 @@ def _weaknesses(weakness: str | None, rule: str | None) -> list[str]:
 def _relative(path: str, targets: list[str]) -> str | None:
     """The claimed path relative to the audited target; absolute paths must lie inside it.
 
-    ``targets`` holds the target's spellings (resolved and as requested); an
-    absolute claim is also resolved, so a symlinked spelling still matches.
-    None means the claim names the audited file itself.
+    ``targets`` holds the target's spellings (resolved and as requested), so a
+    claim through the symlink used for the scan still matches. None means the
+    claim names the audited file itself.
     """
     value = path.replace("\\", "/")
     if value.startswith("/") or re.match(r"[A-Za-z]:/", value):
-        spellings = {value, os.path.realpath(path).replace("\\", "/")}
+        # Compared as spelled: resolving a client-supplied path would touch the filesystem
+        # outside the audited roots. The target's resolved and requested spellings both count.
         for target in targets:
             base = target.replace("\\", "/").rstrip("/")
-            for spelling in spellings:
-                if spelling == base:
-                    return None
-                if spelling.startswith(base + "/"):
-                    value = spelling[len(base) + 1 :]
-                    break
-            else:
-                continue
-            break
+            if value == base:
+                return None
+            if value.startswith(base + "/"):
+                value = value[len(base) + 1 :]
+                break
         else:
             raise ValueError("path is outside the audited target")
     parts = [part for part in value.split("/") if part not in {"", "."}]
@@ -156,11 +152,13 @@ def verify_claim(
         if file_state is None and claimed.endswith(AST_SUFFIXES):
             # A claim relative to another root (a module, a bare file name) may name an analyzed
             # file APSA cannot pick out; list the analyzed files it could mean.
-            name = claimed.rsplit("/", 1)[-1]
+            # A bare file name may mean any analyzed file of that name; a longer claim only
+            # files that end with the whole claimed path.
+            bare = "/" not in claimed
             candidates = sorted(
                 r["path"]
                 for r in records
-                if r["path"] == name or r["path"].endswith("/" + claimed) or r["path"].endswith("/" + name)
+                if r["path"].endswith("/" + claimed) or (bare and r["path"] == claimed)
             )
             file_state = "path-unmatched" if candidates else "not-analyzed"
     observed = set().union(*states.values()) if states else set()

@@ -238,8 +238,10 @@ def test_verify_matches_files_by_path_not_by_bare_name(store, tmp_path, monkeypa
     # A bare file name could be any CallActivity.kt.
     bare = verify_claim(report, path="CallActivity.kt", **claim)
     assert bare["verdict"] == "path-unmatched" and bare["candidate_paths"] == ["feature/CallActivity.kt"]
-    module = verify_claim(report, path="src/feature/CallActivity.kt", **claim)
-    assert module["verdict"] == "path-unmatched" and "path-unmatched" in module["note"]
+    # A longer claim suggests only files ending with the whole claimed path.
+    other = verify_claim(report, path="src/feature/CallActivity.kt", **claim)
+    assert other["verdict"] == "file-not-analyzed" and other["candidate_paths"] == []
+    assert "path-unmatched" in other["note"]
     assert verify_claim(report, path="feature/Missing.kt", **claim)["verdict"] == "file-not-analyzed"
     assert (
         verify_claim(report, path="AndroidManifest.xml", weakness="MASWE-0035")["verdict"]
