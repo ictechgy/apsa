@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import zipfile
 from pathlib import Path
@@ -57,13 +58,20 @@ def main():
         archive.writestr("base/manifest/AndroidManifest.xml", raw)
     inventory, _ = inspect_target(bundle)
     configuration = inventory["android_config"][0]
+    independent = {
+        name.split(":")[-1].split("(")[0]: value.strip('"')
+        for name, value in re.findall(r"^\s*A: ([^=]+)=(.*?) \(Raw:.*\)$", dump, re.MULTILINE)
+    }
     if not (
         inventory["package"] == "audit.generated"
         and configuration["debuggable"] == "true"
         and configuration["cleartext"] == "false"
         and inventory["android_sdk"] == {"min": "21", "target": "35"}
-        and "debuggable" in dump
-        and "usesCleartextTraffic" in dump
+        and independent.get("package") == inventory["package"]
+        and independent.get("debuggable") == configuration["debuggable"]
+        and independent.get("usesCleartextTraffic") == configuration["cleartext"]
+        and independent.get("minSdkVersion") == inventory["android_sdk"]["min"]
+        and independent.get("targetSdkVersion") == inventory["android_sdk"]["target"]
     ):
         raise ValueError("Generated bundle declaration verification failed")
     result = {
@@ -73,6 +81,7 @@ def main():
         "android_jar_sha256": hashlib.sha256(args.android.read_bytes()).hexdigest(),
         "manifest_sha256": hashlib.sha256(raw).hexdigest(),
         "independent_dump": dump,
+        "independent_declarations": independent,
         "observed_configuration": configuration,
         "module_inventory": inventory["android_modules"],
         "resource_merge_verified": False,

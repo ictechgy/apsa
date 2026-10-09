@@ -73,11 +73,19 @@ def sandbox_command(
         def quoted(path):
             return json.dumps(str(path), ensure_ascii=True)
 
-        paths = [Path("/System"), Path("/usr/lib"), Path("/usr/share"), scratch, *reads]
-        executable_maps = [Path("/System"), Path("/usr/lib"), *_runtime_roots()]
+        system_code = [
+            Path("/System/Library"),
+            Path("/System/Cryptexes"),
+            Path("/System/Volumes/Preboot/Cryptexes"),
+            Path("/usr/lib"),
+        ]
+        paths = [*system_code, Path("/usr/share"), scratch, *reads]
+        executable_maps = [*system_code, *_runtime_roots()]
         # Python's editable-install finder lists the package parent directory.
         # Grant only the directory itself, never sibling package contents.
-        runtime_parents = sorted({root.parent for root in _runtime_roots()})
+        read_parents = sorted(
+            {root.parent for root in _runtime_roots()} | {root.parent for root in reads if root.is_file()}
+        )
         rules = [
             "(version 1)",
             "(deny default)",
@@ -91,7 +99,7 @@ def sandbox_command(
             + " ".join("(subpath " + quoted(path) + ")" for path in paths)
             + ' (literal "/"))',
             "(allow file-read* file-test-existence "
-            + " ".join("(literal " + quoted(path) + ")" for path in runtime_parents)
+            + " ".join("(literal " + quoted(path) + ")" for path in read_parents)
             + ")",
             "(allow file-map-executable "
             + " ".join("(subpath " + quoted(path) + ")" for path in executable_maps)
@@ -149,5 +157,5 @@ def sandbox_command(
         "network_denied_by_os": True,
         "filesystem_restricted_by_os": True,
         "policy_sha256": hashlib.sha256(policy_bytes).hexdigest(),
-        "scope": "authorized input/SBOM and trusted Python runtime read-only; runtime-parent directory listing; scratch read/write; no host report-store mount",
+        "scope": "authorized input/SBOM and trusted Python runtime read-only; runtime/file-input parent directory listing; scratch read/write; no host report-store mount",
     }

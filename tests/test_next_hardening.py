@@ -8,6 +8,7 @@ import socket
 import struct
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -460,6 +461,52 @@ def test_macos_policy_maps_only_trusted_executable_roots(monkeypatch, tmp_path):
     assert '(subpath "/")' not in (scratch / "parser.sb").read_text()
     assert '(literal "' + str(runtime.parent) + '")' in (scratch / "parser.sb").read_text()
     assert '(subpath "' + str(runtime.parent) + '")' not in (scratch / "parser.sb").read_text()
+    assert '(subpath "/System")' not in (scratch / "parser.sb").read_text()
+    assert '(subpath "/System/Volumes")' not in (scratch / "parser.sb").read_text()
+    archive = target / "Synthetic.aab"
+    archive.write_bytes(b"synthetic")
+    parser_sandbox.sandbox_command([sys.executable, "-c", "pass"], archive, None, scratch)
+    profile = (scratch / "parser.sb").read_text()
+    assert '(literal "' + str(target) + '")' in profile
+    assert '(subpath "' + str(target) + '")' not in profile
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or __import__("os").environ.get("APSA_SANDBOX_TEST") != "1",
+    reason="Explicit disposable macOS synthetic Data-volume alias probe only",
+)
+def test_actual_macos_sandbox_denies_synthetic_data_volume_aliases(tmp_path):
+    from mobile_audit.processes import command
+
+    target, scratch = tmp_path / "input", tmp_path / "work"
+    target.mkdir()
+    scratch.mkdir()
+    store = target / "reports"
+    store.mkdir()
+    files = [tmp_path / "sibling.txt", store / "report.txt"]
+    for path in files:
+        path.write_text("fresh synthetic data only")
+    aliases = [Path("/System/Volumes/Data") / path.resolve().relative_to("/") for path in files]
+    if not all(path.is_file() for path in aliases):
+        pytest.skip("Runner does not expose these exact synthetic Data-volume aliases")
+    script = """
+import sys
+from pathlib import Path
+for name in sys.argv[1:]:
+ try: Path(name).read_bytes()
+ except OSError: pass
+ else: raise AssertionError('Synthetic Data-volume alias unexpectedly readable')
+print('data-aliases-denied')
+"""
+    wrapped, _ = parser_sandbox.sandbox_command(
+        [sys.executable, "-I", "-B", "-c", script, *map(str, aliases)],
+        target,
+        None,
+        scratch,
+        mode="required",
+        report_home=store,
+    )
+    assert command(wrapped, timeout=10, cwd=scratch).strip() == b"data-aliases-denied"
 
 
 def test_os_sandbox_unavailable_is_reported_and_required_fails(monkeypatch, tmp_path):
