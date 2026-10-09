@@ -27,9 +27,13 @@ def case(identifier: str) -> dict:
 
 
 def shipped(configuration: str) -> bool:
-    # Defined by the evaluation, independently of the scanner's implementation.
-    lowered = configuration.lower()
-    return lowered.endswith("releaseruntimeclasspath") or lowered == "runtimeclasspath"
+    # Defined by the evaluation, independently of the scanner's implementation:
+    # release build-type runtime classpaths of any flavor. Benchmark and
+    # non-minified baseline-profile variants are measurement builds, not shipped.
+    return bool(
+        re.fullmatch(r"(?:[a-z][A-Za-z0-9]*)?[Rr]eleaseRuntimeClasspath|runtimeClasspath", configuration)
+        and not re.search(r"[Bb]enchmark|[Nn]onMinified", configuration)
+    )
 
 
 def fetch(spec: dict, out: Path) -> dict:

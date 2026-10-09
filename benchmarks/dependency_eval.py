@@ -30,7 +30,8 @@ def catalog_score(truth: dict, dependencies: list[dict]) -> dict:
     versions = dict(agree=0, differ=0)
     rows = []
     for entry in truth["catalog_libraries"]:
-        if not isinstance(entry["catalog_version"], str):
+        if not isinstance(entry["catalog_version"], str) or not entry["catalog_version"]:
+            # Version-less (BOM-managed) and rich-version entries are outside the scored universe.
             continue
         dep = found.get(entry["alias"])
         if dep is None:
