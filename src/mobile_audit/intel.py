@@ -707,6 +707,8 @@ def query_dependencies(
             unique[key] = dep
     try:
         for dep in list(unique.values())[:100]:
+            if (dep.get("resolution") or {}).get("state") == "superseded-by-resolved-build":
+                continue
             if (
                 dep["ecosystem"] not in OSV_ECOSYSTEMS
                 or dep.get("confidence", "unknown") == "unknown"

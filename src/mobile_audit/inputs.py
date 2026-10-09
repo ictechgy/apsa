@@ -52,6 +52,7 @@ TEXT_SUFFIXES = {
     ".kts",
     ".toml",
     ".lock",
+    ".lockfile",
     ".yaml",
     ".yml",
     ".js",
@@ -65,6 +66,14 @@ TEXT_SUFFIXES = {
 
 def dependency(name: str, version: str, ecosystem: str, path: str, confidence="exact") -> dict:
     return {"name": name, "version": version, "ecosystem": ecosystem, "path": path, "confidence": confidence}
+
+
+def shipped_runtime_configuration(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.endswith("runtimeclasspath") and not any(
+        word in lowered
+        for word in ("test", "debug", "benchmark", "lint", "kapt", "ksp", "annotationprocessor")
+    )
 
 
 def parse_dependencies(path: str, raw: bytes) -> list[dict]:
@@ -114,7 +123,16 @@ def parse_dependencies(path: str, raw: bytes) -> list[dict]:
             found.append(entry)
     elif name.endswith(".versions.toml"):
         value = tomllib.loads(text)
-        for entry in value.get("libraries", {}).values():
+        bundles = value.get("bundles", {})
+        for alias, entry in value.get("libraries", {}).items():
+            if isinstance(entry, str):
+                # "group:name:version"; a version-less entry is resolved by a platform/BOM.
+                parts = entry.split(":")
+                entry = (
+                    {key: part for key, part in zip(("group", "name", "version"), parts, strict=False)}
+                    if len(parts) in {2, 3}
+                    else {}
+                )
             if not isinstance(entry, dict):
                 continue
             package = entry.get("module") or f"{entry.get('group', '')}:{entry.get('name', '')}"
@@ -124,7 +142,36 @@ def parse_dependencies(path: str, raw: bytes) -> list[dict]:
             if isinstance(version, str) and version:
                 catalog = dependency(package, version, "Maven", path, "unknown")
                 catalog["version_source"] = "catalog-declared-unresolved-usage"
+                catalog["catalog_alias"] = alias
+                member = sorted(
+                    bundle
+                    for bundle, aliases in bundles.items()
+                    if isinstance(aliases, list) and alias in aliases
+                )
+                if member:
+                    catalog["catalog_bundles"] = member[:16]
                 found.append(catalog)
+    elif name == "gradle.lockfile" or (
+        name.endswith(".lockfile") and Path(path).parent.as_posix().endswith("gradle/dependency-locks")
+    ):
+        # Gradle writes resolved coordinates per configuration. Only release runtime
+        # classpaths describe shipped code; build tooling and test/debug graphs are omitted.
+        legacy = None if name == "gradle.lockfile" else name.removesuffix(".lockfile")
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("empty="):
+                continue
+            match = re.fullmatch(r"([^:=\s]+):([^:=\s]+):([^:=\s]+)(?:=([A-Za-z0-9_,]*))?", line)
+            if not match:
+                raise ValueError("Unsupported Gradle lockfile entry")
+            group, artifact, version, configurations = match.groups()
+            names = [legacy] if legacy else (configurations or "").split(",")
+            shipped = sorted(c for c in names if c and shipped_runtime_configuration(c))
+            if shipped:
+                entry = dependency(f"{group}:{artifact}", version, "Maven", path)
+                entry["version_source"] = "gradle-lockfile-resolved"
+                entry["resolved_configurations"] = shipped[:16]
+                found.append(entry)
     elif name == "Package.resolved":
         value = json.loads(text)
         pins = value.get("pins", value.get("object", {}).get("pins", []))
@@ -664,7 +711,7 @@ def inspect_target(
             "Use a source folder, APK, IPA, simulator .app folder, or ZIP containing a supported app"
         )
     if source_input:
-        from .source_context import plist_references, resolve_gradle
+        from .source_context import plist_references, resolve_catalog_usage, resolve_gradle, supersede
 
         if not inventory["partial"]:
             try:
@@ -672,6 +719,10 @@ def inspect_target(
             except ValueError as error:
                 inventory["warnings"].append(str(error))
                 inventory["partial"] = True
+        # Positive usage evidence is valid even when other files were omitted;
+        # a missing reference never becomes evidence that a library is unused.
+        inventory["warnings"].extend(resolve_catalog_usage(inventory["dependencies"], sources))
+        supersede(inventory["dependencies"])
         references, warnings = plist_references(sources)
         inventory["warnings"].extend(warnings)
         inventory["partial"] |= bool(warnings)

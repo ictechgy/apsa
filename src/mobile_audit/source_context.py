@@ -194,6 +194,209 @@ def resolve_gradle(dependencies: list[dict], sources: list[tuple[str, str]]) -> 
             dep["version_source"] = candidates[0]
 
 
+SHIPPED_CONFIGURATIONS = re.compile(r"(?:[a-z][A-Za-z0-9]*)?(?:[Ii]mplementation|[Aa]pi|[Rr]untimeOnly)")
+NON_SHIPPING = re.compile(
+    r"(?i).*(?:test|debug|benchmark|compileonly|kapt|ksp|annotationprocessor|lintchecks|classpath|detekt).*"
+)
+MAX_CATALOG_REFERENCES = 8
+
+
+def _alias_key(alias: str) -> str:
+    return re.sub(r"[-_.]", ".", alias)
+
+
+def _configuration_state(configuration: str, enclosing: list[str]) -> str:
+    if any(re.search(r"(?i)test|buildscript", block) for block in enclosing):
+        return "non-shipping-configuration"
+    if NON_SHIPPING.fullmatch(configuration):
+        return "non-shipping-configuration"
+    if configuration == "coreLibraryDesugaring" or SHIPPED_CONFIGURATIONS.fullmatch(configuration):
+        return "declared"
+    return "referenced-unclassified"
+
+
+def _catalog_references(path: str, text: str, names: set[str]) -> list[dict]:
+    """Find catalog accessors in dependency declarations; other uses stay unclassified."""
+    stream = tokens(text)
+    blocks: list[str] = []
+    found = []
+    for index, (kind, value, line) in enumerate(stream):
+        if kind == "code" and value == "{":
+            head = [t[1] for t in stream[max(0, index - 6) : index] if t[2] == line]
+            blocks.append(" ".join(head))
+            continue
+        if kind == "code" and value == "}":
+            if blocks:
+                blocks.pop()
+            continue
+        if kind != "code" or value not in names or (index and stream[index - 1][1] == "."):
+            continue
+        # libs.foo.bar, libs.bundles.x, libs.findLibrary("foo").get()
+        chain = []
+        cursor = index + 1
+        lookup = None
+        while cursor + 1 < len(stream) and stream[cursor][1] == "." and stream[cursor + 1][0] == "code":
+            part = stream[cursor + 1][1]
+            if part in {"findLibrary", "findBundle"}:
+                argument = stream[cursor + 2 : cursor + 5]
+                if len(argument) == 3 and argument[0][1] == "(" and argument[1][0] == "string":
+                    lookup = (part, argument[1][1][1:-1])
+                break
+            if part in {"get", "asProvider"}:
+                break
+            chain.append(part)
+            cursor += 2
+        if lookup:
+            kind_name = "bundle" if lookup[0] == "findBundle" else "library"
+            key = _alias_key(lookup[1])
+        elif chain and chain[0] in {"plugins", "versions"}:
+            continue
+        elif chain and chain[0] == "bundles":
+            kind_name, key = "bundle", ".".join(chain[1:])
+        elif chain:
+            kind_name, key = "library", ".".join(chain)
+        else:
+            continue
+        configuration = ""
+        platform = False
+        # Walk back over wrappers such as implementation(platform(libs.x)) or add("api", libs.x).
+        back = index - 1
+        while back >= 0 and stream[back][1] == "(":
+            callee = stream[back - 1] if back else None
+            if callee and callee[1] in {"platform", "enforcedPlatform"}:
+                platform = True
+                back -= 2
+                continue
+            if callee and callee[0] == "string":
+                configuration = callee[1][1:-1]
+            elif callee and callee[0] == "code" and re.fullmatch(r"[A-Za-z_]\w*", callee[1]):
+                configuration = callee[1]
+            break
+        if not configuration and back >= 3 and stream[back][1] == ",":
+            call = stream[back - 3 : back]
+            if [t[1] for t in call[:2]] == ["add", "("] and call[2][0] == "string":
+                configuration = call[2][1][1:-1]
+        if not configuration and back >= 0 and stream[back][0] == "code" and stream[back][2] == line:
+            # Groovy command syntax: implementation libs.foo
+            if re.fullmatch(r"[A-Za-z_]\w*", stream[back][1]):
+                configuration = stream[back][1]
+        state = (
+            "platform-only"
+            if platform
+            else _configuration_state(configuration, blocks)
+            if configuration
+            else "referenced-unclassified"
+        )
+        found.append(
+            {
+                "kind": kind_name,
+                "key": key,
+                "catalog": value,
+                "path": path,
+                "line": line,
+                "configuration": configuration,
+                "state": state,
+            }
+        )
+    return found
+
+
+def resolve_catalog_usage(dependencies: list[dict], sources: list[tuple[str, str]]) -> list[str]:
+    """Link catalog aliases to declared build configurations without claiming resolution.
+
+    A used alias becomes a declared candidate, like a literal Gradle declaration.
+    Conflict resolution, variant selection and transitive upgrades still require
+    resolved build evidence (Gradle lockfile or SBOM).
+    """
+    catalogs = [dep for dep in dependencies if dep.get("catalog_alias")]
+    if not catalogs:
+        return []
+    warnings = []
+    settings = [text for path, text in sources if PurePosixPath(path).name.startswith("settings.gradle")]
+    names = {}
+    for dep in catalogs:
+        location = PurePosixPath(dep["path"])
+        stem = location.name.removesuffix(".versions.toml")
+        if stem == "libs" and location.parent.name == "gradle":
+            name = "libs"
+        elif any(re.search(r"\bcreate\s*\(\s*[\"']" + re.escape(stem) + r"[\"']", text) for text in settings):
+            name = stem
+        else:
+            name = None
+        root = location.parent.parent if location.parent.name == "gradle" else location.parent
+        names[dep["path"]] = (name, root)
+    accessor_names = {name for name, _ in names.values() if name}
+    references = []
+    for path, text in sources:
+        if not path.endswith((".gradle", ".gradle.kts", ".kt")) or not any(
+            name + "." in text for name in accessor_names
+        ):
+            continue
+        try:
+            references.extend(_catalog_references(path, text, accessor_names))
+        except ValueError as error:
+            warnings.append(f"Catalog usage not resolved in {path}: {error}")
+    for dep in catalogs:
+        name, root = names[dep["path"]]
+        usage = {"state": "catalog-name-unresolved" if not name else "no-reference-found", "references": []}
+        if name:
+            alias = _alias_key(dep["catalog_alias"])
+            bundles = {_alias_key(bundle) for bundle in dep.get("catalog_bundles", [])}
+            matched = [
+                ref
+                for ref in references
+                if ref["catalog"] == name
+                and (root == PurePosixPath(".") or PurePosixPath(ref["path"]).is_relative_to(root))
+                and (
+                    (ref["kind"] == "library" and ref["key"] == alias)
+                    or (ref["kind"] == "bundle" and ref["key"] in bundles)
+                )
+            ]
+            for state in (
+                "declared",
+                "platform-only",
+                "non-shipping-configuration",
+                "referenced-unclassified",
+            ):
+                if any(ref["state"] == state for ref in matched):
+                    usage["state"] = state
+                    break
+            usage["references"] = [
+                {k: ref[k] for k in ("path", "line", "configuration", "state")}
+                for ref in sorted(matched, key=lambda r: (r["state"] != "declared", r["path"], r["line"]))
+            ][:MAX_CATALOG_REFERENCES]
+            usage["reference_count"] = len(matched)
+        dep["catalog_usage"] = usage
+        if usage["state"] == "declared":
+            dep["confidence"] = "declared"
+            dep["version_source"] = "catalog-alias-declared"
+    return warnings
+
+
+def superseded(dep: dict) -> bool:
+    return (dep.get("resolution") or {}).get("state") == "superseded-by-resolved-build"
+
+
+def supersede(dependencies: list[dict]) -> None:
+    """Resolved Gradle coordinates replace declared candidates for the same package."""
+    resolved: dict[str, set[str]] = {}
+    for dep in dependencies:
+        if dep.get("version_source") == "gradle-lockfile-resolved":
+            resolved.setdefault(dep["name"], set()).add(dep["version"])
+    for dep in dependencies:
+        if (
+            dep["ecosystem"] == "Maven"
+            and dep["name"] in resolved
+            and dep.get("version_source") != "gradle-lockfile-resolved"
+            and dep.get("confidence") != "exact"
+        ):
+            dep["confidence"] = "unknown"
+            dep["resolution"] = {
+                "state": "superseded-by-resolved-build",
+                "resolved_versions": sorted(resolved[dep["name"]])[:16],
+            }
+
+
 def plist_references(sources: list[tuple[str, str]]) -> tuple[dict[str, list[dict]], list[str]]:
     references: dict[str, list[dict]] = {}
     warnings = []

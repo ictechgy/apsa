@@ -22,6 +22,7 @@ from .core import (
 from .engine import analyze_target
 from .intel import query_dependencies, source_health
 from .ios_ranges import PRODUCTS, apple_branch_range, apple_cna, custom_boundaries, numeric_version
+from .source_context import superseded
 from .store import Store
 
 
@@ -102,7 +103,9 @@ def correlate(
         dep = record.get("query_match")
         if dep:
             for current in inventory["dependencies"]:
-                if current.get("version_source") == "catalog-declared-unresolved-usage":
+                if current.get("version_source") == "catalog-declared-unresolved-usage" or superseded(
+                    current
+                ):
                     continue
                 if (dep["name"], dep["ecosystem"], dep["version"]) != (
                     current["name"],
@@ -345,7 +348,9 @@ def scan(
             {
                 "rule_id": "DEPENDENCY-CVE",
                 "dependency": dep,
-                "state": "checked"
+                "state": "not-applicable"
+                if superseded(dep)
+                else "checked"
                 if dep.get("confidence") != "unknown"
                 and health
                 and health["status"] == "ok"

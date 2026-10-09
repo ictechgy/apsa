@@ -1,0 +1,69 @@
+name: Gradle dependency resolution oracle
+
+on:
+  push:
+    branches: ["dev/dependency-evidence"]
+    paths: ["benchmarks/dependency_cases.json", "benchmarks/dependency_oracle.py", ".github/workflows/dependency-oracle.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  oracle:
+    name: Resolve ${{ matrix.case }} with Gradle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: nowinandroid
+            java: "21"
+          - case: mihon
+            java: "21"
+          - case: wikipedia
+            java: "17"
+          - case: fossify-calculator
+            java: "17"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+          path: apsa
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Fetch the pinned public source archive
+        working-directory: apsa
+        run: python3 -I benchmarks/dependency_oracle.py prepare --case "${{ matrix.case }}" --work "$RUNNER_TEMP/oracle"
+      - name: Let Gradle resolve and lock every configuration of the app module
+        run: |
+          cat > "$RUNNER_TEMP/lock-all.gradle" <<'GRADLE'
+          allprojects {
+              dependencyLocking { lockAllConfigurations() }
+          }
+          GRADLE
+          cd "$(find "$RUNNER_TEMP/oracle/source" -mindepth 1 -maxdepth 1 -type d)"
+          rm -f app/gradle.lockfile
+          ./gradlew --no-daemon --no-configuration-cache --init-script "$RUNNER_TEMP/lock-all.gradle" \
+            :app:dependencies --write-locks > "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt" 2>&1 \
+            || { tail -80 "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt"; exit 1; }
+          java -version 2>&1 | head -1 > "$RUNNER_TEMP/oracle/${{ matrix.case }}.java.txt"
+          ./gradlew --no-daemon --version >> "$RUNNER_TEMP/oracle/${{ matrix.case }}.java.txt"
+      - name: Record the resolved oracle without running APSA
+        working-directory: apsa
+        run: python3 -I benchmarks/dependency_oracle.py record --case "${{ matrix.case }}" --work "$RUNNER_TEMP/oracle"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dependency-oracle-${{ matrix.case }}
+          path: |
+            ${{ runner.temp }}/oracle/*.zip
+            ${{ runner.temp }}/oracle/*.json
+            ${{ runner.temp }}/oracle/*.lockfile
+            ${{ runner.temp }}/oracle/*.txt
+          retention-days: 90
+          if-no-files-found: error
+      # APSA is not installed or executed here; upstream Gradle build logic runs on this disposable runner without secrets.
