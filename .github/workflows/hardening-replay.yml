@@ -33,13 +33,21 @@ jobs:
           run-id: 37879443007
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/original-public-evidence
-      - name: Replay original inputs and queries, with one separate public version supplement
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: "11596401157"
+          run-id: 37885440079
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/captured-public-supplement
+      - name: Replay original inputs and frozen queries, including the separate version supplement
         env:
           APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/parser-locks
           APSA_DEVICE_LOCK_DIR: ${{ runner.temp }}/device-locks
         run: |
           uv run --locked python -m benchmarks.hardening_replay \
             --artifact "${{ runner.temp }}/original-public-evidence" \
+            --supplement-artifact "${{ runner.temp }}/captured-public-supplement" \
             --work "${{ runner.temp }}/hardening-inputs" \
             --out "${{ runner.temp }}/hardening-results"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

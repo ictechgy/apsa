@@ -8,9 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
-import httpx
-
-from benchmarks.real_world import OSVTransport, read_prepared, run, sha, write_json
+from benchmarks.real_world import MAX_RESPONSE, read_prepared, run, sha, write_json
 
 INITIAL_SHA = "a08769d89866515d3af1e772260cb944b970746f2599e77415a39c77747b2d32"
 INPUT_SHA = "190a6798ad094e3f2ff65c57e9d4cfa253db0cce28ab4d2e308d5cfb6d213e1e"
@@ -18,7 +16,29 @@ OSV_SHA = "6e6fbb050eddfdf5c30b6a424e6d325946235ff18565695d3503e81f96c5fb10"
 SUPPLEMENT = {"package": {"name": "org.jsoup:jsoup", "ecosystem": "Maven"}, "version": "1.15.1"}
 
 
-def replay(artifact: Path, work: Path, output: Path, python: str) -> dict:
+def read_supplement(root: Path) -> dict:
+    supplement = json.loads((root / "manifest.json").read_text())
+    entries = supplement.get("responses", [])
+    if (
+        supplement.get("schema") != "apsa-osv-http-snapshot-v1"
+        or len(entries) != 1
+        or entries[0]["payload"] != SUPPLEMENT
+    ):
+        raise ValueError("Supplement exceeded its fixed public query scope")
+    entry = entries[0]
+    expected_key = sha(json.dumps(SUPPLEMENT, sort_keys=True, separators=(",", ":")).encode())
+    if entry["key"] != expected_key:
+        raise ValueError("Supplement query key changed")
+    path = root / (entry["key"] + ".json")
+    if path.is_symlink() or path.stat().st_size > MAX_RESPONSE:
+        raise ValueError("Supplement response exceeds safe bounds")
+    raw = path.read_bytes()
+    if entry["status"] != 200 or sha(raw) != entry["sha256"] or len(raw) != entry["bytes"]:
+        raise ValueError("Supplement response failed or its bytes changed")
+    return supplement
+
+
+def replay(artifact: Path, supplement_artifact: Path, work: Path, output: Path, python: str) -> dict:
     initial_path = artifact / "public-real-world-results/summary.json"
     if sha(initial_path.read_bytes()) != INITIAL_SHA:
         raise ValueError("Original result bytes changed")
@@ -38,20 +58,12 @@ def replay(artifact: Path, work: Path, output: Path, python: str) -> dict:
     shutil.copytree(fixtures, work)
     shutil.copyfile(initial_path, work / "original-summary.json")
     shutil.copyfile(base_path, work / "original-osv-manifest.json")
-    # One new version becomes queryable after extraction repair. Capture only it
-    # in a separate namespace; every original response remains byte-for-byte.
+    # The first hardening attempt captured this one new version before a helper
+    # response-handling error. Reuse its exact bytes; do not recapture the API.
     supplement_root = work / "supplemental-osv"
-    transport = OSVTransport(supplement_root, capture=True)
-    try:
-        request = httpx.Request("POST", "https://api.osv.dev/v1/query", json=SUPPLEMENT)
-        response = transport.handle(request)
-        response.raise_for_status()
-    finally:
-        transport.close()
-    supplement = json.loads((supplement_root / "manifest.json").read_text())
+    shutil.copytree(supplement_artifact / "hardening-inputs/supplemental-osv", supplement_root)
+    supplement = read_supplement(supplement_root)
     entries = supplement["responses"]
-    if len(entries) != 1 or entries[0]["payload"] != SUPPLEMENT:
-        raise ValueError("Supplement exceeded its fixed public query scope")
     if entries[0]["key"] in {entry["key"] for entry in base["responses"]}:
         raise ValueError("Supplement must not replace an original capture")
     shutil.copyfile(
@@ -68,6 +80,9 @@ def replay(artifact: Path, work: Path, output: Path, python: str) -> dict:
         "original_osv_manifest_sha256": OSV_SHA,
         "supplemental_osv_manifest_sha256": sha((supplement_root / "manifest.json").read_bytes()),
         "supplemental_osv": supplement,
+        "supplemental_capture_run_id": 37885440079,
+        "supplemental_capture_artifact_id": 11596401157,
+        "supplemental_capture_artifact_digest": "sha256:702bc75b66943974adda7467ea67fb0a8be44bcbf50a04913f70e66efd6667ab",
         "comparator": "APSA only; original MobSF observations were not rerun",
     }
     write_json(output / "summary.json", result)
@@ -82,10 +97,11 @@ def replay(artifact: Path, work: Path, output: Path, python: str) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path, required=True)
+    parser.add_argument("--supplement-artifact", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    replay(args.artifact, args.work, args.out, sys.executable)
+    replay(args.artifact, args.supplement_artifact, args.work, args.out, sys.executable)
 
 
 if __name__ == "__main__":

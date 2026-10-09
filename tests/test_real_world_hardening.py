@@ -5,10 +5,36 @@ import zipfile
 import httpx
 import pytest
 
+from benchmarks.hardening_replay import SUPPLEMENT, read_supplement
+from benchmarks.real_world import sha
 from mobile_audit.audit import correlate
 from mobile_audit.inputs import inspect_target, parse_dependencies
 from mobile_audit.intel import query_dependencies
 from mobile_audit.source_context import osv_package_name
+
+
+@pytest.mark.parametrize("mutation", [None, "status", "payload", "key", "bytes", "body"])
+def test_frozen_supplement_requires_exact_successful_query_and_response(tmp_path, mutation):
+    body = b'{"vulns":[]}'
+    key = sha(json.dumps(SUPPLEMENT, sort_keys=True, separators=(",", ":")).encode())
+    entry = {"key": key, "payload": SUPPLEMENT, "status": 200, "sha256": sha(body), "bytes": len(body)}
+    if mutation == "status":
+        entry["status"] = 503
+    elif mutation == "payload":
+        entry["payload"] = {"package": {"name": "unexpected", "ecosystem": "Maven"}, "version": "1"}
+    elif mutation == "key":
+        entry["key"] = "../outside"
+    elif mutation == "bytes":
+        entry["bytes"] = 1
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"schema": "apsa-osv-http-snapshot-v1", "responses": [entry]})
+    )
+    (tmp_path / (key + ".json")).write_bytes(b"{}" if mutation == "body" else body)
+    if mutation:
+        with pytest.raises(ValueError):
+            read_supplement(tmp_path)
+    else:
+        assert read_supplement(tmp_path)["responses"][0]["sha256"] == sha(body)
 
 
 @pytest.mark.parametrize(
