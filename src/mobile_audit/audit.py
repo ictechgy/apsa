@@ -362,6 +362,7 @@ def scan(
     expected_target: Path | None = None,
     configuration: str | None = None,
     source_module: str | None = None,
+    specs: dict | None = None,
 ) -> dict:
     if progress:
         progress("input-analysis", 5)
@@ -390,8 +391,14 @@ def scan(
                 "vendor_security_patch",
             }
         }
-    analyzed = analyze_target(target, sbom, expected_target, configuration, report_home=store.home)
+    analyzed = analyze_target(
+        target, sbom, expected_target, configuration, report_home=store.home, specs=specs
+    )
     inventory, findings, coverage = analyzed["inventory"], analyzed["findings"], analyzed["coverage"]
+    if specs:
+        from .specs import summary as specs_summary
+
+        inventory["project_specification"] = specs_summary(specs)
     if source_module:
         from .selection import relative_source_path
 

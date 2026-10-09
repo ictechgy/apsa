@@ -1,7 +1,7 @@
 {
   "note": "Regenerate deliberately when an MCP tool name, description, input schema or annotation changes; publish the new hash in docs/MCP_SECURITY.md.",
   "default": {
-    "sha256": "8d0c7e6c348f8fa645236b1b9818a82fb3a3bcc00ef5511950116c217eb11e76",
+    "sha256": "1f55e218265003e9cf17aff0281d3ad7c1a953f2c4f787ee4cde973173123818",
     "tools": [
       [
         "audit_reassess",
@@ -154,11 +154,28 @@
           "idempotentHint": true,
           "openWorldHint": false
         }
+      ],
+      [
+        "specs_validate",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "verify_finding",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
       ]
     ]
   },
   "runtime": {
-    "sha256": "9350051d455b536e07515f9c1bfe8122b5de3d47a1524614358251ca6f89e0c0",
+    "sha256": "403b82cf4343601f9b6ec605ad77966d88bd571f07ea37124ac3c968e7d33be7",
     "tools": [
       [
         "audit_reassess",
@@ -326,6 +343,23 @@
           "readOnlyHint": false,
           "destructiveHint": true,
           "openWorldHint": true
+        }
+      ],
+      [
+        "specs_validate",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "verify_finding",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
         }
       ]
     ]

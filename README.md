@@ -301,12 +301,14 @@ MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. 
 
 | Purpose | MCP tools |
 | --- | --- |
-| Audits | `capabilities`, `audit_scan`, `audit_start`, `audit_reassess` |
+| Audits | `capabilities`, `audit_scan`, `audit_start`, `audit_reassess`, `verify_finding`, `specs_validate` |
 | Jobs | `jobs_list`, `jobs_status`, `jobs_cancel` |
 | Reports | `reports_list`, `reports_get`, `reports_compare`, `reports_export_baseline` |
 | Intelligence | `intelligence_sync`, `intelligence_search`, `intelligence_get`, `dependency_check` |
 | Policy | `policy_evaluate` |
 | Runtime planning | `runtime_plan`, `runtime_devices` |
+
+`verify_finding` (CLI `apsa verify`) cross-checks a finding claimed by another tool or AI reviewer against APSA's evidence and never refutes it. Project taint specifications name project-specific sources and sinks, such as a deep-link parser or an in-app browser wrapper, for APSA to follow deterministically; see [project specifications](https://github.com/ictechgy/apsa/blob/main/docs/PROJECT_SPECS.md).
 
 `capabilities` reports `tool_manifest_sha256`, a hash of the served tool names,
 descriptions, input schemas and annotations; the tool set never changes within

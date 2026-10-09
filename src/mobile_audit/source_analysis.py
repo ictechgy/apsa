@@ -18,6 +18,7 @@ from typing import Any
 
 from .core import code_excerpt, finding
 from .maswe import weaknesses_for
+from .specs import SINK_KINDS
 
 MAX_AST_BYTES = 2 * 1024 * 1024
 MAX_AST_TOTAL = 32 * 1024 * 1024
@@ -158,9 +159,24 @@ class Frame:
         return Frame(self.values.copy(), self.types.copy(), self.bridges.copy(), self.javascript.copy())
 
 
+# SQL syntax argument per framework method (receiver type, method) -> argument index.
+SQL_SINKS = {
+    ("android.database.sqlite.SQLiteDatabase", "rawQuery"): 0,
+    ("android.database.sqlite.SQLiteDatabase", "execSQL"): 0,
+    ("android.database.sqlite.SQLiteDatabase", "rawQueryWithFactory"): 1,
+    ("android.database.sqlite.SQLiteDatabase", "compileStatement"): 0,
+    ("android.database.sqlite.SQLiteDatabase", "delete"): 1,
+    ("android.database.sqlite.SQLiteDatabase", "update"): 2,
+    ("android.database.sqlite.SQLiteDatabase", "query"): 2,
+    ("android.database.sqlite.SQLiteQueryBuilder", "appendWhere"): 0,
+}
+PROVIDER_METHODS = {"query", "update", "delete", "insert", "call"}
+
+
 class Analyzer:
-    def __init__(self, path: str, text: str, language: str):
+    def __init__(self, path: str, text: str, language: str, specs: dict | None = None):
         self.path = path
+        self.specs = specs or {"source": [], "sink": []}
         self.raw = text.encode("utf-8")
         self.line_offsets = [0] + [match.end() for match in re.finditer(b"\n", self.raw)]
         self.lines = text.split("\n")
@@ -191,6 +207,23 @@ class Analyzer:
 
     def key(self, node: Any) -> str:
         return re.sub(r"[?!\s]", "", self.text(node)).removeprefix("this.").removeprefix("self.")
+
+    def spec_entry(self, kind: str, call: Call, frame: Frame) -> dict | None:
+        """The declared source or sink for this call: exact name and, if given, receiver."""
+        for entry in self.specs.get(kind, []):
+            if entry["method"] != call.name:
+                continue
+            receiver = entry.get("receiver")
+            if receiver is None:
+                return entry
+            if call.receiver is None:
+                continue
+            key = self.key(call.receiver)
+            type_name = self.value(call.receiver, frame).type_name
+            simple = receiver.rsplit(".", 1)[-1]
+            if receiver in {key, type_name} or simple in {key, type_name.rsplit(".", 1)[-1]}:
+                return entry
+        return None
 
     def literal(self, node: Any) -> str | None:
         if not node or node.type not in STRINGS:
@@ -335,6 +368,11 @@ class Analyzer:
                 return Value(type_name=call.name)
             if call.name in {"toString", "absoluteString"}:
                 return _union([receiver], "text")
+            declared = self.spec_entry("source", call, frame)
+            if declared:
+                return self.source(
+                    node, f"Project specification source {declared['id']}", declared["returns"], receiver
+                )
             # Unknown calls retain input provenance, with no assumed sanitization or return type.
             return self.changed(node, _union([receiver, *args]))
         if node.type in {
@@ -578,6 +616,23 @@ class Analyzer:
             settings = self.call(call.receiver) if call.receiver else None
             if settings and settings.name == "getSettings" and self.is_webview(settings.receiver, frame):
                 frame.javascript[self.key(settings.receiver)] = self.text(call.args[0])
+        declared = self.spec_entry("sink", call, frame)
+        if declared and len(call.args) > declared["argument"]:
+            value = self.value(call.args[declared["argument"]], frame)
+            unsafe = tuple(
+                trace
+                for trace in value.traces
+                if declared["kind"] == "sql" or guards.get(trace.origin, set()) != {"scheme", "host"}
+            )
+            if unsafe:
+                self.emit(
+                    SINK_KINDS[declared["kind"]],
+                    call.node,
+                    traces=unsafe,
+                    sink=f"{call.name} (project specification sink {declared['id']})",
+                    project_specification={"id": declared["id"], "kind": declared["kind"]},
+                    unknown_helpers_are_sanitizers=False,
+                )
         sink_names = {
             "loadUrl",
             "loadData",
@@ -665,23 +720,29 @@ class Analyzer:
                     self.emit(
                         "AST-CRYPTO-WEAK-HASH", call.node, algorithm=algorithm, security_purpose="unverified"
                     )
-        if call.name in {"rawQuery", "execSQL"} and call.args and self.language in {"java", "kotlin"}:
+        if self.language in {"java", "kotlin"} and call.args:
             receiver_type = self.value(call.receiver, frame).type_name
-            sdk_type = receiver_type == "android.database.sqlite.SQLiteDatabase" or (
-                receiver_type == "SQLiteDatabase"
-                and "android.database.sqlite.SQLiteDatabase" in self.imports
-                and "SQLiteDatabase" not in self.class_names
-            )
-            query = self.value(call.args[0], frame)
-            if sdk_type and query.traces:
-                self.emit(
-                    "AST-SQL-CONCAT",
-                    call.node,
-                    traces=query.traces,
-                    sink=call.name,
-                    statement_scope="first argument only; bound value arguments are not SQL syntax",
-                    unknown_helpers_are_sanitizers=False,
+            for (qualified, method), index in SQL_SINKS.items():
+                simple = qualified.rsplit(".", 1)[-1]
+                sdk_type = receiver_type == qualified or (
+                    receiver_type == simple and qualified in self.imports and simple not in self.class_names
                 )
+                if call.name != method or not sdk_type:
+                    continue
+                if method == "query" and call.args and self.text(call.args[0]) in {"true", "false"}:
+                    index = 3  # query(distinct, table, columns, selection, ...)
+                if len(call.args) <= index:
+                    continue
+                query = self.value(call.args[index], frame)
+                if query.traces:
+                    self.emit(
+                        "AST-SQL-CONCAT",
+                        call.node,
+                        traces=query.traces,
+                        sink=f"{simple}.{method}",
+                        statement_scope=f"argument {index} is SQL syntax; bound value arguments are not",
+                        unknown_helpers_are_sanitizers=False,
+                    )
         logging = (self.key(call.receiver) == "Log" and call.name in {"d", "i", "v", "e", "w"}) or (
             call.receiver is None and call.name in {"print", "println", "NSLog"}
         )
@@ -918,6 +979,9 @@ class Analyzer:
                 )
                 for base in bases
             )
+            provider_scope = self.language in {"java", "kotlin"} and any(
+                re.search(r"\bContentProvider\b", self.text(base)) for base in bases
+            )
             parameters = self.parameters(function)
             self.parameter_types = {name: type_name for name, type_name, _ in parameters}
             frame = Frame(types=self.parameter_types.copy())
@@ -932,6 +996,13 @@ class Analyzer:
                     category, description = "navigation", "WKWebView navigation action parameter"
                 elif "UIOpenURLContext" in type_name:
                     category, description = "url-context", "iOS scene URL context parameter"
+                elif (
+                    provider_scope
+                    and self.scope in PROVIDER_METHODS
+                    and re.search(r"\b(?:String|Uri)\b", type_name)
+                ):
+                    category = "url" if re.search(r"\bUri\b", type_name) else "text"
+                    description = "ContentProvider caller-supplied argument"
                 elif self.scope == "shouldOverrideUrlLoading" and re.search(r"\bString\b", type_name):
                     category, description = "text", "WebView navigation URL parameter"
                 elif (
@@ -970,7 +1041,7 @@ class Analyzer:
                 self.function_counts["without_body"] += 1
 
 
-def analyze_sources(sources: list[Any]) -> dict:
+def analyze_sources(sources: list[Any], specs: dict | None = None) -> dict:
     """Return candidate findings, explicit partial coverage, and parser warnings.
 
     ``sources`` accepts the inventory loader's ``(path, text)`` tuples or the
@@ -1086,7 +1157,7 @@ def analyze_sources(sources: list[Any]) -> dict:
                 skipped += 1  # Preprocessing, dynamic dispatch and unsupported flows remain partial.
                 metric["state"] = "partial"
             else:
-                analyzer = Analyzer(path, text, language)
+                analyzer = Analyzer(path, text, language, specs)
             analyzer.analyze(tree.root_node)
             metric["state"] = "partial" if tree.root_node.has_error or adaptations else "checked"
             if language == "objc":

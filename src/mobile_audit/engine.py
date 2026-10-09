@@ -50,6 +50,7 @@ def analyze_target(
     configuration: str | None = None,
     *,
     report_home: Path | None = None,
+    specs: dict | None = None,
 ) -> dict:
     caller_bound = expected_target is not None
     resolved = target.expanduser().resolve()
@@ -82,6 +83,7 @@ def analyze_target(
             str(staged),
             str(scratch),
             configuration or "",
+            json.dumps(specs, sort_keys=True) if specs else "",
         ]
         from .parser_sandbox import activate, sandbox_command
 

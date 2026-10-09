@@ -49,6 +49,7 @@ def main() -> None:
                 expected_target=Path(row["target"]),
                 configuration=payload.get("configuration"),
                 source_module=payload.get("source_module"),
+                specs=payload.get("specs"),
             )
         else:
             jobs.update(store, identifier, stage="device-scenario", progress=10)

@@ -54,14 +54,16 @@ def stable_input(target: Path, scratch: Path | None = None):
         yield snapshot
 
 
-def analyze(target: Path, sbom: Path | None, configuration: str | None = None) -> dict:
+def analyze(
+    target: Path, sbom: Path | None, configuration: str | None = None, specs: dict | None = None
+) -> dict:
     from .inputs import inspect_target
     from .rules import static_checks
 
     inventory, sources = inspect_target(target, sbom, authorized=True, configuration=configuration)
     from .source_analysis import analyze_sources
 
-    structural = analyze_sources(sources)
+    structural = analyze_sources(sources, specs)
     findings, coverage = static_checks(inventory, sources, structural.get("pattern_exclusions"))
     if inventory.get("aab_manifest", {}).get("unresolved_attributes"):
         for check in coverage:
@@ -111,6 +113,17 @@ def analyze(target: Path, sbom: Path | None, configuration: str | None = None) -
     return {"inventory": inventory, "findings": findings, "coverage": coverage}
 
 
+def parse_specs(value: str) -> dict:
+    from .specs import normalize
+
+    # Revalidate inside the parser boundary; the parent already checked the file.
+    document = json.loads(value)
+    return {
+        **normalize({k: document[k] for k in ("version", "source", "sink")}),
+        "sha256": document["sha256"],
+    }
+
+
 def main() -> None:
     limits()
 
@@ -131,6 +144,7 @@ def main() -> None:
                 snapshot,
                 Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None,
                 sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None,
+                parse_specs(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else None,
             )
             result["inventory"]["target"] = str(target)
     except (ValueError, OSError, TypeError, KeyError) as error:

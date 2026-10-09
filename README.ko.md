@@ -278,12 +278,14 @@ MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 ro
 
 | 목적 | MCP 도구 |
 | --- | --- |
-| 감사 | `capabilities`, `audit_scan`, `audit_start`, `audit_reassess` |
+| 감사 | `capabilities`, `audit_scan`, `audit_start`, `audit_reassess`, `verify_finding`, `specs_validate` |
 | 작업 | `jobs_list`, `jobs_status`, `jobs_cancel` |
 | 보고서 | `reports_list`, `reports_get`, `reports_compare`, `reports_export_baseline` |
 | 취약점 정보 | `intelligence_sync`, `intelligence_search`, `intelligence_get`, `dependency_check` |
 | 정책 | `policy_evaluate` |
 | 런타임 계획 | `runtime_plan`, `runtime_devices` |
+
+`verify_finding`(CLI `apsa verify`)은 다른 도구나 AI 리뷰어가 주장한 발견을 APSA 증거와 대조하며 반박하지 않습니다. 프로젝트 taint 명세는 딥링크 파서나 인앱 브라우저 래퍼 같은 프로젝트 고유 source·sink를 지정해 APSA가 결정적으로 추적하게 합니다. [프로젝트 명세](https://github.com/ictechgy/apsa/blob/main/docs/PROJECT_SPECS.md)를 참고하세요.
 
 `capabilities`는 제공 중인 도구 이름·설명·입력 스키마·annotation의 해시 `tool_manifest_sha256`을
 알려 주며, 한 프로세스 안에서 도구 목록은 바뀌지 않습니다. 읽기 전용 도구는 read-only·idempotent,

@@ -21,7 +21,9 @@ from .policy import evaluate, load_policy
 from .rules import rules
 from .runtime import devices, plan, run, validate_scenario
 from .selection import select_source_module
+from .specs import load_specs
 from .store import Store
+from .verify import verify_claim
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 LOCAL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
@@ -136,9 +138,11 @@ def create_server(
         device_info: str | None = None,
         source_module: str | None = None,
         configuration: str | None = None,
+        specs: str | None = None,
     ) -> dict[str, Any]:
-        """Inspect local source/APK/IPA using cached intelligence. Configuration selects a relative manifest or .plist in a source directory, without build-system merge. No network or device mutation."""
+        """Inspect local source/APK/IPA using cached intelligence. Configuration selects a relative manifest or .plist in a source directory, without build-system merge. specs is a project taint specification file (see specs_validate); findings it causes stay candidates. No network or device mutation."""
         authorized_target = select_source_module(authorize(target), source_module)
+        declared = load_specs(authorize(specs)) if specs else None
         with database() as store:
             report = scan(
                 store,
@@ -148,8 +152,45 @@ def create_server(
                 expected_target=authorized_target,
                 configuration=configuration,
                 source_module=source_module,
+                specs=declared,
             )
             return assistant_context(load_report(store, report["id"]))
+
+    @server.tool(annotations=READ)
+    def specs_validate(path: str) -> dict[str, Any]:
+        """Validate a project taint specification (TOML/JSON, version = 1) before audit_scan uses it. Sources name exact functions returning untrusted url/text; sinks name exact functions (kind webview-load or sql, argument index). Proposed specifications need human review before their findings enter a baseline."""
+        return {"valid": True, **load_specs(authorize(path))}
+
+    @server.tool(annotations=LOCAL)
+    def verify_finding(
+        target: str,
+        weakness: str | None = None,
+        rule: str | None = None,
+        path: str | None = None,
+        line: int | None = None,
+        report_id: str | None = None,
+        rescan: bool = False,
+    ) -> dict[str, Any]:
+        """Cross-check a mobile finding claimed elsewhere (for example by an AI code reviewer) against APSA evidence for target. Give a MASWE-NNNN or CWE-N weakness or an APSA rule ID, optionally with a file path and line. Uses the latest report for target unless report_id is given; rescan=true scans first and saves a report. Verdicts: corroborated, same-file-other-location, not-observed, partial, not-run, not-assessed. APSA never refutes a claim."""
+        authorized_target = authorize(target)
+        if report_id and rescan:
+            raise ValueError("Choose report_id or rescan, not both")
+        with database() as store:
+            if report_id:
+                report = load_report(store, report_id)
+                if Path(report["target"]) != authorized_target:
+                    raise ValueError("Report target differs from the requested target")
+            else:
+                saved = [
+                    item
+                    for item in store.reports(50, roots=[authorized_target])
+                    if Path(item["target"]) == authorized_target
+                ]
+                if rescan or not saved:
+                    report = scan(store, authorized_target, expected_target=authorized_target)
+                else:
+                    report = store.report(saved[0]["id"])
+            return verify_claim(report, path=path, line=line, weakness=weakness, rule=rule)
 
     @server.tool(annotations=NETWORK)
     def intelligence_sync(sources: list[str] | None = None, limit: int = 3) -> dict[str, Any]:
@@ -164,9 +205,11 @@ def create_server(
         device_info: str | None = None,
         source_module: str | None = None,
         configuration: str | None = None,
+        specs: str | None = None,
     ) -> dict[str, Any]:
-        """Start a persistent offline audit. Configuration selects a relative manifest or .plist in a source directory, without build-system merge. Use jobs_status for progress and jobs_cancel to stop it."""
+        """Start a persistent offline audit. Configuration selects a relative manifest or .plist in a source directory, without build-system merge. specs is a project taint specification file. Use jobs_status for progress and jobs_cancel to stop it."""
         authorized_target = select_source_module(authorize(target), source_module)
+        declared = load_specs(authorize(specs)) if specs else None
         with database() as store:
             return jobs.start(
                 store,
@@ -180,6 +223,7 @@ def create_server(
                     "environment": read_json(authorize(device_info), authorized=True)
                     if device_info
                     else None,
+                    "specs": declared,
                 },
             )
 

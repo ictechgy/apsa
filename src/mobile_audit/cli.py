@@ -23,6 +23,7 @@ from .policy import evaluate, load_policy, template
 from .rules import rules
 from .runtime import devices, plan, run, validate_scenario
 from .selection import select_source_module
+from .specs import load_specs
 from .store import Store, default_home
 from .tools import android_sdks, resolve_tool
 
@@ -66,6 +67,9 @@ def parser() -> Parser:
     scan_parser.add_argument("--baseline-file", type=Path)
     scan_parser.add_argument("--baseline-sha256", help="Externally approved baseline artifact SHA-256")
     scan_parser.add_argument("--decision-out", type=Path)
+    scan_parser.add_argument(
+        "--specs", type=Path, help="Project taint specification (TOML/JSON) declaring extra sources and sinks"
+    )
     scan_parser.add_argument("--source-module", help="Relative source module directory")
     scan_parser.add_argument(
         "--configuration",
@@ -79,6 +83,21 @@ def parser() -> Parser:
         action="store_true",
         help="Also apply CI severity threshold to heuristic candidates",
     )
+    specs_parser = commands.add_parser("specs", help="Validate project taint specifications").add_subparsers(
+        dest="action", required=True
+    )
+    specs_validate = specs_parser.add_parser("validate")
+    specs_validate.add_argument("file", type=Path)
+    verify_parser = commands.add_parser(
+        "verify", help="Cross-check a finding claimed elsewhere against APSA evidence; never refutes"
+    )
+    verify_parser.add_argument("target", type=Path)
+    verify_parser.add_argument("--weakness", help="MASWE-NNNN or CWE-N identifier")
+    verify_parser.add_argument("--rule", help="APSA rule ID")
+    verify_parser.add_argument("--path", help="Claimed file, absolute or relative to the target")
+    verify_parser.add_argument("--line", type=int)
+    verify_parser.add_argument("--report", help="Report ID to check instead of the latest for the target")
+    verify_parser.add_argument("--rescan", action="store_true", help="Scan the target first")
     job_commands = commands.add_parser("jobs", help="Track and cancel background audits").add_subparsers(
         dest="action", required=True
     )
@@ -426,6 +445,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                     "online": args.online,
                     "sbom": str(args.sbom.resolve()) if args.sbom else None,
                     "environment": read_json(args.device_info) if args.device_info else None,
+                    "specs": load_specs(args.specs) if args.specs else None,
                 },
             ), 0
         baseline = policy_baseline(args, store) if args.policy else None
@@ -438,6 +458,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             read_json(args.device_info) if args.device_info else None,
             configuration=args.configuration,
             source_module=args.source_module,
+            specs=load_specs(args.specs) if args.specs else None,
         )
         if args.out:
             export_report(result, args.out, args.format, args.sarif_root)
@@ -459,6 +480,27 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
         )
         incomplete = report_incomplete(result)
         return result, 3 if incomplete else 4 if failing else 0
+    if cmd == "specs":
+        return {"valid": True, **load_specs(args.file)}, 0
+    if cmd == "verify":
+        from .verify import verify_claim
+
+        target = args.target.resolve()
+        if args.report and args.rescan:
+            raise UsageError("Choose --report or --rescan")
+        if args.report:
+            report = store.report(args.report)
+            if Path(report["target"]) != target:
+                raise UsageError("Report target differs from the requested target")
+        else:
+            saved = [item for item in store.reports(50, roots=[target]) if Path(item["target"]) == target]
+            report = scan(store, target) if args.rescan or not saved else store.report(saved[0]["id"])
+        try:
+            return verify_claim(
+                report, path=args.path, line=args.line, weakness=args.weakness, rule=args.rule
+            ), 0
+        except ValueError as error:
+            raise UsageError(str(error)) from error
     if cmd == "demo":
         directory = args.out or store.home / "demo" / str(time.time_ns())
         return scan(store, demo_target(directory)), 0
