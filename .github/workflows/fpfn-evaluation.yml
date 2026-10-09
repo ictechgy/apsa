@@ -1,0 +1,43 @@
+name: Independent vulnerable and fixed source pairs
+
+on:
+  push:
+    branches: ["dev/evidence-depth"]
+    paths: ["src/**", "benchmarks/fpfn_eval.py", "benchmarks/fpfn_truth.json", ".github/workflows/fpfn-evaluation.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - run: uv sync --locked --extra dev
+      - name: Scan each pinned vulnerable and fixed commit with APSA only
+        run: |
+          uv run --locked python -m benchmarks.fpfn_eval \
+            --work "$RUNNER_TEMP/fpfn-work" --out "$RUNNER_TEMP/fpfn/results.json"
+      - name: Keep the captured public archives and reports
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/fpfn/captures"
+          cd "$RUNNER_TEMP/fpfn-work" 2>/dev/null && find . \( -name source.zip -o -name report.json \) -print0 \
+            | xargs -0 -I{} cp --parents {} "$RUNNER_TEMP/fpfn/captures/" || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: independent-fpfn-pairs
+          path: ${{ runner.temp }}/fpfn
+          retention-days: 90
+          if-no-files-found: error
+      # Only APSA executes. No upstream app build, backend, device, private data or publishing.
