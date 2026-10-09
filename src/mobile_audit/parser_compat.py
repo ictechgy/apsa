@@ -122,6 +122,132 @@ def _constructor_gaps(raw: bytes, stream: list[tuple[bytes, int, int]]) -> list[
     return gaps
 
 
+def _blank(output: bytearray, start: int, end: int, replacement: bytes = b"") -> None:
+    """Overwrite a span with a same-length replacement, keeping line breaks."""
+    span = bytearray(b" " * (end - start))
+    span[: len(replacement)] = replacement
+    for offset, byte in enumerate(output[start:end]):
+        if byte in (10, 13):
+            span[offset] = byte
+    output[start:end] = span
+
+
+def _swift_extensions(raw: bytes, output: bytearray) -> list[dict]:
+    """Attributes and empty-tuple arguments that the pinned Swift grammar rejects."""
+    try:
+        stream = kotlin_tokens(raw)
+    except ValueError:
+        return []
+    counts = {
+        "swift-documentation-attribute": 0,
+        "swift-diagnostic-directive": 0,
+        "swift-empty-tuple-argument": 0,
+        "swift-nonisolated-unsafe-variable": 0,
+    }
+    for index, (value, start, _end) in enumerate(stream):
+        following = stream[index + 1] if index + 1 < len(stream) else None
+        if (
+            value == b"nonisolated"
+            and [token[0] for token in stream[index + 1 : index + 4]] == [b"(", b"unsafe", b")"]
+            and index + 4 < len(stream)
+            and stream[index + 4][0] in {b"var", b"let", b"static"}
+            and output[start : start + 1] != b" "
+        ):
+            # The local flow analysis does not model concurrency isolation.
+            _blank(output, start, stream[index + 3][2])
+            counts["swift-nonisolated-unsafe-variable"] += 1
+        elif value == b"@" and following and following[0] == b"_documentation":
+            close = raw.find(b")", following[2])
+            if close > 0 and re.fullmatch(rb"\s*\(\s*visibility\s*:\s*\w+\s*", raw[following[2] : close]):
+                # Documentation visibility does not affect local flow analysis.
+                _blank(output, start, close + 1)
+                counts["swift-documentation-attribute"] += 1
+        elif value == b"#" and following and following[0] in {b"warning", b"error"}:
+            line_end = raw.find(b"\n", start)
+            line_end = len(raw) if line_end < 0 else line_end
+            if re.fullmatch(rb"#(?:warning|error)\s*\(\s*\"[^\n]*\"\s*\)\s*", raw[start:line_end]):
+                _blank(output, start, line_end)
+                counts["swift-diagnostic-directive"] += 1
+        elif (
+            value == b"("
+            and following
+            and following[0] == b")"
+            and index
+            and stream[index - 1][0] in {b"(", b",", b":", b"=", b"{", b"return", b"in"}
+            and index + 2 < len(stream)
+            and stream[index + 2][0] in {b")", b",", b"}"}
+        ):
+            # An empty tuple value; a literal keeps the call structure for analysis.
+            _blank(output, start, following[2], b"0")
+            counts["swift-empty-tuple-argument"] += 1
+    return [{"kind": kind, "edits": edits} for kind, edits in counts.items() if edits]
+
+
+ENUM_MACRO = re.compile(
+    rb"\b(?:typedef\s+)?(?:NS_ENUM|NS_OPTIONS|NS_CLOSED_ENUM|NS_ERROR_ENUM|CF_ENUM|CF_OPTIONS|CF_CLOSED_ENUM)"
+    rb"\s*\(\s*[A-Za-z_][A-Za-z_0-9 ]*?\s*,\s*([A-Za-z_][A-Za-z_0-9]*)\s*\)"
+)
+CONDITIONAL = re.compile(rb"[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif)\b([^\n]*)")
+INCLUDE = re.compile(rb"[ \t]*#[ \t]*(?:import|include)\b")
+
+
+def _objc_extensions(raw: bytes, output: bytearray, nodes: list[Any]) -> list[dict]:
+    """Expand enum macros, drop Swift-style comment labels and keep first preprocessor branches."""
+    try:
+        stream = kotlin_tokens(raw)
+    except ValueError:
+        return []
+    code_starts = {start for _, start, _ in stream}
+    counts = {"objc-enum-macro": 0, "objc-localized-comment-label": 0, "objc-preprocessor-first-branch": 0}
+    for match in ENUM_MACRO.finditer(raw):
+        if match.start() in code_starts:
+            _blank(output, match.start(), match.end(), b"enum " + match[1])
+            counts["objc-enum-macro"] += 1
+    callees: list[bytes] = []
+    for index, (value, start, _end) in enumerate(stream):
+        if value == b"(":
+            callees.append(stream[index - 1][0] if index else b"")
+        elif value == b")" and callees:
+            callees.pop()
+        elif (
+            value == b"comment"
+            and callees
+            and callees[-1].startswith(b"NSLocalizedString")
+            and index
+            and stream[index - 1][0] == b","
+            and index + 1 < len(stream)
+            and stream[index + 1][0] == b":"
+        ):
+            _blank(output, start, stream[index + 1][2])
+            counts["objc-localized-comment-label"] += 1
+    if re.search(rb"(?m)^[ \t]*#[ \t]*(?:if|ifdef|ifndef)\b", raw):
+        # Keep one branch per conditional so that statements split across branches
+        # parse: the first branch, or the alternative of a literal `#if 0`. Other
+        # branches are not analyzed and coverage stays partial. Conditional imports
+        # are removed so they never become platform identity evidence.
+        groups: list[list[bool]] = []  # [branch_active, a_branch_was_taken]
+        cursor = 0
+        for line in raw.splitlines(keepends=True):
+            directive = CONDITIONAL.match(line)
+            width = len(line.rstrip(b"\r\n"))
+            if directive:
+                word = directive[1]
+                if word in {b"if", b"ifdef", b"ifndef"}:
+                    dead = word == b"if" and directive[2].split(b"//")[0].strip() == b"0"
+                    groups.append([not dead, not dead])
+                elif word in {b"elif", b"else"} and groups:
+                    groups[-1][0] = not groups[-1][1]
+                    groups[-1][1] = True
+                elif word == b"endif" and groups:
+                    groups.pop()
+                _blank(output, cursor, cursor + width)
+                counts["objc-preprocessor-first-branch"] += 1
+            elif not all(active for active, _ in groups) or (groups and INCLUDE.match(line)):
+                _blank(output, cursor, cursor + width)
+            cursor += len(line)
+    return [{"kind": kind, "edits": edits} for kind, edits in counts.items() if edits]
+
+
 def adapted_source(raw: bytes, language: str, nodes: list[Any]) -> tuple[bytes, list[dict]]:
     """Preserve byte offsets; callers use original line coordinates and retain partial coverage."""
     output = bytearray(raw)
@@ -192,6 +318,9 @@ def adapted_source(raw: bytes, language: str, nodes: list[Any]) -> tuple[bytes, 
             additional.append({"kind": "swift-if-await", "edits": async_edits})
         if cast_edits:
             additional.append({"kind": "swift-sendable-cast-metatype", "edits": cast_edits})
+        additional.extend(_swift_extensions(raw, output))
+    elif language == "objc":
+        additional.extend(_objc_extensions(raw, output, nodes))
     elif language == "kotlin":
         kind = "kotlin-open-identifier"
         try:
