@@ -265,6 +265,109 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
     ]
 
 
+ATS_REFERENCE = "https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsexceptiondomains"
+TRUST_REFERENCE = "https://developer.apple.com/documentation/security/sectrustevaluatewitherror(_:_:)"
+
+
+def _ats_exceptions(inventory: dict) -> tuple[list[dict], list[dict]]:
+    if "ios" not in inventory.get("platforms", []):
+        return [], [{"rule_id": "IOS-ATS-EXCEPTION", "state": "not-applicable", "method": "configuration"}]
+    findings = []
+    for config in inventory.get("ios_config", []):
+        ats = config.get("ats") or {}
+        reasons_by_domain: dict[str, list[str]] = {}
+        if ats.get("NSAllowsArbitraryLoadsForMedia") is True:
+            reasons_by_domain["(media)"] = ["NSAllowsArbitraryLoadsForMedia allows unencrypted media loads"]
+        domains = ats.get("NSExceptionDomains") if isinstance(ats.get("NSExceptionDomains"), dict) else {}
+        for domain, settings in domains.items():
+            if not isinstance(settings, dict):
+                continue
+            reasons = []
+            for prefix in ("NSException", "NSThirdPartyException"):
+                if settings.get(f"{prefix}AllowsInsecureHTTPLoads") is True:
+                    reasons.append(f"{prefix}AllowsInsecureHTTPLoads permits HTTP")
+                if settings.get(f"{prefix}MinimumTLSVersion") in {"TLSv1.0", "TLSv1.1"}:
+                    reasons.append(f"{prefix}MinimumTLSVersion {settings[f'{prefix}MinimumTLSVersion']}")
+                if settings.get(f"{prefix}RequiresForwardSecrecy") is False:
+                    reasons.append(f"{prefix}RequiresForwardSecrecy disabled")
+            if reasons:
+                reasons_by_domain[str(domain)[:200]] = reasons
+        for domain, reasons in sorted(reasons_by_domain.items()):
+            findings.append(
+                finding(
+                    "IOS-ATS-EXCEPTION",
+                    "ATS exception weakens transport security",
+                    "medium",
+                    "configuration-confirmed",
+                    [{"path": config.get("path", ""), "domain": domain, "reasons": reasons}],
+                    "Remove the exception or limit it to the specific host and setting that needs it; keep TLS 1.2+ with forward secrecy.",
+                    "MASVS-NETWORK",
+                    [ATS_REFERENCE],
+                )
+            )
+    return findings, [
+        {
+            "rule_id": "IOS-ATS-EXCEPTION",
+            "state": "checked" if inventory.get("ios_config") else "not-run",
+            "method": "configuration",
+            "note": "Declared ATS exceptions only; the hosts the app actually contacts are not observed.",
+        }
+    ]
+
+
+def _swift_functions(text: str):
+    """Yield (offset, body) for Swift functions, skipping comments and strings for brace matching."""
+    masked = re.sub(
+        r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\\n])*"',
+        lambda m: re.sub(r"[^\n]", " ", m[0]),
+        text,
+    )
+    for match in re.finditer(r"\bfunc\b[^{;]*\{", masked):
+        depth, index = 1, match.end()
+        while index < len(masked) and depth:
+            depth += {"{": 1, "}": -1}.get(masked[index], 0)
+            index += 1
+        yield match.start(), masked[match.start() : index]
+
+
+def _server_trust(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
+    findings, scanned = [], 0
+    for path, text in sources:
+        if not path.endswith(".swift") or "URLCredential" not in text:
+            continue
+        scanned += 1
+        for offset, body in _swift_functions(text):
+            use = re.search(r"\.useCredential\s*,\s*URLCredential\s*\(\s*trust\s*:", body)
+            if use and not re.search(r"\bSecTrustEvaluate(?:WithError|AsyncWithError)?\s*\(", body):
+                findings.append(
+                    finding(
+                        "SWIFT-SERVER-TRUST-ACCEPTED",
+                        "Server trust accepted without evaluation",
+                        "high",
+                        "candidate",
+                        [
+                            {
+                                "path": path,
+                                "line": _line(text, offset + use.start()),
+                                "basis": "function completes the challenge with the presented trust and never evaluates it",
+                            }
+                        ],
+                        "Evaluate the trust with SecTrustEvaluateWithError (and pin if required) before using it; "
+                        "otherwise call completionHandler(.performDefaultHandling, nil).",
+                        "MASVS-NETWORK",
+                        [TRUST_REFERENCE],
+                    )
+                )
+    return findings, [
+        {
+            "rule_id": "SWIFT-SERVER-TRUST-ACCEPTED",
+            "state": "checked" if any(p.endswith(".swift") for p, _ in sources) else "not-run",
+            "method": "source-pattern",
+            "note": "Function-local text check; evaluation in a helper function is not followed.",
+        }
+    ]
+
+
 def _secrets(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
     findings: list[dict] = []
     truncated = False
@@ -315,7 +418,13 @@ def platform_checks(inventory: dict, sources: list[tuple[str, str]]) -> tuple[li
     if inventory.get("input_kind") in {"apk", "ipa"}:
         # The bundled lint engine reports these for compiled packages.
         return findings, coverage
-    for part in (_android(inventory, sources), _privacy_manifest(inventory, sources), _secrets(sources)):
+    for part in (
+        _android(inventory, sources),
+        _privacy_manifest(inventory, sources),
+        _ats_exceptions(inventory),
+        _server_trust(sources),
+        _secrets(sources),
+    ):
         findings += part[0]
         coverage += part[1]
     return findings, coverage

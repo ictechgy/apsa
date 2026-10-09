@@ -447,5 +447,31 @@
     ],
     "mapping_scope": "partial",
     "scope": "PendingIntent factory call with FLAG_MUTABLE in the flags argument and no class, component or package on the wrapped Intent expression."
+  },
+  {
+    "id": "IOS-ATS-EXCEPTION",
+    "mode": "configuration",
+    "title": "ATS exception domain weakens transport security",
+    "severity": "medium",
+    "status": "configuration-confirmed",
+    "masvs": "MASVS-NETWORK",
+    "references": [
+      "https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsexceptiondomains"
+    ],
+    "mapping_scope": "partial",
+    "scope": "NSExceptionDomains entries that allow HTTP, lower the minimum TLS version below 1.2 or disable forward secrecy, and NSAllowsArbitraryLoadsForMedia, in source Info.plist files."
+  },
+  {
+    "id": "SWIFT-SERVER-TRUST-ACCEPTED",
+    "mode": "source-pattern",
+    "title": "Server trust accepted without evaluation",
+    "severity": "high",
+    "status": "candidate",
+    "masvs": "MASVS-NETWORK",
+    "references": [
+      "https://developer.apple.com/documentation/security/sectrustevaluatewitherror(_:_:)"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Swift functions that complete an authentication challenge with URLCredential(trust:) and .useCredential without calling SecTrustEvaluate or SecTrustEvaluateWithError in the same function."
   }
 ]

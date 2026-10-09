@@ -96,7 +96,7 @@ location으로 표시합니다. 이 때문에 code scanning 경고가 한 번 �
 
 | 영역 | 제공하는 검사 |
 | --- | --- |
-| 소스 코드 | Java·Kotlin·Swift AST 분석, 제한된 Objective-C `.m` 후보, WebView·딥링크 패턴, Manifest·Info.plist·저장소·의존성 검사(Gradle catalog 사용 근거·application lockfile 포함), exported 컴포넌트·백업·targetSdk, Apple required-reason API와 privacy manifest 대조, 알려진 형식의 자격증명(마스킹), 보안 값용 약한 난수, 변경 가능한 암시적 PendingIntent |
+| 소스 코드 | Java·Kotlin·Swift AST 분석, 제한된 Objective-C `.m` 후보, WebView·딥링크 패턴, Manifest·Info.plist·저장소·의존성 검사(Gradle catalog 사용 근거·application lockfile 포함), exported 컴포넌트·백업·targetSdk, Apple required-reason API와 privacy manifest 대조, 알려진 형식의 자격증명(마스킹), 보안 값용 약한 난수, 변경 가능한 암시적 PendingIntent, 모든 인증서·호스트를 허용하는 TrustManager·HostnameVerifier, 평가 없이 수락한 iOS 서버 신뢰와 약화된 ATS 예외 도메인, 외부 저장소 쓰기, Java 역직렬화 |
 | Android 빌드 | DEX 호출·상수 흐름, AAB base·feature 모듈 매니페스트와 모듈 DEX(항상 부분 감사), 리소스·네트워크 설정, exported 컴포넌트·provider, 서명 블록·v1 인증서 근거, ELF 하드닝 |
 | iOS 빌드 | 내장 framework·확장 메타데이터를 포함한 Mach-O 헤더, CodeDirectory 페이지·entitlement 해시 무결성(서명 인증 아님), 제한적인 entitlement·설정 검사(내장 XML entitlement, ATS 예외, provisioning 지표), PIE·카나리·문자열 근거 |
 | 공개 취약점 정보 | Apple·Android 공지(지정 기간의 Android 공지 소급 수집 포함), CVE, CISA KEV, OWASP 가이드, OSV 의존성 대조 |

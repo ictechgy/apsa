@@ -198,5 +198,97 @@
       "MASWE-0012"
     ],
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step"
+  },
+  {
+    "id": "SOURCE-TRUST-ALL-CERTS",
+    "title": "X509TrustManager accepts every server certificate",
+    "mode": "source",
+    "platform": "android",
+    "suffixes": [
+      ".kt",
+      ".java"
+    ],
+    "mastg_tests": [],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "requires": "X509TrustManager",
+    "pattern": "\\bcheckServerTrusted\\s*\\([^)]*\\)\\s*(?::\\s*Unit\\s*)?(?:\\{\\s*\\}|=\\s*Unit\\b)",
+    "severity": "high",
+    "masvs": "MASVS-NETWORK",
+    "remediation": "Use the platform default TrustManager, or pin with Network Security Configuration; never accept unchecked chains.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/unsafe-trustmanager"
+    ],
+    "maswe": [
+      "MASWE-0027"
+    ]
+  },
+  {
+    "id": "SOURCE-HOSTNAME-VERIFIER-ALL",
+    "title": "Hostname verification accepts every host",
+    "mode": "source",
+    "platform": "android",
+    "suffixes": [
+      ".kt",
+      ".java"
+    ],
+    "mastg_tests": [],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "requires": "HostnameVerifier|hostnameVerifier|ALLOW_ALL",
+    "pattern": "ALLOW_ALL_HOSTNAME_VERIFIER|NoopHostnameVerifier|[Hh]ostnameVerifier\\s*\\{[^{}]{0,300}?\\btrue\\s*\\}|\\bverify\\s*\\([^)]*\\)\\s*(?::\\s*Boolean\\s*)?(?:=\\s*true\\b|\\{\\s*return\\s+true\\s*;?\\s*\\})",
+    "severity": "high",
+    "masvs": "MASVS-NETWORK",
+    "remediation": "Keep the default hostname verification; do not replace it with a verifier that returns true.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/unsafe-hostname"
+    ],
+    "maswe": [
+      "MASWE-0027"
+    ]
+  },
+  {
+    "id": "SOURCE-EXTERNAL-STORAGE",
+    "title": "Data is written to external or shared storage",
+    "mode": "source",
+    "platform": "android",
+    "suffixes": [
+      ".kt",
+      ".java"
+    ],
+    "mastg_tests": [],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "requires": "External|MediaStore",
+    "pattern": "\\b(?:getExternalStorageDirectory|getExternalStoragePublicDirectory|getExternalFilesDirs?|getExternalCacheDirs?|getExternalMediaDirs)\\s*\\(|MediaStore\\.\\w+\\.EXTERNAL_CONTENT_URI",
+    "severity": "medium",
+    "masvs": "MASVS-STORAGE",
+    "remediation": "Keep sensitive data in internal app storage or encrypt it; shared storage is readable by other apps and the user.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/external-storage"
+    ],
+    "maswe": [
+      "MASWE-0002"
+    ]
+  },
+  {
+    "id": "SOURCE-JAVA-DESERIALIZATION",
+    "title": "Java object deserialization with ObjectInputStream",
+    "mode": "source",
+    "platform": "android",
+    "suffixes": [
+      ".kt",
+      ".java"
+    ],
+    "mastg_tests": [],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "requires": "ObjectInputStream",
+    "pattern": "\\.readObject\\s*\\(\\s*\\)",
+    "severity": "medium",
+    "masvs": "MASVS-CODE",
+    "remediation": "Do not deserialize untrusted data with ObjectInputStream; use a data format with explicit schemas and validate input.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/unsafe-deserialization"
+    ],
+    "maswe": [
+      "MASWE-0050"
+    ]
   }
 ]

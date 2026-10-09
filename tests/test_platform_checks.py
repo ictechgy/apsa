@@ -163,3 +163,105 @@ def test_compiled_packages_keep_the_lint_engine_checks(store, monkeypatch):
     rules = {item["rule_id"] for item in report["coverage"]}
     assert "QG-APP-EXPORTED" in rules
     assert not rules & {"ANDROID-EXPORTED-COMPONENT", "ANDROID-ALLOW-BACKUP", "SOURCE-HARDCODED-SECRET"}
+
+
+NETWORK_KT = """package com.example.net
+
+import java.io.ObjectInputStream
+import java.security.cert.X509Certificate
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.X509TrustManager
+
+class Net {
+    val trustAll = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+    }
+    val strict = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+            delegate.checkServerTrusted(chain, authType)
+        }
+        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+    }
+    fun open(connection: javax.net.ssl.HttpsURLConnection, context: android.content.Context, input: java.io.InputStream) {
+        connection.hostnameVerifier = HostnameVerifier { hostname, _ ->
+            log(hostname)
+            true
+        }
+        val file = java.io.File(context.getExternalFilesDir(null), "token.txt")
+        val value = ObjectInputStream(input).readObject()
+    }
+}
+"""
+
+TRUST_SWIFT = """import Foundation
+
+final class Delegate: NSObject, URLSessionDelegate {
+    func urlSession(_ s: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard let trust = challenge.protectionSpace.serverTrust else { return }
+        completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+}
+
+final class Checked: NSObject, URLSessionDelegate {
+    func urlSession(_ s: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard let trust = challenge.protectionSpace.serverTrust else { return }
+        var error: CFError?
+        if SecTrustEvaluateWithError(trust, &error) {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        }
+    }
+}
+"""
+
+ATS_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>com.example.ats</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSExceptionDomains</key>
+    <dict>
+      <key>legacy.example.com</key>
+      <dict>
+        <key>NSExceptionMinimumTLSVersion</key><string>TLSv1.0</string>
+        <key>NSExceptionRequiresForwardSecrecy</key><false/>
+      </dict>
+      <key>modern.example.com</key>
+      <dict><key>NSIncludesSubdomains</key><true/></dict>
+    </dict>
+  </dict>
+</dict></plist>
+"""
+
+
+def test_network_storage_and_deserialization_candidates(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    root = tmp_path / "net"
+    root.mkdir()
+    (root / "Net.kt").write_text(NETWORK_KT)
+    (root / "Delegate.swift").write_text(TRUST_SWIFT)
+    (root / "Info.plist").write_text(ATS_PLIST)
+    report = scan(store, root)
+    lines = {
+        rule: [f["evidence"][0].get("line") for f in by_rule(report, rule)]
+        for rule in (
+            "SOURCE-TRUST-ALL-CERTS",
+            "SOURCE-HOSTNAME-VERIFIER-ALL",
+            "SOURCE-EXTERNAL-STORAGE",
+            "SOURCE-JAVA-DESERIALIZATION",
+            "SWIFT-SERVER-TRUST-ACCEPTED",
+        )
+    }
+    assert lines == {
+        "SOURCE-TRUST-ALL-CERTS": [11],
+        "SOURCE-HOSTNAME-VERIFIER-ALL": [22],
+        "SOURCE-EXTERNAL-STORAGE": [26],
+        "SOURCE-JAVA-DESERIALIZATION": [27],
+        "SWIFT-SERVER-TRUST-ACCEPTED": [7],
+    }
+    [ats] = by_rule(report, "IOS-ATS-EXCEPTION")
+    assert ats["evidence"][0]["domain"] == "legacy.example.com" and len(ats["evidence"][0]["reasons"]) == 2
