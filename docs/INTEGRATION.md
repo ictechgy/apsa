@@ -4,7 +4,7 @@
 
 `scan` → 공통 감사 엔진 → 자원 제한 parser worker → 고정 입력 사본 → Mobile Audit 분석 + Quaygate 린트 adapter → 공통 findings/coverage → 동일한 Store/정책/출력. TUI와 MCP, 지속 작업도 이 경로를 사용합니다. 기존 `apk/ipa/device`는 호환 린트 경로입니다.
 
-두 바이너리 엔진의 입력 해시는 동일해야 합니다. parser worker의 CPU·RSS·시간·출력·동시 실행 한도와 안전한 파일 열기·archive 검증을 공유합니다. 기존 `openssl` 인증서 보조 프로세스도 parser 프로세스 트리 자원 감시 안에서 실행됩니다. 자원 제한과 별도로 1.2.0은 활성화 검사가 성공하는 환경에서 파서 프로세스의 OS 권한 격리를 기본으로 적용합니다. 가용성·적용 상태·실패 동작은 [분석 범위](NEXT_ANALYSIS.md)를 참고하세요. 읽는 앱은 사용자 소유 또는 승인을 받은 대상으로 한정합니다.
+두 바이너리 엔진의 입력 해시는 동일해야 합니다. parser worker의 CPU·RSS·시간·출력·동시 실행 한도와 안전한 파일 열기·archive 검증을 공유합니다. 기존 `openssl` 인증서 보조 프로세스도 parser 프로세스 트리 자원 감시 안에서 실행됩니다. 자원 제한과 별도로 1.2.0부터 활성화 검사가 성공하는 환경에서 파서 프로세스의 OS 권한 격리를 기본으로 적용합니다. 가용성·적용 상태·실패 동작은 [분석 범위](NEXT_ANALYSIS.md)를 참고하세요. 읽는 앱은 사용자 소유 또는 승인을 받은 대상으로 한정합니다.
 
 adapter는 린트의 warn/fail을 그대로 confirmed 취약점으로 바꾸지 않습니다. 문자열·카나리·서명 방식·provisioning은 candidate입니다. 정확히 동일한 루트 Manifest debuggable 사실은 기존 ID와 근거를 보존하고 출처·심각도를 합칩니다. 다른 분석 규칙은 출처별 ID를 유지합니다. 서로 다른 의미의 ATS·DEX 규칙을 이름 유사성만으로 병합하지 않습니다.
 

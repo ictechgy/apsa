@@ -11,7 +11,7 @@ APSA (앱사)는 [OWASP MASVS](https://mas.owasp.org/MASVS/)의 관련 영역에
 | RESILIENCE | Android debuggable·WebView debugging, Mach-O PIE·내장 XML debug entitlement | 설정 또는 정적 후보. 서명 진위·DER entitlement 의미·모든 anti-tamper 검사 없음 |
 | CODE 및 공급망 | 실제 빌드 SBOM/선언된 의존성과 OSV, Apple/Android/CVE/KEV의 버전·환경 대조 | 버전 영향과 출처를 보존. 선언된 의존성이 실제 포함됐는지·도달 가능한지·exploit 재현은 별도 |
 
-Java/Kotlin/Swift의 구조 분석은 설치 시 포함한 Tree-sitter grammar를 사용합니다. 1.2의 Objective-C `.m`은 제한된 CST 후보·부분 분석을 제공합니다. `.mm`·Dart·JavaScript와 전체 dispatch·함수 간 분석은 미지원 범위를 표시합니다. APK·AAB는 실제 DEX instruction을 읽고, IPA는 Mach-O 구조와 일부 설정을 읽습니다. 문자열에 API 이름만 존재한다는 이유로 DEX 호출을 검출하지 않습니다. 1.2 확장 기능의 경계는 [분석 범위](NEXT_ANALYSIS.md)에 있습니다.
+Java/Kotlin/Swift의 구조 분석은 설치 시 포함한 Tree-sitter grammar를 사용합니다. 1.2의 Objective-C `.m`은 제한된 CST 후보·부분 분석을 제공하며, 1.3은 `NS_ENUM` 계열 매크로와 전처리 분기 일부를 호환 처리합니다. `.mm`·Dart·JavaScript와 전체 dispatch·함수 간 분석은 미지원 범위를 표시합니다. APK·AAB는 실제 DEX instruction을 읽고, IPA는 Mach-O 구조와 일부 설정을 읽습니다. 문자열에 API 이름만 존재한다는 이유로 DEX 호출을 검출하지 않습니다. 1.2 확장 기능의 경계는 [분석 범위](NEXT_ANALYSIS.md)에 있습니다.
 
 스캔 전 환경 정보가 없거나 런타임을 실행하지 않았으면 해당 범위는 `not-run`입니다. 캡처 실패·검사 한도는 `partial`/`not-run`, baseline 또는 전환 증거 부족은 `inconclusive`입니다. CI 정책의 `required_rules`와 인텔 최신성 조건으로 팀이 필요한 수행 범위를 지정할 수 있습니다.
 

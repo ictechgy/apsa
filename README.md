@@ -35,14 +35,44 @@ CVE matches until build usage or resolved versions are supplied. New rules
 `OBJC-CRYPTO-WEAK-HASH`, `OBJC-WEBVIEW-UNTRUSTED-REQUEST`) can add findings
 relative to existing 1.1 baselines.
 
+APSA 1.3 links Gradle version-catalog aliases to the shipped dependency
+configurations that use them and reads application-module `gradle.lockfile`
+coordinates as resolved versions. It also decodes AAB feature-module manifests,
+recomputes Mach-O CodeDirectory page and entitlement hashes without
+authenticating the signature, adapts more Swift and Objective-C syntax, and can
+backfill an explicit range of Android security bulletins with SoC vendor and
+vendor patch-level context. See the
+[dependency evidence results](https://github.com/ictechgy/apsa/blob/main/benchmarks/DEPENDENCY_RESULTS.md),
+the [independent source pairs](https://github.com/ictechgy/apsa/blob/main/benchmarks/FPFN_RESULTS.md)
+and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/NEXT_ANALYSIS.md).
+
+**Upgrading from 1.2.** Catalog aliases referenced from shipped configurations
+become `declared` candidates and can receive CVE matches again; unreferenced,
+test-only and build-tooling aliases stay unresolved. Application-module lockfile
+coordinates are exact, so their matches are `version-affected`, and the default
+policy fails on high and critical ones. A declared candidate that
+every shipping application resolved is marked superseded and leaves CVE
+correlation; library-module lockfiles, partial inputs and unparsed project
+references never supersede. With `--online`, catalog and lockfile coordinates,
+including private group IDs, are sent to OSV. One run still queries at most 100
+packages, exact coordinates first. Measured application lockfiles hold 179–412
+shipped coordinates, so the rest stay `not-run`, the online audit is incomplete,
+and the default `fail_on_partial` policy exits 3. IPA reports gain
+`BINARY-IOS-CODE-INTEGRITY` (modified code pages add a warning; App Store
+encrypted and unsigned executables stay `not-run`). Cached Android bulletin
+records need a new `intel sync` or `intel backfill` to gain a vendor scope.
+Adapted Swift and Objective-C files stay partial, and an Objective-C function
+overlapping a normalized preprocessor conditional is skipped as uncertain.
+Unmodified 1.2 skills upgrade with `apsa skill install`.
+
 ## What it checks
 
 | Area | Available checks |
 | --- | --- |
-| Source code | Java/Kotlin/Swift AST analysis; bounded Objective-C `.m` candidates; WebView and deep-link patterns; Manifest, Info.plist, storage, and dependency inspection |
-| Android builds | DEX calls and constant flow; AAB base manifest and module DEX (always partial); resources and network configuration; exported components/providers; signing-block and v1 certificate evidence; ELF hardening |
-| iOS builds | Mach-O headers, including embedded framework/extension metadata; limited entitlement/configuration checks (embedded XML entitlements, ATS exceptions, provisioning indicators); PIE, canary, and string evidence |
-| Public intelligence | Apple/Android advisories, CVE, CISA KEV, OWASP guidance, and OSV dependency correlation |
+| Source code | Java/Kotlin/Swift AST analysis; bounded Objective-C `.m` candidates; WebView and deep-link patterns; Manifest, Info.plist, storage, and dependency inspection, including Gradle catalog usage and application lockfiles |
+| Android builds | DEX calls and constant flow; AAB base and feature-module manifests and module DEX (always partial); resources and network configuration; exported components/providers; signing-block and v1 certificate evidence; ELF hardening |
+| iOS builds | Mach-O headers, including embedded framework/extension metadata; CodeDirectory page and entitlement hash integrity (not signature authentication); limited entitlement/configuration checks (embedded XML entitlements, ATS exceptions, provisioning indicators); PIE, canary, and string evidence |
+| Public intelligence | Apple/Android advisories with bounded Android bulletin backfill, CVE, CISA KEV, OWASP guidance, and OSV dependency correlation |
 | Reports and CI | SQLite history, comparison and reassessment, JSON/Markdown/SARIF export, coverage requirements, and expiring waivers |
 | Runtime | Prepared scenarios for owned Android test apps and iOS simulator apps; physical iOS devices are unsupported |
 | Model integration | stdio MCP tools/resources and packaged skills, without a required model provider or LLM API key |
@@ -58,7 +88,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.2.0
+uv tool install --python 3.12 apsa==1.3.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -105,8 +135,9 @@ A default `scan` reads local files and cached intelligence without uploading sou
 | `apsa scan TARGET` | Uses local inputs and cached intelligence |
 | `apsa intel sync` | Fetches public vulnerability sources |
 | `apsa intel watch` | Polls public sources and reassesses saved inventories; does not reread app files or implicitly query OSV |
-| `apsa scan TARGET --online` | Sends discovered dependency names and versions to OSV |
-| `apsa intel watch --online` | Also sends saved dependency names and versions to OSV |
+| `apsa intel backfill --source android --since YYYY-MM` | Fetches an explicit, bounded range of monthly Android security bulletins |
+| `apsa scan TARGET --online` | Sends discovered dependency names and versions to OSV, including Gradle catalog aliases used in shipped configurations and application-lockfile coordinates; at most 100 packages per run |
+| `apsa intel watch --online` | Also sends saved dependency names and versions to OSV, with the same budget |
 
 ```sh
 apsa intel sync
@@ -225,7 +256,9 @@ A reproducible [APSA/MobSF comparison](benchmarks/COMPETITIVE.md) and its
 [recorded results](benchmarks/COMPETITIVE_RESULTS.md) use freshly generated
 synthetic source projects and APKs. They measure development candidates
 recorded before APSA 1.2.0, not the published package; these results are not
-production accuracy estimates.
+production accuracy estimates. A rerun on the APSA 1.3.0 release runtime with
+newly generated inputs reproduced the candidate figures (see
+[RELEASE_READINESS.md](https://github.com/ictechgy/apsa/blob/main/RELEASE_READINESS.md)).
 
 A separate [public-source and CVE evaluation](benchmarks/REAL_WORLD.md) records
 [initial results](benchmarks/REAL_WORLD_RESULTS.md) on six pinned app source
@@ -246,5 +279,13 @@ The [additional analysis and independent holdout](benchmarks/NEXT_RESULTS.md)
 covers AAB/IPA metadata, Objective-C, parser isolation and two independently
 labeled public sources. It records selected CVE boundary agreement, unresolved
 catalog usage and remaining parser gaps separately.
+
+The [dependency evidence evaluation](benchmarks/DEPENDENCY_RESULTS.md) compares
+APSA's Gradle catalog usage and lockfile coordinates with Gradle's own
+resolution on three frozen holdouts of public apps, keeping first blind results
+separate from reruns after the truth was seen. The
+[independent source pairs](benchmarks/FPFN_RESULTS.md) score vulnerable and
+fixed commits of public projects against truth frozen before scanning. Both are
+narrow samples, not general accuracy estimates.
 
 The source is publicly available on [GitHub](https://github.com/ictechgy/apsa). [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE) preserves the original Quaygate MIT notice. This publication does not declare an additional license for the combined product.

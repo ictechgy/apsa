@@ -31,14 +31,41 @@ version catalog에만 선언된 의존성은 빌드 사용 근거나 해결 버�
 `OBJC-CRYPTO-WEAK-HASH`, `OBJC-WEBVIEW-UNTRUSTED-REQUEST`)은 기존 1.1 기준선 대비
 새 발견 항목을 추가할 수 있습니다.
 
+APSA 1.3은 Gradle version catalog alias를 실제로 사용하는 출하 의존성 구성과
+연결하고, application 모듈의 `gradle.lockfile` 좌표를 해결된 버전으로 읽습니다.
+AAB feature 모듈 매니페스트를 해석하고, 서명을 인증하지 않은 채 Mach-O
+CodeDirectory의 페이지·entitlement 해시를 다시 계산하며, 더 많은 Swift·Objective-C
+구문을 호환 처리합니다. 지정한 기간의 Android 보안 공지를 SoC 제조사·vendor 패치
+수준 정보와 함께 소급 수집할 수 있습니다.
+[의존성 근거 결과](https://github.com/ictechgy/apsa/blob/main/benchmarks/DEPENDENCY_RESULTS.ko.md),
+[독립 취약·수정 소스 쌍](https://github.com/ictechgy/apsa/blob/main/benchmarks/FPFN_RESULTS.ko.md),
+[분석 범위와 한계](https://github.com/ictechgy/apsa/blob/main/docs/NEXT_ANALYSIS.md)를 참고하세요.
+
+**1.2에서 업그레이드할 때.** 출하 구성에서 참조하는 catalog alias는 `declared` 후보가
+되어 다시 CVE를 대조할 수 있습니다. 참조되지 않거나 테스트·빌드 도구용인 alias는
+미확인으로 남습니다. application 모듈 lockfile 좌표는 정확한 버전이므로 대조 결과가
+`version-affected`가 되며, 기본 정책은 high·critical 항목에서 실패합니다. 모든 출하
+앱이 해결한 선언 후보는 대체(superseded)로 표시되어 CVE 대조에서 빠집니다. library
+모듈 lockfile, 부분 입력, 해석하지 못한 project 참조는 대체 근거가 되지 않습니다.
+`--online`은 catalog·lockfile 좌표(비공개 group ID 포함)를 OSV에 보냅니다. 한 번에
+조회하는 패키지는 여전히 최대 100개이며 정확한 좌표를 먼저 조회합니다. 측정한
+application lockfile은 출하 좌표가 179~412개였으므로 나머지는 `not-run`으로 남고
+온라인 감사는 불완전하며, 기본 `fail_on_partial` 정책은 종료 코드 3을 반환합니다.
+IPA 보고서에 `BINARY-IOS-CODE-INTEGRITY`가 추가됩니다(코드 페이지 변경은 경고 추가,
+App Store 암호화·서명 없는 실행 파일은 `not-run`). 캐시된 Android 공지는 `intel sync`나
+`intel backfill`을 다시 실행해야 vendor 범위가 기록됩니다. 호환 처리한 Swift·Objective-C
+파일은 부분 분석으로 남고, 정규화한 전처리 조건부와 겹치는 Objective-C 함수는
+불확실로 분석에서 제외합니다. 수정하지 않은 1.2 스킬은 `apsa skill install`로
+업그레이드됩니다.
+
 ## 검사 범위
 
 | 영역 | 제공하는 검사 |
 | --- | --- |
-| 소스 코드 | Java·Kotlin·Swift AST 분석, 제한된 Objective-C `.m` 후보, WebView·딥링크 패턴, Manifest·Info.plist·저장소·의존성 검사 |
-| Android 빌드 | DEX 호출·상수 흐름, AAB base 매니페스트·모듈 DEX(항상 부분 감사), 리소스·네트워크 설정, exported 컴포넌트·provider, 서명 블록·v1 인증서 근거, ELF 하드닝 |
-| iOS 빌드 | 내장 framework·확장 메타데이터를 포함한 Mach-O 헤더, 제한적인 entitlement·설정 검사(내장 XML entitlement, ATS 예외, provisioning 지표), PIE·카나리·문자열 근거 |
-| 공개 취약점 정보 | Apple·Android 공지, CVE, CISA KEV, OWASP 가이드, OSV 의존성 대조 |
+| 소스 코드 | Java·Kotlin·Swift AST 분석, 제한된 Objective-C `.m` 후보, WebView·딥링크 패턴, Manifest·Info.plist·저장소·의존성 검사(Gradle catalog 사용 근거·application lockfile 포함) |
+| Android 빌드 | DEX 호출·상수 흐름, AAB base·feature 모듈 매니페스트와 모듈 DEX(항상 부분 감사), 리소스·네트워크 설정, exported 컴포넌트·provider, 서명 블록·v1 인증서 근거, ELF 하드닝 |
+| iOS 빌드 | 내장 framework·확장 메타데이터를 포함한 Mach-O 헤더, CodeDirectory 페이지·entitlement 해시 무결성(서명 인증 아님), 제한적인 entitlement·설정 검사(내장 XML entitlement, ATS 예외, provisioning 지표), PIE·카나리·문자열 근거 |
+| 공개 취약점 정보 | Apple·Android 공지(지정 기간의 Android 공지 소급 수집 포함), CVE, CISA KEV, OWASP 가이드, OSV 의존성 대조 |
 | 보고서와 CI | SQLite 이력, 비교·재평가, JSON·Markdown·SARIF 내보내기, 필수 검사 범위, 만료일이 있는 예외 |
 | 런타임 | 소유한 Android 테스트 앱과 iOS 시뮬레이터 앱의 준비된 시나리오. 실제 iOS 기기는 미지원 |
 | 모델 연결 | stdio MCP 도구·리소스와 패키지 스킬. 특정 모델 제공자나 LLM API 키는 필수가 아님 |
@@ -54,7 +81,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.2.0
+uv tool install --python 3.12 apsa==1.3.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -101,8 +128,9 @@ apsa tui
 | `apsa scan TARGET` | 로컬 입력과 캐시 사용 |
 | `apsa intel sync` | 공개 취약점 정보 수집 |
 | `apsa intel watch` | 공개 피드를 폴링하고 저장된 인벤토리를 재평가. 앱 파일을 다시 읽거나 OSV를 자동 조회하지 않음 |
-| `apsa scan TARGET --online` | 발견한 의존성 이름·버전을 OSV에 전송 |
-| `apsa intel watch --online` | 저장된 의존성 이름·버전도 OSV에 전송 |
+| `apsa intel backfill --source android --since YYYY-MM` | 지정한 제한된 기간의 월별 Android 보안 공지를 수집 |
+| `apsa scan TARGET --online` | 발견한 의존성 이름·버전을 OSV에 전송. 출하 구성에서 쓰는 Gradle catalog alias와 application lockfile 좌표를 포함하며 한 번에 최대 100개 패키지 |
+| `apsa intel watch --online` | 저장된 의존성 이름·버전도 같은 한도로 OSV에 전송 |
 
 ```sh
 apsa intel sync
@@ -220,6 +248,8 @@ make release RELEASE_OUT=dist/apsa-local-release
 새로 생성한 합성 소스 프로젝트와 APK를 사용하는 [APSA/MobSF 비교](benchmarks/COMPETITIVE.md)(영문)와
 [측정 결과](benchmarks/COMPETITIVE_RESULTS.ko.md)를 제공합니다. APSA 1.2.0 배포 전의
 개발 후보를 측정한 결과이며 배포 패키지의 측정이나 운영 앱의 정확도를 나타내지 않습니다.
+APSA 1.3.0 릴리스 런타임에서 새로 생성한 입력으로 다시 실행해 후보 수치를 재현했습니다
+([RELEASE_READINESS.md](https://github.com/ictechgy/apsa/blob/main/RELEASE_READINESS.md)).
 
 별도의 [공개 소스·CVE 평가](benchmarks/REAL_WORLD.ko.md)와
 [최초 결과](benchmarks/REAL_WORLD_RESULTS.ko.md)는 커밋을 고정한 앱 소스 6개,
@@ -239,5 +269,11 @@ make release RELEASE_OUT=dist/apsa-local-release
 [추가 분석·독립 정답 평가](benchmarks/NEXT_RESULTS.ko.md)는 AAB·IPA 메타데이터,
 Objective-C, 파서 격리와 독립 라벨의 새 공개 소스 2개를 다룹니다.
 선택한 CVE 경계 일치, catalog 사용 미확인과 남은 구문 누락을 별도로 기록합니다.
+
+[의존성 근거 평가](benchmarks/DEPENDENCY_RESULTS.ko.md)는 APSA의 Gradle catalog 사용 근거와
+lockfile 좌표를 공개 앱 holdout 3개에서 Gradle 자체 해석과 비교하며, 최초 블라인드 결과와
+정답을 본 뒤의 재실행을 구분합니다. [독립 취약·수정 소스 쌍](benchmarks/FPFN_RESULTS.ko.md)은
+공개 프로젝트의 취약·수정 커밋을 스캔 전에 고정한 정답으로 채점합니다. 둘 다 좁은 표본이며
+일반적인 정확도 추정이 아닙니다.
 
 소스는 [GitHub](https://github.com/ictechgy/apsa)에 공개되어 있습니다. [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE)는 원래 Quaygate의 MIT 고지를 보존합니다. 이번 공개는 통합 제품에 추가 라이선스를 선언하지 않습니다.

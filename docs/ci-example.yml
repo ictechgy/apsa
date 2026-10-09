@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install a reviewed APSA release
-        run: python -m pip install 'apsa==1.2.0'
+        run: python -m pip install 'apsa==1.3.0'
       - name: Build the owned release APK
         run: ./gradlew assembleRelease
       - name: Audit and preserve the policy decision

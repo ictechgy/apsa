@@ -1,4 +1,4 @@
-# Analysis extension (APSA 1.2)
+# Analysis extension (APSA 1.2 and 1.3)
 
 English is the source of truth for this document. These changes were developed
 on the `hardening/real-app-cve-v1` branch and ship in APSA 1.2.0. They are not
@@ -71,9 +71,10 @@ installed patch safety, comprehensive production accuracy or OWASP certification
 The VLC repository-search absence claim is provisional and unscored; the full
 pinned archive independently records any checked-in Info.plist paths.
 
-## Unreleased development after 1.2.0
+## APSA 1.3.0 additions
 
-These changes are on the development branch and are not part of APSA 1.2.0.
+These changes were developed on `dev/evidence-depth` after APSA 1.2.0 and ship
+in APSA 1.3.0. They are not part of APSA 1.2.0 or earlier packages.
 
 - **Gradle dependency evidence.** Catalog aliases used in shipped configurations
   become declared candidates; application-module lockfiles give exact
@@ -122,17 +123,23 @@ These changes are on the development branch and are not part of APSA 1.2.0.
 - **Device evidence.** No physical device was used; see
   [DEVICE_EVIDENCE.md](DEVICE_EVIDENCE.md) for what approved evidence requires.
 
-Compatibility and privacy notes for a future release: catalog aliases used in
-shipped configurations and application-lockfile coordinates (including private
-group IDs) are sent to OSV by `scan --online` and `intel watch --online`;
-lockfile matches are exact and therefore `version-affected`, which default
-policies block; the 100-query OSV budget is smaller than a typical application
-lockfile (179-412 shipped coordinates measured), so online audits of such apps
-stay incomplete; cached Android bulletin records need a re-sync to gain a vendor
-scope. Before release, the head must be frozen, every evaluation harness
-(dependency, frozen replay, source pairs, competitive, real-world, next holdout,
-generated AAB) re-run on it, README/skills/support matrix updated, the version
-bumped, and independent code and architecture reviews repeated.
+Compatibility and privacy notes: catalog aliases used in shipped
+configurations and application-lockfile coordinates (including private group
+IDs) are sent to OSV by `scan --online` and `intel watch --online`. Lockfile
+matches are exact and therefore `version-affected`; the default policy fails on
+high and critical ones. The OSV budget stays at 100 package queries per run, as
+in 1.2.0, with exact coordinates queried first. It is smaller than a typical
+application lockfile (179-412 shipped coordinates measured), so the remaining
+packages stay `not-run`, the warning states how many were skipped, and online
+audits of such apps are incomplete (exit 3 under the default `fail_on_partial`
+policy). Batch querying would change the recorded per-package OSV request
+format that the frozen replay depends on, so it is later work. Cached Android
+bulletin records need a re-sync or backfill to gain a vendor scope.
+
+Release evaluation: every harness (dependency oracle comparison, frozen
+replay, independent source pairs, competitive comparison, public real-world
+sources, next holdout and generated AAB) was re-run on runtime commit
+`aaac2cb`; see `RELEASE_READINESS.md` for runs and results.
 
 
 # 분석 확장 (APSA 1.2)
@@ -179,8 +186,8 @@ OpenSSL에 한정합니다.
 
 Gradle catalog의 이름·버전은 사용 여부 미확인으로 보존합니다. catalog에만 있는
 alias는 포함된 의존성·정확한 CVE 매칭을 증명하지 못하므로 실제 빌드·SBOM 근거가
-필요합니다. 미배포 개발 작업은 alias를 사용하는 구성과 연결하고 Gradle lockfile을
-읽습니다. [의존성 근거 결과](../benchmarks/DEPENDENCY_RESULTS.ko.md)를 참고하세요. 매니페스트 경로가 없는 AAB 모듈의 DEX는 건너뛰고 부분 범위와 별도
+필요합니다. APSA 1.3.0은 alias를 사용하는 구성과 연결하고 Gradle lockfile을
+읽습니다(아래 1.3.0 절). [의존성 근거 결과](../benchmarks/DEPENDENCY_RESULTS.ko.md)를 참고하세요. 매니페스트 경로가 없는 AAB 모듈의 DEX는 건너뛰고 부분 범위와 별도
 목록을 남깁니다.
 
 새 합성 양성·음성·손상 입력, AAPT2 생성 protobuf, 일회용 CI의 파일·네트워크
@@ -193,3 +200,32 @@ alias는 포함된 의존성·정확한 CVE 매칭을 증명하지 못하므로 
 선택한 소스 사실·공개 버전 경계는 앱 악용 가능성, 설치 패치 안전성, 운영 탐지율,
 OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 임시 근거로
 채점하지 않으며, 고정된 전체 소스에서 실제 Info.plist 경로를 따로 확인합니다.
+
+## APSA 1.3.0 추가 사항
+
+영어 원본의 "APSA 1.3.0 additions" 절을 요약한 번역입니다. 이 변경은 1.2.0 이후
+`dev/evidence-depth`에서 개발했고 APSA 1.3.0에 포함됩니다.
+
+- **Gradle 의존성 근거.** 출하 구성에서 쓰는 catalog alias는 `declared` 후보가 되고,
+  application 모듈 lockfile은 정확한 좌표를 제공합니다. library 모듈 lockfile은 앱
+  근거가 아니며, 모든 출하 앱이 해결한 선언 후보만 대체합니다. 부분 입력·해석하지 못한
+  project 참조에서는 대체하지 않습니다.
+- **파서 호환.** Swift `@_documentation(visibility:)`, `#warning`/`#error`, 빈 튜플,
+  토큰 단위 `nonisolated(unsafe)`와 Objective-C `NS_ENUM` 계열 매크로,
+  `NSLocalizedString`의 `comment:` 라벨, 전처리 조건부의 한 가지 분기를 바이트 위치를
+  유지한 채 처리합니다. 호환 처리한 파일은 부분 분석이며, 정규화한 조건부와 겹치는
+  Objective-C 함수는 불확실로 제외합니다.
+- **AAB feature 모듈.** base가 아닌 모듈의 protobuf 매니페스트를 해석해 컴포넌트·딥링크에
+  모듈 이름과 선언된 전달 방식을 붙입니다. 앱 식별자·application 플래그는 base에서만
+  가져오며 설치 상태는 알 수 없습니다.
+- **Mach-O 코드 무결성.** CodeDirectory 페이지·entitlement 슬롯 해시를 다시 계산합니다.
+  불일치는 modified와 경고로 보고하되, 암호화 구간에 한정된 불일치는 검증 불가로 둡니다.
+  CMS 서명·인증서 체인·팀·provisioning은 인증하지 않으며 `signature_verified`는 false입니다.
+- **Android 공지 이력과 칩셋.** `apsa intel backfill --source android --since YYYY-MM`은
+  명시한 기간만 수집합니다. 칩셋·커널 항목은 플랫폼과 vendor 패치 수준 중 오래된 쪽을 쓰며,
+  `chipset_vendor` 일치·불일치는 패치 수준 상태를 대체하지 않습니다. Apple 이력과
+  Pixel/OEM/칩셋 vendor 공지는 소급하지 않습니다.
+- **호환성·개인정보.** `--online`은 catalog·lockfile 좌표(비공개 group ID 포함)를 OSV에
+  보냅니다. OSV 조회는 1.2.0과 같이 실행당 최대 100개이며 정확한 좌표를 먼저 조회합니다.
+  나머지는 `not-run`으로 남고 경고에 건너뛴 개수를 표시하며, 온라인 감사는 불완전합니다.
+  실기기는 사용하지 않았습니다([DEVICE_EVIDENCE.md](DEVICE_EVIDENCE.md)).
