@@ -80,7 +80,8 @@ runs:
           exit 2
         fi
         venv="$RUNNER_TEMP/apsa-venv"
-        uv venv --quiet --python 3.12 "$venv"
+        # A job may run the action more than once; start from a fresh environment each time.
+        uv venv --quiet --clear --python 3.12 "$venv"
         uv pip install --quiet --python "$venv/bin/python" --require-hashes -r "$GITHUB_ACTION_PATH/requirements-release.txt"
         uv pip install --quiet --python "$venv/bin/python" --no-deps "$spec"
         echo "$venv/bin" >> "$GITHUB_PATH"
