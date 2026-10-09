@@ -83,13 +83,16 @@ These changes are on the development branch and are not part of APSA 1.2.0.
   token-level `nonisolated(unsafe)`, and Objective-C `typedef NS_ENUM`-family
   macros, `comment:` labels in `NSLocalizedString` and one kept branch per
   preprocessor conditional (conditional imports are removed, a literal `#if 0`
-  keeps its alternative). Adapted files stay partial. On the already analyzed
+  keeps its alternative). Adapted files stay partial, and an Objective-C
+  function overlapping a normalized conditional is skipped as uncertain because a
+  guard may sit in a dropped branch. On the already analyzed
   VLC iOS and Firefox iOS sources, files with remaining errors drop from 22 to
   0 and from 66 to 7. On two fresh repositories measured once without tuning,
   the adaptations recover 83 of 223 Signal-iOS Swift error files (1.2.0: 2),
   39 of 98 WordPress-iOS Swift files (1.2.0: 1) and 4 of 11 WordPress-iOS
   Objective-C files (1.2.0: 0); Signal-iOS Objective-C remains 0 of 32, mainly
-  `NS_ASSUME_NONNULL_BEGIN`.
+  `NS_ASSUME_NONNULL_BEGIN` (measured once; see
+  `benchmarks/results/2026-10-09-parser-fresh-repos.json`).
 - **AAB feature modules.** Each non-base module's protobuf manifest is decoded;
   its components and deep links carry the module name and declared delivery
   (install-time, on-demand, fast-follow). App identity and application flags
@@ -101,11 +104,15 @@ These changes are on the development branch and are not part of APSA 1.2.0.
   authenticated; `signature_verified` stays false. Encrypted (App Store) or
   unsigned executables leave `BINARY-IOS-CODE-INTEGRITY` `not-run`, and a
   malformed or oversized CodeDirectory is unverifiable rather than a failure.
+  Scatter vectors are not modeled, and whether CodeDirectory 0x20500
+  `preEncryptOffset` changes encrypted-page semantics is still to be checked
+  against xnu; until then encrypted pages stay unverifiable.
 - **Android bulletin history and chipsets.** `apsa intel backfill --source
   android --since YYYY-MM [--until YYYY-MM]` fetches an explicit, bounded month
   range. Bulletin records keep a vendor scope. Device observation adds the SoC
   manufacturer and vendor security patch level (also accepted from
-  `--device-info`); chipset and kernel components use the vendor patch level.
+  `--device-info`); chipset and kernel components use the older of the
+  platform and vendor patch levels, because GKI kernel updates vary.
   A SoC vendor match or mismatch is recorded in `chipset_vendor` beside the
   patch-level state and never replaces it, because connectivity chips can come
   from other vendors. Apple

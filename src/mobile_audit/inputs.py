@@ -350,8 +350,11 @@ def feature_manifest(raw: bytes, origin: str, inventory: dict) -> None:
         "android_config": [],
         "components": [],
         "deep_links": [],
+        "warnings": [],
     }
     android_manifest(raw, origin, scratch)
+    inventory["warnings"].extend(f"{module}: {warning}" for warning in scratch["warnings"])
+    inventory["partial"] |= bool(scratch["warnings"])
     root = ET.fromstring(raw)
     delivery = "unspecified"
     title = ""

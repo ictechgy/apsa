@@ -21,8 +21,11 @@ def walk(node: Any):
 
 
 class ObjCAnalyzer:
-    def __init__(self, path: str, text: str):
+    def __init__(self, path: str, text: str, uncertain_spans: list[list[int]] | None = None):
         self.path = path
+        # Byte spans blanked by preprocessor normalization; overlapping functions
+        # may have lost a guard in a dropped branch and are not analyzed.
+        self.uncertain_spans = uncertain_spans or []
         self.raw = text.encode()
         self.lines = text.split("\n")
         self.findings: list[dict] = []
@@ -181,7 +184,9 @@ class ObjCAnalyzer:
                 continue
             self.function_counts["observed"] += 1
             parent = function.parent
-            uncertain = function.has_error
+            uncertain = function.has_error or any(
+                start < function.end_byte and end > function.start_byte for start, end in self.uncertain_spans
+            )
             while parent:
                 uncertain |= parent.type in {
                     "ERROR",

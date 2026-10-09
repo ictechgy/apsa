@@ -182,7 +182,17 @@ def correlate(
                     "",
                 )
                 vendor_patch = scope not in {"platform"} and environment.get("vendor_security_patch")
-                actual = patch_date(vendor_patch or environment.get("security_patch"))
+                # Chipset and kernel fixes ship in vendor or kernel images; the older
+                # of the observed levels is the conservative bound (GKI kernels vary).
+                levels = [
+                    level
+                    for level in (
+                        patch_date(environment.get("security_patch")),
+                        patch_date(vendor_patch or None),
+                    )
+                    if level is not None
+                ]
+                actual = min(levels) if levels else None
                 fixed = patch_date(record.get("fixed_patch_level"))
                 versions = record.get("updated_aosp_versions", "")
                 release = str(environment.get("version", "")).split(".")[0]

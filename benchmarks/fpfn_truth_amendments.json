@@ -1,0 +1,17 @@
+{
+  "schema": "apsa-fpfn-truth-amendments-v1",
+  "amended_on": "2026-10-09",
+  "truth_sha256": "229b9070166881b136c765eaa65893dd99b09421464c72d7337b7bce97bf535a",
+  "reason": "Code review found a fixed-side path written as free text, which no file can match; the first result therefore counted that side as TN without measuring it. The frozen truth is unchanged; this amendment only restates the labeler's own note as paths.",
+  "pairs": {
+    "wikipedia-ios-ats-arbitrary-loads": {
+      "fixed_locations": [
+        {"path": "Wikipedia/Wikipedia-Info.plist", "function": "NSAppTransportSecurity (removed)"},
+        {"path": "Wikipedia/Wikipedia Alpha-Info.plist", "function": "NSAppTransportSecurity (removed)"},
+        {"path": "Wikipedia/Wikipedia Beta-Info.plist", "function": "NSAppTransportSecurity (removed)"},
+        {"path": "Wikipedia/Wikipedia OSM-Info.plist", "function": "NSAppTransportSecurity (removed)"},
+        {"path": "Wikipedia/Wikipedia User Testing-Info.plist", "function": "NSAppTransportSecurity (removed)"}
+      ]
+    }
+  }
+}

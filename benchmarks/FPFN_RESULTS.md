@@ -29,9 +29,16 @@ or device ran.
 
 ## First result
 
-| Pairs scored | TP | FN | FP | TN | Line-level TP |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 11 | 5 | 6 | 1 | 10 | 3 |
+| Pairs scored | TP | FN | FP | TN | Unscored fixed sides | Line-level TP |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 11 | 5 | 6 | 1 | 9 | 1 | 3 |
+
+The first run reported 10 TN. Code review found that the Wikipedia fixed side
+was labeled with a free-text path that no file can match, so that side was
+counted as TN without being measured. The frozen truth is unchanged;
+[`fpfn_truth_amendments.json`](fpfn_truth_amendments.json) restates the
+labeler's own note as the five plist paths, and the harness now marks any
+labeled path absent from the source as unscored.
 
 | Pair | Expected family | Vulnerable | Fixed |
 | --- | --- | --- | --- |
@@ -39,7 +46,7 @@ or device ran.
 | OpenClaw Android canvas bridge (CVE-2026-35643) | JS bridge | TP (line) | FP |
 | Tiddloid editor file-URL access | WebView file access | TP (line) | TN |
 | Amaze File Manager `usesCleartextTraffic` | Android cleartext | TP (file) | TN |
-| Wikipedia iOS `NSAllowsArbitraryLoads` | iOS ATS | TP (file) | TN |
+| Wikipedia iOS `NSAllowsArbitraryLoads` | iOS ATS | TP (file) | unscored (path label) |
 | Home Assistant `MyActivity` WebView URL (CVE-2023-41898) | Untrusted WebView URL | FN | TN |
 | Element X Android call intent URL (CVE-2025-27599) | Untrusted WebView URL | FN | TN |
 | Element X iOS call deep link (CVE-2026-55644) | Untrusted WebView URL | FN | TN |
@@ -54,7 +61,8 @@ file copy) produced no findings in their labeled files.
 
 - **Cross-file flows.** Both Element X pairs move the deep-link URL through a
   parser and navigation layer before the WebView loads it. APSA's untrusted-URL
-  rule is function-local.
+  rule is function-local. The Element X iOS sink file (`CallScreen.swift`) was
+  also only partially parsed, which can hide a local flow.
 - **Home Assistant.** APSA reported only a substring host check
   (`WEBVIEW-HOST-MATCH`) in the labeled file, not the untrusted load itself.
 - **Sink coverage.** The Nextcloud injection reaches `SQLiteDatabase.delete` and

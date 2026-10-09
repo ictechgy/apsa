@@ -165,7 +165,7 @@ def _swift_extensions(raw: bytes, output: bytearray) -> list[dict]:
         elif value == b"#" and following and following[0] in {b"warning", b"error"}:
             line_end = raw.find(b"\n", start)
             line_end = len(raw) if line_end < 0 else line_end
-            if re.fullmatch(rb"#(?:warning|error)\s*\(\s*\"[^\n]*\"\s*\)\s*", raw[start:line_end]):
+            if re.fullmatch(rb'#(?:warning|error)\s*\(\s*"(?:\\.|[^"\\\n])*"\s*\)\s*', raw[start:line_end]):
                 _blank(output, start, line_end)
                 counts["swift-diagnostic-directive"] += 1
         elif (
@@ -185,7 +185,7 @@ def _swift_extensions(raw: bytes, output: bytearray) -> list[dict]:
 
 ENUM_MACRO = re.compile(
     rb"\b(?:typedef\s+)?(?:NS_ENUM|NS_OPTIONS|NS_CLOSED_ENUM|NS_ERROR_ENUM|CF_ENUM|CF_OPTIONS|CF_CLOSED_ENUM)"
-    rb"\s*\(\s*[A-Za-z_][A-Za-z_0-9 ]*?\s*,\s*([A-Za-z_][A-Za-z_0-9]*)\s*\)"
+    rb"\s*\(\s*[A-Za-z_]\w*(?:\s+[A-Za-z_]\w*)*\s*,\s*([A-Za-z_]\w*)\s*\)"
 )
 CONDITIONAL = re.compile(rb"[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif)\b([^\n]*)")
 INCLUDE = re.compile(rb"[ \t]*#[ \t]*(?:import|include)\b")
@@ -220,20 +220,25 @@ def _objc_extensions(raw: bytes, output: bytearray, nodes: list[Any]) -> list[di
         ):
             _blank(output, start, stream[index + 1][2])
             counts["objc-localized-comment-label"] += 1
+    spans: list[list[int]] = []
     if re.search(rb"(?m)^[ \t]*#[ \t]*(?:if|ifdef|ifndef)\b", raw):
         # Keep one branch per conditional so that statements split across branches
-        # parse: the first branch, or the alternative of a literal `#if 0`. Other
-        # branches are not analyzed and coverage stays partial. Conditional imports
-        # are removed so they never become platform identity evidence.
+        # parse: the first branch, or the alternative of a literal false `#if`.
+        # Every blanked span is returned so callers treat overlapping functions as
+        # uncertain: a guard in a dropped branch must never disappear silently.
+        # Conditional imports are removed so they never become identity evidence.
         groups: list[list[bool]] = []  # [branch_active, a_branch_was_taken]
         cursor = 0
         for line in raw.splitlines(keepends=True):
             directive = CONDITIONAL.match(line)
             width = len(line.rstrip(b"\r\n"))
+            if directive and cursor + line.index(b"#") not in code_starts:
+                directive = None  # inside a comment or string
             if directive:
                 word = directive[1]
+                condition = re.sub(rb"/\*.*?\*/|//.*", b"", directive[2]).strip().strip(b"()").strip()
                 if word in {b"if", b"ifdef", b"ifndef"}:
-                    dead = word == b"if" and directive[2].split(b"//")[0].strip() == b"0"
+                    dead = word == b"if" and condition in {b"0", b"false"}
                     groups.append([not dead, not dead])
                 elif word in {b"elif", b"else"} and groups:
                     groups[-1][0] = not groups[-1][1]
@@ -241,11 +246,17 @@ def _objc_extensions(raw: bytes, output: bytearray, nodes: list[Any]) -> list[di
                 elif word == b"endif" and groups:
                     groups.pop()
                 _blank(output, cursor, cursor + width)
+                spans.append([cursor, cursor + width])
                 counts["objc-preprocessor-first-branch"] += 1
             elif not all(active for active, _ in groups) or (groups and INCLUDE.match(line)):
                 _blank(output, cursor, cursor + width)
+                spans.append([cursor, cursor + width])
             cursor += len(line)
-    return [{"kind": kind, "edits": edits} for kind, edits in counts.items() if edits]
+    result = [{"kind": kind, "edits": edits} for kind, edits in counts.items() if edits]
+    for item in result:
+        if item["kind"] == "objc-preprocessor-first-branch":
+            item["spans"] = spans
+    return result
 
 
 def adapted_source(raw: bytes, language: str, nodes: list[Any]) -> tuple[bytes, list[dict]]:

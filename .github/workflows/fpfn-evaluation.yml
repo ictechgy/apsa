@@ -3,7 +3,7 @@ name: Independent vulnerable and fixed source pairs
 on:
   push:
     branches: ["dev/evidence-depth"]
-    paths: ["src/**", "benchmarks/fpfn_eval.py", "benchmarks/fpfn_truth.json", ".github/workflows/fpfn-evaluation.yml"]
+    paths: ["src/**", "benchmarks/fpfn_eval.py", "benchmarks/fpfn_truth*.json", ".github/workflows/fpfn-evaluation.yml"]
   workflow_dispatch:
 
 permissions:

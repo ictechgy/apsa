@@ -25,9 +25,15 @@ commit을 GitHub에서 내려받아 symlink 없이 풀고, 라벨된 파일의 �
 
 ## 최초 결과
 
-| 채점 쌍 | TP | FN | FP | TN | 행 단위 TP |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 11 | 5 | 6 | 1 | 10 | 3 |
+| 채점 쌍 | TP | FN | FP | TN | 미채점 수정 쪽 | 행 단위 TP |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 11 | 5 | 6 | 1 | 9 | 1 | 3 |
+
+최초 실행은 TN 10개로 보고했습니다. 코드 리뷰에서 Wikipedia 수정 쪽 경로가 어떤 파일과도
+일치할 수 없는 자유 문장으로 라벨되어, 측정 없이 TN으로 셌음을 확인했습니다. 고정된
+정답은 바꾸지 않고 [`fpfn_truth_amendments.json`](fpfn_truth_amendments.json)에 라벨러가
+남긴 설명을 plist 경로 5개로 다시 적었으며, 평가 도구는 소스에 없는 라벨 경로를 미채점으로
+표시합니다.
 
 | 쌍 | 기대 규칙군 | 취약 | 수정 |
 | --- | --- | --- | --- |
@@ -35,7 +41,7 @@ commit을 GitHub에서 내려받아 symlink 없이 풀고, 라벨된 파일의 �
 | OpenClaw Android canvas bridge(CVE-2026-35643) | JS bridge | TP(행) | FP |
 | Tiddloid 편집기 file URL 접근 | WebView 파일 접근 | TP(행) | TN |
 | Amaze File Manager `usesCleartextTraffic` | Android cleartext | TP(파일) | TN |
-| Wikipedia iOS `NSAllowsArbitraryLoads` | iOS ATS | TP(파일) | TN |
+| Wikipedia iOS `NSAllowsArbitraryLoads` | iOS ATS | TP(파일) | 미채점(경로 라벨) |
 | Home Assistant `MyActivity` WebView URL(CVE-2023-41898) | 신뢰할 수 없는 WebView URL | FN | TN |
 | Element X Android 통화 intent URL(CVE-2025-27599) | 신뢰할 수 없는 WebView URL | FN | TN |
 | Element X iOS 통화 deep link(CVE-2026-55644) | 신뢰할 수 없는 WebView URL | FN | TN |
@@ -49,7 +55,8 @@ commit을 GitHub에서 내려받아 symlink 없이 풀고, 라벨된 파일의 �
 ## 놓친 이유
 
 - **파일 간 흐름.** 두 Element X 쌍은 deep link URL이 parser와 navigation 계층을 거친
-  뒤 WebView에 로드됩니다. APSA의 untrusted-URL 규칙은 함수 내부 흐름만 봅니다.
+  뒤 WebView에 로드됩니다. APSA의 untrusted-URL 규칙은 함수 내부 흐름만 봅니다. Element X
+  iOS의 sink 파일(`CallScreen.swift`)도 부분 파싱되어 지역 흐름이 가려졌을 수 있습니다.
 - **Home Assistant.** 라벨된 파일에서 부분 문자열 host 검사(`WEBVIEW-HOST-MATCH`)만
   보고했고 신뢰할 수 없는 로드 자체는 보고하지 않았습니다.
 - **sink 범위.** Nextcloud 주입은 `SQLiteDatabase.delete`와

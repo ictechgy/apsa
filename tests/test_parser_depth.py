@@ -78,7 +78,9 @@ def test_objc_enum_macro_and_split_conditional_parse_without_new_identity():
         "objc-preprocessor-first-branch",
     } <= adaptations(report)
     assert metadata["state"] == "partial"
-    assert "OBJC-WEBVIEW-UNTRUSTED-REQUEST" in {f["rule_id"] for f in report["findings"]}
+    # The method containing the normalized conditional may have lost a branch.
+    assert "OBJC-WEBVIEW-UNTRUSTED-REQUEST" not in {f["rule_id"] for f in report["findings"]}
+    assert metadata["functions"]["skipped"] >= 1
 
 
 def test_objc_adapted_conditional_imports_never_establish_platform_identity():
@@ -316,3 +318,31 @@ def test_encrypted_ipa_leaves_code_integrity_not_run(tmp_path):
     check = next(c for c in report["coverage"] if c["rule_id"] == "BINARY-IOS-CODE-INTEGRITY")
     assert check["state"] == "not-run"
     assert not any("changed after signing" in warning for warning in report["warnings"])
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "#if TARGET_OS_SIMULATOR\n#else\n    if (![self allowed:request]) { return; }\n#endif\n",
+        "#ifndef AUDIT_SKIP_GUARD\n#else\n    if (![self allowed:request]) { return; }\n#endif\n",
+        "#if 0 /* legacy */\n    [self unused];\n#else\n    if (![self allowed:request]) { return; }\n#endif\n",
+    ],
+)
+def test_dropped_branch_guard_never_yields_an_adapted_finding(guard):
+    text = OBJC_PARTS.replace(
+        "    [webView loadRequest:request];", guard + "    [webView loadRequest:request];"
+    )
+    report = analyze_sources([("Handler.m", text)])
+    assert report["metadata"]["files"][0]["native_parse_errors"]
+    assert "OBJC-WEBVIEW-UNTRUSTED-REQUEST" not in {f["rule_id"] for f in report["findings"]}
+    assert all("spans" not in a for a in report["metadata"]["files"][0]["adaptations"])
+
+
+def test_enum_macro_scan_is_linear_on_crafted_spacing():
+    import time
+
+    from mobile_audit.parser_compat import ENUM_MACRO
+
+    started = time.perf_counter()
+    assert ENUM_MACRO.search(b"NS_ENUM(a" + b" " * 200_000) is None
+    assert time.perf_counter() - started < 1

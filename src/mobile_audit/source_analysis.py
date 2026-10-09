@@ -1049,10 +1049,14 @@ def analyze_sources(sources: list[Any]) -> dict:
             }
             metric["native_parse_errors"] = tree.root_node.has_error
             adaptations = []
+            dropped: list[list[int]] = []
             if tree.root_node.has_error:
                 from .parser_compat import adapted_source
 
                 compatible, adaptations = adapted_source(text.encode("utf-8"), language, nodes)
+                for adaptation in adaptations:
+                    # Spans are for the analyzer only; the report keeps edit counts.
+                    dropped.extend(adaptation.pop("spans", []))
                 if adaptations:
                     parsers[language].reset()
                     tree = parsers[language].parse(compatible)
@@ -1077,7 +1081,7 @@ def analyze_sources(sources: list[Any]) -> dict:
             if language == "objc":
                 from .objc_analysis import ObjCAnalyzer
 
-                analyzer = ObjCAnalyzer(path, text)
+                analyzer = ObjCAnalyzer(path, text, uncertain_spans=dropped)
                 skipped += 1  # Preprocessing, dynamic dispatch and unsupported flows remain partial.
                 metric["state"] = "partial"
             else:

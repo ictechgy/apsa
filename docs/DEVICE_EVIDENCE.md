@@ -14,6 +14,11 @@ from an authorized device.
 | Android | `ro.build.version.release`, `ro.build.version.security_patch`, `ro.vendor.build.security_patch`, `ro.soc.manufacturer`, `ro.soc.model`, model and observation time | The SoC properties exist on Android 12 and later; empty values stay unknown. Chipset and kernel components use the vendor patch level when it is observed. |
 | iOS / iPadOS | OS product (`ios` or `ipados`) and version from an authorized simulator or the operator's own capture | APSA does not automate physical iOS devices. A simulator cannot establish a physical device's patch state. |
 
+A `--device-info` JSON uses these keys: `platform` (`android` or `ios`),
+`version`, `security_patch`, `vendor_security_patch`, `soc_manufacturer`,
+`soc_model`, `model`, `observed_at`, `os_product` (`ios` or `ipados`) and
+`simulator`. Other keys are dropped.
+
 The operator must own the device or hold written authorization, use a test
 build, and keep the captured JSON with the report. A device observation
 describes that device at that time; it does not extend to other devices of the

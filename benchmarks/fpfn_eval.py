@@ -12,9 +12,11 @@ import urllib.request
 from pathlib import Path, PurePosixPath
 
 from benchmarks.dependency_oracle import extract
+from mobile_audit.core import report_incomplete
 
 HERE = Path(__file__).resolve().parent
 TRUTH = HERE / "fpfn_truth.json"
+AMENDMENTS = HERE / "fpfn_truth_amendments.json"
 MAX_ARCHIVE = 768 * 1024 * 1024
 LINE_TOLERANCE = 3
 
@@ -58,7 +60,7 @@ def located(report: dict, rules: set[str], path: str) -> list[dict]:
             continue
         for evidence in finding.get("evidence", []):
             observed = str(evidence.get("path") or "")
-            if observed and (observed == path or path.endswith("/" + observed) or observed.endswith(path)):
+            if observed and PurePosixPath(observed) == PurePosixPath(path):
                 hits.append(
                     {"rule_id": finding["rule_id"], "status": finding["status"], "line": evidence.get("line")}
                 )
@@ -84,6 +86,9 @@ def evaluate(pair: dict, work: Path) -> dict:
             str(PurePosixPath(place["path"]).relative_to(root_name)) if target.is_dir() else place["path"]
             for place in places
         ]
+        missing = [
+            path for path in relative if not ((target if target.is_dir() else source) / path).is_file()
+        ]
         hits = []
         in_range = []
         for path, place in zip(relative, places, strict=True):
@@ -105,7 +110,8 @@ def evaluate(pair: dict, work: Path) -> dict:
             "commit": commit,
             "archive": archive,
             "scan_root": root_name if target.is_dir() else ".",
-            "audit_incomplete": report.get("summary", {}).get("audit_incomplete"),
+            "audit_incomplete": report_incomplete(report),
+            "missing_labeled_paths": missing,
             "labeled_file_states": {path: files.get(path, "not-analyzed-as-source") for path in relative},
             "hits": hits[:20],
             "hits_in_labeled_lines": in_range[:20],
@@ -116,9 +122,18 @@ def evaluate(pair: dict, work: Path) -> dict:
     if rules:
         vulnerable_hit = bool(result["vulnerable"]["hits"])
         fixed_hit = bool(result["fixed"]["hits"])
+        # A labeled path absent from the source cannot be measured.
         result["outcome"] = {
-            "vulnerable": "tp" if vulnerable_hit else "fn",
-            "fixed": "fp" if fixed_hit else "tn",
+            "vulnerable": "unscored"
+            if result["vulnerable"]["missing_labeled_paths"]
+            else "tp"
+            if vulnerable_hit
+            else "fn",
+            "fixed": "unscored"
+            if result["fixed"]["missing_labeled_paths"] and not fixed_hit
+            else "fp"
+            if fixed_hit
+            else "tn",
             "vulnerable_line_level": bool(result["vulnerable"]["hits_in_labeled_lines"]),
         }
     else:
@@ -133,6 +148,11 @@ def main() -> None:
     args = parser.parse_args()
     truth_raw = TRUTH.read_bytes()
     truth = json.loads(truth_raw)
+    amendments = json.loads(AMENDMENTS.read_text()) if AMENDMENTS.is_file() else {"pairs": {}}
+    if amendments.get("truth_sha256", sha(truth_raw)) != sha(truth_raw):
+        raise ValueError("Amendments do not apply to this frozen truth")
+    for pair in truth["pairs"]:
+        pair.update(amendments["pairs"].get(pair["id"], {}))
     results = []
     for pair in truth["pairs"]:
         try:
@@ -147,11 +167,16 @@ def main() -> None:
         "tn": sum(r["outcome"]["fixed"] == "tn" for r in scored),
         "line_level_tp": sum(r["outcome"].get("vulnerable_line_level", False) for r in scored),
         "errors": sum("error" in r for r in results),
+        "unscored_sides": sum(
+            side == "unscored" for r in scored for side in (r["outcome"]["vulnerable"], r["outcome"]["fixed"])
+        ),
         "scored_pairs": len(scored),
     }
     summary = {
-        "schema": "apsa-fpfn-results-v1",
+        "schema": "apsa-fpfn-results-v2",
         "truth_sha256": sha(truth_raw),
+        "amendments_sha256": sha(AMENDMENTS.read_bytes()) if AMENDMENTS.is_file() else None,
+        "apsa_commit": os.environ.get("GITHUB_SHA", ""),
         "totals": totals,
         "pairs": results,
     }

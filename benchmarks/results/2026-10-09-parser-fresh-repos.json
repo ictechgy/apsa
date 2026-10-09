@@ -1,0 +1,43 @@
+{
+  "schema": "apsa-parser-adaptation-fresh-repos-v1",
+  "measured_on": "2026-10-09",
+  "method": "Local tree-sitter parse of every .swift and .m file (<=8 MiB) in each public archive with the pinned grammars (tree-sitter 0.25.2, tree-sitter-swift 0.7.4, tree-sitter-objc 3.0.2). For files with native errors, the APSA 1.2.0 adaptations and the development adaptations were applied separately and a file counts as recovered when its adapted text parses without errors. Measured once; no adaptation was changed in response.",
+  "repositories": [
+    {
+      "repository": "signalapp/Signal-iOS",
+      "commit": "69a6cef4094e0eb1975e701b4e6eb7e9cf82cb57",
+      "archive_sha256": "a2f2c5fe784aa1cc368512337f915755a9fb5595657c0f31ffdcf856afaa1337",
+      "swift": {
+        "files": 2676,
+        "native_error_files": 223,
+        "recovered_1_2_0": 2,
+        "recovered_development": 83
+      },
+      "objc": {
+        "files": 34,
+        "native_error_files": 32,
+        "recovered_1_2_0": 0,
+        "recovered_development": 0,
+        "main_residual": "NS_ASSUME_NONNULL_BEGIN"
+      }
+    },
+    {
+      "repository": "wordpress-mobile/WordPress-iOS",
+      "commit": "6df9ab12a922f20db4a9ddb3d6283ce4b81828b4",
+      "archive_sha256": "09ea93a7c3323110c85f5e06ad649eeee6b52fb04c4f5b84929a9607595ca328",
+      "swift": {
+        "files": 3328,
+        "native_error_files": 98,
+        "recovered_1_2_0": 1,
+        "recovered_development": 39
+      },
+      "objc": {
+        "files": 154,
+        "native_error_files": 11,
+        "recovered_1_2_0": 0,
+        "recovered_development": 4
+      }
+    }
+  ],
+  "note": "Recovery means the file parses; Objective-C functions overlapping normalized preprocessor branches are still skipped as uncertain."
+}

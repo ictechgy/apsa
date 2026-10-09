@@ -420,11 +420,9 @@ def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) ->
     algorithm, _ = CODE_HASHES[hash_type]
     identifier = ""
     if 0 < ident_offset < len(blob):
-        identifier = _safe_text(
-            blob[ident_offset : blob.find(b"\0", ident_offset, ident_offset + 256)].decode(
-                "utf-8", errors="replace"
-            )
-        )
+        end = blob.find(b"\0", ident_offset, ident_offset + 256)
+        if end > ident_offset:
+            identifier = _safe_text(blob[ident_offset:end].decode("utf-8", errors="replace"))
     result: dict[str, Any] = {
         "version": version,
         "hash_type": algorithm,
@@ -438,13 +436,15 @@ def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) ->
         team_offset = struct.unpack_from(">I", blob, 48)[0]
         if 0 < team_offset < len(blob):
             end = blob.find(b"\0", team_offset, team_offset + 64)
-            result["team_identifier_claim"] = _safe_text(blob[team_offset:end].decode("ascii", "replace"))
+            if end > team_offset:
+                result["team_identifier_claim"] = _safe_text(blob[team_offset:end].decode("ascii", "replace"))
 
     def digest(data: bytes) -> bytes:
         return hashlib.new(algorithm, data).digest()[:hash_size]
 
     mismatched: list[int] = []
-    if code is None or code_limit > len(code) or not page_log:
+    if code is None or code_limit > len(code) or not page_log or slots << page_log < code_limit:
+        # Missing code, or fewer slots than pages up to codeLimit, leaves bytes unhashed.
         result["integrity"] = "unverifiable"
     else:
         page = 1 << page_log
