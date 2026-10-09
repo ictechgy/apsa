@@ -118,12 +118,21 @@ application 모듈 lockfile만 exact로 취급하고, 선언한 모든 모듈이
 먼저 처리합니다. oracle 워크플로는 upstream 빌드 코드 실행 전에 archive 해시를
 고정합니다. 이 수정 이후 재실행은 아래 실행 ID로 기록합니다.
 
+[37913317319](https://github.com/ictechgy/apsa/actions/runs/37913317319) 재실행(head
+`e1f5eee`, 블라인드 아님)에서 holdout-1·2는 변하지 않았습니다. holdout-3에서는 convention
+plugin이 선언한 Home Assistant catalog 항목이 더 이상 일괄 대체되지 않아 TP 58, FP 2, 출하
+보류 19가 되었고, 묶음 전체는 TP 121, FP 2, 출하 보류 24(정밀도 98.4%, 출하 커버리지
+83.4%)입니다. 커밋된 lockfile을 쓰면 앱 좌표 372개는 그대로 exact이며, 추가 exact 좌표는
+wear(59)·automotive(2) application에서만 나옵니다. 고정된 6개 앱 재실행은 변하지
+않았습니다.
+
 | 결과 파일 | 생성 실행 | head commit |
 | --- | --- | --- |
 | `results/2026-10-09-dependency-first-holdout1.json` | [37907202313](https://github.com/ictechgy/apsa/actions/runs/37907202313) | `6a86b95` |
 | `results/2026-10-09-dependency-first-holdout2.json` | [37908373608](https://github.com/ictechgy/apsa/actions/runs/37908373608) | `36213e0` |
 | `results/2026-10-09-dependency-first-holdout3.json` | [37909298008](https://github.com/ictechgy/apsa/actions/runs/37909298008) | `c24d1c3` |
 | `results/2026-10-09-dependency-development-rerun.json` | [37909811466](https://github.com/ictechgy/apsa/actions/runs/37909811466) | `8de1758` |
+| `results/2026-10-09-dependency-review-rerun.json` | [37913317319](https://github.com/ictechgy/apsa/actions/runs/37913317319) | `e1f5eee` |
 | `results/2026-10-09-dependency-frozen-replay.json` | [37909997903](https://github.com/ictechgy/apsa/actions/runs/37909997903) | `ed02049`(패키지 버전 1.2.0 표기) |
 
 ## 한계

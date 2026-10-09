@@ -134,12 +134,22 @@ puts exact coordinates first in the OSV query budget. The oracle workflow now
 pins each archive hash before upstream build code runs. The rerun after these
 changes is recorded below with its run ID.
 
+Rerun [37913317319](https://github.com/ictechgy/apsa/actions/runs/37913317319)
+(head `e1f5eee`, not blind) leaves holdout-1 and holdout-2 unchanged. In
+holdout-3, Home Assistant's catalog entries declared by convention plugins are
+no longer superseded wholesale: 58 TP, 2 FP and 19 shipped abstentions, so the
+set reaches 121 TP, 2 FP and 24 shipped abstentions (98.4% precision, 83.4%
+shipped coverage). With its committed lockfiles, its 372 app coordinates stay
+exact and the only extra exact coordinates now come from the wear (59) and
+automotive (2) applications. The frozen six-app replay is unchanged.
+
 | Result file | Producing run | Head commit |
 | --- | --- | --- |
 | `results/2026-10-09-dependency-first-holdout1.json` | [37907202313](https://github.com/ictechgy/apsa/actions/runs/37907202313) | `6a86b95` |
 | `results/2026-10-09-dependency-first-holdout2.json` | [37908373608](https://github.com/ictechgy/apsa/actions/runs/37908373608) | `36213e0` |
 | `results/2026-10-09-dependency-first-holdout3.json` | [37909298008](https://github.com/ictechgy/apsa/actions/runs/37909298008) | `c24d1c3` |
 | `results/2026-10-09-dependency-development-rerun.json` | [37909811466](https://github.com/ictechgy/apsa/actions/runs/37909811466) | `8de1758` |
+| `results/2026-10-09-dependency-review-rerun.json` | [37913317319](https://github.com/ictechgy/apsa/actions/runs/37913317319) | `e1f5eee` |
 | `results/2026-10-09-dependency-frozen-replay.json` | [37909997903](https://github.com/ictechgy/apsa/actions/runs/37909997903) | `ed02049` (reports package version 1.2.0) |
 
 ## Limits
