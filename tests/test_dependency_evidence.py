@@ -305,10 +305,11 @@ def test_applications_and_unclassified_consumers_keep_modules_shipping(tmp_path)
     assert deps["org.jsoup:jsoup"]["catalog_usage"]["state"] == "declared"
 
 
-def test_library_module_lockfiles_stay_candidates_once_applications_are_known(tmp_path):
+def test_library_module_lockfiles_stay_candidates(tmp_path):
     deps = project(
         tmp_path,
-        'plugins { id("com.android.application") }\ndependencies { implementation(projects.core) }\n',
+        'plugins { id("io.example.android-compose-application") }\n'
+        "dependencies { implementation(projects.core) }\n",
         {
             "app/gradle.lockfile": "com.squareup.okio:okio:3.6.0=releaseRuntimeClasspath\n",
             "core/build.gradle.kts": "dependencies { implementation(libs.okhttp) }\n",
@@ -323,3 +324,14 @@ def test_library_module_lockfiles_stay_candidates_once_applications_are_known(tm
     assert deps["com.squareup.okio:okio"]["resolution"]["state"] == "superseded-by-resolved-build"
     assert deps["com.squareup.okhttp3:okhttp"]["confidence"] == "declared"
     assert "resolution" not in deps["com.squareup.okhttp3:okhttp"]
+
+
+def test_unrecognized_application_lockfile_stays_exact(tmp_path):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/build.gradle.kts").write_text('plugins { id("custom.convention") }\n')
+    (tmp_path / "app/gradle.lockfile").write_text("com.squareup.okio:okio:3.6.0=releaseRuntimeClasspath\n")
+    (tmp_path / "wear").mkdir()
+    (tmp_path / "wear/build.gradle.kts").write_text('plugins { id("com.android.application") }\n')
+    inventory, _ = inspect_target(tmp_path)
+    okio = next(d for d in inventory["dependencies"] if d["name"] == "com.squareup.okio:okio")
+    assert okio["confidence"] == "exact" and okio["version_source"] == "gradle-lockfile-resolved"

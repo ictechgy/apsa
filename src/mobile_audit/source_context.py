@@ -276,7 +276,11 @@ def _module_roles(sources: list[tuple[str, str]]) -> dict[str, str]:
             roles[directory] = "build-tooling"
         elif re.search(r"[\"']com\.android\.test[\"']|plugins\.(?:\w+\.)*android\.test\b", text):
             roles[directory] = "non-shipping-module"
-        elif re.search(r"[\"']com\.android\.application[\"']|plugins\.(?:\w+\.)*application\b", text):
+        elif re.search(
+            r"\bid\s*\(?\s*[\"'][\w.-]*application[\"']|plugin:\s*[\"']com\.android\.application[\"']"
+            r"|plugins\.(?:\w+\.)*application\b",
+            text,
+        ):
             applications.add(directory)
         try:
             stream = tokens(text)
@@ -329,6 +333,14 @@ def _module_roles(sources: list[tuple[str, str]]) -> dict[str, str]:
                 roles.setdefault(directory, "non-shipping-module")
                 changed = True
     result = {directory.as_posix(): role for directory, role in roles.items()}
+    for directory, consumers in edges.items():
+        # Positive library evidence: another shipped module depends on it.
+        if (
+            directory not in applications
+            and directory not in roles
+            and any(state == "declared" and consumer in live for consumer, state in consumers)
+        ):
+            result[directory.as_posix()] = "library"
     result.update({directory.as_posix(): "application" for directory in applications})
     return result
 
@@ -433,7 +445,7 @@ def resolve_catalog_usage(dependencies: list[dict], sources: list[tuple[str, str
             continue
         role = roles.get(PurePosixPath(path).parent.as_posix()) if path.endswith(("gradle", ".kts")) else None
         for ref in found:
-            if role and role != "application" and ref["state"] == "declared":
+            if role in {"build-tooling", "non-shipping-module"} and ref["state"] == "declared":
                 ref["state"] = role
         references.extend(found)
     for dep in catalogs:
@@ -482,23 +494,23 @@ def superseded(dep: dict) -> bool:
 def supersede(dependencies: list[dict], sources: list[tuple[str, str]] | None = None) -> None:
     """Resolved Gradle coordinates replace declared candidates for the same package.
 
-    Only an application module's lockfile records what that app ships. A library
-    module's lockfile is resolved in the library's own context, so once
-    application modules are recognized its coordinates remain candidates.
+    Only an application module's lockfile records what that app ships. The
+    lockfile of a module that another shipped module consumes (a library), or of
+    a test or tooling module, is resolved in that module's own context, so its
+    coordinates remain candidates.
     """
     roles = _module_roles(sources) if sources else {}
-    applications = {path for path, role in roles.items() if role == "application"}
-    if applications:
-        for dep in dependencies:
-            module = PurePosixPath(dep["path"]).parent
-            if module.name == "dependency-locks":
-                module = module.parent.parent
-            if (
-                dep.get("version_source") == "gradle-lockfile-resolved"
-                and module.as_posix() not in applications
-            ):
-                dep["confidence"] = "declared"
-                dep["version_source"] = "gradle-lockfile-library-module"
+    for dep in dependencies:
+        module = PurePosixPath(dep["path"]).parent
+        if module.name == "dependency-locks":
+            module = module.parent.parent
+        if dep.get("version_source") == "gradle-lockfile-resolved" and roles.get(module.as_posix()) in {
+            "library",
+            "non-shipping-module",
+            "build-tooling",
+        }:
+            dep["confidence"] = "declared"
+            dep["version_source"] = "gradle-lockfile-library-module"
     resolved: dict[str, set[str]] = {}
     for dep in dependencies:
         if dep.get("version_source") == "gradle-lockfile-resolved":
