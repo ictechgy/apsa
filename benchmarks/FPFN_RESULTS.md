@@ -40,6 +40,13 @@ counted as TN without being measured. The frozen truth is unchanged;
 labeler's own note as the five plist paths, and the harness now marks any
 labeled path absent from the source as unscored.
 
+[Run 37916922456](https://github.com/ictechgy/apsa/actions/runs/37916922456)
+re-measured all pairs after the review fixes (source identical to head
+`e9314bc`, exact path matching, amendment applied): **5 TP, 6 FN, 1 FP and
+10 TN with no unscored side**. The Wikipedia fixed side, now measured on its
+five plists, is a TN. This rerun is not blind; the first result above stays as
+recorded.
+
 | Pair | Expected family | Vulnerable | Fixed |
 | --- | --- | --- | --- |
 | SMSSync Twitter OAuth `onReceivedSslError` | WebView SSL bypass | TP (line) | TN |

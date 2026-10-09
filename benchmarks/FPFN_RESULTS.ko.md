@@ -35,6 +35,11 @@ commit을 GitHub에서 내려받아 symlink 없이 풀고, 라벨된 파일의 �
 남긴 설명을 plist 경로 5개로 다시 적었으며, 평가 도구는 소스에 없는 라벨 경로를 미채점으로
 표시합니다.
 
+[37916922456 실행](https://github.com/ictechgy/apsa/actions/runs/37916922456)은 리뷰
+수정 후(head `e9314bc`와 같은 소스, 정확한 경로 일치, 보정 적용) 모든 쌍을 다시
+측정했습니다: **TP 5, FN 6, FP 1, TN 10, 미채점 0**. 다섯 plist로 측정한 Wikipedia 수정
+쪽은 TN입니다. 이 재측정은 블라인드가 아니며 위 최초 결과는 기록대로 유지합니다.
+
 | 쌍 | 기대 규칙군 | 취약 | 수정 |
 | --- | --- | --- | --- |
 | SMSSync Twitter OAuth `onReceivedSslError` | WebView SSL 우회 | TP(행) | TN |

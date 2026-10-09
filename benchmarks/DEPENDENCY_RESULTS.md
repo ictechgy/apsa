@@ -154,7 +154,12 @@ resolved that package; plugin detection reads only application syntax, accepts
 versioned `apply false`, and lets library-plugin evidence win. Run
 [37915794598](https://github.com/ictechgy/apsa/actions/runs/37915794598) at
 head `3325523`, after both review rounds, reproduces the figures above for all
-three holdouts. The oracle workflow's case matrix was narrowed per holdout; each
+three holdouts, and run
+[37916922500](https://github.com/ictechgy/apsa/actions/runs/37916922500) on the
+final reviewed source (identical to head `e9314bc`) reproduces them again
+(`results/2026-10-09-dependency-final-head.json`); frozen replay
+[37916922368](https://github.com/ictechgy/apsa/actions/runs/37916922368) is
+unchanged. The oracle workflow's case matrix was narrowed per holdout; each
 oracle run used the workflow revision committed with its cases.
 
 | Result file | Producing run | Head commit |

@@ -134,7 +134,10 @@ wear(59)·automotive(2) application에서만 나옵니다. 고정된 6개 앱 �
 읽고, version이 붙은 `apply false`를 인식하며, library 플러그인 근거를 우선합니다. 두
 차례 리뷰 수정 후 head `3325523`의
 [37915794598](https://github.com/ictechgy/apsa/actions/runs/37915794598) 실행은 세
-holdout 모두에서 위 수치를 재현합니다. oracle 워크플로의 사례 목록은 holdout마다 좁혔으며,
+holdout 모두에서 위 수치를 재현하며, 최종 리뷰 소스(head `e9314bc`와 동일)의
+[37916922500](https://github.com/ictechgy/apsa/actions/runs/37916922500) 실행도 같은 수치를
+재현합니다(`results/2026-10-09-dependency-final-head.json`). 고정 재실행
+[37916922368](https://github.com/ictechgy/apsa/actions/runs/37916922368)도 변하지 않았습니다. oracle 워크플로의 사례 목록은 holdout마다 좁혔으며,
 각 oracle 실행은 해당 사례와 함께 커밋된 워크플로 버전을 사용했습니다.
 
 | 결과 파일 | 생성 실행 | head commit |
