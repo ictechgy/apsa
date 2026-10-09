@@ -138,31 +138,32 @@ def main() -> None:
     sys.stdout.write(json.dumps(result, ensure_ascii=False))
 
 
-def probe() -> None:
-    """Load the parser modules and native extensions without reading any input."""
+PROBE_MODULES = (
+    "mobile_audit.inputs",
+    "mobile_audit.source_analysis",
+    "mobile_audit.binary_analysis",
+    "lxml.etree",
+    "mutf8",
+    "androguard.core.axml",
+    "tree_sitter",
+    "tree_sitter_java",
+    "tree_sitter_kotlin",
+    "tree_sitter_swift",
+    "tree_sitter_objc",
+    "tree_sitter_json",
+)
+
+
+def probe(names: list[str]) -> None:
+    """Under the parser limits, load modules the parent found, without any input."""
     import importlib
 
-    for name in (
-        "mobile_audit.inputs",
-        "mobile_audit.source_analysis",
-        "mobile_audit.binary_analysis",
-        "lxml.etree",
-        "mutf8",
-        "androguard.core.axml",
-        "tree_sitter",
-        "tree_sitter_java",
-        "tree_sitter_kotlin",
-        "tree_sitter_swift",
-        "tree_sitter_objc",
-        "tree_sitter_json",
-    ):
-        try:
-            importlib.import_module(name)
-        except ModuleNotFoundError as error:
-            # An absent optional grammar is reported by the parser itself, not the sandbox.
-            if error.name != name:
-                raise
+    limits()
+    for name in names:
+        if name not in PROBE_MODULES:
+            raise SystemExit(f"Unknown probe module: {name}")
+        importlib.import_module(name)
 
 
 if __name__ == "__main__":
-    probe() if sys.argv[1:] == ["--probe"] else main()
+    probe(sys.argv[2:]) if sys.argv[1:2] == ["--probe"] else main()

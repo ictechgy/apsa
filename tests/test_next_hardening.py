@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import plistlib
 import socket
+import stat
 import struct
 import sys
 import tomllib
@@ -564,8 +565,17 @@ def test_activation_probe_is_input_free_and_auto_records_unavailable(monkeypatch
     _failed_probe(monkeypatch, probes)
     command, isolation = parser_sandbox.activate(wrapped, args, metadata, scratch)
     assert len(probes) == 1 and probes[0][0] == "/usr/bin/bwrap"
-    assert probes[0][-6:] == [sys.executable, "-I", "-B", "-m", "mobile_audit._parser_worker", "--probe"]
-    assert str(target) not in probes[0][-6:]
+    start = probes[0].index(sys.executable, 1)
+    assert probes[0][start : start + 6] == [
+        sys.executable,
+        "-I",
+        "-B",
+        "-m",
+        "mobile_audit._parser_worker",
+        "--probe",
+    ]
+    assert "mobile_audit.source_analysis" in probes[0][start + 6 :]
+    assert str(target) not in probes[0][start:]
     assert command == args
     assert isolation["state"] == "unavailable" and isolation["backend"] == "resource-limits-only"
     assert isolation["attempted_backend"] == "bubblewrap" and isolation["activation_probe"] == "failed"
@@ -618,6 +628,7 @@ def test_enforced_parser_failure_explains_sandbox_without_retry(monkeypatch, tmp
     target = tmp_path / "input"
     target.mkdir()
     monkeypatch.setenv("APSA_PARSER_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "auto")
     monkeypatch.setattr(parser_sandbox, "backend", lambda: "/usr/bin/bwrap")
     monkeypatch.setattr(parser_sandbox.sys, "platform", "linux")
     monkeypatch.setattr(
@@ -735,8 +746,11 @@ def test_second_store_keeps_live_sqlite_wal_index_locks(tmp_path):
     try:
         first.db.execute("SELECT count(*) FROM reports").fetchone()
         assert (home / "audit.sqlite3-shm").is_file()
+        for path in home.glob("audit.sqlite3*"):
+            path.chmod(0o644)
         second = Store(home)
         second.close()
+        assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in home.glob("audit.sqlite3*"))
         # SQLite's dead-man-switch byte stays share-locked while a connection lives.
         # Another process must not obtain it exclusively and reinitialize the mapping.
         probe = (
@@ -760,13 +774,16 @@ def test_second_store_keeps_live_sqlite_wal_index_locks(tmp_path):
         first.close()
 
 
-def test_parser_probe_loads_modules_without_input():
+def test_parser_probe_loads_listed_modules_without_input():
+    import importlib.util
     import subprocess
 
-    result = subprocess.run(
-        [sys.executable, "-I", "-B", "-m", "mobile_audit._parser_worker", "--probe"],
-        capture_output=True,
-        timeout=60,
-    )
+    from mobile_audit._parser_worker import PROBE_MODULES
+
+    available = [name for name in PROBE_MODULES if importlib.util.find_spec(name) is not None]
+    command = [sys.executable, "-I", "-B", "-m", "mobile_audit._parser_worker", "--probe"]
+    result = subprocess.run([*command, *available], capture_output=True, timeout=60)
     assert result.returncode == 0, result.stderr
     assert result.stdout == b""
+    refused = subprocess.run([*command, "os"], capture_output=True, timeout=60)
+    assert refused.returncode != 0 and b"Unknown probe module" in refused.stderr

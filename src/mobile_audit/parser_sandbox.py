@@ -178,6 +178,13 @@ def activate(command: list[str], args: list[str], metadata: dict, scratch: Path)
     """
     if metadata.get("state") != "enforced":
         return command, metadata
+    import importlib.util
+
+    from ._parser_worker import PROBE_MODULES
+
+    # Modules visible to the parent must also load inside the sandbox; a module
+    # absent from the installation is reported by the parser, not the probe.
+    available = [name for name in PROBE_MODULES if importlib.util.find_spec(name) is not None]
     probe = command[: len(command) - len(args)] + [
         sys.executable,
         "-I",
@@ -185,6 +192,7 @@ def activate(command: list[str], args: list[str], metadata: dict, scratch: Path)
         "-m",
         "mobile_audit._parser_worker",
         "--probe",
+        *available,
     ]
     try:
         result = subprocess.run(

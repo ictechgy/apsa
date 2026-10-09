@@ -23,10 +23,11 @@ signatures. See [analysis scope and limits](https://github.com/ictechgy/apsa/blo
 
 **Upgrading from 1.1.** With the default `APSA_PARSER_SANDBOX=auto`, the parser
 runs under macOS Seatbelt or Linux bubblewrap after an input-free activation
-probe succeeds. If the backend is missing or cannot start (for example inside
-another sandbox or with blocked user namespaces), the report records
-`parser_isolation.state: unavailable` with the reason and parses with resource
-limits only. `required` refuses such audits; `off` skips the backend. A parser
+probe succeeds. Without a backend, the report records
+`parser_isolation.state: unavailable` and parses with resource limits only. If
+the backend is present but cannot start (for example inside another sandbox or
+with blocked user namespaces), the report also records the attempted backend
+and probe reason and adds an inventory warning. `required` refuses such audits; `off` skips the backend. A parser
 failure after isolation has started aborts the audit without an unsandboxed
 retry. Dependencies declared only in a Gradle version catalog no longer receive
 CVE matches until build usage or resolved versions are supplied. New rules

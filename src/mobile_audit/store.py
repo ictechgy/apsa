@@ -32,10 +32,13 @@ def _restrict(path: Path) -> None:
         return
     except NotImplementedError:
         pass
-    descriptor = os.open(path, getattr(os, "O_PATH", 0) | os.O_NOFOLLOW | os.O_RDONLY)
+    o_path = getattr(os, "O_PATH", 0)
+    if not o_path or not os.path.isdir("/proc/self/fd"):
+        raise OSError(
+            errno.ENOTSUP, "Lock-safe permission repair requires lchmod or O_PATH with /proc", str(path)
+        )
+    descriptor = os.open(path, o_path | os.O_NOFOLLOW)
     try:
-        if not getattr(os, "O_PATH", 0):
-            raise OSError(errno.ENOTSUP, "Lock-safe permission repair is unavailable", str(path))
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise ValueError("Audit database files must be regular files")
         os.chmod(f"/proc/self/fd/{descriptor}", 0o600)

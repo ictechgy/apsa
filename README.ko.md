@@ -22,9 +22,9 @@ APSA 1.2는 AAB base 매니페스트·모듈 DEX 분석, IPA 내장 Mach-O 메�
 
 **1.1에서 업그레이드할 때.** 기본값 `APSA_PARSER_SANDBOX=auto`는 입력 없이 실행하는
 활성화 검사가 성공하면 파서를 macOS Seatbelt 또는 Linux bubblewrap 아래에서
-실행합니다. 백엔드가 없거나 시작하지 못하면(예: 다른 sandbox 내부, user namespace
-차단) 보고서에 `parser_isolation.state: unavailable`과 이유를 기록하고 자원 제한만으로
-파싱합니다. `required`는 이런 감사를 거부하고 `off`는 백엔드를 사용하지 않습니다.
+실행합니다. 백엔드가 없으면 보고서에 `parser_isolation.state: unavailable`을 기록하고
+자원 제한만으로 파싱합니다. 백엔드가 있지만 시작하지 못하면(예: 다른 sandbox 내부,
+user namespace 차단) 시도한 백엔드와 실패 이유를 함께 기록하고 inventory 경고를 추가합니다. `required`는 이런 감사를 거부하고 `off`는 백엔드를 사용하지 않습니다.
 격리가 시작된 뒤의 파서 실패는 격리 없이 재시도하지 않고 감사를 중단합니다. Gradle
 version catalog에만 선언된 의존성은 빌드 사용 근거나 해결 버전을 제공하기 전까지 CVE를
 대조하지 않습니다. 새 규칙(`AST-CRYPTO-ECB`, `AST-CRYPTO-WEAK-HASH`, `AST-SQL-CONCAT`,
