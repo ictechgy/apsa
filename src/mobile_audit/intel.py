@@ -707,10 +707,12 @@ def query_dependencies(
                 )
                 continue
             try:
+                from .source_context import osv_package_name
+
                 fetcher.hashes.clear()
                 endpoint = "https://api.osv.dev/v1/query"
                 payload = {
-                    "package": {"name": dep["name"], "ecosystem": dep["ecosystem"]},
+                    "package": {"name": osv_package_name(dep), "ecosystem": dep["ecosystem"]},
                     "version": dep["version"],
                 }
                 package_records = []

@@ -59,6 +59,7 @@ TEXT_SUFFIXES = {
     ".dart",
     ".xcprivacy",
     ".resolved",
+    ".pbxproj",
 }
 
 
@@ -71,13 +72,46 @@ def parse_dependencies(path: str, raw: bytes) -> list[dict]:
     name = Path(path).name
     found = []
     if name.endswith((".gradle", ".gradle.kts")):
-        for match in re.finditer(
-            r"""(?:implementation|api|compileOnly|runtimeOnly)\s*\(?\s*["']([^"':\s]+:[^"':\s]+):([^"'\s]+)["']""",
-            text,
-        ):
-            package, version = match.groups()
-            exact = not any(c in version for c in "$+[](),") and version.lower() != "latest.release"
-            found.append(dependency(package, version, "Maven", path, "declared" if exact else "unknown"))
+        from .source_context import tokens
+
+        # Only real string declarations; comments are not dependency evidence.
+        stream = tokens(text)
+        for index, (kind, word, _) in enumerate(stream):
+            if kind != "code" or word not in {"implementation", "api", "compileOnly", "runtimeOnly"}:
+                continue
+            index += 1
+            parenthesized = index < len(stream) and stream[index][1] == "("
+            if parenthesized:
+                index += 1
+            if index >= len(stream) or stream[index][0] != "string":
+                continue
+            match = re.fullmatch(r"""(["'])([^"':\s]+:[^"':\s]+):([^"'\s]+)\1""", stream[index][1])
+            if not match:
+                continue
+            quote, package, version = match.groups()
+            end = index + 1
+            standalone = True
+            if parenthesized:
+                standalone = end < len(stream) and stream[end][1] == ")"
+                if standalone:
+                    end += 1
+            if end < len(stream):
+                following = stream[end]
+                standalone &= following[1] in {";", "}"} or (
+                    following[0] == "code"
+                    and following[1] not in {"as", "in", "instanceof"}
+                    and bool(re.fullmatch(r"[A-Za-z_]\w*", following[1]))
+                    and following[2] > stream[end - 1][2]
+                )
+            exact = (
+                standalone
+                and not any(c in version for c in "$+[](),")
+                and version.lower() != "latest.release"
+            )
+            entry = dependency(package, version, "Maven", path, "declared" if exact else "unknown")
+            if "$" in version:
+                entry.update(version_expression=version, version_interpolation=standalone and quote == '"')
+            found.append(entry)
     elif name.endswith(".versions.toml"):
         value = tomllib.loads(text)
         for entry in value.get("libraries", {}).values():
@@ -321,6 +355,7 @@ def inspect_target(
         "partial": False,
     }
     sources = []
+    source_plists = {}
     main_plists = set()
     app_archive = False
     source_input = target.is_dir() and target.suffix.lower() != ".app"
@@ -328,9 +363,11 @@ def inspect_target(
         from .selection import relative_source_path
 
         configuration = relative_source_path(configuration)
-        if not source_input or Path(configuration).name not in {"AndroidManifest.xml", "Info.plist"}:
+        if not source_input or not (
+            Path(configuration).name == "AndroidManifest.xml" or Path(configuration).suffix == ".plist"
+        ):
             raise ValueError(
-                "Configuration selection requires a source directory and a manifest or Info.plist"
+                "Configuration selection requires a source directory and a manifest or .plist file"
             )
     inventory["source_selection"] = {
         "configuration": configuration,
@@ -356,6 +393,8 @@ def inspect_target(
         inventory["bytes_scanned"] += len(raw)
         hasher.update(name.encode() + b"\0" + raw)
         inventory["files_scanned"] += 1
+        if source_input and name.endswith(".plist"):
+            source_plists[name] = raw
         if name.endswith((".gradle", ".gradle.kts")) and source_input and not configuration:
             text = raw.decode("utf-8", errors="replace")
             package_ids = re.findall(r"applicationId\s*(?:=|\()?\s*[\"']([A-Za-z0-9_.]+)[\"']", text)
@@ -375,7 +414,7 @@ def inspect_target(
             if primary_android(name):
                 android_manifest(raw, name, inventory)
             elif (
-                name.endswith("Info.plist")
+                (name.endswith("Info.plist") or (source_input and name == configuration))
                 and (not configuration or name == configuration)
                 and (target.is_dir() or target.suffix.lower() in {".ipa", ".zip"})
                 and (
@@ -597,12 +636,39 @@ def inspect_target(
             inventory["warnings"].append(
                 "IPA code paths and library versions may be unavailable for encrypted/stripped binaries; supply source or SBOM for dependency coverage."
             )
-        if not inventory["platforms"]:
-            raise ValueError("Archive has no readable Android manifest or main iOS Info.plist")
     else:
         raise ValueError(
             "Use a source folder, APK, IPA, simulator .app folder, or ZIP containing a supported app"
         )
+    if source_input:
+        from .source_context import plist_references, resolve_gradle
+
+        if not inventory["partial"]:
+            try:
+                resolve_gradle(inventory["dependencies"], sources)
+            except ValueError as error:
+                inventory["warnings"].append(str(error))
+                inventory["partial"] = True
+        references, warnings = plist_references(sources)
+        inventory["warnings"].extend(warnings)
+        inventory["partial"] |= bool(warnings)
+        for name, origins in references.items():
+            if configuration and name != configuration:
+                continue
+            existing = next((c for c in inventory["ios_config"] if c["path"] == name), None)
+            if existing is None:
+                try:
+                    if name not in source_plists:
+                        raise ValueError("Referenced plist was not read within source bounds")
+                    ios_plist(source_plists[name], name, inventory)
+                    existing = inventory["ios_config"][-1]
+                except (ValueError, TypeError, plistlib.InvalidFileException, RecursionError):
+                    inventory["warnings"].append(f"Referenced source plist unavailable or invalid: {name}")
+                    inventory["partial"] = True
+            if existing is not None:
+                existing["xcode_references"] = origins
+    if not target.is_dir() and not inventory["platforms"]:
+        raise ValueError("Archive has no readable Android manifest or main iOS Info.plist")
     if (
         (target.is_dir() and target.suffix.lower() == ".app")
         or target.suffix.lower() == ".ipa"

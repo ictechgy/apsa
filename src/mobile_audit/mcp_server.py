@@ -125,7 +125,7 @@ def create_server(
         source_module: str | None = None,
         configuration: str | None = None,
     ) -> dict[str, Any]:
-        """Inspect local source/APK/IPA using cached intelligence and save an evidence report. No network or device mutation."""
+        """Inspect local source/APK/IPA using cached intelligence. Configuration selects a relative manifest or .plist in a source directory, without build-system merge. No network or device mutation."""
         authorized_target = select_source_module(authorize(target), source_module)
         with database() as store:
             report = scan(
@@ -153,7 +153,7 @@ def create_server(
         source_module: str | None = None,
         configuration: str | None = None,
     ) -> dict[str, Any]:
-        """Start a persistent offline audit; use jobs_status for progress and jobs_cancel to stop it."""
+        """Start a persistent offline audit. Configuration selects a relative manifest or .plist in a source directory, without build-system merge. Use jobs_status for progress and jobs_cancel to stop it."""
         authorized_target = select_source_module(authorize(target), source_module)
         with database() as store:
             return jobs.start(

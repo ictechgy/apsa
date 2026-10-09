@@ -1,0 +1,54 @@
+name: Replay frozen public evidence after hardening
+
+on:
+  push:
+    branches: ["hardening/real-app-cve-v1"]
+    paths:
+      - "src/**"
+      - "benchmarks/hardening_replay.py"
+      - ".github/workflows/hardening-replay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - run: uv sync --locked --extra dev
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: public-real-world-evaluation
+          run-id: 37879443007
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/original-public-evidence
+      - name: Replay original inputs and queries, with one separate public version supplement
+        env:
+          APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/parser-locks
+          APSA_DEVICE_LOCK_DIR: ${{ runner.temp }}/device-locks
+        run: |
+          uv run --locked python -m benchmarks.hardening_replay \
+            --artifact "${{ runner.temp }}/original-public-evidence" \
+            --work "${{ runner.temp }}/hardening-inputs" \
+            --out "${{ runner.temp }}/hardening-results"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: public-hardening-replay
+          path: |
+            ${{ runner.temp }}/hardening-inputs
+            ${{ runner.temp }}/hardening-results
+          retention-days: 30
+          if-no-files-found: error
+      # No upstream builds, application/backend/device execution or registry publication.

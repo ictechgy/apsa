@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import re
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
@@ -21,6 +22,15 @@ from .core import (
 from .engine import analyze_target
 from .intel import query_dependencies, source_health
 from .store import Store
+
+
+def patch_date(value: object) -> date | None:
+    if not isinstance(value, str) or not re.fullmatch(r"20\d\d-\d\d-\d\d", value):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def in_cve_range(version: str, affected: dict) -> bool | None:
@@ -135,11 +145,12 @@ def correlate(
                 state = "simulator-only"
                 basis = "Simulator observations cannot establish the security patch state of physical iOS devices."
             elif platform == "android" and record.get("fixed_patch_level"):
-                actual = environment.get("security_patch", "")
+                actual = patch_date(environment.get("security_patch"))
+                fixed = patch_date(record.get("fixed_patch_level"))
                 versions = record.get("updated_aosp_versions", "")
-                release = environment.get("version", "").split(".")[0]
-                if re.fullmatch(r"20\d\d-\d\d-\d\d", actual):
-                    if actual >= record["fixed_patch_level"]:
+                release = str(environment.get("version", "")).split(".")[0]
+                if actual is not None and fixed is not None:
+                    if actual >= fixed:
                         state = "vendor-patch-level-satisfied"
                     elif release and release in re.findall(r"\b\d+\b", versions):
                         state = "potentially-affected"

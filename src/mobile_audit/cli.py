@@ -64,7 +64,7 @@ def parser() -> Parser:
     scan_parser.add_argument("--source-module", help="Relative source module directory")
     scan_parser.add_argument(
         "--configuration",
-        help="Relative manifest/Info.plist within selected source module; no build-system merge",
+        help="Relative manifest/.plist within selected source module; no build-system merge",
     )
     scan_parser.add_argument(
         "--background", action="store_true", help="Return a persistent job ID and track it with jobs status"
