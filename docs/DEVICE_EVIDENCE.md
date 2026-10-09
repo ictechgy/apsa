@@ -11,7 +11,7 @@ from an authorized device.
 
 | Platform | Observed values | Notes |
 | --- | --- | --- |
-| Android | `ro.build.version.release`, `ro.build.version.security_patch`, `ro.vendor.build.security_patch`, `ro.soc.manufacturer`, `ro.soc.model`, model and observation time | The SoC properties exist on Android 12 and later; empty values stay unknown. Chipset and kernel components use the vendor patch level when it is observed. |
+| Android | `ro.build.version.release`, `ro.build.version.security_patch`, `ro.vendor.build.security_patch`, `ro.soc.manufacturer`, `ro.soc.model`, model and observation time | The SoC properties exist on Android 12 and later; empty values stay unknown. Chipset and kernel components use the older of the platform and vendor patch levels. |
 | iOS / iPadOS | OS product (`ios` or `ipados`) and version from an authorized simulator or the operator's own capture | APSA does not automate physical iOS devices. A simulator cannot establish a physical device's patch state. |
 
 A `--device-info` JSON uses these keys: `platform` (`android` or `ios`),

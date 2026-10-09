@@ -149,7 +149,7 @@ def main() -> None:
     truth_raw = TRUTH.read_bytes()
     truth = json.loads(truth_raw)
     amendments = json.loads(AMENDMENTS.read_text()) if AMENDMENTS.is_file() else {"pairs": {}}
-    if amendments.get("truth_sha256", sha(truth_raw)) != sha(truth_raw):
+    if AMENDMENTS.is_file() and amendments.get("truth_sha256") != sha(truth_raw):
         raise ValueError("Amendments do not apply to this frozen truth")
     for pair in truth["pairs"]:
         pair.update(amendments["pairs"].get(pair["id"], {}))

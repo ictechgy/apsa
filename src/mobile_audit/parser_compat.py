@@ -228,6 +228,7 @@ def _objc_extensions(raw: bytes, output: bytearray, nodes: list[Any]) -> list[di
         # uncertain: a guard in a dropped branch must never disappear silently.
         # Conditional imports are removed so they never become identity evidence.
         groups: list[list[bool]] = []  # [branch_active, a_branch_was_taken]
+        starts: list[int] = []
         cursor = 0
         for line in raw.splitlines(keepends=True):
             directive = CONDITIONAL.match(line)
@@ -240,18 +241,27 @@ def _objc_extensions(raw: bytes, output: bytearray, nodes: list[Any]) -> list[di
                 if word in {b"if", b"ifdef", b"ifndef"}:
                     dead = word == b"if" and condition in {b"0", b"false"}
                     groups.append([not dead, not dead])
+                    starts.append(cursor)
                 elif word in {b"elif", b"else"} and groups:
                     groups[-1][0] = not groups[-1][1]
                     groups[-1][1] = True
                 elif word == b"endif" and groups:
                     groups.pop()
+                    # The whole group is uncertain, like a function under preproc_if natively.
+                    spans.append([starts.pop(), cursor + width])
                 _blank(output, cursor, cursor + width)
-                spans.append([cursor, cursor + width])
                 counts["objc-preprocessor-first-branch"] += 1
             elif not all(active for active, _ in groups) or (groups and INCLUDE.match(line)):
                 _blank(output, cursor, cursor + width)
-                spans.append([cursor, cursor + width])
             cursor += len(line)
+        spans.extend([start, len(raw)] for start in starts)  # unterminated groups
+        merged: list[list[int]] = []
+        for start, end in sorted(spans):
+            if merged and start <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+        spans = merged
     result = [{"kind": kind, "edits": edits} for kind, edits in counts.items() if edits]
     for item in result:
         if item["kind"] == "objc-preprocessor-first-branch":

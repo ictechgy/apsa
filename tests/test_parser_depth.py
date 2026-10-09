@@ -346,3 +346,28 @@ def test_enum_macro_scan_is_linear_on_crafted_spacing():
     started = time.perf_counter()
     assert ENUM_MACRO.search(b"NS_ENUM(a" + b" " * 200_000) is None
     assert time.perf_counter() - started < 1
+
+
+def test_kept_branch_methods_stay_uncertain():
+    duplicate = OBJC_PARTS.replace(
+        "@implementation Handler\n",
+        "@implementation Handler\n#if TARGET_OS_SIMULATOR\n",
+        1,
+    ).replace(
+        "@end\n",
+        "#else\n- (void)release {}\n#endif\n@end\n",
+        1,
+    )
+    report = analyze_sources([("Handler.m", duplicate)])
+    assert report["metadata"]["files"][0]["native_parse_errors"]
+    assert "OBJC-WEBVIEW-UNTRUSTED-REQUEST" not in {f["rule_id"] for f in report["findings"]}
+
+
+def test_uncertain_span_checks_are_fast_on_crafted_files():
+    import time
+
+    body = "\n".join(f"- (void)m{i} {{ }}" for i in range(2000))
+    text = OBJC_PARTS.replace("@end\n", "#if 0\n" + "\n" * 200_000 + "#endif\n" + body + "\n@end\n", 1)
+    started = time.perf_counter()
+    analyze_sources([("Handler.m", text)])
+    assert time.perf_counter() - started < 10

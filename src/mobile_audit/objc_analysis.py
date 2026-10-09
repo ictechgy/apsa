@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from typing import Any
 
 from .core import code_excerpt, finding
@@ -25,7 +26,9 @@ class ObjCAnalyzer:
         self.path = path
         # Byte spans blanked by preprocessor normalization; overlapping functions
         # may have lost a guard in a dropped branch and are not analyzed.
-        self.uncertain_spans = uncertain_spans or []
+        spans = sorted(uncertain_spans or [])
+        self.span_starts = [start for start, _ in spans]
+        self.span_ends = [end for _, end in spans]
         self.raw = text.encode()
         self.lines = text.split("\n")
         self.findings: list[dict] = []
@@ -184,9 +187,10 @@ class ObjCAnalyzer:
                 continue
             self.function_counts["observed"] += 1
             parent = function.parent
-            uncertain = function.has_error or any(
-                start < function.end_byte and end > function.start_byte for start, end in self.uncertain_spans
-            )
+            # Spans are merged and disjoint: the last one starting before the
+            # function end is the only candidate for overlap.
+            index = bisect_left(self.span_starts, function.end_byte) - 1
+            uncertain = function.has_error or (index >= 0 and self.span_ends[index] > function.start_byte)
             while parent:
                 uncertain |= parent.type in {
                     "ERROR",
