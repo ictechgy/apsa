@@ -18,21 +18,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - case: nowinandroid
+          - case: owncloud
             java: "21"
-          - case: mihon
+          - case: nextcloud
             java: "21"
-          - case: wikipedia
-            java: "17"
-          - case: fossify-calculator
-            java: "17"
-          - case: ankidroid
+          - case: home-assistant
             java: "21"
-          - case: pocket-casts
+          - case: signal
             java: "21"
-          - case: fossify-gallery
-            java: "21"
-          - case: element-x
+          - case: amaze
             java: "21"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0

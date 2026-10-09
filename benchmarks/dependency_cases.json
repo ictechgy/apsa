@@ -67,7 +67,48 @@
       "module": ":app",
       "java": "21",
       "set": "holdout-2"
+    },
+    {
+      "id": "owncloud",
+      "repository": "owncloud/android",
+      "commit": "0d6c955f9d06776bce425d88b55f608c8bd6fe89",
+      "module": ":owncloudApp",
+      "java": "21",
+      "set": "holdout-3"
+    },
+    {
+      "id": "nextcloud",
+      "repository": "nextcloud/android",
+      "commit": "1ae824cc88cd4c6928d45682571f637a8c855141",
+      "module": ":app",
+      "java": "21",
+      "set": "holdout-3"
+    },
+    {
+      "id": "home-assistant",
+      "repository": "home-assistant/android",
+      "commit": "5eb016fa5bff4c482d8b391c99e679ce4da53a16",
+      "module": ":app",
+      "java": "21",
+      "set": "holdout-3"
+    },
+    {
+      "id": "signal",
+      "repository": "Signalapp/Signal-Android",
+      "commit": "92f5ccd3a52c4780a0c916566e26280f640ba1de",
+      "module": ":app",
+      "java": "21",
+      "set": "holdout-3"
+    },
+    {
+      "id": "amaze",
+      "repository": "TeamAmaze/AmazeFileManager",
+      "commit": "94afab32b0a1bd0ddbc582978aca9ffced1301b8",
+      "module": ":app",
+      "java": "21",
+      "set": "holdout-3"
     }
   ],
-  "holdout_2_selection": "Selected 2026-10-09 after scoring holdout-1 and before changing the scanner in response; default-branch HEAD on that date. Their oracle is captured before the improved scanner is committed and is not inspected until then."
+  "holdout_2_selection": "Selected 2026-10-09 after scoring holdout-1 and before changing the scanner in response; default-branch HEAD on that date. Their oracle is captured before the improved scanner is committed and is not inspected until then.",
+  "holdout_3_selection": "Selected 2026-10-09 after the module-consumption fix (0bfa345) was committed; default-branch HEAD on that date; not inspected before that commit."
 }
