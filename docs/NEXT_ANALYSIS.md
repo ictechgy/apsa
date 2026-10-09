@@ -16,7 +16,7 @@ them. Their path, declaration line and unavailable state remain in the inventory
 | AAB | AAPT2 protobuf base manifest; module inventory; bounded DEX calls with module paths | Resource and feature-manifest merging, device targeting and installed split sets are unverified. Every bundle audit stays partial. AAB does not run the legacy APK signing/ELF lint engine. |
 | IPA | Main executable plus declared framework, extension, nested app and Frameworks dylib Mach-O metadata | Separate hashes and bundle roles; embedded identity cannot replace the main app. No signature authentication or native instruction/control-flow analysis. Encrypted and malformed inputs retain warnings and unavailable scope. |
 | Objective-C `.m` | CST calls to imported CommonCrypto weak digests; straight-line declared WKNavigationAction → NSURLRequest → WKWebView flow | Candidate evidence only, always partial. No macro evaluation, dynamic dispatch, swizzling, interprocedural validation, Objective-C++ `.mm` or complete callable inventory. |
-| Parser OS permissions | Parent stages bounded source/configuration bytes through stable directory/file descriptors, then system Seatbelt on macOS or bubblewrap on Linux grants staged input/SBOM and trusted runtime read-only access, scratch writes and no host network | Trusted runtime/system libraries are readable; macOS file metadata is visible. This isolates the parser process, not the parent CLI, MCP client, installation or device commands. |
+| Parser OS permissions | Parent stages bounded source/configuration bytes through stable directory/file descriptors, then system Seatbelt on macOS or bubblewrap on Linux grants staged input/SBOM and trusted runtime read-only access, fresh scratch read/write and no host network | Trusted runtime/system libraries are readable; macOS file metadata and exact parent-directory listings are visible. This isolates the parser process, not the parent CLI, MCP client, installation or device commands. |
 
 `APSA_PARSER_SANDBOX=auto` is the default. If the system backend is absent,
 the report explicitly records resource limits without OS filesystem/network
@@ -32,6 +32,13 @@ omissions retain incomplete coverage. Staging has byte/file/depth/entry/time
 budgets and fails explicitly on budget exhaustion. A directory snapshot is not
 an atomic build snapshot across every file; scan a stable build for that assurance.
 CPU/RSS/time/output limits remain separate controls.
+
+Parser stdin is closed and unrelated descriptors are not inherited. Standard
+output/error are bounded pipes. macOS permits literal root/runtime-parent and
+staged file-input parent directory listings for loader/import/descriptor
+initialization, without recursive sibling content access. Fresh scratch is
+readable and writable; executable mappings
+are limited to trusted runtime/system code and the system OpenSSL helper.
 
 Gradle version catalog entries retain their declared names and versions with
 unresolved usage. An alias merely present in the catalog cannot establish a
@@ -71,7 +78,7 @@ AAB 입력, IPA 내장 바이너리 메타데이터, Objective-C 후보와 파�
 | AAB | AAPT2 protobuf base 매니페스트, 모듈 목록, 모듈 경로가 포함된 제한된 DEX 호출 | 리소스·feature 매니페스트 병합, 기기 targeting, 설치된 split은 미확인. 항상 부분 감사이며 기존 APK 서명·ELF lint 엔진은 실행하지 않음 |
 | IPA | 메인 실행 파일과 선언된 framework·확장·중첩 앱·Frameworks dylib의 Mach-O 메타데이터 | 해시·역할을 분리하며 메인 앱 식별자를 대체하지 않음. 서명 인증·native 코드 흐름 미지원. 암호화·손상 입력의 누락 범위를 표시 |
 | Objective-C `.m` | CommonCrypto 약한 해시 호출, 선언된 WKNavigationAction → NSURLRequest → WKWebView의 직선 흐름 | 후보·부분 분석만 제공. 매크로, 동적 dispatch, swizzling, 함수 간 검증, `.mm`, 전체 함수 목록 미지원 |
-| 파서 OS 권한 | 부모가 안정된 파일·디렉터리 descriptor로 소스·설정을 제한해 복사한 뒤 macOS Seatbelt·Linux bubblewrap으로 복사 입력·SBOM·신뢰 런타임 읽기, scratch 쓰기, 호스트 네트워크 거부 | 신뢰 런타임·시스템 라이브러리와 macOS 파일 메타데이터는 접근 가능. 부모 CLI·MCP·설치·기기 명령의 격리가 아님 |
+| 파서 OS 권한 | 부모가 안정된 파일·디렉터리 descriptor로 소스·설정을 제한해 복사한 뒤 macOS Seatbelt·Linux bubblewrap으로 복사 입력·SBOM·신뢰 런타임 읽기, 새 scratch 읽기·쓰기, 호스트 네트워크 거부 | 신뢰 런타임·시스템 라이브러리, macOS 파일 메타데이터·지정한 부모 폴더 자체의 목록은 접근 가능. 부모 CLI·MCP·설치·기기 명령의 격리가 아님 |
 
 기본값 `APSA_PARSER_SANDBOX=auto`는 시스템 백엔드가 없으면 자원 제한만
 적용했음을 명시합니다. `required`는 OS 격리가 불가능하면 감사를 거부하고,
@@ -85,6 +92,13 @@ AAB 입력, IPA 내장 바이너리 메타데이터, Objective-C 후보와 파�
 있으며 한도 초과는 실패합니다. 여러 파일의 복사는 원자적 빌드 스냅샷이 아니므로
 그 보장이 필요하면 안정된 빌드를 검사하세요. CPU·RSS·시간·출력 제한은 별도로
 유지합니다.
+
+파서의 표준입력은 닫고 무관한 descriptor는 상속하지 않습니다. 표준출력·오류는
+크기가 제한된 pipe입니다. macOS loader·import 초기화를 위해 루트·런타임 부모
+폴더·복사한 입력 파일의 부모 폴더 자체의 목록만 허용하며, 형제 파일 내용을
+재귀적으로 읽게 하지 않습니다.
+새 scratch는 읽기·쓰기를 허용하고 실행 파일 매핑은 신뢰 런타임·시스템과
+OpenSSL에 한정합니다.
 
 Gradle catalog의 이름·버전은 사용 여부 미확인으로 보존합니다. catalog에만 있는
 alias는 포함된 의존성·정확한 CVE 매칭을 증명하지 못하므로 실제 빌드·SBOM 근거가

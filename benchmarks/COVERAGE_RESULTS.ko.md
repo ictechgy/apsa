@@ -119,6 +119,10 @@ Linux/macOS × Python 3.11/3.12 네 환경에서 **832개 테스트**, Ruff, Pyr
 
 ## 남은 근거
 
+이후 [추가 분석·독립 정답 평가](NEXT_RESULTS.ko.md)는 다른 배포 전 스냅샷에서
+아래 누락 일부를 다룹니다. 이 문서는 dev3 측정·리뷰 범위를 보존하며 새 파서,
+Objective-C·catalog 사용 판정을 설명하지 않습니다.
+
 Kotlin 생성자·줄바꿈과 최신 Swift `@Sendable`, `if await` 등 구문 누락이
 남아 있다. Firefox의 큰 PBX 참조 토큰 예산과 Deferred plist 누락·유효성 경고도
 남는다. Objective-C 등 미지원 언어, 빌드 변형, AAB/IPA 내장 바이너리, 기기

@@ -1,0 +1,534 @@
+{
+  "aab": {
+    "aapt2_sha256": "d1096e11aba9c974644369ee3c50d239acac3f3428ffa928e5b9c14dfb7a57de",
+    "android_jar_sha256": "4566663c3876e022b4fa4ced8c8697c4ab1688267f090114fd92d027b32e619b",
+    "artifacts": [
+      {
+        "archive_download_url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11601213138/zip",
+        "created_at": "2026-10-09T07:30:36Z",
+        "digest": "sha256:a8f656669fd8c34c049deb91097d06ef6dafa78065f1e08fbb942b16917d07c8",
+        "expired": false,
+        "expires_at": "2026-11-08T07:30:35Z",
+        "id": 11601213138,
+        "name": "generated-synthetic-aab",
+        "size_in_bytes": 2816,
+        "updated_at": "2026-10-09T07:30:36Z",
+        "url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11601213138",
+        "workflow_run": {
+          "head_branch": "hardening/real-app-cve-v1",
+          "head_repository_id": 1406574335,
+          "head_sha": "9c2d5d5033132ee2113a2638e17d3225d2e7dbc8",
+          "id": 37899396256,
+          "repository_id": 1406574335
+        }
+      }
+    ],
+    "fixture": "fresh synthetic base-only bundle",
+    "independent_compiled_fields": [
+      "package",
+      "debuggable",
+      "usesCleartextTraffic",
+      "minSdkVersion",
+      "targetSdkVersion"
+    ],
+    "installed_split_verified": false,
+    "run_id": 37899396256,
+    "summary_sha256": "3517f530199988e1f451475cdf85fe0f1ea81deda251124d665e740ab23abfc3"
+  },
+  "ci": {
+    "conclusion": "success",
+    "distinct_tests": 873,
+    "jobs": [
+      {
+        "conclusion": "success",
+        "id": 113718156653,
+        "name": "ubuntu-24.04 / Python 3.12.13",
+        "raw_log": "https://github.com/ictechgy/apsa/actions/runs/37899396137/job/113718156653",
+        "release": {
+          "artifacts": [
+            {
+              "file": "apsa-1.1.0-py3-none-any.whl",
+              "sha256": "347e7787e497f90bb3b0562c2883c40846314509566570638f04c8b737a7951f"
+            },
+            {
+              "file": "apsa-1.1.0.tar.gz",
+              "sha256": "2f8a4e79e3e63c318589a25f9049bd02994535fcaf4bcb9b10554baf17f6bec7"
+            }
+          ],
+          "attribution": {
+            "distributions": 79,
+            "license_files": 100,
+            "metadata_only": [
+              "loguru"
+            ],
+            "not_declared": []
+          },
+          "output": "/home/runner/work/_temp/apsa-release",
+          "smoke": {
+            "binary_input_hash_matches": true,
+            "console_aliases": [
+              "apsa",
+              "quaygate",
+              "mobile-audit"
+            ],
+            "doctor_offline_ready": true,
+            "expected_candidate_rule": "AST-WEBVIEW-UNTRUSTED-URL",
+            "help": "passed",
+            "import_from_clean_venv": true,
+            "intel_network_requested": false,
+            "mcp_stdio_binary_scan": "passed",
+            "module_entrypoints": [
+              "apsa",
+              "quaygate",
+              "mobile_audit"
+            ],
+            "offline_binary_engines": [
+              "mobile-audit",
+              "quaygate-lint"
+            ],
+            "offline_source_scan": "passed",
+            "packaged_skill_install": [
+              "apsa",
+              "quaygate",
+              "mobile-audit"
+            ],
+            "reports_verify": {
+              "checked": 1,
+              "failures": [],
+              "state": "passed"
+            },
+            "version": "1.1.0"
+          },
+          "version": "1.1.0"
+        },
+        "tests": {
+          "passed": 870,
+          "skipped": 3
+        }
+      },
+      {
+        "conclusion": "success",
+        "id": 113718156825,
+        "name": "Parser OS isolation / ubuntu-22.04",
+        "raw_log": "https://github.com/ictechgy/apsa/actions/runs/37899396137/job/113718156825",
+        "release": null,
+        "tests": {
+          "passed": 872,
+          "skipped": 1
+        }
+      },
+      {
+        "conclusion": "success",
+        "id": 113718156924,
+        "name": "macos-15 / Python 3.11.15",
+        "raw_log": "https://github.com/ictechgy/apsa/actions/runs/37899396137/job/113718156924",
+        "release": {
+          "artifacts": [
+            {
+              "file": "apsa-1.1.0-py3-none-any.whl",
+              "sha256": "347e7787e497f90bb3b0562c2883c40846314509566570638f04c8b737a7951f"
+            },
+            {
+              "file": "apsa-1.1.0.tar.gz",
+              "sha256": "2f8a4e79e3e63c318589a25f9049bd02994535fcaf4bcb9b10554baf17f6bec7"
+            }
+          ],
+          "attribution": {
+            "distributions": 79,
+            "license_files": 100,
+            "metadata_only": [
+              "loguru"
+            ],
+            "not_declared": []
+          },
+          "output": "/Users/runner/work/_temp/apsa-release",
+          "smoke": {
+            "binary_input_hash_matches": true,
+            "console_aliases": [
+              "apsa",
+              "quaygate",
+              "mobile-audit"
+            ],
+            "doctor_offline_ready": true,
+            "expected_candidate_rule": "AST-WEBVIEW-UNTRUSTED-URL",
+            "help": "passed",
+            "import_from_clean_venv": true,
+            "intel_network_requested": false,
+            "mcp_stdio_binary_scan": "passed",
+            "module_entrypoints": [
+              "apsa",
+              "quaygate",
+              "mobile_audit"
+            ],
+            "offline_binary_engines": [
+              "mobile-audit",
+              "quaygate-lint"
+            ],
+            "offline_source_scan": "passed",
+            "packaged_skill_install": [
+              "apsa",
+              "quaygate",
+              "mobile-audit"
+            ],
+            "reports_verify": {
+              "checked": 1,
+              "failures": [],
+              "state": "passed"
+            },
+            "version": "1.1.0"
+          },
+          "version": "1.1.0"
+        },
+        "tests": {
+          "passed": 870,
+          "skipped": 3
+        }
+      },
+      {
+        "conclusion": "success",
+        "id": 113718156931,
+        "name": "macos-15 / Python 3.12.13",
+        "raw_log": "https://github.com/ictechgy/apsa/actions/runs/37899396137/job/113718156931",
+        "release": {
+          "artifacts": [
+            {
+              "file": "apsa-1.1.0-py3-none-any.whl",
+              "sha256": "347e7787e497f90bb3b0562c2883c40846314509566570638f04c8b737a7951f"
+            },
+            {
+              "file": "apsa-1.1.0.tar.gz",
+              "sha256": "2f8a4e79e3e63c318589a25f9049bd02994535fcaf4bcb9b10554baf17f6bec7"
+            }
+          ],
+          "attribution": {
+            "distributions": 79,
+            "license_files": 100,
+            "metadata_only": [
+              "loguru"
+            ],
+            "not_declared": []
+          },
+          "output": "/Users/runner/work/_temp/apsa-release",
+          "smoke": {
+            "binary_input_hash_matches": true,
+            "console_aliases": [
+              "apsa",
+              "quaygate",
+              "mobile-audit"
+            ],
+            "doctor_offline_ready": true,
+            "expected_candidate_rule": "AST-WEBVIEW-UNTRUSTED-URL",
+            "help": "passed",
+            "import_from_clean_venv": true,
+            "intel_network_requested": false,
+            "mcp_stdio_binary_scan": "passed",
+            "module_entrypoints": [
+              "apsa",
+              "quaygate",
+              "mobile_audit"
+            ],
+            "offline_binary_engines": [
+              "mobile-audit",
+              "quaygate-lint"
+            ],
+            "offline_source_scan": "passed",
+            "packaged_skill_install": [
+              "apsa",
+              "quaygate",
+              "mobile-audit"
+            ],
+            "reports_verify": {
+              "checked": 1,
+              "failures": [],
+              "state": "passed"
+            },
+            "version": "1.1.0"
+          },
+          "version": "1.1.0"
+        },
+        "tests": {
+          "passed": 870,
+          "skipped": 3
+        }
+      },
+      {
+        "conclusion": "success",
+        "id": 113718157085,
+        "name": "ubuntu-24.04 / Python 3.11.15",
+        "raw_log": "https://github.com/ictechgy/apsa/actions/runs/37899396137/job/113718157085",
+        "release": {
+          "artifacts": [
+            {
+              "file": "apsa-1.1.0-py3-none-any.whl",
+              "sha256": "347e7787e497f90bb3b0562c2883c40846314509566570638f04c8b737a7951f"
+            },
+            {
+              "file": "apsa-1.1.0.tar.gz",
+              "sha256": "2f8a4e79e3e63c318589a25f9049bd02994535fcaf4bcb9b10554baf17f6bec7"
+            }
+          ],
+          "attribution": {
+            "distributions": 79,
+            "license_files": 100,
+            "metadata_only": [
+              "loguru"
+            ],
+            "not_declared": []
+          },
+          "output": "/home/runner/work/_temp/apsa-release",
+          "smoke": {
+            "binary_input_hash_matches": true,
+            "console_aliases": [
+              "apsa",
+              "quaygate",
+              "mobile-audit"
+            ],
+            "doctor_offline_ready": true,
+            "expected_candidate_rule": "AST-WEBVIEW-UNTRUSTED-URL",
+            "help": "passed",
+            "import_from_clean_venv": true,
+            "intel_network_requested": false,
+            "mcp_stdio_binary_scan": "passed",
+            "module_entrypoints": [
+              "apsa",
+              "quaygate",
+              "mobile_audit"
+            ],
+            "offline_binary_engines": [
+              "mobile-audit",
+              "quaygate-lint"
+            ],
+            "offline_source_scan": "passed",
+            "packaged_skill_install": [
+              "apsa",
+              "quaygate",
+              "mobile-audit"
+            ],
+            "reports_verify": {
+              "checked": 1,
+              "failures": [],
+              "state": "passed"
+            },
+            "version": "1.1.0"
+          },
+          "version": "1.1.0"
+        },
+        "tests": {
+          "passed": 870,
+          "skipped": 3
+        }
+      },
+      {
+        "conclusion": "success",
+        "id": 113718157102,
+        "name": "Parser OS isolation / macos-15",
+        "raw_log": "https://github.com/ictechgy/apsa/actions/runs/37899396137/job/113718157102",
+        "release": null,
+        "tests": {
+          "passed": 873,
+          "skipped": 0
+        }
+      }
+    ],
+    "run_id": 37899396137
+  },
+  "first_holdout": {
+    "artifact": {
+      "digest": "sha256:c07f1f60a8d9f29a5352b8fd0b3caff271aaa3629fd87e6272275186b54ab4f9",
+      "expires_at": "2026-11-08T06:54:48Z",
+      "id": 11600073127,
+      "name": "independent-next-holdout"
+    },
+    "cleartext_fact": {
+      "correct": 1,
+      "total": 1
+    },
+    "declared_dependency_facts": {
+      "catalog_usage_verified": false,
+      "correct": 4,
+      "total": 4
+    },
+    "known_summary_defect": "finding_statuses selected absent cve field; advisory decisions correct; first bytes preserved",
+    "os_isolation": "resource-limits-only/unavailable",
+    "public_head": "3fb38a32f535f46b12befdce13bf6bf76317d326",
+    "run_id": 37896002099,
+    "selected_cve_boundary_cases": {
+      "correct": 16,
+      "total": 16,
+      "unique_cves": 3
+    },
+    "summary_sha256": "516ce3955c5d5702c3619c0a0f2e657041eeee13f256eba9858f7c6888616b03",
+    "tree": "5cbc9e2b9a1813671a271e277b76810151a8b540",
+    "vlc_absence_label_scored": false,
+    "vlc_absence_label_verified": false
+  },
+  "frozen_replay": {
+    "abstentions": [
+      "k9-CVE-2022-36033",
+      "k9-CVE-2023-3635"
+    ],
+    "additional_one_cve_branch_cases": "14/14",
+    "artifacts": [
+      {
+        "archive_download_url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11602045160/zip",
+        "created_at": "2026-10-09T07:32:21Z",
+        "digest": "sha256:9b2ed910b598259de2daf1b14c2dfbb5218abeeb695fecb2f1d43944f8be9ad7",
+        "expired": false,
+        "expires_at": "2026-11-08T07:32:19Z",
+        "id": 11602045160,
+        "name": "public-coverage-replay",
+        "size_in_bytes": 17906897,
+        "updated_at": "2026-10-09T07:32:21Z",
+        "url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11602045160",
+        "workflow_run": {
+          "head_branch": "hardening/real-app-cve-v1",
+          "head_repository_id": 1406574335,
+          "head_sha": "9c2d5d5033132ee2113a2638e17d3225d2e7dbc8",
+          "id": 37899396124,
+          "repository_id": 1406574335
+        }
+      }
+    ],
+    "dependency_score": {
+      "completed_recall": 1,
+      "correct_abstentions": 5,
+      "end_to_end_recall": 1,
+      "failed": 0,
+      "failed_affected": 0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1,
+      "tn": 19,
+      "tp": 8,
+      "unknown": 5,
+      "unstable": 0
+    },
+    "kind": "development-rerun-after-labels-seen",
+    "mobsf_rerun": false,
+    "original_os_label_agreement": "9/11",
+    "recapture": false,
+    "run_id": 37899396124,
+    "selected_real_app_cve_score": {
+      "completed_recall": 1,
+      "correct_abstentions": 0,
+      "end_to_end_recall": 1,
+      "failed": 2,
+      "failed_affected": 0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1,
+      "tn": 1,
+      "tp": 1,
+      "unknown": 0,
+      "unstable": 0
+    },
+    "summary_sha256": "837acc40ad40a059e06b2c08e41b8d55057b63a04c3a46532537fbaa2225eec1"
+  },
+  "holdout_rerun": {
+    "artifacts": [
+      {
+        "archive_download_url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11601329508/zip",
+        "created_at": "2026-10-09T07:30:54Z",
+        "digest": "sha256:556d0be909ff7cf306085a66d06aa5e33fbd5a6b1906a8901b1c012dac90baf2",
+        "expired": false,
+        "expires_at": "2026-11-08T07:30:53Z",
+        "id": 11601329508,
+        "name": "independent-next-holdout",
+        "size_in_bytes": 3649782,
+        "updated_at": "2026-10-09T07:30:54Z",
+        "url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11601329508",
+        "workflow_run": {
+          "head_branch": "hardening/real-app-cve-v1",
+          "head_repository_id": 1406574335,
+          "head_sha": "9c2d5d5033132ee2113a2638e17d3225d2e7dbc8",
+          "id": 37899396170,
+          "repository_id": 1406574335
+        }
+      }
+    ],
+    "kind": "development-rerun-after-labels-seen",
+    "run_id": 37899396170,
+    "summary_sha256": "afbea375bd2a53845d5c11e625d6a25da311d1226418543a70e6c6069449f54d",
+    "truth_sha256": "b7d297d09997343049de79b79219c86d5c366c5673b2efc90d23ab9e25896bc7"
+  },
+  "preserved_bytes_sha256": {
+    "benchmarks/next_truth.json": "b7d297d09997343049de79b79219c86d5c366c5673b2efc90d23ab9e25896bc7",
+    "benchmarks/results/2026-10-09-next-first-holdout.json": "516ce3955c5d5702c3619c0a0f2e657041eeee13f256eba9858f7c6888616b03",
+    "benchmarks/results/2026-10-09-public-coverage-extension.json": "499910bb95bbb25bd596a235ec571dfe98f853906f3aa094e1e01a554880267d",
+    "benchmarks/results/2026-10-09-public-real-world-hardened.json": "a52623cff0fefab268c56e2263beebab88ac92a90f04018373200874acc74eee",
+    "benchmarks/results/2026-10-09-public-real-world-initial.json": "a08769d89866515d3af1e772260cb944b970746f2599e77415a39c77747b2d32"
+  },
+  "resolved_hosted_failures": [
+    {
+      "ci_run": 37896002044,
+      "issues": [
+        "unsupported .m fixture now .mm",
+        "demo subtree report-home exclusion",
+        "missing target error contract",
+        "macOS sandbox startup -6"
+      ],
+      "public_head": "3fb38a32f535f46b12befdce13bf6bf76317d326"
+    },
+    {
+      "aab_run": 37897226448,
+      "ci_run": 37897226441,
+      "issues": [
+        "macOS startup -6",
+        "obsolete Android tools default package"
+      ],
+      "public_head": "22d9387bf2ca79149effee5e0677c3f446a2c063"
+    },
+    {
+      "aab_conclusion": "success",
+      "aab_run": 37897718208,
+      "ci_run": 37897718241,
+      "issues": [
+        "macOS startup -6"
+      ],
+      "public_head": "6fb6e6769cefb26630e27d9c64553e6ec0c02928"
+    },
+    {
+      "ci_run": 37898271846,
+      "issues": [
+        "bare Python startup fixed; worker imports need exact runtime parent and scratch reads"
+      ],
+      "public_head": "e084973457f2389dffd2f21e217e13081eee3fbc"
+    },
+    {
+      "ci_run": 37898820418,
+      "issues": [
+        "30 archive tests failed opening staged file parent",
+        "broad System grant narrowed after adversarial review"
+      ],
+      "public_head": "cb674db8f33a544194ccfdbf40e03d50d2514780"
+    }
+  ],
+  "review": {
+    "architecture": "../reviews/2026-10-09-next-runtime-architecture.md",
+    "base": "f614ecc9aef5cde8f252a4b015d9bd05cfe2115f",
+    "code": "../reviews/2026-10-09-next-runtime-code.md",
+    "code_verbatim": "../reviews/2026-10-09-next-runtime-code.json",
+    "external_advisors_invoked": false,
+    "head": "a74442044f960744197b1fea29d03de91cc01d60",
+    "kind": "independent-native-Codex-code-reviewer-and-architect",
+    "raw_code_text_sha256": "3ecd73d8a9e72ebe483a4d123df56e65b161f5b0fa6187f8ce8e68c4da2d210a",
+    "raw_report_sha256": {
+      "benchmarks/reviews/2026-10-09-next-runtime-architecture.md": "d0a4f65998702ef685f05b1bc243cecc7795d2cafbb6c4cff5ee110e843ad14e",
+      "benchmarks/reviews/2026-10-09-next-runtime-code.json": "670acaee75fffe0e7359a44e6060d871516b7d7ec843ef617e7946f4e31ba1b5"
+    },
+    "readiness_at_source_review": "BLOCKED pending hosted validation and later docs closure",
+    "rendered_code_sha256": "5e4abe58b48ae6fbfa926405b8c8c34868c51070d24039279ee3792afac29953",
+    "terminal_source_verdict": "APPROVED_FOR_HOSTED_VALIDATION",
+    "tree": "133b48e59bbf01bb2aad8458812020eee6ae157f"
+  },
+  "runtime": {
+    "base": "f614ecc9aef5cde8f252a4b015d9bd05cfe2115f",
+    "local_head": "a74442044f960744197b1fea29d03de91cc01d60",
+    "package_version": "1.1.0",
+    "public_head": "9c2d5d5033132ee2113a2638e17d3225d2e7dbc8",
+    "rules_version": "2026.10.09.apsa.111-dev4",
+    "tree": "133b48e59bbf01bb2aad8458812020eee6ae157f",
+    "unreleased": true
+  },
+  "schema": "apsa-next-evidence-v1"
+}

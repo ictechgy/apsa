@@ -225,4 +225,9 @@ Swift/Kotlin compatibility, recognized function counts and Apple-evidenced
 iOS/iPadOS branch decisions. Adapted source remains partial; the selected
 fixtures do not establish general CVE accuracy.
 
+The [additional analysis and independent holdout](benchmarks/NEXT_RESULTS.md)
+covers AAB/IPA metadata, Objective-C, parser isolation and two independently
+labeled public sources. It records selected CVE boundary agreement, unresolved
+catalog usage and remaining parser gaps separately.
+
 The source is publicly available on [GitHub](https://github.com/ictechgy/apsa). [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE) preserves the original Quaygate MIT notice. This publication does not declare an additional license for the combined product.

@@ -4,6 +4,13 @@
 
 # Third-party notices
 
+The unreleased analysis branch additionally pins `tree-sitter-objc==3.0.2`;
+its [upstream package metadata](https://pypi.org/project/tree-sitter-objc/3.0.2/)
+declares MIT. The historical generated table below predates this addition.
+Release validation regenerates notices and copies declared license files from
+the actual installed distributions; this note does not claim those new files
+were copied into this checkout.
+
 이 목록은 잠긴 Python 런타임 의존성의 실제 설치 메타데이터와 배포본에 포함된 라이선스 파일에서 생성했습니다.
 라이선스 이름, 표현식, 저작권을 추측하거나 자체 제품의 라이선스를 지정하지 않습니다.
 `dependency-licenses.json`에 원래 선언을 보존하며 `licenses/`에 발견한 원문 파일을 그대로 복사합니다.

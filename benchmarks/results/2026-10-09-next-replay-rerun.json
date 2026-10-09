@@ -1,0 +1,5269 @@
+{
+  "apps": [
+    {
+      "commit": "c6e17218843e59f264f39d9cd719c1173a95abfd",
+      "config_label": {
+        "correct": true,
+        "covered": true,
+        "expected": false,
+        "matched": false,
+        "path": "app/src/main/AndroidManifest.xml",
+        "rule": "ANDROID-CLEARTEXT",
+        "state": "completed"
+      },
+      "dependency_labels": [
+        {
+          "ecosystem": "Maven",
+          "extracted": true,
+          "git_blob": "d03bd64e320eef26d45cea4362deada9816b4a2c",
+          "name": "org.jsoup:jsoup",
+          "path": "app/build.gradle",
+          "state": "completed",
+          "version": "1.17.2"
+        },
+        {
+          "ecosystem": "Maven",
+          "extracted": true,
+          "git_blob": "d03bd64e320eef26d45cea4362deada9816b4a2c",
+          "name": "com.squareup.okhttp3:okhttp",
+          "path": "app/build.gradle",
+          "state": "completed",
+          "version": "4.12.0"
+        }
+      ],
+      "id": "newpipe",
+      "input_sha256": "310036384125adad2bd72aed5221b481b75d9ee11adedae3e88ef9968149a20b",
+      "platform": "android",
+      "repository": "TeamNewPipe/NewPipe",
+      "source_entries": 951,
+      "tools": {
+        "apsa": {
+          "errors": [],
+          "median_seconds": 2.8792255440000005,
+          "seconds": [
+            2.797585265000002,
+            2.8792255440000005,
+            2.910508335000003
+          ],
+          "state": "completed",
+          "summary": {
+            "audit_incomplete": true,
+            "bytes_scanned": 9328499,
+            "coverage": [
+              {
+                "rule": "WEBVIEW-SSL-BYPASS",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-HOST-MATCH",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-JS-BRIDGE",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-FILE-ACCESS",
+                "state": "checked"
+              },
+              {
+                "rule": "STORAGE-SENSITIVE-LOG",
+                "state": "checked"
+              },
+              {
+                "rule": "STORAGE-TOKEN-PREFS",
+                "state": "checked"
+              },
+              {
+                "rule": "IOS-KEYCHAIN-ACCESS",
+                "state": "not-applicable"
+              },
+              {
+                "rule": "ANDROID-CONFIG",
+                "state": "checked"
+              },
+              {
+                "rule": "RUNTIME-DEEPLINK",
+                "state": "not-run"
+              },
+              {
+                "rule": "RUNTIME-RESIDUAL",
+                "state": "not-run"
+              },
+              {
+                "rule": "AST-WEBVIEW-UNTRUSTED-URL",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-HOST-ALLOWLIST",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-SSL-BYPASS",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-JS-BRIDGE",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-CRYPTO-ECB",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-CRYPTO-WEAK-HASH",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-SQL-CONCAT",
+                "state": "partial"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "OS-CVE",
+                "state": "not-run"
+              }
+            ],
+            "dependencies": 48,
+            "files_scanned": 926,
+            "findings": 8,
+            "inventory_warnings": [
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "AST mobile checks do not support these source languages: .js."
+            ],
+            "source_analysis": {
+              "adapted_files": 0,
+              "function_inventory_complete": false,
+              "functions": {
+                "analyzed": 4471,
+                "observed": 4735,
+                "skipped": 0,
+                "without_body": 264
+              },
+              "native_function_nodes": 4735,
+              "native_function_nodes_with_errors": 0,
+              "native_parse_error_files": 0,
+              "remaining_parse_error_files": 0,
+              "remaining_source_records": 0,
+              "unparsed_files": 0
+            },
+            "source_inventory_partial": true,
+            "unique_rules": 2,
+            "unresolved_dependencies": 21,
+            "warnings": [
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "AST mobile checks do not support these source languages: .js.",
+              "No cached intelligence. Run intel sync; offline scan did not check current CVEs.",
+              "Some intelligence sources are stale or failed. Inspect intel status for coverage."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "commit": "26175298968afabdd6555040f07a78c6e7524bf2",
+      "config_label": {
+        "correct": true,
+        "covered": true,
+        "expected": true,
+        "matched": true,
+        "path": "app/src/main/AndroidManifest.xml",
+        "rule": "ANDROID-CLEARTEXT",
+        "state": "completed"
+      },
+      "dependency_labels": [
+        {
+          "ecosystem": "Maven",
+          "extracted": true,
+          "git_blob": "e06aa76372d2b432dd13e58c690162ee0e544333",
+          "name": "org.jsoup:jsoup",
+          "path": "parser/feed/build.gradle",
+          "state": "completed",
+          "version": "1.15.1"
+        },
+        {
+          "ecosystem": "Maven",
+          "extracted": true,
+          "git_blob": "4d80916d2b714f7353a3627408fb8d2071ad9e65",
+          "name": "com.squareup.okhttp3:okhttp",
+          "path": "net/common/build.gradle",
+          "state": "completed",
+          "version": "4.12.0"
+        }
+      ],
+      "id": "antennapod",
+      "input_sha256": "04efb938a408782d1fab21dedd22f5e806cc7d2cb4278c78b8fe9b60bd9aab83",
+      "platform": "android",
+      "repository": "AntennaPod/AntennaPod",
+      "source_entries": 1061,
+      "tools": {
+        "apsa": {
+          "errors": [],
+          "median_seconds": 3.1478199750000044,
+          "seconds": [
+            3.1478199750000044,
+            4.033110436000001,
+            2.770351087999998
+          ],
+          "state": "completed",
+          "summary": {
+            "audit_incomplete": true,
+            "bytes_scanned": 5995550,
+            "coverage": [
+              {
+                "rule": "WEBVIEW-SSL-BYPASS",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-HOST-MATCH",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-JS-BRIDGE",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-FILE-ACCESS",
+                "state": "checked"
+              },
+              {
+                "rule": "STORAGE-SENSITIVE-LOG",
+                "state": "checked"
+              },
+              {
+                "rule": "STORAGE-TOKEN-PREFS",
+                "state": "checked"
+              },
+              {
+                "rule": "IOS-KEYCHAIN-ACCESS",
+                "state": "not-applicable"
+              },
+              {
+                "rule": "ANDROID-CONFIG",
+                "state": "checked"
+              },
+              {
+                "rule": "RUNTIME-DEEPLINK",
+                "state": "not-run"
+              },
+              {
+                "rule": "RUNTIME-RESIDUAL",
+                "state": "not-run"
+              },
+              {
+                "rule": "AST-WEBVIEW-UNTRUSTED-URL",
+                "state": "checked"
+              },
+              {
+                "rule": "AST-WEBVIEW-HOST-ALLOWLIST",
+                "state": "checked"
+              },
+              {
+                "rule": "AST-WEBVIEW-SSL-BYPASS",
+                "state": "checked"
+              },
+              {
+                "rule": "AST-WEBVIEW-JS-BRIDGE",
+                "state": "checked"
+              },
+              {
+                "rule": "AST-CRYPTO-ECB",
+                "state": "checked"
+              },
+              {
+                "rule": "AST-CRYPTO-WEAK-HASH",
+                "state": "checked"
+              },
+              {
+                "rule": "AST-SQL-CONCAT",
+                "state": "checked"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "OS-CVE",
+                "state": "not-run"
+              }
+            ],
+            "dependencies": 162,
+            "files_scanned": 1019,
+            "findings": 10,
+            "inventory_warnings": [
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed."
+            ],
+            "source_analysis": {
+              "adapted_files": 0,
+              "function_inventory_complete": true,
+              "functions": {
+                "analyzed": 4404,
+                "observed": 4576,
+                "skipped": 0,
+                "without_body": 172
+              },
+              "native_function_nodes": 4576,
+              "native_function_nodes_with_errors": 0,
+              "native_parse_error_files": 0,
+              "remaining_parse_error_files": 0,
+              "remaining_source_records": 0,
+              "unparsed_files": 0
+            },
+            "source_inventory_partial": true,
+            "unique_rules": 4,
+            "unresolved_dependencies": 20,
+            "warnings": [
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "No cached intelligence. Run intel sync; offline scan did not check current CVEs.",
+              "Some intelligence sources are stale or failed. Inspect intel status for coverage."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "commit": "62caaba78f7204278359b1d96d77f74f3c5d05f5",
+      "config_label": {
+        "correct": true,
+        "covered": true,
+        "expected": true,
+        "matched": true,
+        "path": "app/common/src/main/AndroidManifest.xml",
+        "rule": "ANDROID-CLEARTEXT",
+        "state": "completed"
+      },
+      "dependency_labels": [
+        {
+          "ecosystem": "Maven",
+          "extracted": true,
+          "git_blob": "2ecc23b55d766ef0d36992bf165a9efb4f505aaf",
+          "name": "org.jsoup:jsoup",
+          "path": "gradle/libs.versions.toml",
+          "state": "completed",
+          "version": "1.15.4"
+        },
+        {
+          "ecosystem": "Maven",
+          "extracted": true,
+          "git_blob": "2ecc23b55d766ef0d36992bf165a9efb4f505aaf",
+          "name": "com.squareup.okio:okio",
+          "path": "gradle/libs.versions.toml",
+          "state": "completed",
+          "version": "3.7.0"
+        }
+      ],
+      "id": "k9",
+      "input_sha256": "33d8c1609a980c1b1d8c58d743a21d7ea8b336accba454a49ef9f38007601d6c",
+      "platform": "android",
+      "repository": "thunderbird/thunderbird-android",
+      "source_entries": 3039,
+      "tools": {
+        "apsa": {
+          "errors": [],
+          "median_seconds": 5.952978334000001,
+          "seconds": [
+            5.952978334000001,
+            5.924677930999998,
+            6.01553284500001
+          ],
+          "state": "completed",
+          "summary": {
+            "audit_incomplete": true,
+            "bytes_scanned": 12803649,
+            "coverage": [
+              {
+                "rule": "WEBVIEW-SSL-BYPASS",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-HOST-MATCH",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-JS-BRIDGE",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-FILE-ACCESS",
+                "state": "checked"
+              },
+              {
+                "rule": "STORAGE-SENSITIVE-LOG",
+                "state": "checked"
+              },
+              {
+                "rule": "STORAGE-TOKEN-PREFS",
+                "state": "checked"
+              },
+              {
+                "rule": "IOS-KEYCHAIN-ACCESS",
+                "state": "not-applicable"
+              },
+              {
+                "rule": "ANDROID-CONFIG",
+                "state": "checked"
+              },
+              {
+                "rule": "RUNTIME-DEEPLINK",
+                "state": "not-run"
+              },
+              {
+                "rule": "RUNTIME-RESIDUAL",
+                "state": "not-run"
+              },
+              {
+                "rule": "AST-WEBVIEW-UNTRUSTED-URL",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-HOST-ALLOWLIST",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-SSL-BYPASS",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-JS-BRIDGE",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-CRYPTO-ECB",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-CRYPTO-WEAK-HASH",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-SQL-CONCAT",
+                "state": "partial"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "OS-CVE",
+                "state": "not-run"
+              }
+            ],
+            "dependencies": 97,
+            "files_scanned": 3011,
+            "findings": 4,
+            "inventory_warnings": [
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "AST parser compatibility in app/ui/legacy/src/main/java/com/fsck/k9/ui/settings/general/LanguagePreference.kt: [{'kind': 'kotlin-primary-constructor-linebreak', 'edits': 1}]; source remains partial.",
+              "AST parser compatibility in mail/protocols/imap/src/main/java/com/fsck/k9/mail/store/imap/RealImapConnection.kt: [{'kind': 'kotlin-open-identifier', 'edits': 10}]; source remains partial.",
+              "AST parser compatibility in mail/protocols/imap/src/main/java/com/fsck/k9/mail/store/imap/RealImapFolder.kt: [{'kind': 'kotlin-open-identifier', 'edits': 8}]; source remains partial.",
+              "AST syntax recovery in mail/protocols/imap/src/test/java/com/fsck/k9/mail/store/imap/RealImapStoreTest.kt: functions containing parse errors were skipped.",
+              "AST parser compatibility in mail/protocols/pop3/src/test/java/com/fsck/k9/mail/store/pop3/Pop3FolderTest.kt: [{'kind': 'kotlin-open-identifier', 'edits': 22}]; source remains partial.",
+              "AST parser compatibility in mail/protocols/smtp/src/main/java/com/fsck/k9/mail/transport/smtp/SmtpTransport.kt: [{'kind': 'kotlin-open-identifier', 'edits': 3}]; source remains partial."
+            ],
+            "source_analysis": {
+              "adapted_files": 5,
+              "function_inventory_complete": false,
+              "functions": {
+                "analyzed": 10925,
+                "observed": 11625,
+                "skipped": 1,
+                "without_body": 699
+              },
+              "native_function_nodes": 11526,
+              "native_function_nodes_with_errors": 6,
+              "native_parse_error_files": 6,
+              "remaining_parse_error_files": 1,
+              "remaining_source_records": 0,
+              "unparsed_files": 0
+            },
+            "source_inventory_partial": true,
+            "unique_rules": 3,
+            "unresolved_dependencies": 97,
+            "warnings": [
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "AST parser compatibility in app/ui/legacy/src/main/java/com/fsck/k9/ui/settings/general/LanguagePreference.kt: [{'kind': 'kotlin-primary-constructor-linebreak', 'edits': 1}]; source remains partial.",
+              "AST parser compatibility in mail/protocols/imap/src/main/java/com/fsck/k9/mail/store/imap/RealImapConnection.kt: [{'kind': 'kotlin-open-identifier', 'edits': 10}]; source remains partial.",
+              "AST parser compatibility in mail/protocols/imap/src/main/java/com/fsck/k9/mail/store/imap/RealImapFolder.kt: [{'kind': 'kotlin-open-identifier', 'edits': 8}]; source remains partial.",
+              "AST syntax recovery in mail/protocols/imap/src/test/java/com/fsck/k9/mail/store/imap/RealImapStoreTest.kt: functions containing parse errors were skipped.",
+              "AST parser compatibility in mail/protocols/pop3/src/test/java/com/fsck/k9/mail/store/pop3/Pop3FolderTest.kt: [{'kind': 'kotlin-open-identifier', 'edits': 22}]; source remains partial.",
+              "AST parser compatibility in mail/protocols/smtp/src/main/java/com/fsck/k9/mail/transport/smtp/SmtpTransport.kt: [{'kind': 'kotlin-open-identifier', 'edits': 3}]; source remains partial.",
+              "No cached intelligence. Run intel sync; offline scan did not check current CVEs.",
+              "Some intelligence sources are stale or failed. Inspect intel status for coverage."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "commit": "d590f07c5ec294b1f1bd3e120b88cf38ddb78fdb",
+      "config_label": {
+        "correct": true,
+        "covered": true,
+        "expected": true,
+        "matched": true,
+        "path": "Brand/iOSClient.plist",
+        "rule": "IOS-ATS",
+        "state": "completed"
+      },
+      "dependency_labels": [],
+      "id": "nextcloudios",
+      "input_sha256": "ec92d96076c91c0836dcc0bab943296898301d5ffe13c00a1effd61878daa7d5",
+      "platform": "ios",
+      "repository": "nextcloud/ios",
+      "source_entries": 496,
+      "tools": {
+        "apsa": {
+          "errors": [],
+          "median_seconds": 2.544775609999988,
+          "seconds": [
+            2.544775609999988,
+            2.920985981000001,
+            2.541781786999991
+          ],
+          "state": "completed",
+          "summary": {
+            "audit_incomplete": true,
+            "bytes_scanned": 3639760,
+            "coverage": [
+              {
+                "rule": "WEBVIEW-SSL-BYPASS",
+                "state": "not-applicable"
+              },
+              {
+                "rule": "WEBVIEW-HOST-MATCH",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-JS-BRIDGE",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-FILE-ACCESS",
+                "state": "not-applicable"
+              },
+              {
+                "rule": "STORAGE-SENSITIVE-LOG",
+                "state": "checked"
+              },
+              {
+                "rule": "STORAGE-TOKEN-PREFS",
+                "state": "checked"
+              },
+              {
+                "rule": "IOS-KEYCHAIN-ACCESS",
+                "state": "checked"
+              },
+              {
+                "rule": "IOS-CONFIG",
+                "state": "checked"
+              },
+              {
+                "rule": "RUNTIME-DEEPLINK",
+                "state": "not-run"
+              },
+              {
+                "rule": "RUNTIME-RESIDUAL",
+                "state": "not-run"
+              },
+              {
+                "rule": "AST-WEBVIEW-UNTRUSTED-URL",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-HOST-ALLOWLIST",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-SSL-BYPASS",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-JS-BRIDGE",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-CRYPTO-ECB",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-CRYPTO-WEAK-HASH",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-SQL-CONCAT",
+                "state": "partial"
+              },
+              {
+                "rule": "OBJC-WEBVIEW-UNTRUSTED-REQUEST",
+                "state": "partial"
+              },
+              {
+                "rule": "OBJC-CRYPTO-WEAK-HASH",
+                "state": "partial"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "OS-CVE",
+                "state": "not-run"
+              }
+            ],
+            "dependencies": 0,
+            "files_scanned": 489,
+            "findings": 12,
+            "inventory_warnings": [
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "AST syntax recovery in iOSClient/Extensions/UIImage+animatedGIF.m: functions containing parse errors were skipped.",
+              "AST syntax recovery in iOSClient/Networking/E2EE/NCEndToEndEncryption.m: functions containing parse errors were skipped."
+            ],
+            "source_analysis": {
+              "adapted_files": 0,
+              "function_inventory_complete": false,
+              "functions": {
+                "analyzed": 2700,
+                "observed": 2704,
+                "skipped": 4,
+                "without_body": 0
+              },
+              "native_function_nodes": 2704,
+              "native_function_nodes_with_errors": 4,
+              "native_parse_error_files": 2,
+              "remaining_parse_error_files": 2,
+              "remaining_source_records": 0,
+              "unparsed_files": 0
+            },
+            "source_inventory_partial": true,
+            "unique_rules": 4,
+            "unresolved_dependencies": 0,
+            "warnings": [
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "AST syntax recovery in iOSClient/Extensions/UIImage+animatedGIF.m: functions containing parse errors were skipped.",
+              "AST syntax recovery in iOSClient/Networking/E2EE/NCEndToEndEncryption.m: functions containing parse errors were skipped.",
+              "No cached intelligence. Run intel sync; offline scan did not check current CVEs.",
+              "Some intelligence sources are stale or failed. Inspect intel status for coverage."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "commit": "afcb46afdf55892e33638a2b81b3570cffb81a21",
+      "config_label": {
+        "correct": true,
+        "covered": true,
+        "expected": true,
+        "matched": true,
+        "path": "firefox-ios/Client/Info.plist",
+        "rule": "IOS-ATS",
+        "state": "completed"
+      },
+      "dependency_labels": [
+        {
+          "ecosystem": "SwiftURL",
+          "extracted": true,
+          "git_blob": "fa9baec273413d766d37d27bb39586fcd3974e71",
+          "name": "https://github.com/onevcat/Kingfisher",
+          "path": "firefox-ios/Client.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "state": "completed",
+          "version": "8.13.0"
+        },
+        {
+          "ecosystem": "SwiftURL",
+          "extracted": true,
+          "git_blob": "fa9baec273413d766d37d27bb39586fcd3974e71",
+          "name": "https://github.com/getsentry/sentry-cocoa",
+          "path": "firefox-ios/Client.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "state": "completed",
+          "version": "9.10.0"
+        }
+      ],
+      "id": "firefox",
+      "input_sha256": "a474d12390d883c24d988589d5a93005049f58c86e545650c2206f86054d3f5d",
+      "platform": "ios",
+      "repository": "mozilla-mobile/firefox-ios",
+      "source_entries": 4375,
+      "tools": {
+        "apsa": {
+          "errors": [],
+          "median_seconds": 17.33194189800001,
+          "seconds": [
+            17.21871536900001,
+            17.38374759,
+            17.33194189800001
+          ],
+          "state": "completed",
+          "summary": {
+            "audit_incomplete": true,
+            "bytes_scanned": 37762996,
+            "coverage": [
+              {
+                "rule": "WEBVIEW-SSL-BYPASS",
+                "state": "not-applicable"
+              },
+              {
+                "rule": "WEBVIEW-HOST-MATCH",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-JS-BRIDGE",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-FILE-ACCESS",
+                "state": "not-applicable"
+              },
+              {
+                "rule": "STORAGE-SENSITIVE-LOG",
+                "state": "checked"
+              },
+              {
+                "rule": "STORAGE-TOKEN-PREFS",
+                "state": "checked"
+              },
+              {
+                "rule": "IOS-KEYCHAIN-ACCESS",
+                "state": "checked"
+              },
+              {
+                "rule": "IOS-CONFIG",
+                "state": "not-run"
+              },
+              {
+                "rule": "RUNTIME-DEEPLINK",
+                "state": "not-run"
+              },
+              {
+                "rule": "RUNTIME-RESIDUAL",
+                "state": "not-run"
+              },
+              {
+                "rule": "AST-WEBVIEW-UNTRUSTED-URL",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-HOST-ALLOWLIST",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-SSL-BYPASS",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-JS-BRIDGE",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-CRYPTO-ECB",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-CRYPTO-WEAK-HASH",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-SQL-CONCAT",
+                "state": "partial"
+              },
+              {
+                "rule": "OBJC-WEBVIEW-UNTRUSTED-REQUEST",
+                "state": "partial"
+              },
+              {
+                "rule": "OBJC-CRYPTO-WEAK-HASH",
+                "state": "partial"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "OS-CVE",
+                "state": "not-run"
+              }
+            ],
+            "dependencies": 305,
+            "files_scanned": 4290,
+            "findings": 63,
+            "inventory_warnings": [
+              "Referenced source plist unavailable or invalid: firefox-ios/ThirdParty/Deferred/Deferred/Info.plist",
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "AST parser compatibility in BrowserKit/Sources/ActionExtensionKit/FirefoxURLBuilding.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 4}]; source remains partial.",
+              "AST syntax recovery in BrowserKit/Sources/OnboardingKit/Models/OnboardingCardInfoModelProtocol.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in BrowserKit/Sources/Shared/Deferred/Deferred.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 2}]; source remains partial.",
+              "AST syntax recovery in BrowserKit/Sources/Shared/DeferredUtils.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in BrowserKit/Sources/SummarizeKit/Backend/AppleIntelligence/FoundationModelsSummarizer.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST parser compatibility in BrowserKit/Sources/SummarizeKit/Backend/LLM/LiteLLMSummarizer.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 2}]; source remains partial.",
+              "AST syntax recovery in BrowserKit/Sources/WebCompatReporterKit/Preview/WebCompatFullPageScreenshotPreview.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in BrowserKit/Sources/WebCompatReporterKit/Preview/WebCompatReportSheetPreview.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in BrowserKit/Sources/WebCompatReporterKit/Preview/WebCompatTechnicalDataPreview.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/ads_client.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/context_id.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/errorsupport.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/nimbus.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/remote_settings.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/rust_log_forwarder.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/tracing.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/viaduct.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Nimbus/ArgumentProcessor.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Nimbus/Utils/Unreachable.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/ASOhttpClient/OhttpManager.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/FxAClient/FxAccountDeviceConstellation.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/FxAClient/FxAccountManager.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/ads_client.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/as_ohttp_client.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/autofill.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/context_id.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/crashtest.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/db_crypto.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/errorsupport.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/fxa_client.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/init_rust_components.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/logins.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/merino.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/nimbus.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/places.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/push.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/relay.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/remote_settings.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/rust_log_forwarder.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/search.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/suggest.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/sync15.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/syncmanager.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/tabs.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/tracing.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/viaduct.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/viaduct_hyper.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Nimbus/ArgumentProcessor.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Nimbus/Utils/Unreachable.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in MozillaRustComponents/Tests/MozillaRustComponentsTests/FxAccountManagerTests.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 3}]; source remains partial.",
+              "AST parser compatibility in firefox-ios/Client/ContentBlocker/ContentBlocker.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/Client/ContentBlocker/ContentBlocker.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/AuthenticationManager/AppAuthenticator.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/Autofill/AutofillFooterView.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/Autofill/AutofillHeaderView.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/Browser/Tabs/Middleware/TabManagerMiddleware.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/Home/Homepage/Wallpapers/v1/Interface/WallpaperManager.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/Client/Frontend/NotificationSurface/NotificationSurfaceManager.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/Settings/Clearables.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/Extensions/NotificationService/NotificationService.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/Providers/Profile.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Providers/RustSyncManager.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Storage/Rust/RustAutofill.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Storage/Rust/RustLogins.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Storage/SQL/SQLitePinnedSites.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/ClientTests/EventQueueTests.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 13}]; source remains partial.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/ClientTests/Merino/MerinoProviderTests.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/Mocks/MockAppAuthenticator.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/Mocks/MockBookmarksHandler.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/Mocks/MockHistoryHandler.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/Mocks/MockablePinnedSites.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/ClientTests/TemporaryDocumentTests.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/ClientTests/TestHistory.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/TranslationsTests/MockTranslationsService.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/ClientTests/Utils/MainThreadThrottlerTests.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/Wallpaper/Mocks/WallpaperManagerMock.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/SharedTests/DeferredTests.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/StorageTests/TestSwiftData.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/StorageTests/TestSwiftData.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in focus-ios/Blockzilla/Lib/DomainCompletion/DomainCompletion.swift: functions containing parse errors were skipped.",
+              "AST mobile checks do not support these source languages: .js."
+            ],
+            "source_analysis": {
+              "adapted_files": 14,
+              "function_inventory_complete": false,
+              "functions": {
+                "analyzed": 26858,
+                "observed": 26902,
+                "skipped": 41,
+                "without_body": 3
+              },
+              "native_function_nodes": 26902,
+              "native_function_nodes_with_errors": 67,
+              "native_parse_error_files": 78,
+              "remaining_parse_error_files": 66,
+              "remaining_source_records": 0,
+              "unparsed_files": 0
+            },
+            "source_inventory_partial": true,
+            "unique_rules": 5,
+            "unresolved_dependencies": 10,
+            "warnings": [
+              "Referenced source plist unavailable or invalid: firefox-ios/ThirdParty/Deferred/Deferred/Info.plist",
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "AST parser compatibility in BrowserKit/Sources/ActionExtensionKit/FirefoxURLBuilding.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 4}]; source remains partial.",
+              "AST syntax recovery in BrowserKit/Sources/OnboardingKit/Models/OnboardingCardInfoModelProtocol.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in BrowserKit/Sources/Shared/Deferred/Deferred.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 2}]; source remains partial.",
+              "AST syntax recovery in BrowserKit/Sources/Shared/DeferredUtils.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in BrowserKit/Sources/SummarizeKit/Backend/AppleIntelligence/FoundationModelsSummarizer.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST parser compatibility in BrowserKit/Sources/SummarizeKit/Backend/LLM/LiteLLMSummarizer.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 2}]; source remains partial.",
+              "AST syntax recovery in BrowserKit/Sources/WebCompatReporterKit/Preview/WebCompatFullPageScreenshotPreview.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in BrowserKit/Sources/WebCompatReporterKit/Preview/WebCompatReportSheetPreview.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in BrowserKit/Sources/WebCompatReporterKit/Preview/WebCompatTechnicalDataPreview.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/ads_client.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/context_id.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/errorsupport.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/nimbus.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/remote_settings.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/rust_log_forwarder.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/tracing.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Generated/viaduct.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Nimbus/ArgumentProcessor.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/FocusRustComponentsWrapper/Nimbus/Utils/Unreachable.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/ASOhttpClient/OhttpManager.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/FxAClient/FxAccountDeviceConstellation.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/FxAClient/FxAccountManager.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/ads_client.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/as_ohttp_client.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/autofill.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/context_id.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/crashtest.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/db_crypto.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/errorsupport.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/fxa_client.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/init_rust_components.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/logins.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/merino.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/nimbus.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/places.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/push.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/relay.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/remote_settings.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/rust_log_forwarder.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/search.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/suggest.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/sync15.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/syncmanager.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/tabs.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/tracing.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/viaduct.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Generated/viaduct_hyper.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Nimbus/ArgumentProcessor.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in MozillaRustComponents/Sources/MozillaRustComponentsWrapper/Nimbus/Utils/Unreachable.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in MozillaRustComponents/Tests/MozillaRustComponentsTests/FxAccountManagerTests.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 3}]; source remains partial.",
+              "AST parser compatibility in firefox-ios/Client/ContentBlocker/ContentBlocker.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/Client/ContentBlocker/ContentBlocker.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/AuthenticationManager/AppAuthenticator.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/Autofill/AutofillFooterView.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/Autofill/AutofillHeaderView.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/Browser/Tabs/Middleware/TabManagerMiddleware.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/Home/Homepage/Wallpapers/v1/Interface/WallpaperManager.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/Client/Frontend/NotificationSurface/NotificationSurfaceManager.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/Client/Frontend/Settings/Clearables.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/Extensions/NotificationService/NotificationService.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/Providers/Profile.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Providers/RustSyncManager.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Storage/Rust/RustAutofill.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Storage/Rust/RustLogins.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/Storage/SQL/SQLitePinnedSites.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/ClientTests/EventQueueTests.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 13}]; source remains partial.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/ClientTests/Merino/MerinoProviderTests.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/Mocks/MockAppAuthenticator.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/Mocks/MockBookmarksHandler.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/Mocks/MockHistoryHandler.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/Mocks/MockablePinnedSites.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/ClientTests/TemporaryDocumentTests.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/ClientTests/TestHistory.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/TranslationsTests/MockTranslationsService.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/ClientTests/Utils/MainThreadThrottlerTests.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/ClientTests/Wallpaper/Mocks/WallpaperManagerMock.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/SharedTests/DeferredTests.swift: functions containing parse errors were skipped.",
+              "AST parser compatibility in firefox-ios/firefox-ios-tests/Tests/StorageTests/TestSwiftData.swift: [{'kind': 'swift-nonisolated-unsafe-variable', 'edits': 1}]; source remains partial.",
+              "AST syntax recovery in firefox-ios/firefox-ios-tests/Tests/StorageTests/TestSwiftData.swift: functions containing parse errors were skipped.",
+              "AST syntax recovery in focus-ios/Blockzilla/Lib/DomainCompletion/DomainCompletion.swift: functions containing parse errors were skipped.",
+              "AST mobile checks do not support these source languages: .js.",
+              "No cached intelligence. Run intel sync; offline scan did not check current CVEs.",
+              "Some intelligence sources are stale or failed. Inspect intel status for coverage."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "commit": "2ad6e689125801abeb7e356360785c08a4864982",
+      "config_label": {
+        "correct": true,
+        "covered": true,
+        "expected": false,
+        "matched": false,
+        "path": "IceCubesApp/Info.plist",
+        "rule": "IOS-ATS",
+        "state": "completed"
+      },
+      "dependency_labels": [
+        {
+          "ecosystem": "SwiftURL",
+          "extracted": true,
+          "git_blob": "3f893a80ae2a5824177d6b1d0cd154f0dd2c8c5d",
+          "name": "https://github.com/stephencelis/SQLite.swift",
+          "path": "IceCubesApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "state": "completed",
+          "version": "0.16.0"
+        },
+        {
+          "ecosystem": "SwiftURL",
+          "extracted": true,
+          "git_blob": "3f893a80ae2a5824177d6b1d0cd154f0dd2c8c5d",
+          "name": "https://github.com/evgenyneu/keychain-swift",
+          "path": "IceCubesApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "state": "completed",
+          "version": "24.0.0"
+        }
+      ],
+      "id": "icecubes",
+      "input_sha256": "0ad3132befa94435a69fe2f6f22822fb641cb2e1bb4847d257589237283e5034",
+      "platform": "ios",
+      "repository": "Dimillian/IceCubesApp",
+      "source_entries": 553,
+      "tools": {
+        "apsa": {
+          "errors": [],
+          "median_seconds": 1.4228848969999888,
+          "seconds": [
+            1.3762688319999938,
+            1.4228848969999888,
+            1.4362913790000107
+          ],
+          "state": "completed",
+          "summary": {
+            "audit_incomplete": true,
+            "bytes_scanned": 1436629,
+            "coverage": [
+              {
+                "rule": "WEBVIEW-SSL-BYPASS",
+                "state": "not-applicable"
+              },
+              {
+                "rule": "WEBVIEW-HOST-MATCH",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-JS-BRIDGE",
+                "state": "checked"
+              },
+              {
+                "rule": "WEBVIEW-FILE-ACCESS",
+                "state": "not-applicable"
+              },
+              {
+                "rule": "STORAGE-SENSITIVE-LOG",
+                "state": "checked"
+              },
+              {
+                "rule": "STORAGE-TOKEN-PREFS",
+                "state": "checked"
+              },
+              {
+                "rule": "IOS-KEYCHAIN-ACCESS",
+                "state": "checked"
+              },
+              {
+                "rule": "IOS-CONFIG",
+                "state": "not-run"
+              },
+              {
+                "rule": "RUNTIME-DEEPLINK",
+                "state": "not-run"
+              },
+              {
+                "rule": "RUNTIME-RESIDUAL",
+                "state": "not-run"
+              },
+              {
+                "rule": "AST-WEBVIEW-UNTRUSTED-URL",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-HOST-ALLOWLIST",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-SSL-BYPASS",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-WEBVIEW-JS-BRIDGE",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-CRYPTO-ECB",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-CRYPTO-WEAK-HASH",
+                "state": "partial"
+              },
+              {
+                "rule": "AST-SQL-CONCAT",
+                "state": "partial"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "DEPENDENCY-CVE",
+                "state": "not-run"
+              },
+              {
+                "rule": "OS-CVE",
+                "state": "not-run"
+              }
+            ],
+            "dependencies": 18,
+            "files_scanned": 535,
+            "findings": 0,
+            "inventory_warnings": [
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "AST parser compatibility in IceCubesNotifications/NotificationService.swift: [{'kind': 'swift-sendable-cast-metatype', 'edits': 1}]; source remains partial.",
+              "AST parser compatibility in Packages/Timeline/Sources/Timeline/View/TimelineViewModel.swift: [{'kind': 'swift-if-await', 'edits': 2}]; source remains partial.",
+              "AST mobile checks do not support these source languages: .js."
+            ],
+            "source_analysis": {
+              "adapted_files": 2,
+              "function_inventory_complete": false,
+              "functions": {
+                "analyzed": 1037,
+                "observed": 1037,
+                "skipped": 0,
+                "without_body": 0
+              },
+              "native_function_nodes": 1037,
+              "native_function_nodes_with_errors": 2,
+              "native_parse_error_files": 2,
+              "remaining_parse_error_files": 0,
+              "remaining_source_records": 0,
+              "unparsed_files": 0
+            },
+            "source_inventory_partial": true,
+            "unique_rules": 0,
+            "unresolved_dependencies": 1,
+            "warnings": [
+              "Multiple source configurations were observed; select one configuration for an app/variant audit. No build-system merge was performed.",
+              "AST parser compatibility in IceCubesNotifications/NotificationService.swift: [{'kind': 'swift-sendable-cast-metatype', 'edits': 1}]; source remains partial.",
+              "AST parser compatibility in Packages/Timeline/Sources/Timeline/View/TimelineViewModel.swift: [{'kind': 'swift-if-await', 'edits': 2}]; source remains partial.",
+              "AST mobile checks do not support these source languages: .js.",
+              "No cached intelligence. Run intel sync; offline scan did not check current CVEs.",
+              "Some intelligence sources are stale or failed. Inspect intel status for coverage."
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "apsa_engine": {
+    "dependencies": {
+      "androguard": "4.1.4",
+      "psutil": "7.2.2",
+      "tree-sitter": "0.25.2",
+      "tree-sitter-java": "0.23.5",
+      "tree-sitter-kotlin": "1.1.0",
+      "tree-sitter-objc": "3.0.2",
+      "tree-sitter-swift": "0.7.4"
+    },
+    "rule_version": "2026.10.09.apsa.111-dev4",
+    "source_sha256": {
+      "__init__.py": "854f83bbd7efdb6e3418973565894d14c49aa8f1339fff99518763cb8dcf938b",
+      "__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+      "_job_worker.py": "3bb277a06bde2aae7bedf794d4052a83b4514a2f613fa01c0b116dc2dc984dae",
+      "_parser_worker.py": "429d29228914ded37d4aeca9190a0a618bc470647a5ee879ebe3486d0283bcd1",
+      "aab_manifest.py": "88bd05491bad57688f59d12ea85122aec4748fccf72c993fe9825eb16c5719f7",
+      "audit.py": "78e28e85403b110ad5a3b390272cd980e59dabb8442d8ff0ec80cd618c939507",
+      "baselines.py": "ab3749530bedf17c9f881a2c399d152633eb7e77017f90385ae4e666abaa658f",
+      "binary_analysis.py": "ba1bc6bb0c83048a94aada135e51b245b189e3b08f604bf0245ac01a520e74fd",
+      "cli.py": "f717388b22e6affa5a8a619c771336a087933fdcf5e0aacc9ce117d31a086b8c",
+      "core.py": "c785c4388ac96b25496aab78ed2723a929a3ebc48c626550c54470318e6c8308",
+      "data/rules.json": "9585922fc14c63a0f77697cba937477b2175cecf46b0f02707db4482198732b0",
+      "data/structural-rules.json": "2187bac6bcdba3ec71709d3df3d4b9d6811dbc3f156c75e0062c8781652b70e9",
+      "engine.py": "363634ad8a4d05de1ad1a8a0148bc528d70623aa4486ff009cba386f396ad2c0",
+      "input_snapshot.py": "a401eb2c3896e306797c8b0b349f899c7e75b195eae39be5898a623c3ec0299c",
+      "inputs.py": "7aec4e9df87954ed34037da79aa9562fab9a0ad08846cccbf7541d6e5e3dc9f2",
+      "intel.py": "4479dcfbf2311b6b7376ac90e6fd44af38c24d11d1ed4d243c36b87da7c48d73",
+      "ios_embedded.py": "0d861c90dc61789d70ed757919941a3afbab944f1798dc4ac20bf2a6a206bd44",
+      "ios_ranges.py": "0016893c37bafa3611b2e7940d6fe56baf034f301a8814c464e6409f22607a9b",
+      "jobs.py": "37028b194533f5d0ef3523730f31330f47e666fee3259853f7e14d2540f23963",
+      "mcp_server.py": "375782aabf4a0450576529dcbef95fd0d5858ec0c7390045a29b8ff4f27fca05",
+      "model_context.py": "e63cc5cc5fe5ca5766e28801739aaa715d1549cad5f30aa0980b12cb4a5212f8",
+      "objc_analysis.py": "40e4615bd30480212a3e03bab45267948bb8bcea9e51089eb7d7f66bf9782bc2",
+      "output.py": "03fb4e391c57bb66ca94d0118127c46abce5a9137bc6e9686d4c03df0c7393cc",
+      "parser_compat.py": "6b3973a9acaa9e5ace6df5d4100c3dc624830b454bf8e4318154cd160384bf6c",
+      "parser_sandbox.py": "eedaaa1169851fb69118c94f3f03daa68b66213116eb9f5f98cba51fba2e6749",
+      "policy.py": "106f2244e59ae26bc34f0bd37a3ed48d5c656239571dcc078caf55c19f64c893",
+      "processes.py": "27c3c400d1bba8bf90b05a620edec720d22610619ef1a0f83b014d7cd31a91bb",
+      "quaygate_analysis.py": "d1d24dc1047b31bb42b66a1a05dd889420135343a3ad6ee832acabd1d4dea1ed",
+      "rules.py": "1ca0a0a2624ac21516867227b0d5a4c661b35bf38f9fe2ccc68c8df0a42bda36",
+      "runtime.py": "bc5972a7428f139e39d19613f3d425d7adfce22b78c99ad1abd5d98bf878a10d",
+      "selection.py": "f48006199d0cc4b5c8ae1a945835bb044275f300696d70fd2477733af8bce95d",
+      "skills.py": "ae8f0936cca86413378757e3ca71076f4a7976464bbbe840a616513c4d9074c0",
+      "source_analysis.py": "abecbe5fa437ac49de0cc803e4749f8c5888342acd40a034dbd1524c62ceedb2",
+      "source_context.py": "f2a9419c2e20b08edd4a585bd613e98d4ef353e6708808828fe080b7f31ff586",
+      "store.py": "a3305315012dc6cfb6599a6696388e0cd15479f7b36f5bd42c4cc453990b65dd",
+      "tools.py": "904bce3cb1fbccc02598cfc847ce50015475800818d2b3b597e62c4f37c0f727",
+      "tui.py": "11d606ef79dac6f2deb4b3db7fc869d93ed9eea1dac6d04df09bfca2f6a4647e",
+      "watch.py": "98f84cf43369aaacfb0830c91df454a69f4c061608da8b7282fd2bda9e0409f1"
+    },
+    "version": "1.1.0"
+  },
+  "coverage_extension_provenance": {
+    "kind": "development-rerun-after-labels-seen",
+    "legacy_os_expected_states": "Frozen unchanged; two formerly unknown iOS cases now intentionally produce supported branch decisions. Inspect legacy correctness separately from the new branch fixtures.",
+    "previous_summary_sha256": "a52623cff0fefab268c56e2263beebab88ac92a90f04018373200874acc74eee",
+    "source_function_counts": "Recognized function nodes only, with raw grammar counts and adapted analysis counts; not a complete callable inventory. Adapted files remain partial."
+  },
+  "dependency_cases": [
+    {
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "com.google.code.gson:gson",
+        "path": "benchmark/SBOM",
+        "version": "2.8.8"
+      },
+      "expected": "affected",
+      "id": "gson-affected",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": true,
+        "matched_ids": [
+          "CVE-2022-25647"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "com.google.code.gson:gson",
+        "path": "benchmark/SBOM",
+        "version": "2.8.9"
+      },
+      "expected": "unaffected",
+      "id": "gson-fixed-boundary",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "com.google.code.gson:gson",
+        "path": "benchmark/SBOM",
+        "version": "2.10.1"
+      },
+      "expected": "unaffected",
+      "id": "gson-newer",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "org.example:gson",
+        "path": "benchmark/SBOM",
+        "version": "2.8.8"
+      },
+      "expected": "unaffected",
+      "id": "gson-different-group",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "npm",
+        "name": "gson",
+        "path": "benchmark/SBOM",
+        "version": "2.8.8"
+      },
+      "expected": "unaffected",
+      "id": "gson-different-ecosystem",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "confidence": "unknown",
+        "ecosystem": "Maven",
+        "name": "com.google.code.gson:gson",
+        "path": "benchmark/SBOM",
+        "version": "$version"
+      },
+      "expected": "unknown",
+      "id": "gson-unresolved",
+      "result": {
+        "errors": [
+          "Unresolved/unsupported dependency: Maven com.google.code.gson:gson $version"
+        ],
+        "feed_status": [],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "abstained",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "org.jsoup:jsoup",
+        "path": "benchmark/SBOM",
+        "version": "1.15.2"
+      },
+      "expected": "affected",
+      "id": "jsoup-affected",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": true,
+        "matched_ids": [
+          "CVE-2022-36033",
+          "CVE-2026-71497",
+          "CVE-2026-75140"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "org.jsoup:jsoup",
+        "path": "benchmark/SBOM",
+        "version": "1.15.3"
+      },
+      "expected": "unaffected",
+      "id": "jsoup-fixed-boundary",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [
+          "CVE-2026-71497",
+          "CVE-2026-75140"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "org.jsoup:jsoup",
+        "path": "benchmark/SBOM",
+        "version": "1.17.2"
+      },
+      "expected": "unaffected",
+      "id": "jsoup-newer",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [
+          "CVE-2026-71497",
+          "CVE-2026-75140"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "org.example:jsoup",
+        "path": "benchmark/SBOM",
+        "version": "1.15.2"
+      },
+      "expected": "unaffected",
+      "id": "jsoup-different-group",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "npm",
+        "name": "jsoup",
+        "path": "benchmark/SBOM",
+        "version": "1.15.2"
+      },
+      "expected": "unaffected",
+      "id": "jsoup-different-ecosystem",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "confidence": "unknown",
+        "ecosystem": "Maven",
+        "name": "org.jsoup:jsoup",
+        "path": "benchmark/SBOM",
+        "version": "$version"
+      },
+      "expected": "unknown",
+      "id": "jsoup-unresolved",
+      "result": {
+        "errors": [
+          "Unresolved/unsupported dependency: Maven org.jsoup:jsoup $version"
+        ],
+        "feed_status": [],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "abstained",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "com.squareup.okio:okio",
+        "path": "benchmark/SBOM",
+        "version": "1.17.5"
+      },
+      "expected": "affected",
+      "id": "okio-legacy-affected",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": true,
+        "matched_ids": [
+          "CVE-2023-3635"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "com.squareup.okio:okio",
+        "path": "benchmark/SBOM",
+        "version": "1.17.6"
+      },
+      "expected": "unaffected",
+      "id": "okio-legacy-fixed",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "com.squareup.okio:okio",
+        "path": "benchmark/SBOM",
+        "version": "3.3.0"
+      },
+      "expected": "affected",
+      "id": "okio-modern-affected",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": true,
+        "matched_ids": [
+          "CVE-2023-3635"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "com.squareup.okio:okio",
+        "path": "benchmark/SBOM",
+        "version": "3.4.0"
+      },
+      "expected": "unaffected",
+      "id": "okio-modern-fixed",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "com.squareup.okio:okhttp",
+        "path": "benchmark/SBOM",
+        "version": "3.3.0"
+      },
+      "expected": "unaffected",
+      "id": "okio-different-artifact",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "npm",
+        "name": "okio",
+        "path": "benchmark/SBOM",
+        "version": "3.3.0"
+      },
+      "expected": "unaffected",
+      "id": "okio-different-ecosystem",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "confidence": "unknown",
+        "ecosystem": "Maven",
+        "name": "com.squareup.okio:okio",
+        "path": "benchmark/SBOM",
+        "version": "$version"
+      },
+      "expected": "unknown",
+      "id": "okio-unresolved",
+      "result": {
+        "errors": [
+          "Unresolved/unsupported dependency: Maven com.squareup.okio:okio $version"
+        ],
+        "feed_status": [],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "abstained",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "org.bouncycastle:bctls-jdk18on",
+        "path": "benchmark/SBOM",
+        "version": "1.77"
+      },
+      "expected": "affected",
+      "id": "bc-bctls-jdk18on-affected",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": true,
+        "matched_ids": [
+          "CVE-2024-29857",
+          "CVE-2024-30171",
+          "CVE-2024-30172",
+          "CVE-2025-8885"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "org.bouncycastle:bctls-jdk18on",
+        "path": "benchmark/SBOM",
+        "version": "1.78"
+      },
+      "expected": "unaffected",
+      "id": "bc-bctls-jdk18on-fixed",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "org.bouncycastle:bcprov-jdk18on",
+        "path": "benchmark/SBOM",
+        "version": "1.77"
+      },
+      "expected": "affected",
+      "id": "bc-bcprov-jdk18on-affected",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": true,
+        "matched_ids": [
+          "CVE-2024-29857",
+          "CVE-2024-30171",
+          "CVE-2024-30172",
+          "CVE-2024-34447",
+          "CVE-2025-14813",
+          "CVE-2025-8885",
+          "CVE-2026-0636",
+          "CVE-2026-13506",
+          "CVE-2026-8763"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "org.bouncycastle:bcprov-jdk18on",
+        "path": "benchmark/SBOM",
+        "version": "1.78"
+      },
+      "expected": "unaffected",
+      "id": "bc-bcprov-jdk18on-fixed",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [
+          "CVE-2025-14813",
+          "CVE-2026-0636",
+          "CVE-2026-13506",
+          "CVE-2026-8763"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "Maven",
+        "name": "org.example:bctls-jdk18on",
+        "path": "benchmark/SBOM",
+        "version": "1.77"
+      },
+      "expected": "unaffected",
+      "id": "bc-different-group",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "npm",
+        "name": "bctls-jdk18on",
+        "path": "benchmark/SBOM",
+        "version": "1.77"
+      },
+      "expected": "unaffected",
+      "id": "bc-different-ecosystem",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "confidence": "unknown",
+        "ecosystem": "Maven",
+        "name": "org.bouncycastle:bctls-jdk18on",
+        "path": "benchmark/SBOM",
+        "version": "$version"
+      },
+      "expected": "unknown",
+      "id": "bc-unresolved",
+      "result": {
+        "errors": [
+          "Unresolved/unsupported dependency: Maven org.bouncycastle:bctls-jdk18on $version"
+        ],
+        "feed_status": [],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "abstained",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "SwiftURL",
+        "name": "github.com/apple/swift-nio",
+        "path": "benchmark/SBOM",
+        "version": "2.99.0"
+      },
+      "expected": "affected",
+      "id": "swift-nio-canonical-affected",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": true,
+        "matched_ids": [
+          "CVE-2026-28970",
+          "CVE-2026-28980",
+          "CVE-2026-43671"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    },
+    {
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "SwiftURL",
+        "name": "github.com/apple/swift-nio",
+        "path": "benchmark/SBOM",
+        "version": "2.100.0"
+      },
+      "expected": "unaffected",
+      "id": "swift-nio-canonical-fixed",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    },
+    {
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "SwiftURL",
+        "name": "https://github.com/apple/swift-nio",
+        "path": "benchmark/SBOM",
+        "version": "2.99.0"
+      },
+      "expected": "affected",
+      "id": "swift-nio-https-affected",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": true,
+        "matched_ids": [
+          "CVE-2026-28970",
+          "CVE-2026-28980",
+          "CVE-2026-43671"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "version-affected"
+        ]
+      },
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    },
+    {
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "SwiftURL",
+        "name": "https://github.com/apple/swift-nio",
+        "path": "benchmark/SBOM",
+        "version": "2.100.0"
+      },
+      "expected": "unaffected",
+      "id": "swift-nio-https-fixed",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    },
+    {
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "confidence": "exact",
+        "ecosystem": "SwiftURL",
+        "name": "github.com/example/swift-nio",
+        "path": "benchmark/SBOM",
+        "version": "2.99.0"
+      },
+      "expected": "unaffected",
+      "id": "swift-nio-different-repo",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "completed",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    },
+    {
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "confidence": "unknown",
+        "ecosystem": "SwiftURL",
+        "name": "https://github.com/apple/swift-nio",
+        "path": "benchmark/SBOM",
+        "version": ""
+      },
+      "expected": "unknown",
+      "id": "swift-nio-unresolved",
+      "result": {
+        "errors": [
+          "Unresolved/unsupported dependency: SwiftURL https://github.com/apple/swift-nio "
+        ],
+        "feed_status": [],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "abstained",
+        "statuses": []
+      },
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    }
+  ],
+  "dependency_score": {
+    "completed_recall": 1.0,
+    "correct_abstentions": 5,
+    "end_to_end_recall": 1.0,
+    "failed": 0,
+    "failed_affected": 0,
+    "fn": 0,
+    "fp": 0,
+    "precision": 1.0,
+    "tn": 19,
+    "tp": 8,
+    "unknown": 5,
+    "unstable": 0
+  },
+  "environment": {
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "python": "3.12.13",
+    "repetitions": 3
+  },
+  "input_manifest_sha256": "190a6798ad094e3f2ff65c57e9d4cfa253db0cce28ab4d2e308d5cfb6d213e1e",
+  "ios_branch_extension": {
+    "cases": [
+      {
+        "correct": true,
+        "document": "ios18",
+        "expected": "version-affected",
+        "finding_statuses": [
+          "version-affected"
+        ],
+        "id": "ios18-affected",
+        "observed_states": [
+          "version-affected"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "version": "18.3.1"
+      },
+      {
+        "correct": true,
+        "document": "ios18",
+        "expected": "outside-published-affected-range",
+        "finding_statuses": [],
+        "id": "ios18-boundary",
+        "observed_states": [
+          "outside-published-affected-range"
+        ],
+        "reachability": [],
+        "version": "18.3.2"
+      },
+      {
+        "correct": true,
+        "document": "ios18",
+        "expected": "outside-published-affected-range",
+        "finding_statuses": [],
+        "id": "ios18-later",
+        "observed_states": [
+          "outside-published-affected-range"
+        ],
+        "reachability": [],
+        "version": "18.4.0"
+      },
+      {
+        "correct": true,
+        "document": "ios16",
+        "expected": "version-affected",
+        "finding_statuses": [
+          "version-affected"
+        ],
+        "id": "ios16-affected",
+        "observed_states": [
+          "version-affected"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "version": "16.7.10"
+      },
+      {
+        "correct": true,
+        "document": "ios16",
+        "expected": "outside-published-affected-range",
+        "finding_statuses": [],
+        "id": "ios16-boundary",
+        "observed_states": [
+          "outside-published-affected-range"
+        ],
+        "reachability": [],
+        "version": "16.7.11"
+      },
+      {
+        "correct": true,
+        "document": "ios15",
+        "expected": "version-affected",
+        "finding_statuses": [
+          "version-affected"
+        ],
+        "id": "ios15-affected",
+        "observed_states": [
+          "version-affected"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "version": "15.8.3"
+      },
+      {
+        "correct": true,
+        "document": "ios15",
+        "expected": "outside-published-affected-range",
+        "finding_statuses": [],
+        "id": "ios15-boundary",
+        "observed_states": [
+          "outside-published-affected-range"
+        ],
+        "reachability": [],
+        "version": "15.8.4"
+      },
+      {
+        "correct": true,
+        "document": "ipad17",
+        "expected": "version-affected",
+        "finding_statuses": [
+          "version-affected"
+        ],
+        "id": "ipad17-affected",
+        "observed_states": [
+          "version-affected"
+        ],
+        "os_product": "ipados",
+        "reachability": [
+          "unknown"
+        ],
+        "version": "17.7.5"
+      },
+      {
+        "correct": true,
+        "document": "ipad17",
+        "expected": "outside-published-affected-range",
+        "finding_statuses": [],
+        "id": "ipad17-boundary",
+        "observed_states": [
+          "outside-published-affected-range"
+        ],
+        "os_product": "ipados",
+        "reachability": [],
+        "version": "17.7.6"
+      },
+      {
+        "correct": true,
+        "document": "ipad17",
+        "expected": "applicability-unknown",
+        "finding_statuses": [],
+        "id": "ipad17-requires-product",
+        "observed_states": [
+          "applicability-unknown"
+        ],
+        "reachability": [],
+        "version": "17.7.5"
+      },
+      {
+        "correct": true,
+        "document": "ios18",
+        "expected": "applicability-unknown",
+        "finding_statuses": [],
+        "id": "other-major",
+        "observed_states": [
+          "applicability-unknown"
+        ],
+        "reachability": [],
+        "version": "26.0"
+      },
+      {
+        "correct": true,
+        "document": "ios18",
+        "expected": "applicability-unknown",
+        "finding_statuses": [],
+        "id": "other-bulletin-branch",
+        "observed_states": [
+          "applicability-unknown"
+        ],
+        "reachability": [],
+        "version": "16.7.10"
+      },
+      {
+        "correct": true,
+        "document": "ios18",
+        "expected": "applicability-unknown",
+        "finding_statuses": [],
+        "id": "unordered-beta",
+        "observed_states": [
+          "applicability-unknown"
+        ],
+        "reachability": [],
+        "version": "18.3.1beta"
+      },
+      {
+        "correct": true,
+        "document": "ios18",
+        "expected": "simulator-only",
+        "finding_statuses": [],
+        "id": "simulator",
+        "observed_states": [
+          "simulator-only"
+        ],
+        "reachability": [],
+        "simulator": true,
+        "version": "18.3.1"
+      }
+    ],
+    "correct": 14,
+    "documents": {
+      "ios15": {
+        "label": "iOS 15.8.4",
+        "url": "https://support.apple.com/en-us/122345"
+      },
+      "ios16": {
+        "label": "iOS 16.7.11",
+        "url": "https://support.apple.com/en-us/122346"
+      },
+      "ios18": {
+        "label": "iOS 18.3.2",
+        "url": "https://support.apple.com/en-us/122281"
+      },
+      "ipad17": {
+        "label": "iPadOS 17.7.6",
+        "url": "https://support.apple.com/en-us/122372"
+      }
+    },
+    "fixture_kind": "Synthetic environment and vendor-record fixtures; bulletin labels verified against linked Apple pages, not newly captured HTTP bytes or actual devices.",
+    "primary_sha256": "971fd42da9e0c278cce7d79580f05a396c744694dbc6c5a83c25946395430904",
+    "spec_sha256": "3c57c1b87c407e164bef5c371d0e372faf90be0a260119c8ecc7915f06b82c08",
+    "total": 14
+  },
+  "limits": [
+    "Six convenience-selected public source snapshots; not representative apps or a complete vulnerability truth set.",
+    "Whole source archives include tests, build variants and library modules; no merged release build or reachability proof.",
+    "Selected configuration labels concern explicit source declarations only; broad exceptions may be deliberate product behavior.",
+    "CVE labels are frozen from primary vendor/CNA evidence before scanners run; OSV supplies the engine's matching service, not the scoring oracle.",
+    "Unknown, unsupported, failed, or unstable inputs are not true negatives.",
+    "OS environments are newly generated fixtures, not observations from actual devices.",
+    "No APK/IPA/AAB builds, dynamic testing, exploitation, user apps, private data, or publication of new vulnerabilities."
+  ],
+  "mobsf_image_digest": null,
+  "os_cases": [
+    {
+      "correct": true,
+      "cve": "CVE-2024-32896",
+      "environment": null,
+      "expected_states": [
+        "device-info-required"
+      ],
+      "id": "android-device-info-required",
+      "observed_states": [
+        "device-info-required"
+      ],
+      "platform": "android"
+    },
+    {
+      "correct": true,
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "security_patch": "2024-08-05",
+        "version": "14"
+      },
+      "expected_states": [
+        "potentially-affected"
+      ],
+      "id": "android-old-patch",
+      "observed_states": [
+        "potentially-affected"
+      ],
+      "platform": "android"
+    },
+    {
+      "correct": true,
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "security_patch": "2024-09-01",
+        "version": "14"
+      },
+      "expected_states": [
+        "vendor-patch-level-satisfied"
+      ],
+      "id": "android-fixed-boundary",
+      "observed_states": [
+        "vendor-patch-level-satisfied"
+      ],
+      "platform": "android"
+    },
+    {
+      "correct": true,
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "security_patch": "2024-09-05",
+        "version": "14"
+      },
+      "expected_states": [
+        "vendor-patch-level-satisfied"
+      ],
+      "id": "android-newer-patch",
+      "observed_states": [
+        "vendor-patch-level-satisfied"
+      ],
+      "platform": "android"
+    },
+    {
+      "correct": true,
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "security_patch": "2024-08-05",
+        "version": "11"
+      },
+      "expected_states": [
+        "applicability-unknown"
+      ],
+      "id": "android-unlisted-release",
+      "observed_states": [
+        "applicability-unknown"
+      ],
+      "platform": "android"
+    },
+    {
+      "correct": true,
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "security_patch": "2024-99-99",
+        "version": "14"
+      },
+      "expected_states": [
+        "device-info-required",
+        "applicability-unknown"
+      ],
+      "id": "android-invalid-date",
+      "observed_states": [
+        "device-info-required"
+      ],
+      "platform": "android"
+    },
+    {
+      "correct": true,
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "version": "14"
+      },
+      "expected_states": [
+        "device-info-required"
+      ],
+      "id": "android-missing-patch",
+      "observed_states": [
+        "device-info-required"
+      ],
+      "platform": "android"
+    },
+    {
+      "correct": true,
+      "cve": "CVE-2025-24201",
+      "environment": null,
+      "expected_states": [
+        "device-info-required"
+      ],
+      "id": "ios-device-info-required",
+      "observed_states": [
+        "device-info-required"
+      ],
+      "platform": "ios"
+    },
+    {
+      "correct": true,
+      "cve": "CVE-2025-24201",
+      "environment": {
+        "platform": "ios",
+        "simulator": true,
+        "version": "18.3.1"
+      },
+      "expected_states": [
+        "simulator-only"
+      ],
+      "id": "ios-simulator",
+      "observed_states": [
+        "simulator-only"
+      ],
+      "platform": "ios"
+    },
+    {
+      "correct": false,
+      "cve": "CVE-2025-24201",
+      "environment": {
+        "platform": "ios",
+        "version": "18.3.1"
+      },
+      "expected_states": [
+        "applicability-unknown"
+      ],
+      "id": "ios-custom-cna-range",
+      "observed_states": [
+        "version-affected"
+      ],
+      "platform": "ios"
+    },
+    {
+      "correct": false,
+      "cve": "CVE-2025-24201",
+      "environment": {
+        "platform": "ios",
+        "version": "18.3.2"
+      },
+      "expected_states": [
+        "applicability-unknown"
+      ],
+      "id": "ios-fixed-label-not-universal-bound",
+      "observed_states": [
+        "outside-published-affected-range"
+      ],
+      "platform": "ios"
+    }
+  ],
+  "osv_manifest_sha256": "f35c7459384896150a24f3dee8c9a68d52b83aea9e2b083b9fa6ba292c0ad145",
+  "replay_provenance": {
+    "comparator": "APSA only; original MobSF observations were not rerun",
+    "kind": "development-rerun-after-labels-seen",
+    "original_input_manifest_sha256": "190a6798ad094e3f2ff65c57e9d4cfa253db0cce28ab4d2e308d5cfb6d213e1e",
+    "original_osv_manifest_sha256": "6e6fbb050eddfdf5c30b6a424e6d325946235ff18565695d3503e81f96c5fb10",
+    "original_run_id": 37879443007,
+    "original_source_revision": "5513aa0d4466f8ce0413c4720a3f2e470e417924",
+    "original_summary_sha256": "a08769d89866515d3af1e772260cb944b970746f2599e77415a39c77747b2d32",
+    "supplemental_capture_artifact_digest": "sha256:702bc75b66943974adda7467ea67fb0a8be44bcbf50a04913f70e66efd6667ab",
+    "supplemental_capture_artifact_id": 11596401157,
+    "supplemental_capture_run_id": 37885440079,
+    "supplemental_osv": {
+      "responses": [
+        {
+          "bytes": 10073,
+          "captured_at": "2026-10-09T04:46:41.465519+00:00",
+          "key": "d429018e216c29ba40a9279792fa0e0a0a859975e26ae931bd5e7d1f236582dd",
+          "payload": {
+            "package": {
+              "ecosystem": "Maven",
+              "name": "org.jsoup:jsoup"
+            },
+            "version": "1.15.1"
+          },
+          "sha256": "822b30c31a2b254704bf6f18a081a9709aff5106a4288c0668a90ae07b1a1678",
+          "status": 200
+        }
+      ],
+      "schema": "apsa-osv-http-snapshot-v1"
+    },
+    "supplemental_osv_manifest_sha256": "604ef9085abaca3dc460bd20bdcf3fb075b08efbd66256d86101fab6d0d3c5fe"
+  },
+  "schema": "apsa-real-world-result-v1",
+  "selected_real_app_cve_cases": [
+    {
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "confidence": "declared",
+        "ecosystem": "Maven",
+        "name": "org.jsoup:jsoup",
+        "path": "app/build.gradle",
+        "version": "1.17.2"
+      },
+      "expected": "unaffected",
+      "id": "newpipe-CVE-2022-36033",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": false,
+        "matched_ids": [
+          "CVE-2026-71497",
+          "CVE-2026-75140"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "candidate"
+        ]
+      },
+      "source_dependency_label": {
+        "ecosystem": "Maven",
+        "git_blob": "d03bd64e320eef26d45cea4362deada9816b4a2c",
+        "name": "org.jsoup:jsoup",
+        "path": "app/build.gradle",
+        "version": "1.17.2"
+      }
+    },
+    {
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "confidence": "declared",
+        "ecosystem": "Maven",
+        "name": "org.jsoup:jsoup",
+        "path": "parser/feed/build.gradle",
+        "version": "1.15.1",
+        "version_expression": "$jsoupVersion",
+        "version_interpolation": true,
+        "version_source": {
+          "line": 29,
+          "path": "build.gradle",
+          "property": "jsoupVersion",
+          "value": "1.15.1"
+        }
+      },
+      "expected": "affected",
+      "id": "antennapod-CVE-2022-36033",
+      "result": {
+        "errors": [],
+        "feed_status": [
+          "ok"
+        ],
+        "matched": true,
+        "matched_ids": [
+          "CVE-2022-36033",
+          "CVE-2026-71497",
+          "CVE-2026-75140"
+        ],
+        "reachability": [
+          "unknown"
+        ],
+        "state": "completed",
+        "statuses": [
+          "candidate"
+        ]
+      },
+      "source_dependency_label": {
+        "ecosystem": "Maven",
+        "git_blob": "e06aa76372d2b432dd13e58c690162ee0e544333",
+        "name": "org.jsoup:jsoup",
+        "path": "parser/feed/build.gradle",
+        "version": "1.15.1"
+      }
+    },
+    {
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "confidence": "unknown",
+        "ecosystem": "Maven",
+        "name": "org.jsoup:jsoup",
+        "path": "gradle/libs.versions.toml",
+        "version": "1.15.4",
+        "version_source": "catalog-declared-unresolved-usage"
+      },
+      "expected": "unaffected",
+      "id": "k9-CVE-2022-36033",
+      "result": {
+        "errors": [
+          "Unresolved/unsupported dependency: Maven org.jsoup:jsoup 1.15.4"
+        ],
+        "feed_status": [],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "abstained",
+        "statuses": []
+      },
+      "source_dependency_label": {
+        "ecosystem": "Maven",
+        "git_blob": "2ecc23b55d766ef0d36992bf165a9efb4f505aaf",
+        "name": "org.jsoup:jsoup",
+        "path": "gradle/libs.versions.toml",
+        "version": "1.15.4"
+      }
+    },
+    {
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "confidence": "unknown",
+        "ecosystem": "Maven",
+        "name": "com.squareup.okio:okio",
+        "path": "gradle/libs.versions.toml",
+        "version": "3.7.0",
+        "version_source": "catalog-declared-unresolved-usage"
+      },
+      "expected": "unaffected",
+      "id": "k9-CVE-2023-3635",
+      "result": {
+        "errors": [
+          "Unresolved/unsupported dependency: Maven com.squareup.okio:okio 3.7.0"
+        ],
+        "feed_status": [],
+        "matched": false,
+        "matched_ids": [],
+        "reachability": [],
+        "state": "abstained",
+        "statuses": []
+      },
+      "source_dependency_label": {
+        "ecosystem": "Maven",
+        "git_blob": "2ecc23b55d766ef0d36992bf165a9efb4f505aaf",
+        "name": "com.squareup.okio:okio",
+        "path": "gradle/libs.versions.toml",
+        "version": "3.7.0"
+      }
+    }
+  ],
+  "selected_real_app_cve_score": {
+    "completed_recall": 1.0,
+    "correct_abstentions": 0,
+    "end_to_end_recall": 1.0,
+    "failed": 2,
+    "failed_affected": 0,
+    "fn": 0,
+    "fp": 0,
+    "precision": 1.0,
+    "tn": 1,
+    "tp": 1,
+    "unknown": 0,
+    "unstable": 0
+  },
+  "source_revision": "9c2d5d5033132ee2113a2638e17d3225d2e7dbc8",
+  "spec_sha256": "dee900f64f18513d283c8a3581a86152f804910a535175e4198ff208573514fc"
+}

@@ -1,0 +1,20 @@
+{
+  "aapt2_sha256": "d1096e11aba9c974644369ee3c50d239acac3f3428ffa928e5b9c14dfb7a57de",
+  "aapt2_version": "Android Asset Packaging Tool (aapt) 2.19-11948202",
+  "android_jar_sha256": "4566663c3876e022b4fa4ced8c8697c4ab1688267f090114fd92d027b32e619b",
+  "fixture": "fresh-synthetic-only-no-upstream-app",
+  "independent_dump": "N: android=http://schemas.android.com/apk/res/android (line=1)\n  E: manifest (line=1)\n    A: package=\"audit.generated\" (Raw: \"audit.generated\")\n    A: http://schemas.android.com/apk/res/android:compileSdkVersion(0x01010572)=35 (Raw: \"35\")\n    A: platformBuildVersionCode=35 (Raw: \"35\")\n    A: http://schemas.android.com/apk/res/android:compileSdkVersionCodename(0x01010573)=\"15\" (Raw: \"15\")\n    A: platformBuildVersionName=15 (Raw: \"15\")\n      E: uses-sdk (line=1)\n        A: http://schemas.android.com/apk/res/android:minSdkVersion(0x0101020c)=21 (Raw: \"21\")\n        A: http://schemas.android.com/apk/res/android:targetSdkVersion(0x01010270)=35 (Raw: \"35\")\n      E: application (line=1)\n        A: http://schemas.android.com/apk/res/android:debuggable(0x0101000f)=true (Raw: \"true\")\n        A: http://schemas.android.com/apk/res/android:usesCleartextTraffic(0x010104ec)=false (Raw: \"false\")\n",
+  "installed_split_set_verified": false,
+  "manifest_sha256": "79a10f42bef785cfd2981ebb77ba128401484d85c8e198aedd16dc9bf68a8a38",
+  "module_inventory": [
+    "base"
+  ],
+  "observed_configuration": {
+    "allow_backup": "unspecified",
+    "cleartext": "false",
+    "debuggable": "true",
+    "network_security_config": "",
+    "path": "base/manifest/AndroidManifest.xml"
+  },
+  "resource_merge_verified": false
+}

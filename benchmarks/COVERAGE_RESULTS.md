@@ -129,6 +129,11 @@ independent Codex lanes, not Claude, Devin or Agy invocations.
 
 ## Remaining evidence
 
+The later [analysis extension and independent holdout](NEXT_RESULTS.md) addresses
+selected gaps below on a different unreleased snapshot. This page preserves
+the dev3 measurements and review scope; it does not describe the newer parser,
+Objective-C or catalog-usage behavior.
+
 Kotlin constructor/newline syntax and modern Swift `@Sendable`, `if await`
 and other syntax gaps remain. Firefox still has the large PBX reference token
 budget and unavailable/invalid Deferred plist warning. Unsupported languages,

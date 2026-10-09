@@ -224,4 +224,8 @@ make release RELEASE_OUT=dist/apsa-local-release
 호환 처리한 소스는 부분 분석으로 남으며, 선택한 사례로 일반적인 CVE 정확도를
 입증하지 않습니다.
 
+[추가 분석·독립 정답 평가](benchmarks/NEXT_RESULTS.ko.md)는 AAB·IPA 메타데이터,
+Objective-C, 파서 격리와 독립 라벨의 새 공개 소스 2개를 다룹니다.
+선택한 CVE 경계 일치, catalog 사용 미확인과 남은 구문 누락을 별도로 기록합니다.
+
 소스는 [GitHub](https://github.com/ictechgy/apsa)에 공개되어 있습니다. [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE)는 원래 Quaygate의 MIT 고지를 보존합니다. 이번 공개는 통합 제품에 추가 라이선스를 선언하지 않습니다.
