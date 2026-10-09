@@ -204,4 +204,10 @@ make release RELEASE_OUT=dist/apsa-local-release
 [측정 결과](benchmarks/COMPETITIVE_RESULTS.ko.md)를 제공합니다. 개선한 규칙은 아직 배포하지 않은
 벤치마크 후보이며, 이 결과는 운영 앱의 정확도를 나타내지 않습니다.
 
+별도의 [공개 소스·CVE 평가](benchmarks/REAL_WORLD.ko.md)와
+[최초 결과](benchmarks/REAL_WORLD_RESULTS.ko.md)는 커밋을 고정한 앱 소스 6개,
+선택한 의존성·CVE, OS 공지 사례를 검증합니다. 의존성 추출 누락·분석 실패·
+불완전한 커버리지를 유지하며 앱 전체의 보안이나 일반적인 운영 정확도를
+측정하지 않습니다.
+
 소스는 [GitHub](https://github.com/ictechgy/apsa)에 공개되어 있습니다. [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE)는 원래 Quaygate의 MIT 고지를 보존합니다. 이번 공개는 통합 제품에 추가 라이선스를 선언하지 않습니다.

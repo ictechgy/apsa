@@ -1,0 +1,854 @@
+{
+  "captured_osv": {
+    "responses": [
+      {
+        "bytes": 4792,
+        "captured_at": "2026-10-09T03:33:43.204141+00:00",
+        "key": "1b20f19bffd0f6a1719d0627d0c456a8020c40322cf5b15c9492379f1941e103",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.jsoup:jsoup"
+          },
+          "version": "1.15.3"
+        },
+        "sha256": "e7d8f785870d57447189778494fe29068bfdd1877bc59cea68573d65fac90cc3",
+        "status": 200
+      },
+      {
+        "bytes": 2117,
+        "captured_at": "2026-10-09T03:33:42.023152+00:00",
+        "key": "1b80bb641a8c7d955c394667df4dc68843607880bff3f4b5b4998124f0e38e2d",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "com.google.code.gson:gson"
+          },
+          "version": "2.8.8"
+        },
+        "sha256": "1011fe44de966b64dc7e8f3376ad282f8ad47899805e1264016a0350fc89ace5",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:42.185342+00:00",
+        "key": "31ff4067dc8f70e708664e7f17dd87b101f7e743ab12e74d8d49de6dbfab1056",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "com.google.code.gson:gson"
+          },
+          "version": "2.8.9"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 26258,
+        "captured_at": "2026-10-09T03:33:45.613651+00:00",
+        "key": "34f009cae2eff24768337b09f534ee57200b3a68606cb281de94b1eab45dbe29",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.bouncycastle:bcprov-jdk18on"
+          },
+          "version": "1.78"
+        },
+        "sha256": "53fc9cb33c66282d277ee07297784a171833bddb9c64a4ce12a4d8766547e7f7",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:42.816036+00:00",
+        "key": "37ddde330bb49fc2f1d358d1f10783c7cd28e3eeff8b9b73bac2e5fcab7dd96a",
+        "payload": {
+          "package": {
+            "ecosystem": "npm",
+            "name": "gson"
+          },
+          "version": "2.8.8"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:44.145823+00:00",
+        "key": "3d5b044cddf95674ba0aba1cf723cd3b0ab3908baaeb36047bfaa1a1de8196d3",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "com.squareup.okio:okio"
+          },
+          "version": "1.17.6"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 10073,
+        "captured_at": "2026-10-09T03:33:43.003144+00:00",
+        "key": "40bc1f18fe5bb7457fe48fa7e3928ce9c4afd01126f49ea0b47bab398c68e823",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.jsoup:jsoup"
+          },
+          "version": "1.15.2"
+        },
+        "sha256": "c49d2bd23aa850e7f363a4fe68fd2ebcd9c3b67a8cbe6abb1216b32b57eb8335",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:46.636401+00:00",
+        "key": "48b1e0e849018e0c819571ba09684799a058ebc7c782aa807b99145a9afd4c2e",
+        "payload": {
+          "package": {
+            "ecosystem": "SwiftURL",
+            "name": "https://github.com/apple/swift-nio"
+          },
+          "version": "2.100.0"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 3311,
+        "captured_at": "2026-10-09T03:33:44.315147+00:00",
+        "key": "48c5fe19571fb13957788e129e45a988dcc6e2c2f43dd855b030b3cf836b3051",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "com.squareup.okio:okio"
+          },
+          "version": "3.3.0"
+        },
+        "sha256": "ee40141b6c099f5739cf37d41c661040e7bc62f147d527688dd31f6e916aa13e",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:44.679637+00:00",
+        "key": "49127f0255c1d7b4b17bcaa14025a59cb283183a17a16e6ecd53e636e25ca1f6",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "com.squareup.okio:okhttp"
+          },
+          "version": "3.3.0"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 23393,
+        "captured_at": "2026-10-09T03:33:45.027173+00:00",
+        "key": "4d161ae740f0e75ae990cc9b66cfb008a51bd9b05c862766d2eb0d3fca61733d",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.bouncycastle:bctls-jdk18on"
+          },
+          "version": "1.77"
+        },
+        "sha256": "c859679636005ed4dfd9696e8fc8ad44a50880be9a1e05c38e216fbe3400ec8d",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:46.298836+00:00",
+        "key": "5aad516b3bab85fb78ea4b7c8f0751e5a005c96c6459d73358fe80e68c492bed",
+        "payload": {
+          "package": {
+            "ecosystem": "SwiftURL",
+            "name": "github.com/apple/swift-nio"
+          },
+          "version": "2.100.0"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:45.944187+00:00",
+        "key": "65123d1ea79e8b41263de0e533bd5db58cc10a22e82f5e142f1246f38e686a9a",
+        "payload": {
+          "package": {
+            "ecosystem": "npm",
+            "name": "bctls-jdk18on"
+          },
+          "version": "1.77"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 4792,
+        "captured_at": "2026-10-09T03:33:43.401138+00:00",
+        "key": "65b1465d82b8df4f7a42895b6d22dbbf0f475c5cdf1eafe7c6758c0e6db255d0",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.jsoup:jsoup"
+          },
+          "version": "1.17.2"
+        },
+        "sha256": "cc693631e8082e00176fbc19eb1f383bed927bb48d4b047a58eb2a976b932db5",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:42.388840+00:00",
+        "key": "7f4c46574f424083f674ece3d43221436c3b0ddf2d276d967c23f4da79e62ce4",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "com.google.code.gson:gson"
+          },
+          "version": "2.10.1"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:44.521028+00:00",
+        "key": "8369c47e5f12b8b47a5eaba91d19157c94128832d1ba8e494180692a72b83ca5",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "com.squareup.okio:okio"
+          },
+          "version": "3.4.0"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:46.820366+00:00",
+        "key": "83ccd82d89c06e132d4f29530248a581e9c6c0a1e4a0fc470ae3769f60374c42",
+        "payload": {
+          "package": {
+            "ecosystem": "SwiftURL",
+            "name": "github.com/example/swift-nio"
+          },
+          "version": "2.99.0"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:43.784798+00:00",
+        "key": "85164076656b9f6c0d4dc2a98f77e6fcdd66173571c79c0196c22e718a3f2a71",
+        "payload": {
+          "package": {
+            "ecosystem": "npm",
+            "name": "jsoup"
+          },
+          "version": "1.15.2"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:44.837229+00:00",
+        "key": "968b5f20a5c3ab509a63a1706ca0de9444a571f8c90be670e918914cb6d7de75",
+        "payload": {
+          "package": {
+            "ecosystem": "npm",
+            "name": "okio"
+          },
+          "version": "3.3.0"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 3311,
+        "captured_at": "2026-10-09T03:33:43.972377+00:00",
+        "key": "9f16c62b3edb209ddd8267a61f3e7ba5b7497c0f212e28ed279383975c9f8dc6",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "com.squareup.okio:okio"
+          },
+          "version": "1.17.5"
+        },
+        "sha256": "b93d449299f1c04568879c6dbae83fd5898a9990789bef4d2ff1e84ffb7dc8d5",
+        "status": 200
+      },
+      {
+        "bytes": 4792,
+        "captured_at": "2026-10-09T03:33:47.028991+00:00",
+        "key": "a06724f6796221eb614ad06fe16a5576c29c8938535af45a85e02b4bee55b3e9",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.jsoup:jsoup"
+          },
+          "version": "1.15.4"
+        },
+        "sha256": "2b1793bd9e4493cab4d0e586ed3621e57ea39b05488070506c55db7420d89bae",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:45.786194+00:00",
+        "key": "a46db327a7a52f6bbe65b5009339b0ca7db57e2d001cc7547eb03f0d72c09a33",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.example:bctls-jdk18on"
+          },
+          "version": "1.77"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:47.198307+00:00",
+        "key": "a528d2e0af7c1a6ba603f70b599b72b1b7476d781c5a0b1e555ca477065c9027",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "com.squareup.okio:okio"
+          },
+          "version": "3.7.0"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:43.611502+00:00",
+        "key": "a8e13d00cbc17c42028cdbec30b3232aedec0d215d3af574202724bc9e391859",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.example:jsoup"
+          },
+          "version": "1.15.2"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 54463,
+        "captured_at": "2026-10-09T03:33:45.408130+00:00",
+        "key": "aee4ded09f7e35cd740113df5572cb418ab56b662fd3c8322bfe0b284893f970",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.bouncycastle:bcprov-jdk18on"
+          },
+          "version": "1.77"
+        },
+        "sha256": "8917629aea458cc985f946e7b64ffe0b200a823d5bc81c0a36e3addfde66e69a",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:45.208431+00:00",
+        "key": "d0e74fb0c098fb8f768aa0698a06f19983b966b98a5c8c65f14bddb8acb81ab2",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.bouncycastle:bctls-jdk18on"
+          },
+          "version": "1.78"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 14572,
+        "captured_at": "2026-10-09T03:33:46.129135+00:00",
+        "key": "d60e5f90d65263a236cb83c95631f2046f1ba310e4b84f73c58cfa2925e645b9",
+        "payload": {
+          "package": {
+            "ecosystem": "SwiftURL",
+            "name": "github.com/apple/swift-nio"
+          },
+          "version": "2.99.0"
+        },
+        "sha256": "9ce511adaed83d1316de2417a71c6f09b351846bfd3b56d948beb902079c1d04",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:46.455915+00:00",
+        "key": "dfd3cfe47cfdd13428640b987c21548d1f83a2819899ee2b2369dc17d3086c25",
+        "payload": {
+          "package": {
+            "ecosystem": "SwiftURL",
+            "name": "https://github.com/apple/swift-nio"
+          },
+          "version": "2.99.0"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      },
+      {
+        "bytes": 2,
+        "captured_at": "2026-10-09T03:33:42.591309+00:00",
+        "key": "f2fd90358ff7a4f1f6f21b63ad549dce2c9a5651be40284a4833b5814fab185d",
+        "payload": {
+          "package": {
+            "ecosystem": "Maven",
+            "name": "org.example:gson"
+          },
+          "version": "2.8.8"
+        },
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "status": 200
+      }
+    ],
+    "schema": "apsa-osv-http-snapshot-v1"
+  },
+  "diagnostic_runs": [
+    {
+      "conclusion": "failure",
+      "job_id": 113659045004,
+      "public_source_revision": "7cc3ce7c4c6d15e408d04a791e37f5a8ed5852f0",
+      "reason": "Fixed summary guard stopped before inspection: JavaScript serialization changed Python 1.0 to 1. Original Python output bytes were recovered without changing values; original result scores were never replaced.",
+      "run_id": 37880560673
+    },
+    {
+      "conclusion": "success",
+      "engine_hashes_checked": true,
+      "input_manifest_hash_checked": true,
+      "job_id": 113660024790,
+      "local_source_revision": "1cbfb101aa0c964edf2c0adaa410240259169daa",
+      "online": false,
+      "osv_manifest_hash_checked": true,
+      "public_source_revision": "40dc95893e151842ce247ef3a71e5747c4f362fa",
+      "run_id": 37880872218,
+      "score_replaced": false,
+      "summary_hash_checked": true,
+      "tree": "293e984b43e9aeee25edcf746ca54e6e0652a896"
+    }
+  ],
+  "general_ci": {
+    "conclusion": "success",
+    "lanes": [
+      {
+        "conclusion": "success",
+        "id": 113655490002,
+        "name": "macos-15 / Python 3.11.15"
+      },
+      {
+        "conclusion": "success",
+        "id": 113655490179,
+        "name": "macos-15 / Python 3.12.13"
+      },
+      {
+        "conclusion": "success",
+        "id": 113655490211,
+        "name": "ubuntu-24.04 / Python 3.11.15"
+      },
+      {
+        "conclusion": "success",
+        "id": 113655490327,
+        "name": "ubuntu-24.04 / Python 3.12.13"
+      }
+    ],
+    "linux_tests": 716,
+    "run_id": 37879443024
+  },
+  "initial_artifact": {
+    "archive_download_url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11593238939/zip",
+    "created_at": "2026-10-09T03:33:49Z",
+    "digest": "sha256:30fb74fd21788fd0d2a50ee80723d164f335121fe4d75189727ee321bc7e616e",
+    "expired": false,
+    "expires_at": "2026-11-08T03:33:47Z",
+    "id": 11593238939,
+    "name": "public-real-world-evaluation",
+    "size_in_bytes": 19072778,
+    "updated_at": "2026-10-09T03:33:49Z",
+    "url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11593238939",
+    "workflow_run": {
+      "head_branch": "benchmark/real-apps-cve-v1",
+      "head_repository_id": 1406574335,
+      "head_sha": "5513aa0d4466f8ce0413c4720a3f2e470e417924",
+      "id": 37879443007,
+      "repository_id": 1406574335
+    }
+  },
+  "initial_run": {
+    "conclusion": "success",
+    "job_id": 113655489966,
+    "local_source_revision": "8c5a90787bcafd9484071611ad496f0453a2ff1e",
+    "public_source_revision": "5513aa0d4466f8ce0413c4720a3f2e470e417924",
+    "run_id": 37879443007,
+    "summary_sha256": "a08769d89866515d3af1e772260cb944b970746f2599e77415a39c77747b2d32",
+    "tree": "42c8b6c9cb3beef83f630c951ac5d5e23f285db4"
+  },
+  "nextcloud_failure": {
+    "app": "nextcloudios",
+    "input_sha256": "ec92d96076c91c0836dcc0bab943296898301d5ffe13c00a1effd61878daa7d5",
+    "returncode": 1,
+    "stderr": "",
+    "stdout": "{\"ok\": false, \"error\": {\"type\": \"ValueError\", \"message\": \"Input analysis failed (ValueError): Archive has no readable Android manifest or main iOS Info.plist\"}, \"exit_code\": 1}\n"
+  },
+  "prepared_inputs": {
+    "apps": [
+      {
+        "id": "newpipe",
+        "input": "newpipe.zip",
+        "omitted": [
+          {
+            "path": "app/src/main/res/values-iw",
+            "reason": "symlink"
+          }
+        ],
+        "sha256": "310036384125adad2bd72aed5221b481b75d9ee11adedae3e88ef9968149a20b",
+        "source_bytes": 9670738,
+        "source_entries": 951,
+        "upstream": {
+          "bytes": 12978034,
+          "resolved_url": "https://codeload.github.com/TeamNewPipe/NewPipe/zip/c6e17218843e59f264f39d9cd719c1173a95abfd",
+          "sha256": "e2cf3bf4b1086b7c3d192c5aa0088655c25fc1530e744650add107b30532a046",
+          "url": "https://codeload.github.com/TeamNewPipe/NewPipe/zip/c6e17218843e59f264f39d9cd719c1173a95abfd"
+        },
+        "verified_git_blobs": {
+          "app/build.gradle": "d03bd64e320eef26d45cea4362deada9816b4a2c",
+          "app/src/main/AndroidManifest.xml": "d11de9f478d3645ab75c8c0974b9fa6cfb7df66b"
+        }
+      },
+      {
+        "id": "antennapod",
+        "input": "antennapod.zip",
+        "omitted": [
+          {
+            "path": "app/src/free/play",
+            "reason": "symlink"
+          },
+          {
+            "path": "app/src/play/play",
+            "reason": "symlink"
+          },
+          {
+            "path": "ui/preferences/src/main/assets/LICENSE.txt",
+            "reason": "symlink"
+          }
+        ],
+        "sha256": "04efb938a408782d1fab21dedd22f5e806cc7d2cb4278c78b8fe9b60bd9aab83",
+        "source_bytes": 6064876,
+        "source_entries": 1061,
+        "upstream": {
+          "bytes": 8915707,
+          "resolved_url": "https://codeload.github.com/AntennaPod/AntennaPod/zip/26175298968afabdd6555040f07a78c6e7524bf2",
+          "sha256": "a67c1eccd8de91990059c078d6cb47e63e05a39a729d2b6596cca78601ce9ddf",
+          "url": "https://codeload.github.com/AntennaPod/AntennaPod/zip/26175298968afabdd6555040f07a78c6e7524bf2"
+        },
+        "verified_git_blobs": {
+          "app/src/main/AndroidManifest.xml": "55b1eaeb96a070f37f0d4e11479290346aecb3e8",
+          "build.gradle": "6eaf7c0febdfd3ee72d00eb2ed2a7b99cb41e1ab",
+          "net/common/build.gradle": "4d80916d2b714f7353a3627408fb8d2071ad9e65",
+          "parser/feed/build.gradle": "e06aa76372d2b432dd13e58c690162ee0e544333"
+        }
+      },
+      {
+        "id": "k9",
+        "input": "k9.zip",
+        "omitted": [],
+        "sha256": "33d8c1609a980c1b1d8c58d743a21d7ea8b336accba454a49ef9f38007601d6c",
+        "source_bytes": 12871501,
+        "source_entries": 3039,
+        "upstream": {
+          "bytes": 8786097,
+          "resolved_url": "https://codeload.github.com/thunderbird/thunderbird-android/zip/62caaba78f7204278359b1d96d77f74f3c5d05f5",
+          "sha256": "59f5f9495771e634586030b697aabc95ac58890a90c3a3956ceac27d50811507",
+          "url": "https://codeload.github.com/thunderbird/thunderbird-android/zip/62caaba78f7204278359b1d96d77f74f3c5d05f5"
+        },
+        "verified_git_blobs": {
+          "app/common/src/main/AndroidManifest.xml": "a097a240412528f2018f5f59d8ebc823ee9615dc",
+          "gradle/libs.versions.toml": "2ecc23b55d766ef0d36992bf165a9efb4f505aaf"
+        }
+      },
+      {
+        "id": "nextcloudios",
+        "input": "nextcloudios.zip",
+        "omitted": [],
+        "sha256": "ec92d96076c91c0836dcc0bab943296898301d5ffe13c00a1effd61878daa7d5",
+        "source_bytes": 3664491,
+        "source_entries": 496,
+        "upstream": {
+          "bytes": 10018379,
+          "resolved_url": "https://codeload.github.com/nextcloud/ios/zip/d590f07c5ec294b1f1bd3e120b88cf38ddb78fdb",
+          "sha256": "d3fb68357f37fec06f25bc804426d93bc42aa27f09866458895ee0aace0086d3",
+          "url": "https://codeload.github.com/nextcloud/ios/zip/d590f07c5ec294b1f1bd3e120b88cf38ddb78fdb"
+        },
+        "verified_git_blobs": {
+          "Brand/iOSClient.plist": "dae6de554307b87bf0785e11c718404b51f170f2",
+          "Nextcloud.xcodeproj/project.pbxproj": "ee34afa1ec15f6428c5c6165f9083124a81d7a93"
+        }
+      },
+      {
+        "id": "firefox",
+        "input": "firefox.zip",
+        "omitted": [],
+        "sha256": "a474d12390d883c24d988589d5a93005049f58c86e545650c2206f86054d3f5d",
+        "source_bytes": 37927597,
+        "source_entries": 4375,
+        "upstream": {
+          "bytes": 106618729,
+          "resolved_url": "https://codeload.github.com/mozilla-mobile/firefox-ios/zip/afcb46afdf55892e33638a2b81b3570cffb81a21",
+          "sha256": "0f3bda492935c09b852c587cd0f9f945e956110b4e6da554abda3a101f2329ea",
+          "url": "https://codeload.github.com/mozilla-mobile/firefox-ios/zip/afcb46afdf55892e33638a2b81b3570cffb81a21"
+        },
+        "verified_git_blobs": {
+          "firefox-ios/Client.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved": "fa9baec273413d766d37d27bb39586fcd3974e71",
+          "firefox-ios/Client/Info.plist": "c9c4ab96c0db8d79f85b4ca734b17b4ffc473932"
+        }
+      },
+      {
+        "id": "icecubes",
+        "input": "icecubes.zip",
+        "omitted": [
+          {
+            "path": "AGENTS.MD",
+            "reason": "symlink"
+          }
+        ],
+        "sha256": "0ad3132befa94435a69fe2f6f22822fb641cb2e1bb4847d257589237283e5034",
+        "source_bytes": 1489933,
+        "source_entries": 553,
+        "upstream": {
+          "bytes": 81187962,
+          "resolved_url": "https://codeload.github.com/Dimillian/IceCubesApp/zip/2ad6e689125801abeb7e356360785c08a4864982",
+          "sha256": "c963feb0e5fbe672ea4b2c58f7495610f8923856e504c30553a236305adcb20e",
+          "url": "https://codeload.github.com/Dimillian/IceCubesApp/zip/2ad6e689125801abeb7e356360785c08a4864982"
+        },
+        "verified_git_blobs": {
+          "IceCubesApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved": "3f893a80ae2a5824177d6b1d0cd154f0dd2c8c5d",
+          "IceCubesApp/Info.plist": "699c971320336d32428d347740b214b94e8c4b92"
+        }
+      }
+    ],
+    "documents": [
+      {
+        "bytes": 197671,
+        "id": "android",
+        "resolved_url": "https://source.android.com/docs/security/bulletin/2024-09-01",
+        "sha256": "af32bec7f2352019859e68b89e62c3d665bb6b4c1ea31183b3f5f57f3d940d24",
+        "url": "https://source.android.com/docs/security/bulletin/2024-09-01"
+      },
+      {
+        "bytes": 157403,
+        "id": "apple",
+        "resolved_url": "https://support.apple.com/en-us/122281",
+        "sha256": "afd66aa3f202e4beec18589dc219774240441110fe53460d82bd06e72e453ec0",
+        "url": "https://support.apple.com/en-us/122281"
+      },
+      {
+        "bytes": 184629,
+        "id": "swift-nio",
+        "resolved_url": "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v",
+        "sha256": "82463d9b5d969878374d2da9168decaf22fd1e117e5c4419e14c92c456cf8943",
+        "url": "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      }
+    ],
+    "primary_json_sha256": "971fd42da9e0c278cce7d79580f05a396c744694dbc6c5a83c25946395430904",
+    "schema": "apsa-real-world-input-v1",
+    "spec_sha256": "dee900f64f18513d283c8a3581a86152f804910a535175e4198ff208573514fc"
+  },
+  "schema": "apsa-public-real-world-evidence-v1",
+  "selected_dependency_inventory": [
+    {
+      "app": "newpipe",
+      "expected": {
+        "ecosystem": "Maven",
+        "git_blob": "d03bd64e320eef26d45cea4362deada9816b4a2c",
+        "name": "org.jsoup:jsoup",
+        "path": "app/build.gradle",
+        "version": "1.17.2"
+      },
+      "observed": [
+        {
+          "confidence": "declared",
+          "ecosystem": "Maven",
+          "name": "org.jsoup:jsoup",
+          "path": "app/build.gradle",
+          "version": "1.17.2"
+        }
+      ]
+    },
+    {
+      "app": "newpipe",
+      "expected": {
+        "ecosystem": "Maven",
+        "git_blob": "d03bd64e320eef26d45cea4362deada9816b4a2c",
+        "name": "com.squareup.okhttp3:okhttp",
+        "path": "app/build.gradle",
+        "version": "4.12.0"
+      },
+      "observed": [
+        {
+          "confidence": "declared",
+          "ecosystem": "Maven",
+          "name": "com.squareup.okhttp3:okhttp",
+          "path": "app/build.gradle",
+          "version": "4.12.0"
+        }
+      ]
+    },
+    {
+      "app": "antennapod",
+      "expected": {
+        "ecosystem": "Maven",
+        "git_blob": "e06aa76372d2b432dd13e58c690162ee0e544333",
+        "name": "org.jsoup:jsoup",
+        "path": "parser/feed/build.gradle",
+        "version": "1.15.1"
+      },
+      "observed": [
+        {
+          "confidence": "unknown",
+          "ecosystem": "Maven",
+          "name": "org.jsoup:jsoup",
+          "path": "parser/feed/build.gradle",
+          "version": "$jsoupVersion"
+        }
+      ]
+    },
+    {
+      "app": "antennapod",
+      "expected": {
+        "ecosystem": "Maven",
+        "git_blob": "4d80916d2b714f7353a3627408fb8d2071ad9e65",
+        "name": "com.squareup.okhttp3:okhttp",
+        "path": "net/common/build.gradle",
+        "version": "4.12.0"
+      },
+      "observed": [
+        {
+          "confidence": "unknown",
+          "ecosystem": "Maven",
+          "name": "com.squareup.okhttp3:okhttp",
+          "path": "net/common/build.gradle",
+          "version": "$okhttpVersion"
+        }
+      ]
+    },
+    {
+      "app": "k9",
+      "expected": {
+        "ecosystem": "Maven",
+        "git_blob": "2ecc23b55d766ef0d36992bf165a9efb4f505aaf",
+        "name": "org.jsoup:jsoup",
+        "path": "gradle/libs.versions.toml",
+        "version": "1.15.4"
+      },
+      "observed": [
+        {
+          "confidence": "declared",
+          "ecosystem": "Maven",
+          "name": "org.jsoup:jsoup",
+          "path": "gradle/libs.versions.toml",
+          "version": "1.15.4"
+        }
+      ]
+    },
+    {
+      "app": "k9",
+      "expected": {
+        "ecosystem": "Maven",
+        "git_blob": "2ecc23b55d766ef0d36992bf165a9efb4f505aaf",
+        "name": "com.squareup.okio:okio",
+        "path": "gradle/libs.versions.toml",
+        "version": "3.7.0"
+      },
+      "observed": [
+        {
+          "confidence": "declared",
+          "ecosystem": "Maven",
+          "name": "com.squareup.okio:okio",
+          "path": "gradle/libs.versions.toml",
+          "version": "3.7.0"
+        }
+      ]
+    },
+    {
+      "app": "firefox",
+      "expected": {
+        "ecosystem": "SwiftURL",
+        "git_blob": "fa9baec273413d766d37d27bb39586fcd3974e71",
+        "name": "https://github.com/onevcat/Kingfisher",
+        "path": "firefox-ios/Client.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+        "version": "8.13.0"
+      },
+      "observed": [
+        {
+          "confidence": "exact",
+          "ecosystem": "SwiftURL",
+          "name": "https://github.com/onevcat/Kingfisher",
+          "path": "firefox-ios/Client.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "version": "8.13.0"
+        }
+      ]
+    },
+    {
+      "app": "firefox",
+      "expected": {
+        "ecosystem": "SwiftURL",
+        "git_blob": "fa9baec273413d766d37d27bb39586fcd3974e71",
+        "name": "https://github.com/getsentry/sentry-cocoa",
+        "path": "firefox-ios/Client.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+        "version": "9.10.0"
+      },
+      "observed": [
+        {
+          "confidence": "exact",
+          "ecosystem": "SwiftURL",
+          "name": "https://github.com/getsentry/sentry-cocoa",
+          "path": "firefox-ios/Client.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "version": "9.10.0"
+        }
+      ]
+    },
+    {
+      "app": "icecubes",
+      "expected": {
+        "ecosystem": "SwiftURL",
+        "git_blob": "3f893a80ae2a5824177d6b1d0cd154f0dd2c8c5d",
+        "name": "https://github.com/stephencelis/SQLite.swift",
+        "path": "IceCubesApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+        "version": "0.16.0"
+      },
+      "observed": [
+        {
+          "confidence": "exact",
+          "ecosystem": "SwiftURL",
+          "name": "https://github.com/stephencelis/SQLite.swift",
+          "path": "IceCubesApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "version": "0.16.0"
+        }
+      ]
+    },
+    {
+      "app": "icecubes",
+      "expected": {
+        "ecosystem": "SwiftURL",
+        "git_blob": "3f893a80ae2a5824177d6b1d0cd154f0dd2c8c5d",
+        "name": "https://github.com/evgenyneu/keychain-swift",
+        "path": "IceCubesApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+        "version": "24.0.0"
+      },
+      "observed": [
+        {
+          "confidence": "exact",
+          "ecosystem": "SwiftURL",
+          "name": "https://github.com/evgenyneu/keychain-swift",
+          "path": "IceCubesApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "version": "24.0.0"
+        }
+      ]
+    }
+  ]
+}

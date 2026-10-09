@@ -1,6 +1,8 @@
 # Public app source and CVE evaluation protocol
 
-English is the source of truth. This evaluation is separate from the development
+English is the source of truth. [한국어](REAL_WORLD.ko.md).
+
+This evaluation is separate from the development
 synthetic corpus. The detector is held unchanged until the initial results have
 been captured. Application commits, selected source/configuration facts, package
 versions and expected CVE states are frozen in real_world_cases.json.

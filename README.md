@@ -205,4 +205,10 @@ A reproducible [APSA/MobSF comparison](benchmarks/COMPETITIVE.md) and its
 synthetic source projects and APKs. The improved rule set is an unreleased
 benchmark candidate; these results are not production accuracy estimates.
 
+A separate [public-source and CVE evaluation](benchmarks/REAL_WORLD.md) records
+[initial results](benchmarks/REAL_WORLD_RESULTS.md) on six pinned app source
+snapshots, selected dependency/CVE units and OS advisory fixtures. It preserves
+extraction gaps, scanner failures and incomplete coverage; it does not measure
+whole-app security or general production accuracy.
+
 The source is publicly available on [GitHub](https://github.com/ictechgy/apsa). [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE) preserves the original Quaygate MIT notice. This publication does not declare an additional license for the combined product.
