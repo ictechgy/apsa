@@ -3,7 +3,7 @@ name: Catalog usage and lockfile evidence against the Gradle oracle
 on:
   push:
     branches: ["dev/dependency-evidence"]
-    paths: ["src/**", "benchmarks/dependency_eval.py", "benchmarks/dependency_truth.json", "benchmarks/dependency_locks/**", ".github/workflows/dependency-evaluation.yml"]
+    paths: ["src/**", "benchmarks/dependency_eval.py", "benchmarks/dependency_truth*.json", "benchmarks/dependency_locks/**", ".github/workflows/dependency-evaluation.yml"]
   workflow_dispatch:
 
 permissions:
@@ -28,8 +28,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          RUN_ID="$(python3 -c 'import json; print(json.load(open("benchmarks/dependency_truth.json"))["oracle_run"])')"
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'dependency-oracle-*' --dir "$RUNNER_TEMP/oracle"
+          for RUN_ID in $(python3 -c 'import glob, json; print(" ".join(sorted({str(json.load(open(p))["oracle_run"]) for p in glob.glob("benchmarks/dependency_truth*.json")})))'); do
+            gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'dependency-oracle-*' --dir "$RUNNER_TEMP/oracle/$RUN_ID"
+          done
       - name: Scan pinned sources with APSA only; no Gradle or upstream code runs
         env:
           APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/dependency-parser-locks

@@ -12,7 +12,7 @@ from benchmarks.dependency_oracle import extract
 from mobile_audit.inputs import inspect_target
 
 HERE = Path(__file__).resolve().parent
-TRUTH = HERE / "dependency_truth.json"
+TRUTHS = sorted(HERE.glob("dependency_truth*.json"))
 LOCKS = HERE / "dependency_locks"
 
 
@@ -129,24 +129,47 @@ def main() -> None:
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    truth = json.loads(TRUTH.read_text())
-    results = []
-    for case in truth["cases"]:
-        archive = next(args.archives.rglob(f"{case['id']}.zip"))
-        results.append(evaluate(case, archive, args.work))
-    totals = {
-        key: sum(r["catalog_without_lockfile"][key] for r in results)
-        for key in ("tp", "fp", "abstained_shipped", "abstained_not_shipped", "missing_entry")
-    }
-    summary = {
-        "schema": "apsa-dependency-evidence-results-v1",
-        "truth_sha256": sha(TRUTH.read_bytes()),
-        "totals": totals,
-        "cases": results,
-    }
+    sets = []
+    for path in TRUTHS:
+        truth = json.loads(path.read_text())
+        results = []
+        for case in truth["cases"]:
+            # The same public commit may appear in several oracle runs; bytes must match the frozen hash.
+            archive = next(
+                a
+                for a in sorted(args.archives.rglob(f"{case['id']}.zip"))
+                if sha(a.read_bytes()) == case["archive"]["sha256"]
+            )
+            results.append(evaluate(case, archive, args.work))
+        totals = {
+            key: sum(r["catalog_without_lockfile"][key] for r in results)
+            for key in ("tp", "fp", "abstained_shipped", "abstained_not_shipped", "missing_entry")
+        }
+        sets.append(
+            {
+                "truth": path.name,
+                "truth_sha256": sha(path.read_bytes()),
+                "oracle_run": truth["oracle_run"],
+                "totals": totals,
+                "cases": results,
+            }
+        )
+    summary = {"schema": "apsa-dependency-evidence-results-v2", "sets": sets}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    print(json.dumps({"totals": totals, "lockfile": [r["with_oracle_lockfile"] for r in results]}, indent=2))
+    print(
+        json.dumps(
+            [
+                {
+                    "truth": s["truth"],
+                    "totals": s["totals"],
+                    "lockfile": [r["with_oracle_lockfile"] for r in s["cases"]],
+                }
+                for s in sets
+            ],
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
