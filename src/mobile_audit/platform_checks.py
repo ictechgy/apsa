@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import plistlib
 import re
+from xml.parsers.expat import ExpatError
 
 from .core import finding
+from .rules import strip_comments
 
 # Google Play: new apps and updates must target API 36 from 2026-08-31.
 PLAY_TARGET_SDK = 36
@@ -38,8 +40,12 @@ SECRETS = [
     ("github-token", "high", r"\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{60,255})\b"),
     ("slack-token", "high", r"\bxox[baprs]-[A-Za-z0-9-]{10,72}\b"),
     ("stripe-live-key", "high", r"\b[rs]k_live_[0-9A-Za-z]{24,99}\b"),
-    ("openai-api-key", "high", r"\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}\b"),
-    ("anthropic-api-key", "high", r"\bsk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{80,}\b"),
+    (
+        "openai-api-key",
+        "high",
+        r"\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,200}T3BlbkFJ[A-Za-z0-9_-]{20,200}\b",
+    ),
+    ("anthropic-api-key", "high", r"\bsk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{80,200}\b"),
     ("google-api-key", "low", r"\bAIza[0-9A-Za-z_-]{35}\b"),
 ]
 SECRET_SUFFIXES = (
@@ -57,6 +63,15 @@ SECRET_SUFFIXES = (
     ".strings",
 )
 MAX_SECRET_FINDINGS = 50
+RANDOM_REFERENCE = "https://developer.android.com/privacy-and-security/risks/weak-prng"
+# Identifier words that name security values; matched as whole camelCase/snake_case words.
+SECURITY_WORDS = {"token", "nonce", "salt", "otp", "secret", "password", "passcode", "iv"}
+ASSIGNMENT = re.compile(r"(?<![\w.])([A-Za-z_]\w{0,63})\s*(?::\s*[\w<>?.]{1,60}\s*)?=(?!=)")
+WEAK_RANDOM = re.compile(
+    r"(?<!\w)Random\s*\(|\bMath\.random\s*\(|(?<!\w)Random\.(?:Default|next[A-Z]\w{0,20})\b"
+    r"|\bThreadLocalRandom\.current\s*\("
+)
+MAX_RANDOM_FINDINGS = 50
 
 
 def _line(text: str, offset: int) -> int:
@@ -74,7 +89,10 @@ def _exposed(component: dict, target_level: int | None) -> bool:
         and component.get("intent_filters")
         and (target_level is None or target_level < 31)
     )
-    protected = any(component.get(key) for key in ("permission", "read_permission", "write_permission"))
+    # A provider with only one of read/write permission stays open for the other direction.
+    protected = bool(component.get("permission")) or bool(
+        component.get("read_permission") and component.get("write_permission")
+    )
     return bool((exported == "true" or implicit) and not protected)
 
 
@@ -87,6 +105,32 @@ def exposed_providers(inventory: dict) -> set[str]:
         for c in inventory.get("components", [])
         if c.get("type") == "provider" and c.get("name") and _exposed(c, level)
     }
+
+
+def _blocks(text: str, name: str):
+    """Yield (start, end) of each ``name { ... }`` block, matching braces."""
+    for match in re.finditer(rf"\b{name}\s*\{{", text):
+        depth, index = 1, match.end()
+        while index < len(text) and depth:
+            depth += {"{": 1, "}": -1}.get(text[index], 0)
+            index += 1
+        yield match.end(), index
+
+
+def _gradle_targets(path: str, text: str) -> list[tuple[str, int | None, int]]:
+    """Literal targetSdk in defaultConfig and productFlavors of application modules."""
+    cleaned = strip_comments(text)
+    # Library targetSdk does not set the app's target; root scripts only define variables.
+    if re.search(r"""com\.android\.library|\bandroid[.-]library\b|androidLibrary\b""", cleaned):
+        return []
+    found = []
+    for block in ("defaultConfig", "productFlavors"):
+        for start, end in _blocks(cleaned, block):
+            for match in re.finditer(
+                r"\btargetSdk(?:Version)?\s*(?:=\s*|\(\s*|\s+)(\d{2})\b", cleaned[start:end]
+            ):
+                found.append((path, _line(cleaned, start + match.start()), int(match[1])))
+    return list(dict.fromkeys(found))
 
 
 def _android(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
@@ -108,8 +152,7 @@ def _android(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict
     )
     for path, text in sources:
         if path.endswith((".gradle", ".gradle.kts")):
-            for match in re.finditer(r"\btargetSdk(?:Version)?\s*(?:=\s*|\(\s*|\s+)(\d{2})\b", text):
-                targets.append((path, _line(text, match.start()), int(match[1])))
+            targets += _gradle_targets(path, text)
     if target_level is None and targets:
         target_level = min(level for _, _, level in targets)
     for component in inventory.get("components", []):
@@ -208,19 +251,31 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
             {"rule_id": "IOS-PRIVACY-MANIFEST", "state": "not-applicable", "method": "source-pattern"}
         ]
     declared: set[str] = set()
-    manifests = []
+    manifests, unreadable = [], []
     for path, text in sources:
         if not path.endswith(".xcprivacy"):
             continue
         manifests.append(path)
         try:
             document = plistlib.loads(text.encode("utf-8"))
-        except (plistlib.InvalidFileException, ValueError, UnicodeError):
+        except (
+            plistlib.InvalidFileException,
+            ExpatError,
+            ValueError,
+            TypeError,
+            OverflowError,
+            UnicodeError,
+        ):
+            unreadable.append(path)
             continue
-        for item in document.get("NSPrivacyAccessedAPITypes", []) if isinstance(document, dict) else []:
+        types = document.get("NSPrivacyAccessedAPITypes", []) if isinstance(document, dict) else None
+        if not isinstance(types, list):
+            unreadable.append(path)
+            continue
+        for item in types:
             if isinstance(item, dict) and isinstance(item.get("NSPrivacyAccessedAPIType"), str):
                 declared.add(item["NSPrivacyAccessedAPIType"])
-    first_use: dict[str, tuple[str, int]] = {}
+    first_use: dict[str, tuple[str, int, int]] = {}
     scanned = 0
     for path, text in sources:
         if not path.endswith(APPLE_SOURCES):
@@ -232,7 +287,7 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
                 continue
             match = re.search(pattern, cleaned)
             if match:
-                first_use[category] = (path, _line(cleaned, match.start()))
+                first_use[category] = (path, _line(cleaned, match.start()), match.start())
     findings = [
         finding(
             "IOS-PRIVACY-MANIFEST",
@@ -243,6 +298,7 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
                 {
                     "path": path,
                     "line": line,
+                    "offset": offset,
                     "category": category,
                     "manifests": manifests[:20],
                     "basis": "symbol name in app source; SDK manifests in the tree count as declarations",
@@ -253,14 +309,19 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
             "MASVS-PRIVACY",
             [PRIVACY_REFERENCE],
         )
-        for category, (path, line) in sorted(first_use.items())
+        for category, (path, line, offset) in sorted(first_use.items())
     ]
+    note = "Symbol-name evidence only; compiled SDKs and dynamic use are not inspected."
+    if unreadable:
+        note += (
+            f" {len(unreadable)} privacy manifest(s) could not be read, so their declarations are unknown."
+        )
     return findings, [
         {
             "rule_id": "IOS-PRIVACY-MANIFEST",
-            "state": "checked" if scanned else "not-run",
+            "state": ("partial" if unreadable else "checked") if scanned else "not-run",
             "method": "source-pattern",
-            "note": "Symbol-name evidence only; compiled SDKs and dynamic use are not inspected.",
+            "note": note,
         }
     ]
 
@@ -392,6 +453,7 @@ def _secrets(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
                             {
                                 "path": path,
                                 "line": _line(text, match.start()),
+                                "offset": match.start(),
                                 "credential_type": kind,
                                 "masked_value": _masked(match[0]),
                                 "basis": "credential format match; validity and scope are not checked",
@@ -413,6 +475,71 @@ def _secrets(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
     ]
 
 
+def _words(identifier: str) -> list[str]:
+    """camelCase, PascalCase and snake_case words, lowercased."""
+    return [w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", identifier)]
+
+
+def _insecure_random(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
+    if "android" not in inventory.get("platforms", []):
+        return [], [
+            {"rule_id": "SOURCE-INSECURE-RANDOM", "state": "not-applicable", "method": "source-pattern"}
+        ]
+    findings: list[dict] = []
+    scanned, truncated = 0, False
+    for path, text in sources:
+        if not path.endswith((".kt", ".java")):
+            continue
+        scanned += 1
+        if "andom" not in text:
+            continue
+        cleaned = strip_comments(text)
+        for match in ASSIGNMENT.finditer(cleaned):
+            words = _words(match[1])
+            if not (
+                SECURITY_WORDS & set(words)
+                or any(a == "session" and b == "id" for a, b in zip(words, words[1:], strict=False))
+            ):
+                continue
+            end = cleaned.find("\n", match.end())
+            statement = cleaned[match.end() : match.end() + 160 if end < 0 else min(end, match.end() + 160)]
+            generator = WEAK_RANDOM.search(statement.split(";", 1)[0])
+            if not generator:
+                continue
+            if len(findings) >= MAX_RANDOM_FINDINGS:
+                truncated = True
+                break
+            findings.append(
+                finding(
+                    "SOURCE-INSECURE-RANDOM",
+                    "Non-cryptographic random value assigned to a security-named variable",
+                    "medium",
+                    "candidate",
+                    [
+                        {
+                            "path": path,
+                            "line": _line(cleaned, match.start()),
+                            "offset": match.start(),
+                            "variable": match[1],
+                            "generator": generator[0].rstrip("( "),
+                            "basis": "assignment of java.util/kotlin Random or Math.random to a security-named variable",
+                        }
+                    ],
+                    "Use java.security.SecureRandom (or a platform key generator) for tokens, nonces, salts and passwords.",
+                    "MASVS-CRYPTO",
+                    [RANDOM_REFERENCE],
+                )
+            )
+    return findings, [
+        {
+            "rule_id": "SOURCE-INSECURE-RANDOM",
+            "state": "partial" if truncated else "checked" if scanned else "not-run",
+            "method": "source-pattern",
+            "note": "Single-statement assignments only; values passed through helpers or fields are not followed.",
+        }
+    ]
+
+
 def platform_checks(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
     findings: list[dict] = []
     coverage: list[dict] = []
@@ -425,7 +552,11 @@ def platform_checks(inventory: dict, sources: list[tuple[str, str]]) -> tuple[li
         _ats_exceptions(inventory),
         _server_trust(sources),
         _secrets(sources),
+        _insecure_random(inventory, sources),
     ):
         findings += part[0]
         coverage += part[1]
-    return findings, coverage
+    # The same identity can arise twice, for example one manifest reached through two source roots.
+    seen: set[str] = set()
+    unique = [item for item in findings if not (item["id"] in seen or seen.add(item["id"]))]
+    return unique, coverage

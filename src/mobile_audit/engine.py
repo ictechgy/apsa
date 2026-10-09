@@ -83,7 +83,17 @@ def analyze_target(
             str(staged),
             str(scratch),
             configuration or "",
-            json.dumps(specs, sort_keys=True) if specs else "",
+            # Notes are for people; the parser needs only names, kinds and the file hash.
+            json.dumps(
+                {
+                    **specs,
+                    "source": [{k: v for k, v in e.items() if k != "note"} for e in specs["source"]],
+                    "sink": [{k: v for k, v in e.items() if k != "note"} for e in specs["sink"]],
+                },
+                sort_keys=True,
+            )
+            if specs
+            else "",
         ]
         from .parser_sandbox import activate, sandbox_command
 

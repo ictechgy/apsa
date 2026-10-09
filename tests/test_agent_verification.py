@@ -1,4 +1,4 @@
-"""verify_finding, project taint specifications and the added SQL sinks (1.5)."""
+"""verify_finding, project taint specifications and the added SQL sinks (1.4)."""
 
 from __future__ import annotations
 
@@ -79,7 +79,11 @@ receiver = "InAppBrowser"
 
 def rules_at(findings: list[dict]) -> list[tuple[str, int, str]]:
     return sorted(
-        (item["rule_id"], item["evidence"][0]["line"], item["evidence"][0].get("sink", ""))
+        (
+            item["rule_id"],
+            item["evidence"][0]["line"],
+            item["evidence"][0].get("sink_api") or item["evidence"][0].get("sink", ""),
+        )
         for item in findings
     )
 
@@ -124,6 +128,8 @@ def test_specification_sources_and_sinks_add_candidates_only_where_declared(tmp_
         {"version": 1, "sink": [{"id": "x", "method": "a", "kind": "sql", "pattern": ".*"}]},
         {"version": 1, "source": [{"id": "x", "method": "a"}, {"id": "x", "method": "b"}]},
         {"version": 1, "extra": True, "source": [{"id": "x", "method": "a"}]},
+        {"version": True, "source": [{"id": "x", "method": "a"}]},
+        {"version": 1.0, "source": [{"id": "x", "method": "a"}]},
     ],
 )
 def test_specifications_reject_patterns_unknown_fields_and_bad_values(document):
@@ -195,3 +201,55 @@ def test_background_scans_carry_the_validated_specification(store, tmp_path, mon
     report = store.report(result["report_id"])
     assert report["inventory"]["project_specification"]["sha256"] == specs["sha256"]
     assert any("in-app-browser" in f["evidence"][0].get("sink", "") for f in report["findings"])
+
+
+def test_sql_sink_identity_keeps_the_method_name():
+    result = analyze_sources([("FilesProvider.java", PROVIDER)], None, {"FilesProvider"})
+    delete = next(f for f in result["findings"] if f["evidence"][0]["line"] == 13)
+    assert delete["evidence"][0]["sink"] == "delete"
+    assert delete["evidence"][0]["sink_api"] == "SQLiteDatabase.delete"
+
+
+def test_receiver_specific_specification_entries_win(tmp_path):
+    path = tmp_path / "specs.toml"
+    path.write_text(
+        SPEC.replace(
+            '[[sink]]\nid = "in-app-browser"',
+            '[[sink]]\nid = "any-open"\nkind = "sql"\nmethod = "open"\n\n[[sink]]\nid = "in-app-browser"',
+        )
+    )
+    result = analyze_sources([("CallActivity.kt", WRAPPERS)], load_specs(path))
+    sinks = {f["evidence"][0]["line"]: f["evidence"][0]["sink"] for f in result["findings"]}
+    assert sinks[10] == "open (project specification sink in-app-browser)"
+
+
+def test_verify_matches_files_by_path_not_by_bare_name(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    app = tmp_path / "repo" / "android"
+    (app / "feature").mkdir(parents=True)
+    (app / "feature/CallActivity.kt").write_text(WRAPPERS)
+    (tmp_path / "specs.toml").write_text(SPEC)
+    report = scan(store, app, specs=load_specs(tmp_path / "specs.toml"))
+    claim = {"line": 10, "weakness": "MASWE-0035"}
+    assert verify_claim(report, path="feature/CallActivity.kt", **claim)["verdict"] == "corroborated"
+    # A repository-relative claim whose prefix ends at the audited target.
+    assert verify_claim(report, path="android/feature/CallActivity.kt", **claim)["verdict"] == "corroborated"
+    assert verify_claim(report, path="ios/feature/CallActivity.kt", **claim)["verdict"] != "corroborated"
+    # A bare file name could be any CallActivity.kt.
+    bare = verify_claim(report, path="CallActivity.kt", **claim)
+    assert bare["verdict"] == "file-not-analyzed" and bare["source_file_state"] == "not-analyzed"
+    assert verify_claim(report, path="feature/Missing.kt", **claim)["verdict"] == "file-not-analyzed"
+    assert (
+        verify_claim(report, path="AndroidManifest.xml", weakness="MASWE-0035")["verdict"]
+        != "file-not-analyzed"
+    )
+    for outside in ("/etc/passwd", "../other/CallActivity.kt", str(tmp_path / "elsewhere.kt")):
+        with pytest.raises(ValueError):
+            verify_claim(report, path=outside, **claim)
+    assert (
+        verify_claim(report, path=str(app / "feature/CallActivity.kt"), **claim)["verdict"] == "corroborated"
+    )
+    assert (
+        verify_claim(report, weakness="CWE-089")["weaknesses"]
+        == verify_claim(report, weakness="CWE-89")["weaknesses"]
+    )

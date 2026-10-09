@@ -177,29 +177,6 @@
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step"
   },
   {
-    "id": "SOURCE-INSECURE-RANDOM",
-    "title": "Non-cryptographic random value assigned to a security-named variable",
-    "mode": "source",
-    "platform": "android",
-    "suffixes": [
-      ".kt",
-      ".java"
-    ],
-    "requires": "Random",
-    "pattern": "\\b\\w*(?:[Tt]oken|[Nn]once|[Ss]alt|[Oo]tp|OTP|[Ss]ecret|[Pp]assword|[Pp]asscode|[Ss]ession[Ii]d|[Ii]v)\\w*\\s*(?::\\s*[\\w<>?]+\\s*)?=\\s*[^\\n;]{0,120}?(?:(?<!Secure)\\bRandom\\s*\\(|Math\\.random\\s*\\(|\\bRandom\\.(?:Default|next\\w*))",
-    "severity": "medium",
-    "masvs": "MASVS-CRYPTO",
-    "remediation": "Use java.security.SecureRandom (or a platform key generator) for tokens, nonces, salts and passwords.",
-    "references": [
-      "https://developer.android.com/privacy-and-security/risks/weak-prng"
-    ],
-    "mastg_tests": [],
-    "maswe": [
-      "MASWE-0012"
-    ],
-    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step"
-  },
-  {
     "id": "SOURCE-TRUST-ALL-CERTS",
     "title": "X509TrustManager accepts every server certificate",
     "mode": "source",

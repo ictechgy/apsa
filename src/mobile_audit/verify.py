@@ -10,14 +10,16 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath
 
-from .maswe import RULE_WEAKNESSES, UNMAPPED, weakness_index, weaknesses_for
+from .maswe import RULE_WEAKNESSES, UNMAPPED, finding_weaknesses, weakness_index, weaknesses_for
 from .rules import rules
 
 STATUS_STRENGTH = ("candidate", "version-affected", "configuration-confirmed", "runtime-confirmed")
 NOTE = (
     "APSA evidence can corroborate a claim; it cannot refute one. not-observed means the related "
-    "checks ran without an APSA finding at that location, which is not proof that the weakness is absent."
+    "checks ran without an APSA finding at that location, which is not proof that the weakness is absent. "
+    "file-not-analyzed means APSA's source analysis did not cover the claimed file."
 )
+AST_SUFFIXES = (".java", ".kt", ".kts", ".swift", ".m")
 
 
 def _weaknesses(weakness: str | None, rule: str | None) -> list[str]:
@@ -30,6 +32,7 @@ def _weaknesses(weakness: str | None, rule: str | None) -> list[str]:
                 raise ValueError(f"Unknown MASWE identifier {value}")
             found.append(value)
         elif re.fullmatch(r"CWE-\d{1,5}", value):
+            value = f"CWE-{int(value[4:])}"  # CWE-089 is CWE-89
             found += [w["id"] for w in known.values() if value in w["cwe"]]
         else:
             raise ValueError("weakness must be a MASWE-NNNN or CWE-N identifier")
@@ -41,16 +44,33 @@ def _weaknesses(weakness: str | None, rule: str | None) -> list[str]:
 
 
 def _relative(path: str, target: str) -> str:
+    """The claimed path relative to the audited target; absolute paths must lie inside it."""
     value = path.replace("\\", "/")
     root = target.replace("\\", "/").rstrip("/") + "/"
     if value.startswith(root):
         value = value[len(root) :]
-    return str(PurePosixPath(value.lstrip("/")))
+    elif value.startswith("/") or re.match(r"[A-Za-z]:/", value):
+        raise ValueError("path is outside the audited target")
+    parts = [part for part in value.split("/") if part not in {"", "."}]
+    if not parts or ".." in parts:
+        raise ValueError("path must name a file inside the audited target")
+    return "/".join(parts)
 
 
-def _same_file(evidence_path: str, claimed: str) -> bool:
+def _same_file(evidence_path: str, claimed: str, target: str) -> bool:
+    """Exact match, or a claim with a repository prefix that ends at the audited target.
+
+    A bare file name never matches a deeper evidence path: ``Foo.kt`` is not
+    ``app/src/Foo.kt``.
+    """
     evidence = str(PurePosixPath(evidence_path.replace("\\", "/").lstrip("/")))
-    return evidence == claimed or evidence.endswith("/" + claimed) or claimed.endswith("/" + evidence)
+    if evidence == claimed:
+        return True
+    if not claimed.endswith("/" + evidence):
+        return False
+    prefix = claimed[: -len(evidence) - 1].split("/")
+    tail = [part for part in target.replace("\\", "/").split("/") if part]
+    return len(prefix) <= len(tail) and tail[-len(prefix) :] == prefix
 
 
 def verify_claim(
@@ -73,14 +93,15 @@ def verify_claim(
         {rule_id for rule_id, mapped in RULE_WEAKNESSES.items() if set(mapped) & set(weaknesses)}
         | ({rule} if rule else set())
     )
-    claimed = _relative(path, report.get("target", "")) if path else None
+    target = str(report.get("target", ""))
+    claimed = _relative(path, target) if path else None
     states: dict[str, set[str]] = {}
     for item in report.get("coverage", []):
         if item.get("rule_id") in checks and isinstance(item.get("state"), str):
             states.setdefault(item["rule_id"], set()).add(item["state"])
     matches, elsewhere = [], []
     for item in report.get("findings", []):
-        mapped = item.get("maswe") or weaknesses_for(item.get("rule_id", ""))
+        mapped = finding_weaknesses(item)
         if item.get("rule_id") not in checks and not set(weaknesses) & set(mapped):
             continue
         located = [e for e in item.get("evidence", []) if isinstance(e, dict)]
@@ -94,7 +115,7 @@ def verify_claim(
         if claimed is None:
             matches.append(summary)
             continue
-        in_file = [e for e in located if e.get("path") and _same_file(e["path"], claimed)]
+        in_file = [e for e in located if e.get("path") and _same_file(e["path"], claimed, target)]
         if not in_file:
             continue
         if line is None or any(
@@ -106,8 +127,10 @@ def verify_claim(
     file_state = None
     if claimed is not None:
         for record in (report.get("inventory", {}).get("source_analysis") or {}).get("files", []):
-            if isinstance(record, dict) and _same_file(str(record.get("path", "")), claimed):
+            if isinstance(record, dict) and _same_file(str(record.get("path", "")), claimed, target):
                 file_state = record.get("state")
+        if file_state is None and claimed.endswith(AST_SUFFIXES):
+            file_state = "not-analyzed"
     observed = set().union(*states.values()) if states else set()
     if matches:
         verdict = "corroborated"
@@ -115,6 +138,8 @@ def verify_claim(
         verdict = "not-assessed"
     elif elsewhere:
         verdict = "same-file-other-location"
+    elif file_state in {"skipped", "not-analyzed"}:
+        verdict = "file-not-analyzed"
     elif "partial" in observed or file_state == "partial":
         verdict = "partial"
     elif "checked" in observed:

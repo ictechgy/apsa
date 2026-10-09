@@ -457,7 +457,7 @@ def inspect_target(
         raise ValueError(f"Input not found: {target}")
     inventory = {
         "target": str(target),
-        "input_kind": "source" if target.is_dir() else target.suffix.lstrip("."),
+        "input_kind": "source" if target.is_dir() else target.suffix.lower().lstrip("."),
         "platforms": [],
         "package": "",
         "apps": [],

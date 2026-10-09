@@ -1,4 +1,4 @@
-"""Imported SARIF results as candidate external evidence (1.5)."""
+"""Imported SARIF results as candidate external evidence (1.4)."""
 
 from __future__ import annotations
 

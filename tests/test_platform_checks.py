@@ -1,4 +1,4 @@
-"""Source-tree platform checks and the added candidate rules (1.5)."""
+"""Source-tree platform checks and the added candidate rules (1.4)."""
 
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ MANIFEST = """<manifest xmlns:android="http://schemas.android.com/apk/res/androi
     <provider android:name=".Files" android:authorities="com.example.files" android:exported="true" />
     <provider android:name=".Guarded" android:authorities="com.example.guarded" android:exported="true"
         android:readPermission="com.example.READ" />
+    <provider android:name=".Locked" android:authorities="com.example.locked" android:exported="true"
+        android:readPermission="com.example.READ" android:writePermission="com.example.WRITE" />
     <receiver android:name=".Implicit">
       <intent-filter><action android:name="com.example.PING" /></intent-filter>
     </receiver>
@@ -91,7 +93,8 @@ def test_exported_components_backup_and_target_sdk(store, project):
     exported = {
         item["evidence"][0]["component"]: item for item in by_rule(report, "ANDROID-EXPORTED-COMPONENT")
     }
-    assert set(exported) == {".Files", ".Implicit"}
+    # Read permission alone leaves writes open; both, or android:permission, protect a provider.
+    assert set(exported) == {".Files", ".Guarded", ".Implicit"}
     assert exported[".Files"]["severity"] == "medium" and exported[".Files"]["status"] == "candidate"
     assert exported[".Implicit"]["evidence"][0]["implicit_export"] is True
     backup = by_rule(report, "ANDROID-ALLOW-BACKUP")
@@ -265,3 +268,114 @@ def test_network_storage_and_deserialization_candidates(store, tmp_path, monkeyp
     }
     [ats] = by_rule(report, "IOS-ATS-EXCEPTION")
     assert ats["evidence"][0]["domain"] == "legacy.example.com" and len(ats["evidence"][0]["reasons"]) == 2
+
+
+def test_unreadable_privacy_manifests_make_the_check_partial(store, project):
+    (project / "PrivacyInfo.xcprivacy").write_text("<plist><dict><key>broken")
+    (project / "Other.xcprivacy").write_text(
+        "<?xml version='1.0'?><plist version='1.0'><dict><key>NSPrivacyAccessedAPITypes</key>"
+        "<string>not a list</string></dict></plist>"
+    )
+    report = scan(store, project)
+    coverage = next(c for c in report["coverage"] if c["rule_id"] == "IOS-PRIVACY-MANIFEST")
+    assert coverage["state"] == "partial" and "2 privacy manifest(s)" in coverage["note"]
+    assert {f["evidence"][0]["category"] for f in by_rule(report, "IOS-PRIVACY-MANIFEST")} >= {
+        "NSPrivacyAccessedAPICategorySystemBootTime"
+    }
+
+
+def test_gradle_target_sdk_ignores_comments_libraries_and_variables(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    root = tmp_path / "modules"
+    for module in ("app", "lib"):
+        (root / module).mkdir(parents=True)
+    (root / "app/AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.m">'
+        "<application/></manifest>"
+    )
+    (root / "build.gradle").write_text("ext.targetSdkVersion = 21\n")
+    (root / "lib/build.gradle").write_text(
+        "plugins { id 'com.android.library' }\nandroid { defaultConfig { targetSdkVersion 21 } }\n"
+    )
+    (root / "app/build.gradle").write_text(
+        "plugins { id 'com.android.application' }\n"
+        "android {\n"
+        "    defaultConfig {\n"
+        "        // targetSdkVersion 19\n"
+        "        /* targetSdk = 20 */\n"
+        "        targetSdkVersion 36\n"
+        "    }\n"
+        "    productFlavors {\n"
+        "        legacy { targetSdkVersion 28 }\n"
+        "    }\n"
+        "}\n"
+    )
+    target = by_rule(scan(store, root), "ANDROID-TARGET-SDK")
+    assert [
+        (t["evidence"][0]["path"], t["evidence"][0]["line"], t["evidence"][0]["target_sdk"]) for t in target
+    ] == [("app/build.gradle", 9, 28)]
+
+
+def test_repeated_secrets_on_one_line_keep_distinct_identities(store, project):
+    (project / "src/Keys.kt").write_text(
+        'val pair = listOf("AKIAIOSFODNN7EXAMPLE", "AKIAIOSFODNN7EXAMPLE")\n'
+    )
+    secrets = [
+        f
+        for f in by_rule(scan(store, project), "SOURCE-HARDCODED-SECRET")
+        if "Keys" in f["evidence"][0]["path"]
+    ]
+    assert len(secrets) == 2 and len({f["id"] for f in secrets}) == 2
+    assert secrets[0]["evidence"][0]["line"] == secrets[1]["evidence"][0]["line"] == 1
+
+
+def test_insecure_random_matches_whole_words_and_case(store, project):
+    (project / "src/Words.kt").write_text(
+        "import java.util.Random\n"
+        "fun words(secureRandom: java.security.SecureRandom) {\n"
+        "    val activityId = Random().nextInt()\n"
+        "    val privateKey = Random().nextInt()\n"
+        "    val token = secureRandom.nextInt()\n"
+        "    val ivSpec = Random().nextInt()\n"
+        "    val sessionId = kotlin.random.Random.nextLong()\n"
+        "    val password = Math.random()\n"
+        "    val salt = SecureRandom().nextInt()\n"
+        "    if (token == Random().nextInt()) {}\n"
+        "}\n"
+    )
+    found = sorted(
+        (f["evidence"][0]["line"], f["evidence"][0]["variable"])
+        for f in by_rule(scan(store, project), "SOURCE-INSECURE-RANDOM")
+        if f["evidence"][0]["path"].endswith("Words.kt")
+    )
+    assert found == [(6, "ivSpec"), (7, "sessionId"), (8, "password")]
+
+
+def test_pending_intent_variables_are_followed_in_the_function(store, project):
+    (project / "src/Alarms.kt").write_text(
+        "import android.app.PendingIntent\n"
+        "import android.content.Intent\n"
+        "class Alarms {\n"
+        "    fun schedule(context: android.content.Context) {\n"
+        "        val explicit = Intent(context, Alarms::class.java)\n"
+        "        PendingIntent.getActivity(context, 0, explicit, PendingIntent.FLAG_MUTABLE)\n"
+        '        val configured = Intent("com.example.ALARM").apply {\n'
+        "            setPackage(context.packageName)\n"
+        "        }\n"
+        "        PendingIntent.getBroadcast(context, 1, configured, PendingIntent.FLAG_MUTABLE)\n"
+        '        val implicit = Intent("com.example.ALARM")\n'
+        "        PendingIntent.getBroadcast(context, 2, implicit, PendingIntent.FLAG_MUTABLE)\n"
+        "    }\n"
+        "    fun passed(context: android.content.Context, given: Intent) {\n"
+        "        PendingIntent.getService(context, 3, given, PendingIntent.FLAG_MUTABLE)\n"
+        "    }\n"
+        "}\n"
+    )
+    found = {
+        f["evidence"][0]["line"]: f["evidence"][0]["intent_argument"]
+        for f in by_rule(scan(store, project), "AST-PENDINGINTENT-MUTABLE")
+        if f["evidence"][0]["path"].endswith("Alarms.kt")
+    }
+    assert set(found) == {12, 15}
+    assert "where the Intent variable is built" in found[12]
+    assert "not built in this function" in found[15]

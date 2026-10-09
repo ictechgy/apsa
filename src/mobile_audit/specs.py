@@ -34,7 +34,7 @@ def _text(entry: dict, key: str, pattern: re.Pattern, *, required: bool = True) 
 
 
 def normalize(document: dict) -> dict:
-    if not isinstance(document, dict) or document.get("version") != 1:
+    if not isinstance(document, dict) or type(document.get("version")) is not int or document["version"] != 1:
         raise ValueError("Specification must be a table with version = 1")
     unknown = set(document) - {"version", "source", "sink"}
     if unknown:

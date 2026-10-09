@@ -1,4 +1,4 @@
-"""CycloneDX SBOM with embedded VEX (1.5)."""
+"""CycloneDX SBOM with embedded VEX (1.4)."""
 
 from __future__ import annotations
 
@@ -27,6 +27,14 @@ GSON = {"ecosystem": "Maven", "name": "com.google.code.gson:gson", "version": "2
             "pkg:swift/github.com/apple/swift-nio@2.40.0",
         ),
         ({"ecosystem": "SwiftURL", "name": "swift-nio", "version": "2.40.0"}, None),
+        (
+            {"ecosystem": "Go", "name": "github.com/gorilla/mux", "version": "v1.8.0"},
+            "pkg:golang/github.com/gorilla/mux@v1.8.0",
+        ),
+        (
+            {"ecosystem": "CocoaPods", "name": "GoogleUtilities/Environment", "version": "7.11.0"},
+            "pkg:cocoapods/GoogleUtilities@7.11.0#Environment",
+        ),
         ({"ecosystem": "Maven", "name": "a:b", "version": ""}, None),
         ({"ecosystem": "Unknown", "name": "x", "version": "1"}, None),
     ],
@@ -122,3 +130,18 @@ def test_cli_exports_cyclonedx(tmp_path, store, project, capsys):
         )
         == 2
     )
+
+
+def test_first_observed_reads_only_the_exact_target_before_limiting(store, project):
+    nested = project / "nested"
+    nested.mkdir()
+    (nested / "build.gradle").write_text((project / "build.gradle").read_text())
+    first = scan(store, project)
+    # Reports of a target inside this one are newer and must not crowd out the target's own.
+    for _ in range(3):
+        scan(store, nested)
+    latest = scan(store, project)
+    seen = first_observed(store, latest, limit=2)
+    assert seen and set(seen.values()) == {first["created"]}
+    assert all(item["target"] == str(project) for item in store.target_reports(str(project)))
+    assert [item["id"] for item in store.target_reports(str(project))] == [latest["id"], first["id"]]

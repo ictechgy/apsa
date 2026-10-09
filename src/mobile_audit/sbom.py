@@ -45,6 +45,15 @@ def purl(dep: dict) -> str | None:
             return None
         namespace, package = location.rsplit("/", 1)
         return f"pkg:swift/{quote(namespace, safe='./')}/{quote(package, safe='.')}{suffix}"
+    if ecosystem == "Go" and "/" in name:
+        # Go module paths keep their segments: pkg:golang/github.com/org/module@v1.
+        segments = [quote(part, safe=".") for part in name.split("/") if part]
+        return f"pkg:golang/{'/'.join(segments)}{suffix}"
+    if ecosystem == "CocoaPods" and "/" in name:
+        # A subspec is a subpath of its pod: pkg:cocoapods/Pod@1.0#Subspec.
+        pod, subspec = name.split("/", 1)
+        subpath = "/".join(quote(part, safe=".") for part in subspec.split("/") if part)
+        return f"pkg:cocoapods/{quote(pod, safe='.')}{suffix}" + (f"#{subpath}" if subpath else "")
     if ecosystem in PURL_TYPES:
         return f"pkg:{PURL_TYPES[ecosystem]}/{quote(name, safe='.')}{suffix}"
     return None

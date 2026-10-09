@@ -473,5 +473,18 @@
     ],
     "mapping_scope": "partial",
     "scope": "Swift functions that complete an authentication challenge with URLCredential(trust:) and .useCredential without calling SecTrustEvaluate or SecTrustEvaluateWithError in the same function."
+  },
+  {
+    "id": "SOURCE-INSECURE-RANDOM",
+    "mode": "source-pattern",
+    "title": "Non-cryptographic random value assigned to a security-named variable",
+    "severity": "medium",
+    "status": "candidate",
+    "masvs": "MASVS-CRYPTO",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/weak-prng"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Case-sensitive single-statement check: java.util.Random, kotlin.random.Random, ThreadLocalRandom or Math.random assigned to a variable whose camelCase or snake_case words include token, nonce, salt, otp, secret, password, passcode, iv or session id."
   }
 ]

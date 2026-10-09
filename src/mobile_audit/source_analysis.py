@@ -225,13 +225,18 @@ class Analyzer:
         return re.sub(r"[?!\s]", "", self.text(node)).removeprefix("this.").removeprefix("self.")
 
     def spec_entry(self, kind: str, call: Call, frame: Frame) -> dict | None:
-        """The declared source or sink for this call: exact name and, if given, receiver."""
+        """The declared source or sink for this call: exact name and, if given, receiver.
+
+        An entry naming this receiver wins over a receiver-less entry for the same method.
+        """
+        fallback = None
         for entry in self.specs.get(kind, []):
             if entry["method"] != call.name:
                 continue
             receiver = entry.get("receiver")
             if receiver is None:
-                return entry
+                fallback = fallback or entry
+                continue
             if call.receiver is None:
                 continue
             key = self.key(call.receiver)
@@ -239,7 +244,36 @@ class Analyzer:
             simple = receiver.rsplit(".", 1)[-1]
             if receiver in {key, type_name} or simple in {key, type_name.rsplit(".", 1)[-1]}:
                 return entry
-        return None
+        return fallback
+
+    def intent_expression(self, node: Any, call_node: Any) -> tuple[str, str]:
+        """Text that builds the Intent passed to a PendingIntent, following a local variable."""
+        text = self.text(node)
+        if node.type not in IDENTIFIERS:
+            return text, "no class, component or package in the argument expression"
+        function = call_node
+        while function is not None and function.type not in FUNCTIONS:
+            function = function.parent
+        body = self.text(function)[: call_node.start_byte - function.start_byte] if function else ""
+        name = re.escape(text)
+        parts = []
+        for match in re.finditer(rf"\b{name}\b\s*(?::\s*[\w.?]+\s*)?=(?!=)", body):
+            end = body.find("\n", match.end())
+            line = body[match.end() : len(body) if end < 0 else end]
+            parts.append(line)
+            # Kotlin scope functions configure the Intent in a following block.
+            if re.search(r"\.(?:apply|also|run)\s*\{\s*$", line):
+                depth, index = 1, end + 1
+                while 0 < index < len(body) and depth:
+                    depth += {"{": 1, "}": -1}.get(body[index], 0)
+                    index += 1
+                parts.append(body[end:index])
+        parts += re.findall(
+            rf"\b{name}\s*\.\s*(?:setClass\w*|setComponent|setPackage|component\s*=|`?package`?\s*=)", body
+        )
+        if not parts:
+            return text, "Intent variable not built in this function; its target is unknown"
+        return " ".join(parts), "no class, component or package where the Intent variable is built"
 
     def literal(self, node: Any) -> str | None:
         if not node or node.type not in STRINGS:
@@ -755,7 +789,9 @@ class Analyzer:
                         "AST-SQL-CONCAT",
                         call.node,
                         traces=query.traces,
-                        sink=f"{simple}.{method}",
+                        # sink is part of the finding identity; 1.3 used the bare method name.
+                        sink=call.name,
+                        sink_api=f"{simple}.{method}",
                         statement_scope=f"argument {index} is SQL syntax; bound value arguments are not",
                         unknown_helpers_are_sanitizers=False,
                     )
@@ -767,14 +803,17 @@ class Analyzer:
             and len(call.args) >= 4
             and "FLAG_MUTABLE" in self.text(call.args[3])
         ):
-            wrapped = self.text(call.args[2])
-            explicit = re.search(r"::class|\.class\b|setClass|setComponent|setPackage|ComponentName", wrapped)
+            wrapped, basis = self.intent_expression(call.args[2], call.node)
+            explicit = re.search(
+                r"::class|\.class\b|setClass|setComponent|setPackage|ComponentName|\b(?:component|`?package`?)\s*=",
+                wrapped,
+            )
             if not explicit:
                 self.emit(
                     "AST-PENDINGINTENT-MUTABLE",
                     call.node,
                     factory=f"PendingIntent.{call.name}",
-                    intent_argument="no class, component or package in the argument expression",
+                    intent_argument=basis,
                     target_sdk_note="Android 14+ rejects mutable implicit PendingIntents for targetSdk 34+",
                 )
         logging = (self.key(call.receiver) == "Log" and call.name in {"d", "i", "v", "e", "w"}) or (
