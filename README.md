@@ -262,6 +262,13 @@ apsa reports export latest --format maswe --out maswe.json
 apsa reports export latest --format cyclonedx --out apsa.cdx.json
 ```
 
+`reports ingest REPORT --sarif FILE --tool NAME` (MCP `reports_ingest_sarif`)
+imports another tool's SARIF 2.1.0 results, such as Android Lint, CodeQL or
+Semgrep, into a new report. Imported results stay candidates with
+`origin: external`, add no APSA coverage, and are cross-linked with APSA
+findings of a related weakness at the same location. Their text is sanitized
+and treated as untrusted.
+
 `--format cyclonedx` writes a CycloneDX 1.6 SBOM of the dependencies APSA
 discovered, with package URLs and the evidence behind each version, and embeds
 APSA's dependency matches as VEX entries. Each entry carries the evidence
@@ -314,7 +321,7 @@ MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. 
 | --- | --- |
 | Audits | `capabilities`, `audit_scan`, `audit_start`, `audit_reassess`, `verify_finding`, `specs_validate` |
 | Jobs | `jobs_list`, `jobs_status`, `jobs_cancel` |
-| Reports | `reports_list`, `reports_get`, `reports_compare`, `reports_export_baseline` |
+| Reports | `reports_list`, `reports_get`, `reports_compare`, `reports_export_baseline`, `reports_ingest_sarif` |
 | Intelligence | `intelligence_sync`, `intelligence_search`, `intelligence_get`, `dependency_check` |
 | Policy | `policy_evaluate` |
 | Runtime planning | `runtime_plan`, `runtime_devices` |

@@ -80,9 +80,8 @@ def verify_claim(
             states.setdefault(item["rule_id"], set()).add(item["state"])
     matches, elsewhere = [], []
     for item in report.get("findings", []):
-        if item.get("rule_id") not in checks and not set(weaknesses) & set(
-            weaknesses_for(item.get("rule_id", ""))
-        ):
+        mapped = item.get("maswe") or weaknesses_for(item.get("rule_id", ""))
+        if item.get("rule_id") not in checks and not set(weaknesses) & set(mapped):
             continue
         located = [e for e in item.get("evidence", []) if isinstance(e, dict)]
         summary = {

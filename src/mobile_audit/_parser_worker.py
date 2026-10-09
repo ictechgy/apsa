@@ -61,9 +61,10 @@ def analyze(
     from .rules import static_checks
 
     inventory, sources = inspect_target(target, sbom, authorized=True, configuration=configuration)
+    from .platform_checks import exposed_providers
     from .source_analysis import analyze_sources
 
-    structural = analyze_sources(sources, specs)
+    structural = analyze_sources(sources, specs, exposed_providers(inventory))
     findings, coverage = static_checks(inventory, sources, structural.get("pattern_exclusions"))
     from .platform_checks import platform_checks
 

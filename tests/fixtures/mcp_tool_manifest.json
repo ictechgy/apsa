@@ -1,7 +1,7 @@
 {
   "note": "Regenerate deliberately when an MCP tool name, description, input schema or annotation changes; publish the new hash in docs/MCP_SECURITY.md.",
   "default": {
-    "sha256": "1f55e218265003e9cf17aff0281d3ad7c1a953f2c4f787ee4cde973173123818",
+    "sha256": "e57801c6adb9348299891bb67cd20368ac95e5e1fa792fb99cc376c304868ae1",
     "tools": [
       [
         "audit_reassess",
@@ -125,6 +125,14 @@
           "readOnlyHint": true,
           "destructiveHint": false,
           "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "reports_ingest_sarif",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
           "openWorldHint": false
         }
       ],
@@ -175,7 +183,7 @@
     ]
   },
   "runtime": {
-    "sha256": "403b82cf4343601f9b6ec605ad77966d88bd571f07ea37124ac3c968e7d33be7",
+    "sha256": "dd07282ff7a17d4fe7c2619718c1887ae4cedcb864aac741655f71e65171f9eb",
     "tools": [
       [
         "audit_reassess",
@@ -299,6 +307,14 @@
           "readOnlyHint": true,
           "destructiveHint": false,
           "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "reports_ingest_sarif",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
           "openWorldHint": false
         }
       ],

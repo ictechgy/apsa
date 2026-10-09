@@ -67,6 +67,28 @@ def _masked(value: str) -> str:
     return f"{value[:4]}…({len(value)} characters)"
 
 
+def _exposed(component: dict, target_level: int | None) -> bool:
+    exported = component.get("exported")
+    implicit = (
+        exported == "unspecified"
+        and component.get("intent_filters")
+        and (target_level is None or target_level < 31)
+    )
+    protected = any(component.get(key) for key in ("permission", "read_permission", "write_permission"))
+    return bool((exported == "true" or implicit) and not protected)
+
+
+def exposed_providers(inventory: dict) -> set[str]:
+    """Simple class names of declared providers that other apps can reach."""
+    target = str((inventory.get("android_sdk") or {}).get("target") or "")
+    level = int(target) if target.isdigit() else None
+    return {
+        str(c.get("name", "")).rsplit(".", 1)[-1]
+        for c in inventory.get("components", [])
+        if c.get("type") == "provider" and c.get("name") and _exposed(c, level)
+    }
+
+
 def _android(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
     findings: list[dict] = []
     coverage: list[dict] = []
@@ -94,13 +116,8 @@ def _android(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict
         if component.get("type") not in {"activity", "activity-alias", "service", "receiver", "provider"}:
             continue
         exported = component.get("exported")
-        implicit = (
-            exported == "unspecified"
-            and component.get("intent_filters")
-            and (target_level is None or target_level < 31)
-        )
-        protected = any(component.get(key) for key in ("permission", "read_permission", "write_permission"))
-        if (exported == "true" or implicit) and not protected and not component.get("launcher"):
+        implicit = exported == "unspecified" and bool(component.get("intent_filters"))
+        if _exposed(component, target_level) and not component.get("launcher"):
             severity = "low" if component["type"] in {"activity", "activity-alias"} else "medium"
             findings.append(
                 finding(

@@ -1,0 +1,3575 @@
+{
+  "demos": [
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0089",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0326",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0045",
+      "weaknesses": [
+        "MASWE-0021"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0090",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "STORAGE-SENSITIVE-LOG"
+      ],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0327",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0044",
+      "weaknesses": [
+        "MASWE-0020"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0091",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0328",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0046",
+      "weaknesses": [
+        "MASWE-0022"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0092",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0329",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0044",
+      "weaknesses": [
+        "MASWE-0020"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0093",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0330",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0044",
+      "weaknesses": [
+        "MASWE-0020"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0025",
+      "in_scope": true,
+      "label": "pass",
+      "other_findings": [],
+      "outcome": "tn",
+      "platform": "android",
+      "test": "MASTG-TEST-0245",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0077",
+      "weaknesses": [
+        "MASWE-0041"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0050",
+      "in_scope": true,
+      "label": null,
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0272",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0076",
+      "weaknesses": [
+        "MASWE-0044"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0051",
+      "in_scope": true,
+      "label": null,
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0272",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0076",
+      "weaknesses": [
+        "MASWE-0044"
+      ]
+    },
+    {
+      "files": [
+        "MainActivity.kt",
+        "MastgTest.kt",
+        "PayloadGenerator.java"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0100",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0337",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0088",
+      "weaknesses": [
+        "MASWE-0050"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0102",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "ANDROID-EXPORTED-COMPONENT"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0339",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0086",
+      "weaknesses": [
+        "MASWE-0050"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0136",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-EXPORTED-COMPONENT"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0372",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0066",
+      "weaknesses": [
+        "MASWE-0032"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0138",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0374",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0066",
+      "weaknesses": [
+        "MASWE-0032"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0139",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0375",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0083",
+      "weaknesses": [
+        "MASWE-0050"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0140",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-EXPORTED-COMPONENT"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0372",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0066",
+      "weaknesses": [
+        "MASWE-0032"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0141",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-EXPORTED-COMPONENT",
+        "STORAGE-SENSITIVE-LOG"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0375",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0083",
+      "weaknesses": [
+        "MASWE-0050"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTestWebView.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0156",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0399",
+      "test_type": [
+        "static",
+        "config",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0071",
+      "weaknesses": [
+        "MASWE-0035"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTestWebView.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0157",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0398",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0071",
+      "weaknesses": [
+        "MASWE-0035"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0158",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0400",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0071",
+      "weaknesses": [
+        "MASWE-0035"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0007",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0204",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0027",
+      "weaknesses": [
+        "MASWE-0012"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0008",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0205",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0027",
+      "weaknesses": [
+        "MASWE-0012"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0012",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0208",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0009",
+      "weaknesses": [
+        "MASWE-0013"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0017",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0212",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0014",
+      "weaknesses": [
+        "MASWE-0003"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0022",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0221",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0020",
+      "weaknesses": [
+        "MASWE-0007"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [
+        "AST-CRYPTO-ECB"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0023",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0232",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0020",
+      "weaknesses": [
+        "MASWE-0007"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [
+        "AST-CRYPTO-ECB"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0058",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0350",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0020",
+      "weaknesses": [
+        "MASWE-0007"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0071",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0307",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0012",
+      "weaknesses": [
+        "MASWE-0007",
+        "MASWE-0009",
+        "MASWE-0010"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0072",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0308",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0012",
+      "weaknesses": [
+        "MASWE-0007",
+        "MASWE-0009",
+        "MASWE-0010"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0075",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0312",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0020",
+      "weaknesses": [
+        "MASWE-0007"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0048",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0234",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0052",
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0049",
+      "in_scope": true,
+      "label": "pass",
+      "other_findings": [],
+      "outcome": "tn",
+      "platform": "android",
+      "test": "MASTG-TEST-0234",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0052",
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0054",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0282",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0052",
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0055",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0283",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0052",
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTestWebView.kt"
+      ],
+      "findings": [
+        "AST-WEBVIEW-SSL-BYPASS",
+        "WEBVIEW-SSL-BYPASS"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0056",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0284",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0052",
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt",
+        "network_security_config.xml"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0057",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0286",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0052",
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTestWebView.kt",
+        "filepaths.xml"
+      ],
+      "findings": [
+        "WEBVIEW-FILE-ACCESS"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0029",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "ANDROID-CLEARTEXT"
+      ],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0250",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTestWebView.kt",
+        "filepaths.xml"
+      ],
+      "findings": [
+        "WEBVIEW-FILE-ACCESS"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0030",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "ANDROID-CLEARTEXT"
+      ],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0251",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTestWebView.kt"
+      ],
+      "findings": [
+        "WEBVIEW-FILE-ACCESS"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0031",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "ANDROID-CLEARTEXT"
+      ],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0253",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTestWebView.kt"
+      ],
+      "findings": [
+        "WEBVIEW-FILE-ACCESS"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0032",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "ANDROID-CLEARTEXT"
+      ],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0252",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml"
+      ],
+      "findings": [
+        "ANDROID-DEBUG"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0040",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0226",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0067",
+      "weaknesses": [
+        "MASWE-0063"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0061",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0291",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0055",
+      "weaknesses": [
+        "MASWE-0038"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0062",
+      "in_scope": false,
+      "label": null,
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0292",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0055",
+      "weaknesses": [
+        "MASWE-0038"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0063",
+      "in_scope": false,
+      "label": null,
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0293",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0055",
+      "weaknesses": [
+        "MASWE-0038"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0078",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0315",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0054",
+      "weaknesses": [
+        "MASWE-0037"
+      ]
+    },
+    {
+      "files": [
+        "MainActivity.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0079",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0316",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0053",
+      "weaknesses": [
+        "MASWE-0036"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MainActivityWebView.kt",
+        "MastgTestWebView.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0082",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "WEBVIEW-JS-BRIDGE"
+      ],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0320",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0118",
+      "weaknesses": [
+        "MASWE-0001"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTestWebView.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0097",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "WEBVIEW-JS-BRIDGE"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0334",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0103",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0340",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0053",
+      "weaknesses": [
+        "MASWE-0036"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0104",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0340",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0053",
+      "weaknesses": [
+        "MASWE-0036"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0105",
+      "in_scope": true,
+      "label": "pass",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "tn",
+      "platform": "android",
+      "test": "MASTG-TEST-0340",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0053",
+      "weaknesses": [
+        "MASWE-0036"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0120",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0355",
+      "test_type": [
+        "static",
+        "config",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0064",
+      "weaknesses": [
+        "MASWE-0018"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [
+        "ANDROID-EXPORTED-COMPONENT"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0121",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0356",
+      "test_type": [
+        "dynamic",
+        "filesystem",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0064",
+      "weaknesses": [
+        "MASWE-0018"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt",
+        "filepaths.xml"
+      ],
+      "findings": [
+        "ANDROID-EXPORTED-COMPONENT"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0122",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0357",
+      "test_type": [
+        "static",
+        "config",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0064",
+      "weaknesses": [
+        "MASWE-0018"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0123",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0357",
+      "test_type": [
+        "static",
+        "config",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0064",
+      "weaknesses": [
+        "MASWE-0018"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [
+        "ANDROID-EXPORTED-COMPONENT"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0128",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0364",
+      "test_type": [
+        "static",
+        "config",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0119",
+      "weaknesses": [
+        "MASWE-0018"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [
+        "ANDROID-EXPORTED-COMPONENT"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0129",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "STORAGE-TOKEN-PREFS"
+      ],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0365",
+      "test_type": [
+        "static",
+        "config",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0062",
+      "weaknesses": [
+        "MASWE-0018"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [
+        "ANDROID-EXPORTED-COMPONENT"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0130",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "STORAGE-SENSITIVE-LOG",
+        "STORAGE-TOKEN-PREFS"
+      ],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0366",
+      "test_type": [
+        "static",
+        "config",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0063",
+      "weaknesses": [
+        "MASWE-0018"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [
+        "AST-PENDINGINTENT-MUTABLE"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0147",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0381",
+      "test_type": [
+        "static"
+      ],
+      "weakness_beta": "MASWE-0066",
+      "weaknesses": [
+        "MASWE-0032"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0151",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "ANDROID-EXPORTED-COMPONENT"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0393",
+      "test_type": [
+        "static",
+        "config"
+      ],
+      "weakness_beta": "MASWE-0058",
+      "weaknesses": [
+        "MASWE-0029"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0152",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "ANDROID-EXPORTED-COMPONENT"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0394",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0058",
+      "weaknesses": [
+        "MASWE-0029"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0009",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0206",
+      "test_type": [
+        "dynamic",
+        "network"
+      ],
+      "weakness_beta": "MASWE-0108",
+      "weaknesses": [
+        "MASWE-0073",
+        "MASWE-0074"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0033",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0254",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0117",
+      "weaknesses": [
+        "MASWE-0066"
+      ]
+    },
+    {
+      "files": [
+        "MainActivity.kt",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0081",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0319",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0112",
+      "weaknesses": [
+        "MASWE-0073"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0027",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "ANDROID-CLEARTEXT"
+      ],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0249",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0008",
+      "weaknesses": [
+        "MASWE-0017"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0028",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP",
+        "ANDROID-CLEARTEXT"
+      ],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0247",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0008",
+      "weaknesses": [
+        "MASWE-0017"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0037",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0263",
+      "test_type": [
+        "dynamic",
+        "logs"
+      ],
+      "weakness_beta": "MASWE-0094",
+      "weaknesses": [
+        "MASWE-0061"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0038",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0264",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0094",
+      "weaknesses": [
+        "MASWE-0061"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0039",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0265",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0094",
+      "weaknesses": [
+        "MASWE-0061"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0087",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0324",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0097",
+      "weaknesses": []
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0088",
+      "in_scope": false,
+      "label": "pass",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0325",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0097",
+      "weaknesses": []
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0101",
+      "in_scope": false,
+      "label": null,
+      "other_findings": [],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0338",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0105",
+      "weaknesses": [
+        "MASWE-0057"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0106",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0341",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0107",
+      "weaknesses": [
+        "MASWE-0058"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0107",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0341",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0107",
+      "weaknesses": [
+        "MASWE-0058"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0108",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0341",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0107",
+      "weaknesses": [
+        "MASWE-0058"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0114",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0351",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0099",
+      "weaknesses": [
+        "MASWE-0053"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0115",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0352",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0101",
+      "weaknesses": [
+        "MASWE-0064"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0116",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0352",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0101",
+      "weaknesses": [
+        "MASWE-0064"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0132",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0368",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0089",
+      "weaknesses": [
+        "MASWE-0059"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0133",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "android",
+      "test": "MASTG-TEST-0369",
+      "test_type": [
+        "static",
+        "package",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0089",
+      "weaknesses": [
+        "MASWE-0059"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0001",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0200",
+      "test_type": [
+        "dynamic",
+        "filesystem",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0007",
+      "weaknesses": [
+        "MASWE-0002"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0002",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0201",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0007",
+      "weaknesses": [
+        "MASWE-0002"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0003",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0202",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0007",
+      "weaknesses": [
+        "MASWE-0002"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0004",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0202",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0007",
+      "weaknesses": [
+        "MASWE-0002"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0005",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0202",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0007",
+      "weaknesses": [
+        "MASWE-0002"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [
+        "STORAGE-SENSITIVE-LOG"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0006",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [],
+      "outcome": "unlabeled",
+      "platform": "android",
+      "test": "MASTG-TEST-0203",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0001",
+      "weaknesses": [
+        "MASWE-0005"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0010",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0207",
+      "test_type": [
+        "dynamic",
+        "filesystem"
+      ],
+      "weakness_beta": "MASWE-0006",
+      "weaknesses": [
+        "MASWE-0001"
+      ]
+    },
+    {
+      "files": [
+        "AndroidManifest.xml",
+        "MastgTest.kt",
+        "backup_rules.xml",
+        "data_extraction_rules.xml"
+      ],
+      "findings": [
+        "ANDROID-ALLOW-BACKUP"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0020",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0216",
+      "test_type": [
+        "dynamic",
+        "filesystem"
+      ],
+      "weakness_beta": "MASWE-0004",
+      "weaknesses": [
+        "MASWE-0006"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0034",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0262",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0004",
+      "weaknesses": [
+        "MASWE-0006"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0035",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0216",
+      "test_type": [
+        "dynamic",
+        "filesystem"
+      ],
+      "weakness_beta": "MASWE-0004",
+      "weaknesses": [
+        "MASWE-0006"
+      ]
+    },
+    {
+      "files": [
+        "MasSharedPref_Sensitive_Data.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [
+        "STORAGE-TOKEN-PREFS"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0059",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "SOURCE-HARDCODED-SECRET"
+      ],
+      "outcome": "tp",
+      "platform": "android",
+      "test": "MASTG-TEST-0287",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0006",
+      "weaknesses": [
+        "MASWE-0001"
+      ]
+    },
+    {
+      "files": [
+        "MasSharedPref_Sensitive_Data.xml",
+        "MastgTest.kt"
+      ],
+      "findings": [
+        "STORAGE-TOKEN-PREFS"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0060",
+      "in_scope": true,
+      "label": "pass",
+      "other_findings": [
+        "SOURCE-HARDCODED-SECRET"
+      ],
+      "outcome": "fp",
+      "platform": "android",
+      "test": "MASTG-TEST-0287",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0006",
+      "weaknesses": [
+        "MASWE-0001"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.kt"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0064",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "android",
+      "test": "MASTG-TEST-0258",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0053",
+      "weaknesses": [
+        "MASWE-0036"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0068",
+      "in_scope": true,
+      "label": null,
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0304",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0006",
+      "weaknesses": [
+        "MASWE-0001"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0069",
+      "in_scope": true,
+      "label": null,
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0305",
+      "test_type": [
+        "static",
+        "dynamic"
+      ],
+      "weakness_beta": "MASWE-0006",
+      "weaknesses": [
+        "MASWE-0001"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0070",
+      "in_scope": true,
+      "label": null,
+      "outcome": "no-sample",
+      "platform": "android",
+      "test": "MASTG-TEST-0306",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0006",
+      "weaknesses": [
+        "MASWE-0001"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0041",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0266",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0044",
+      "weaknesses": [
+        "MASWE-0020"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0042",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0267",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0044",
+      "weaknesses": [
+        "MASWE-0020"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0043",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0268",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0045",
+      "weaknesses": [
+        "MASWE-0021"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0044",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0269",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0045",
+      "weaknesses": [
+        "MASWE-0021"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0045",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0270",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0046",
+      "weaknesses": [
+        "MASWE-0022"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0046",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0271",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0046",
+      "weaknesses": [
+        "MASWE-0022"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0047",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0266",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0044",
+      "weaknesses": [
+        "MASWE-0020"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0052",
+      "in_scope": true,
+      "label": null,
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0273",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0076",
+      "weaknesses": [
+        "MASWE-0044"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0053",
+      "in_scope": true,
+      "label": null,
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0275",
+      "test_type": [
+        "static",
+        "developer"
+      ],
+      "weakness_beta": "MASWE-0076",
+      "weaknesses": [
+        "MASWE-0044"
+      ]
+    },
+    {
+      "files": [
+        "Info.plist",
+        "MASTestAppApp.swift",
+        "MastgTest.swift",
+        "PayloadGenerator.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0149",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "STORAGE-SENSITIVE-LOG"
+      ],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0386",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0088",
+      "weaknesses": [
+        "MASWE-0050"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0011",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0209",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0009",
+      "weaknesses": [
+        "MASWE-0013"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift",
+        "decompiled-o1-review.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0013",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0213",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0014",
+      "weaknesses": [
+        "MASWE-0003"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift",
+        "decompiled-o1-review.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0014",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0213",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0014",
+      "weaknesses": [
+        "MASWE-0003"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [
+        "AST-CRYPTO-WEAK-HASH"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0015",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "tp",
+      "platform": "ios",
+      "test": "MASTG-TEST-0211",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0021",
+      "weaknesses": [
+        "MASWE-0008"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0016",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0211",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0021",
+      "weaknesses": [
+        "MASWE-0008"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift",
+        "decompiled-o1-review.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0018",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0210",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0020",
+      "weaknesses": [
+        "MASWE-0007"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0073",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0311",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0027",
+      "weaknesses": [
+        "MASWE-0012"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0074",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0349",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0027",
+      "weaknesses": [
+        "MASWE-0012"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0080",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0317",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0020",
+      "weaknesses": [
+        "MASWE-0007"
+      ]
+    },
+    {
+      "files": [
+        "Info.plist",
+        "MastgTest.swift"
+      ],
+      "findings": [
+        "IOS-ATS"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0083",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "tp",
+      "platform": "ios",
+      "test": "MASTG-TEST-0322",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0050",
+      "weaknesses": [
+        "MASWE-0026"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0084",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0321",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0050",
+      "weaknesses": [
+        "MASWE-0026"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0085",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0323",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0050",
+      "weaknesses": [
+        "MASWE-0026"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0086",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0323",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0050",
+      "weaknesses": [
+        "MASWE-0026"
+      ]
+    },
+    {
+      "files": [
+        "Info.plist",
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0109",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0342",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0050",
+      "weaknesses": [
+        "MASWE-0026"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0110",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0343",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0050",
+      "weaknesses": [
+        "MASWE-0026"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0111",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0344",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0050",
+      "weaknesses": [
+        "MASWE-0026"
+      ]
+    },
+    {
+      "files": [
+        "Info.plist",
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0148",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0385",
+      "test_type": [
+        "static"
+      ],
+      "weakness_beta": "MASWE-0047",
+      "weaknesses": [
+        "MASWE-0028"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0154",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0396",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0052",
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0155",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0397",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0052",
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0094",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0331",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0072",
+      "weaknesses": [
+        "MASWE-0035"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift",
+        "ai-decompiled.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0095",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0332",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0071",
+      "weaknesses": [
+        "MASWE-0035"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0096",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0333",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0098",
+      "in_scope": true,
+      "label": null,
+      "other_findings": [],
+      "outcome": "unlabeled",
+      "platform": "ios",
+      "test": "MASTG-TEST-0335",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0099",
+      "in_scope": true,
+      "label": null,
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0336",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0112",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0346",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0053",
+      "weaknesses": [
+        "MASWE-0036"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0113",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0347",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0053",
+      "weaknesses": [
+        "MASWE-0036"
+      ]
+    },
+    {
+      "files": [
+        "Info.plist",
+        "MASTestAppApp.swift",
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0134",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0370",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0058",
+      "weaknesses": [
+        "MASWE-0029"
+      ]
+    },
+    {
+      "files": [
+        "Info.plist",
+        "MASTestAppApp.swift",
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0135",
+      "in_scope": true,
+      "label": "pass",
+      "other_findings": [],
+      "outcome": "tn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0371",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0058",
+      "weaknesses": [
+        "MASWE-0029"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0142",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [
+        "WEBVIEW-JS-BRIDGE"
+      ],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0376",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0143",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0377",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0144",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0378",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0145",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0379",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0146",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0380",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0069",
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "files": [
+        "MASTestAppApp.swift",
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0153",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0395",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0058",
+      "weaknesses": [
+        "MASWE-0029"
+      ]
+    },
+    {
+      "files": [
+        "Info.plist",
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0126",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0361",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0117",
+      "weaknesses": [
+        "MASWE-0066"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0127",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0363",
+      "test_type": [
+        "dynamic",
+        "hooks",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0117",
+      "weaknesses": [
+        "MASWE-0066"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0021",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0240",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0097",
+      "weaknesses": []
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0024",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0248",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0008",
+      "weaknesses": [
+        "MASWE-0017"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0026",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0246",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0008",
+      "weaknesses": [
+        "MASWE-0017"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0036",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0261",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0067",
+      "weaknesses": [
+        "MASWE-0063"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0117",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0354",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0107",
+      "weaknesses": [
+        "MASWE-0058"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0118",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0354",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0107",
+      "weaknesses": [
+        "MASWE-0058"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0119",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0354",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0107",
+      "weaknesses": [
+        "MASWE-0058"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0124",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [
+        "STORAGE-SENSITIVE-LOG"
+      ],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0358",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0094",
+      "weaknesses": [
+        "MASWE-0061"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0125",
+      "in_scope": false,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0359",
+      "test_type": [
+        "dynamic",
+        "logs"
+      ],
+      "weakness_beta": "MASWE-0094",
+      "weaknesses": [
+        "MASWE-0061"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0131",
+      "in_scope": false,
+      "label": "pass",
+      "other_findings": [
+        "IOS-PRIVACY-MANIFEST"
+      ],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0367",
+      "test_type": [
+        "dynamic"
+      ],
+      "weakness_beta": "MASWE-0099",
+      "weaknesses": [
+        "MASWE-0053"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0150",
+      "in_scope": false,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "not-assessed",
+      "platform": "ios",
+      "test": "MASTG-TEST-0387",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0105",
+      "weaknesses": [
+        "MASWE-0057"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift",
+        "decompiled-o1-review.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0019",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0215",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0004",
+      "weaknesses": [
+        "MASWE-0006"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [
+        "STORAGE-SENSITIVE-LOG"
+      ],
+      "flagged": true,
+      "id": "MASTG-DEMO-0065",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "tp",
+      "platform": "ios",
+      "test": "MASTG-TEST-0297",
+      "test_type": [
+        "static",
+        "code"
+      ],
+      "weakness_beta": "MASWE-0001",
+      "weaknesses": [
+        "MASWE-0005"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0066",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0296",
+      "test_type": [
+        "dynamic",
+        "logs"
+      ],
+      "weakness_beta": "MASWE-0001",
+      "weaknesses": [
+        "MASWE-0005"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0067",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0298",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0004",
+      "weaknesses": [
+        "MASWE-0006"
+      ]
+    },
+    {
+      "files": [
+        "MastgTest.swift"
+      ],
+      "findings": [],
+      "flagged": false,
+      "id": "MASTG-DEMO-0076",
+      "in_scope": true,
+      "label": "fail",
+      "other_findings": [],
+      "outcome": "fn",
+      "platform": "ios",
+      "test": "MASTG-TEST-0313",
+      "test_type": [
+        "static",
+        "code",
+        "manual"
+      ],
+      "weakness_beta": "MASWE-0053",
+      "weaknesses": [
+        "MASWE-0036"
+      ]
+    },
+    {
+      "files": [],
+      "id": "MASTG-DEMO-0077",
+      "in_scope": true,
+      "label": "fail",
+      "outcome": "no-sample",
+      "platform": "ios",
+      "test": "MASTG-TEST-0314",
+      "test_type": [
+        "dynamic",
+        "hooks"
+      ],
+      "weakness_beta": "MASWE-0053",
+      "weaknesses": [
+        "MASWE-0036"
+      ]
+    }
+  ],
+  "labeled": 133,
+  "method": "Score APSA on OWASP MASTG v2.0 demos that state a pass or fail outcome.\n\nMethod, fixed before the first run:\n\n- Input: the OWASP/mastg archive at a pinned commit, verified by SHA-256. Demos\n  and tests are CC BY-SA 4.0; this harness copies sample sources into a fresh\n  work directory and stores only identifiers and outcomes.\n- Label: a demo's ``kind: fail|pass``; otherwise an unambiguous \"The test\n  fails/passes\" statement in its Evaluation section. Other demos are unlabeled.\n- Weakness: the demo's test names a MASWE beta identifier, translated to MASWE\n  v1.0 through the index's beta mapping.\n- Target: the demo's original sample sources (Kotlin, Java except decompiled\n  ``*_reversed`` files, Swift, XML, plists); scripts and expected outputs are\n  excluded.\n- Outcome: flagged when any APSA finding maps to one of the demo's v1\n  weaknesses. A demo is in scope when APSA has a related check for one of them.\n- Score: in-scope fail demos are TP or FN, in-scope pass demos TN or FP, others\n  not-assessed; scan failures are errors, never negatives. A strict pair needs\n  every fail demo of a test flagged and every pass demo clear.\n",
+  "schema": "apsa-mastg-demos-v1",
+  "source": {
+    "archive_sha256": "72052f77b2e252c0034aae5f009615c22c6b2b4ebe031490b5f33711f433149c",
+    "commit": "990472dbcffe126f5556045d60270c4ffdfdde72",
+    "license": "CC-BY-SA-4.0",
+    "repository": "OWASP/mastg"
+  },
+  "strict_pairs": {
+    "by_test": {
+      "MASTG-TEST-0234": false,
+      "MASTG-TEST-0287": false
+    },
+    "correct": 0,
+    "tests": 2
+  },
+  "summary": {
+    "fn": 53,
+    "fp": 1,
+    "no-sample": 38,
+    "not-assessed": 32,
+    "tn": 4,
+    "tp": 15,
+    "unlabeled": 14
+  }
+}

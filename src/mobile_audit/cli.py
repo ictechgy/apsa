@@ -173,6 +173,15 @@ def parser() -> Parser:
     )
     export.add_argument("--approved-by")
     export.add_argument("--approval-reference")
+    ingest_parser = reports.add_parser(
+        "ingest", help="Import another tool's SARIF results as candidate external evidence"
+    )
+    ingest_parser.add_argument("id")
+    ingest_parser.add_argument("--sarif", type=Path, required=True)
+    ingest_parser.add_argument("--tool", required=True, help="Short tool label, for example codeql or lint")
+    ingest_parser.add_argument(
+        "--sarif-root", default="", help="Repository-relative path of the scanned target, stripped from URIs"
+    )
     comparison = reports.add_parser("compare")
     comparison.add_argument("before")
     comparison.add_argument("after")
@@ -615,6 +624,18 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             return compare(store, args.before, args.after), 0
         if args.action == "reassess":
             return refresh_report(store, args.id), 0
+        if args.action == "ingest":
+            from .ingest import ingest
+
+            try:
+                result = ingest(store, args.id, args.sarif, args.tool, args.sarif_root)
+            except ValueError as error:
+                raise UsageError(str(error)) from error
+            return {
+                "report_id": result["id"],
+                "parent_report": result["parent_report"],
+                "external_input": result["external_inputs"][-1],
+            }, 0
         if args.action == "export":
             if args.format == "baseline":
                 if args.sarif_root is not None:

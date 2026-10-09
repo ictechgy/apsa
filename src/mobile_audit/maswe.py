@@ -147,7 +147,7 @@ def coverage_matrix(report: dict) -> dict:
             states.setdefault(rule, set()).add(item["state"])
     findings: dict[str, list[str]] = {}
     for item in report.get("findings", []):
-        for weakness in weaknesses_for(item.get("rule_id", "")):
+        for weakness in item.get("maswe") or weaknesses_for(item.get("rule_id", "")):
             findings.setdefault(weakness, []).append(item["id"])
     rows = []
     for weakness in index["weaknesses"]:

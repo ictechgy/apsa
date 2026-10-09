@@ -39,6 +39,13 @@ public class FilesProvider extends ContentProvider {
 }
 """
 
+MANIFEST = """<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.files">
+  <application>
+    <provider android:name=".FilesProvider" android:authorities="com.example.files" android:exported="true" />
+  </application>
+</manifest>
+"""
+
 WRAPPERS = """package com.example.calls
 
 import android.app.Activity
@@ -78,7 +85,9 @@ def rules_at(findings: list[dict]) -> list[tuple[str, int, str]]:
 
 
 def test_provider_arguments_reach_added_sql_sinks():
-    result = analyze_sources([("FilesProvider.java", PROVIDER)])
+    # A provider no other app can reach has no caller-supplied arguments.
+    assert analyze_sources([("FilesProvider.java", PROVIDER)])["findings"] == []
+    result = analyze_sources([("FilesProvider.java", PROVIDER)], None, {"FilesProvider"})
     found = rules_at(result["findings"])
     assert ("AST-SQL-CONCAT", 13, "SQLiteDatabase.delete") in found
     # A constant where clause with bound arguments is not SQL syntax from the caller.
@@ -128,6 +137,7 @@ def test_scan_records_the_specification_and_verify_cross_checks_claims(store, tm
     app.mkdir()
     (app / "CallActivity.kt").write_text(WRAPPERS)
     (app / "FilesProvider.java").write_text(PROVIDER)
+    (app / "AndroidManifest.xml").write_text(MANIFEST)
     (tmp_path / "specs.toml").write_text(SPEC)
     specs = load_specs(tmp_path / "specs.toml")
     report = scan(store, app, specs=specs)

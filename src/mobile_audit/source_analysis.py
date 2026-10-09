@@ -181,9 +181,18 @@ PROVIDER_METHODS = {"query", "update", "delete", "insert", "call"}
 
 
 class Analyzer:
-    def __init__(self, path: str, text: str, language: str, specs: dict | None = None):
+    def __init__(
+        self,
+        path: str,
+        text: str,
+        language: str,
+        specs: dict | None = None,
+        exposed_providers: set[str] | None = None,
+    ):
         self.path = path
         self.specs = specs or {"source": [], "sink": []}
+        # Simple class names of providers other apps can reach (exported, no permission).
+        self.exposed_providers = exposed_providers or set()
         self.raw = text.encode("utf-8")
         self.line_offsets = [0] + [match.end() for match in re.finditer(b"\n", self.raw)]
         self.lines = text.split("\n")
@@ -1004,8 +1013,11 @@ class Analyzer:
                 )
                 for base in bases
             )
-            provider_scope = self.language in {"java", "kotlin"} and any(
-                re.search(r"\bContentProvider\b", self.text(base)) for base in bases
+            provider_scope = (
+                self.language in {"java", "kotlin"}
+                and enclosing is not None
+                and self.text(_field(enclosing, "name")) in self.exposed_providers
+                and any(re.search(r"\bContentProvider\b", self.text(base)) for base in bases)
             )
             parameters = self.parameters(function)
             self.parameter_types = {name: type_name for name, type_name, _ in parameters}
@@ -1066,7 +1078,9 @@ class Analyzer:
                 self.function_counts["without_body"] += 1
 
 
-def analyze_sources(sources: list[Any], specs: dict | None = None) -> dict:
+def analyze_sources(
+    sources: list[Any], specs: dict | None = None, exposed_providers: set[str] | None = None
+) -> dict:
     """Return candidate findings, explicit partial coverage, and parser warnings.
 
     ``sources`` accepts the inventory loader's ``(path, text)`` tuples or the
@@ -1182,7 +1196,7 @@ def analyze_sources(sources: list[Any], specs: dict | None = None) -> dict:
                 skipped += 1  # Preprocessing, dynamic dispatch and unsupported flows remain partial.
                 metric["state"] = "partial"
             else:
-                analyzer = Analyzer(path, text, language, specs)
+                analyzer = Analyzer(path, text, language, specs, exposed_providers)
             analyzer.analyze(tree.root_node)
             metric["state"] = "partial" if tree.root_node.has_error or adaptations else "checked"
             if language == "objc":
