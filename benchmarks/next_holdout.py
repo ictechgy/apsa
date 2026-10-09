@@ -58,7 +58,7 @@ def evaluate_cves(spec: dict, root: Path) -> list[dict]:
                         "cna_sha256": sha(raw),
                         "bulletin_sha256": sha((root / (doc["id"] + ".html")).read_bytes()),
                         "finding_statuses": sorted(
-                            {f["status"] for f in findings if f.get("cve") == cve["cve"]}
+                            {f["status"] for f in findings if f["rule_id"] == "OS-" + cve["cve"]}
                         ),
                         "reachability": "unknown",
                         "installed_patch_verified": False,

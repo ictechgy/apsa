@@ -24,6 +24,9 @@ jobs:
           enable-cache: false
       - run: uv sync --locked --extra dev
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: ""
+          log-accepted-android-sdk-licenses: "false"
       - name: Install only the pinned synthetic build tool inputs
         run: sdkmanager "build-tools;35.0.0" "platforms;android-35"
       - name: Create and independently dump a new synthetic protobuf manifest

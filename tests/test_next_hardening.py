@@ -420,6 +420,23 @@ else: raise AssertionError('Replacement input unexpectedly mounted')
     assert command(wrapped, timeout=10, cwd=scratch).strip() == b"replacement-denied"
 
 
+def test_macos_policy_maps_only_trusted_executable_roots(monkeypatch, tmp_path):
+    target, scratch, runtime = (tmp_path / name for name in ("input", "scratch", "runtime"))
+    for path in (target, scratch, runtime):
+        path.mkdir()
+    monkeypatch.setattr(parser_sandbox.sys, "platform", "darwin")
+    monkeypatch.setattr(parser_sandbox, "backend", lambda: "/usr/bin/sandbox-exec")
+    monkeypatch.setattr(parser_sandbox, "_runtime_roots", lambda: [runtime])
+    parser_sandbox.sandbox_command([sys.executable, "-c", "pass"], target, None, scratch)
+    rule = next(
+        line
+        for line in (scratch / "parser.sb").read_text().splitlines()
+        if line.startswith("(allow file-map-executable")
+    )
+    assert str(runtime) in rule
+    assert str(target) not in rule and str(scratch) not in rule
+
+
 def test_os_sandbox_unavailable_is_reported_and_required_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(parser_sandbox, "backend", lambda: None)
     args = [sys.executable, "-c", "pass"]

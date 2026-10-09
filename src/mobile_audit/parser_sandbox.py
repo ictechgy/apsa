@@ -74,6 +74,7 @@ def sandbox_command(
             return json.dumps(str(path), ensure_ascii=True)
 
         paths = [Path("/System"), Path("/usr/lib"), Path("/usr/share"), *reads]
+        executable_maps = [Path("/System"), Path("/usr/lib"), *_runtime_roots()]
         rules = [
             "(version 1)",
             "(deny default)",
@@ -83,10 +84,16 @@ def sandbox_command(
             '(allow process-exec (literal "/usr/bin/openssl"))',
             "(allow file-read-metadata)",
             "(allow file-read* " + " ".join("(subpath " + quoted(path) + ")" for path in paths) + ")",
+            "(allow file-map-executable "
+            + " ".join("(subpath " + quoted(path) + ")" for path in executable_maps)
+            + ' (literal "/usr/bin/openssl"))',
             '(allow file-read* (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
             "(allow file-write* (subpath " + quoted(scratch) + ') (literal "/dev/null"))',
         ]
-        rules += ["(deny file-read* file-write* (subpath " + quoted(path) + "))" for path in protected]
+        rules += [
+            "(deny file-read* file-write* file-map-executable (subpath " + quoted(path) + "))"
+            for path in protected
+        ]
         profile = "\n".join(rules) + "\n"
         path = scratch / "parser.sb"
         path.write_text(profile)
