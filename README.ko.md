@@ -237,7 +237,14 @@ Action 없이:
 ```sh
 apsa scan android --format sarif --out apsa.sarif --sarif-root android
 apsa reports export latest --format maswe --out maswe.json
+apsa reports export latest --format cyclonedx --out apsa.cdx.json
 ```
+
+`--format cyclonedx`는 APSA가 찾은 의존성의 CycloneDX 1.6 SBOM(package URL, 버전 근거 포함)을
+쓰고, 의존성 CVE 대조 결과를 VEX 항목으로 넣습니다. 각 항목에는 증거 상태, CISA KEV 여부, 해당
+대상에서 APSA가 처음 관찰한 시각이 있어 EU 사이버복원력법(CRA) 같은 취약점 처리 기한 관리에 쓸 수
+있습니다. 분석 상태는 모두 `in_triage`이며 APSA는 `not_affected`를 자동으로 쓰지 않으니, 그 판단은
+근거와 함께 직접 기록하세요. 이 SBOM은 완전한 빌드 목록이 아니며 어떤 규정 준수도 보장하지 않습니다.
 
 정책·백업·제한·문제 해결은 [CI 예제](https://github.com/ictechgy/apsa/blob/main/docs/ci-example.yml)와 [운영 가이드](https://github.com/ictechgy/apsa/blob/main/docs/OPERATIONS.md)를 참고하세요.
 

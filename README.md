@@ -259,7 +259,18 @@ Without the action:
 ```sh
 apsa scan android --format sarif --out apsa.sarif --sarif-root android
 apsa reports export latest --format maswe --out maswe.json
+apsa reports export latest --format cyclonedx --out apsa.cdx.json
 ```
+
+`--format cyclonedx` writes a CycloneDX 1.6 SBOM of the dependencies APSA
+discovered, with package URLs and the evidence behind each version, and embeds
+APSA's dependency matches as VEX entries. Each entry carries the evidence
+status, the CISA KEV flag and when APSA first observed it for that target, which
+helps run vulnerability-handling clocks such as the EU Cyber Resilience Act's.
+Every analysis state is `in_triage`: APSA never marks a vulnerability
+`not_affected`; record that decision yourself with a justification. The SBOM is
+not a complete build inventory and does not make an app compliant with any
+regulation.
 
 See the [CI example](https://github.com/ictechgy/apsa/blob/main/docs/ci-example.yml) and [operations guide](https://github.com/ictechgy/apsa/blob/main/docs/OPERATIONS.md) (Korean) for policies, backup, limits, and troubleshooting.
 

@@ -163,7 +163,9 @@ def parser() -> Parser:
     export.add_argument("id")
     export.add_argument("--out", type=Path, required=True)
     export.add_argument(
-        "--format", choices=["json", "markdown", "sarif", "maswe", "baseline"], default="markdown"
+        "--format",
+        choices=["json", "markdown", "sarif", "maswe", "cyclonedx", "baseline"],
+        default="markdown",
     )
     export.add_argument(
         "--sarif-root",
@@ -343,6 +345,20 @@ def demo_target(directory: Path) -> Path:
             raise ValueError(f"Demo destination exists; choose a new folder: {destination}")
         destination.write_bytes(files("mobile_audit").joinpath("data/demo", name).read_bytes())
     return directory
+
+
+def first_observed(store: Store, report: dict, limit: int = 200) -> dict[str, str]:
+    """Earliest saved report time at which each finding ID appeared for the same target."""
+    seen: dict[str, str] = {}
+    history = [
+        item
+        for item in store.reports(limit, roots=[Path(report["target"])])
+        if item["target"] == report["target"] and item["created"] <= report["created"]
+    ]
+    for item in reversed(history):
+        for finding_item in store.report(item["id"]).get("findings", []):
+            seen.setdefault(finding_item["id"], item["created"])
+    return seen
 
 
 def export_report(report: dict, path: Path, format_: str, sarif_root: str | None = None):
@@ -613,7 +629,15 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                     "sha256": digest(args.out.read_bytes()),
                     "approval": artifact["approval"],
                 }, 0
-            export_report(store.report(args.id), args.out, args.format, args.sarif_root)
+            report = store.report(args.id)
+            if args.format == "cyclonedx":
+                from .sbom import cyclonedx
+
+                if args.sarif_root is not None:
+                    raise UsageError("--sarif-root applies only to --format sarif")
+                write_json(args.out, cyclonedx(report, first_observed(store, report)))
+                return {"path": str(args.out), "format": args.format}, 0
+            export_report(report, args.out, args.format, args.sarif_root)
             return {"path": str(args.out), "format": args.format}, 0
     if cmd == "runtime":
         if args.action == "devices":
