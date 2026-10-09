@@ -1,0 +1,71 @@
+name: Inspect frozen public evaluation evidence
+
+on:
+  push:
+    branches: ["benchmark/real-apps-cve-v1"]
+    paths: [".github/workflows/public-evidence.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - run: uv sync --locked --extra dev
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: public-real-world-evaluation
+          run-id: 37879443007
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/public-evidence
+      - name: Inspect public manifests and reproduce only the failed source scan
+        run: |
+          uv run --locked python - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, sys
+          from benchmarks.real_world import read_prepared, engine_metadata
+          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "public-evidence"
+          summary = root / "public-real-world-results/summary.json"
+          assert hashlib.sha256(summary.read_bytes()).hexdigest() == "e005c5ae5badb6f7b63fbb145838d606432c07bc854775a852c59558f821fd70"
+          original = json.loads(summary.read_text())
+          assert original["source_revision"] == "5513aa0d4466f8ce0413c4720a3f2e470e417924"
+          assert engine_metadata(sys.executable)["source_sha256"] == original["apsa_engine"]["source_sha256"]
+          fixtures = root / "public-real-world"
+          manifest = read_prepared(fixtures)
+          assert hashlib.sha256((fixtures / "manifest.json").read_bytes()).hexdigest() == original["input_manifest_sha256"]
+          osv_path = fixtures / "osv/manifest.json"
+          assert hashlib.sha256(osv_path.read_bytes()).hexdigest() == original["osv_manifest_sha256"]
+          osv = json.loads(osv_path.read_text())
+          print("PUBLIC_EVIDENCE_MANIFEST_BEGIN")
+          print(json.dumps({"inputs": manifest, "osv": osv}))
+          print("PUBLIC_EVIDENCE_MANIFEST_END")
+          for app in manifest["apps"]:
+              folder = root / ("public-real-world-results/" + app["id"] + "-apsa-0")
+              report = folder / "report.json"
+              if report.is_file():
+                  value = json.loads(report.read_text())
+                  print(json.dumps({"app": app["id"], "dependencies": value["inventory"]["dependencies"], "ios_config": value["inventory"].get("ios_config", [])}))
+          entry = next(a for a in manifest["apps"] if a["id"] == "nextcloudios")
+          output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "public-failure-diagnostic"
+          output.mkdir()
+          env = os.environ.copy()
+          env["APSA_PARSER_LOCK_DIR"] = str(output / "parser-locks")
+          env["APSA_DEVICE_LOCK_DIR"] = str(output / "device-locks")
+          result = subprocess.run([sys.executable, "-I", "-m", "apsa", "--home", str(output / "home"), "scan", str(fixtures / "inputs" / entry["input"]), "--json"], capture_output=True, text=True, timeout=180, env=env)
+          print("PUBLIC_SOURCE_FAILURE_BEGIN")
+          print(json.dumps({"app": entry["id"], "input_sha256": entry["sha256"], "returncode": result.returncode, "stdout": result.stdout[-3000:], "stderr": result.stderr[-3000:]}))
+          print("PUBLIC_SOURCE_FAILURE_END")
+          assert result.returncode == 1, "Initial source failure did not reproduce; do not replace original scores"
+          PY
+      # Reads one fixed public artifact; no app execution, backend, device, OSV recapture, or publication.
