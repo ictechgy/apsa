@@ -78,6 +78,20 @@ CodeDirectory의 페이지·entitlement 해시를 다시 계산하며, 더 많�
   겹치는 Objective-C 함수는 불확실로 분석에서 제외합니다. 수정하지 않은 1.2 스킬은
   `apsa skill install`로 업그레이드됩니다.
 
+APSA 1.4는 개발자와 코딩 에이전트가 바로 쓸 수 있도록 배포 경로를 넓혔습니다. GitHub Action이
+안정적인 fingerprint·보안 심각도·MASWE 태그·증거 상태를 담은 SARIF를 code scanning에 올리고,
+모든 보고서에 [OWASP MASWE v1.0](https://mas.owasp.org/MASWE/) 커버리지 표가 붙어 APSA가 평가하지
+않은 약점까지 명시합니다. MCP 서버는 MCP Registry와 Claude Code 플러그인으로 배포되며
+[MCP 보안 모델](https://github.com/ictechgy/apsa/blob/main/docs/MCP_SECURITY.md)을 문서화했습니다.
+
+**1.3에서 업그레이드할 때.** SARIF 내보내기는 결과가 있는 규칙마다 descriptor(도움말,
+`security-severity`, precision, MASVS/MASWE 태그)를 넣고, 발견 ID로 `partialFingerprints`를 만들며,
+not-run·partial 커버리지를 tool execution notification으로 보고합니다. `--sarif-root`로 위치를
+저장소 기준 상대 경로로 만들고, 바이너리 발견은 APK/AAB/IPA 파일을 위치로, 내부 경로를 logical
+location으로 표시합니다. 이 때문에 code scanning 경고가 한 번 새 키로 다시 생성될 수 있습니다. 규칙
+메타데이터에 MASWE v1.0 ID가 추가되고, 모델 context와 `capabilities`에 `maswe` 섹션이, Markdown
+보고서에 MASWE 커버리지 표가 추가됩니다. 수정하지 않은 1.3 스킬은 `apsa skill install`로 업그레이드됩니다.
+
 ## 검사 범위
 
 | 영역 | 제공하는 검사 |
@@ -101,7 +115,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.3.0
+uv tool install --python 3.12 apsa==1.4.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -193,7 +207,39 @@ apsa jobs status JOB_ID --json
 | `4` | 발견 항목이 설정한 CI 임계값 초과 |
 | `130` | 중단 |
 
-`--json`은 `ok`, `data` 또는 `error`, `exit_code`를 담은 envelope를 출력합니다. Watch는 주기마다 JSON envelope 하나를 출력합니다(NDJSON). `ok`는 코드 `0`과 `4`에서 `true`입니다. 코드 `4`는 평가 자체는 성공했지만 CI 임계값을 초과했다는 뜻입니다. CI는 `exit_code`와 정책 결과를 확인해야 합니다. 코드 `3`과 `4`에서도 보고서가 생성될 수 있습니다. 정책·백업·제한·문제 해결은 [CI 예제](https://github.com/ictechgy/apsa/blob/main/docs/ci-example.yml)와 [운영 가이드](https://github.com/ictechgy/apsa/blob/main/docs/OPERATIONS.md)를 참고하세요.
+`--json`은 `ok`, `data` 또는 `error`, `exit_code`를 담은 envelope를 출력합니다. Watch는 주기마다 JSON envelope 하나를 출력합니다(NDJSON). `ok`는 코드 `0`과 `4`에서 `true`입니다. 코드 `4`는 평가 자체는 성공했지만 CI 임계값을 초과했다는 뜻입니다. CI는 `exit_code`와 정책 결과를 확인해야 합니다. 코드 `3`과 `4`에서도 보고서가 생성될 수 있습니다.
+
+### GitHub code scanning
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+steps:
+  - uses: actions/checkout@v7
+  - uses: ictechgy/apsa@<commit-sha> # v1.4.0; 전체 커밋 SHA로 고정
+    with:
+      path: android            # 소스 폴더 또는 workspace 안의 APK/AAB/IPA
+      fail-on-incomplete: "true"
+```
+
+Action은 같은 버전의 `apsa`를 PyPI에서 설치하고 `scan --format sarif --sarif-root`를 실행한 뒤
+작업 요약을 쓰고 SARIF를 code scanning에 업로드하며, 마지막에 종료 코드를 적용합니다. `4`는 정책·
+임계값 실패, `3`은 불완전한 감사로 실패합니다(`fail-on-incomplete: "false"`면 경고만 남김). 팀 게이트는
+`policy`(필요 시 `baseline-file`, `baseline-sha256`), 단순 임계값은 후보를 제외하는 `fail-on`을 쓰세요.
+`intel-sync`는 공개 공지를 먼저 수집하고, `online`은 의존성 이름·버전을 OSV에 보냅니다. 비공개
+저장소의 SARIF 업로드에는 GitHub Code Security가 필요하며, `upload-sarif: "false"`면 파일만 남깁니다.
+기능이 켜진 저장소에서는 업로드된 경고에 GitHub의 AI 수정 제안이 붙을 수 있으며, APSA 증거 상태는
+각 경고의 properties에 남습니다.
+
+Action 없이:
+
+```sh
+apsa scan android --format sarif --out apsa.sarif --sarif-root android
+apsa reports export latest --format maswe --out maswe.json
+```
+
+정책·백업·제한·문제 해결은 [CI 예제](https://github.com/ictechgy/apsa/blob/main/docs/ci-example.yml)와 [운영 가이드](https://github.com/ictechgy/apsa/blob/main/docs/OPERATIONS.md)를 참고하세요.
 
 ## MCP와 스킬
 
@@ -217,6 +263,17 @@ apsa context --report latest --section findings --limit 20 --json
 }
 ```
 
+### 에이전트에 설치
+
+| 클라이언트 | 설치 |
+| --- | --- |
+| Claude Code | `/plugin marketplace add ictechgy/apsa` 후 `/plugin install apsa@apsa`. 플러그인은 `uvx --python 3.12 apsa@VERSION mcp --root <현재 프로젝트>`를 실행하고 스킬을 추가합니다. |
+| 모든 MCP 클라이언트 | `apsa integrations` 설정 또는 MCP Registry 항목 `io.github.ictechgy/apsa`(PyPI 패키지, `uvx`, 필수 `--root`). |
+| Codex 등 스킬 런타임 | `apsa skill install`과 `integrations` 설정. |
+
+Claude Code 2.1.295와 Codex CLI 0.162.0에서 새로 만든 합성 프로젝트로 `capabilities`·`audit_scan`
+호출을 각각 확인했습니다. 다른 클라이언트는 아직 검증하지 않았습니다.
+
 MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 root는 옵션을 반복해서 지정합니다. `integrations`에 root를 주지 않으면 현재 폴더를 사용합니다. Root는 검사 대상과 해당 보고서·작업 접근을 제한합니다. `--allow-any-root`는 이 제한을 명시적으로 해제합니다. APSA는 모델 클라이언트 설정을 자동 변경하지 않으며, 클라이언트 인증은 클라이언트가 관리합니다.
 
 | 목적 | MCP 도구 |
@@ -227,6 +284,11 @@ MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 ro
 | 취약점 정보 | `intelligence_sync`, `intelligence_search`, `intelligence_get`, `dependency_check` |
 | 정책 | `policy_evaluate` |
 | 런타임 계획 | `runtime_plan`, `runtime_devices` |
+
+`capabilities`는 제공 중인 도구 이름·설명·입력 스키마·annotation의 해시 `tool_manifest_sha256`을
+알려 주며, 한 프로세스 안에서 도구 목록은 바뀌지 않습니다. 읽기 전용 도구는 read-only·idempotent,
+네트워크 도구는 open-world로 표시합니다. 앱 내용과 공지 문구는 신뢰하지 않는 데이터로 다루며 모델
+context에는 원문 발췌가 없습니다. [MCP 보안 모델](https://github.com/ictechgy/apsa/blob/main/docs/MCP_SECURITY.md)을 참고하세요.
 
 제공하는 리소스에는 `apsa://rules`와 `apsa://reports/{report_id}`가 있으며, 기존 `quaygate://`·`mobile-audit://` scheme도 호환됩니다.
 

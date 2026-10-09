@@ -7,7 +7,15 @@ import json
 from .core import report_incomplete
 from .output import assistant_context, assistant_finding
 
-SECTIONS = ("findings", "coverage", "environment_advisories", "intel_snapshot", "runtime", "warnings")
+SECTIONS = (
+    "findings",
+    "coverage",
+    "environment_advisories",
+    "intel_snapshot",
+    "runtime",
+    "maswe",
+    "warnings",
+)
 DEFAULT_BYTES = 65536
 
 

@@ -34,6 +34,10 @@ PyPI rejects overwriting an existing release file. If publishing fails, inspect 
 
 See [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/using-a-publisher/) and [pending publishers](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
 
+After PyPI accepts a release, the `mcp-registry` job publishes `server.json` to the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.ictechgy/apsa`. It authenticates with GitHub OIDC (no stored secret), requires `server.json` and its package entry to match the released version and `README.md` to contain the `mcp-name` ownership marker, and installs a pinned `mcp-publisher` release verified by SHA-256. It runs without the `pypi` environment, so its token cannot satisfy the PyPI trusted publisher. The registry is in preview; a failed listing does not affect the PyPI release and can be retried by rerunning that job.
+
+The Claude Code plugin in `plugins/apsa` pins `apsa@VERSION`; the marketplace serves whatever the default branch contains, so update the plugin version, `server.json` and `action.yml` together with `pyproject.toml`.
+
 An explicit `Release APSA ...` commit on `main` that changes `pyproject.toml` also starts release verification. The workflow creates the version tag only after all checks pass and refuses a tag bound to different bytes. Its publishing job runs in the original invocation's ref context, so creating a tag does not turn a main-context invocation into a tag-context invocation. Ordinary commits do not publish packages.
 
 If the approved tag was created but the publishing job failed before its steps, inspect job summaries and the environment/publisher configuration. The cause must be verified separately. A maintainer can start the existing workflow on that exact tag without moving it:

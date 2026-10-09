@@ -6,17 +6,20 @@ from importlib.resources import files
 from itertools import islice
 
 from .core import code_excerpt, finding
+from .maswe import weaknesses_for
 
 
 def rules() -> list[dict]:
     from .quaygate_analysis import catalog
 
     data = files("mobile_audit").joinpath("data")
-    return (
+    loaded = (
         json.loads(data.joinpath("rules.json").read_text())
         + json.loads(data.joinpath("structural-rules.json").read_text())
         + catalog()
     )
+    # One MASWE v1.0 mapping for the catalog, findings, SARIF and coverage matrix.
+    return [{**rule, "maswe": list(weaknesses_for(rule["id"]))} for rule in loaded]
 
 
 def strip_comments(text: str) -> str:

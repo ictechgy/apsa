@@ -2,6 +2,8 @@
 
 APSA (앱사)는 [OWASP MASVS](https://mas.owasp.org/MASVS/)의 관련 영역에 개별 증거를 연결합니다. 하나의 규칙이 control이나 [MASTG](https://mas.owasp.org/MASTG/) 테스트의 모든 절차를 구현한다는 뜻은 아닙니다. 실행 보고서의 `coverage`와 `mapping_scope`가 실제 수행 범위를 나타내며, `apsa rules --json`과 MCP `apsa://rules`에서 구현한 규칙을 조회할 수 있습니다.
 
+1.4부터 모든 규칙에 [OWASP MASWE v1.0](https://mas.owasp.org/MASWE/) 약점 ID를 연결하고, 보고서마다 78개 약점 전체의 커버리지 표(관련 검사, `checked`·`partial`·`not-run`·`not-applicable`·`not-assessed` 상태, 발견 ID)를 Markdown·SARIF·MCP `maswe` 섹션·`reports export --format maswe`로 제공합니다. 관련 검사는 약점의 일부만 다루므로 `scope`는 항상 `partial`이며, `not-assessed`는 APSA에 관련 검사가 없다는 뜻입니다. MASWE 데이터는 OWASP MASWE v1.0.0(CC BY-SA 4.0)을 식별자·제목 색인으로 줄인 것입니다.
+
 | MASVS 영역 | 실행하는 검사 | 결과의 의미·남은 범위 |
 | --- | --- | --- |
 | PLATFORM | Java/Kotlin/Swift 함수 내 외부 URL→WebView 흐름, 파싱된 host/scheme guard, 문자열 allowlist, bridge·file-origin API, Manifest와 URL scheme, target delivery marker | AST·DEX는 후보. 함수 간 흐름·redirect·반사·동적 로딩·모든 deep-link 인증 경로를 증명하지 않음 |

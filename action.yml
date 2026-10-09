@@ -1,0 +1,155 @@
+name: APSA mobile app security audit
+description: Evidence-first Android/iOS audit of source, APK, AAB or IPA with SARIF upload to GitHub code scanning.
+author: ictechgy
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  path:
+    description: Source folder or APK/AAB/IPA to audit, inside the workspace.
+    default: "."
+  version:
+    description: APSA version installed from PyPI. Keep it equal to this action's release.
+    default: "1.4.0"
+  package:
+    description: Advanced. A pip requirement or local path installed instead of apsa==version (for testing).
+    default: ""
+  policy:
+    description: Project policy file (TOML/JSON). Its decision gates the job.
+    default: ""
+  baseline-file:
+    description: Approved portable baseline for policy only_new.
+    default: ""
+  baseline-sha256:
+    description: Independently pinned SHA-256 of baseline-file.
+    default: ""
+  fail-on:
+    description: Without a policy, fail on non-candidate findings at or above this severity (low, medium, high, critical).
+    default: ""
+  fail-on-incomplete:
+    description: Fail when APSA reports a partial or incomplete audit (exit code 3).
+    default: "true"
+  intel-sync:
+    description: Fetch public Apple/Android/CVE/KEV advisories before scanning (network).
+    default: "false"
+  online:
+    description: Send discovered dependency names and versions to OSV (see the APSA README).
+    default: "false"
+  upload-sarif:
+    description: Upload the SARIF file to GitHub code scanning (needs security-events write).
+    default: "true"
+  category:
+    description: Code scanning category for this analysis.
+    default: "apsa"
+  sarif-file:
+    description: Where to write the SARIF file.
+    default: "apsa.sarif"
+
+outputs:
+  sarif-file:
+    description: Path of the written SARIF file.
+    value: ${{ steps.scan.outputs.sarif-file }}
+  report-id:
+    description: APSA report ID.
+    value: ${{ steps.scan.outputs.report-id }}
+  exit-code:
+    description: APSA exit code (0 complete, 3 partial or incomplete, 4 policy or threshold failure).
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        enable-cache: false
+
+    - name: Install APSA
+      shell: bash
+      env:
+        APSA_VERSION: ${{ inputs.version }}
+        APSA_PACKAGE: ${{ inputs.package }}
+      run: |
+        if [ -n "$APSA_PACKAGE" ]; then
+          spec="$APSA_PACKAGE"
+        elif [[ "$APSA_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          spec="apsa==${APSA_VERSION}"
+        else
+          echo "::error::version must be an exact release such as 1.4.0" >&2
+          exit 2
+        fi
+        uv tool install --python 3.12 "$spec"
+        echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+
+    - name: Fetch public advisories
+      if: inputs.intel-sync == 'true'
+      shell: bash
+      run: apsa --home "$RUNNER_TEMP/apsa-home" intel sync
+
+    - name: Audit
+      id: scan
+      shell: bash
+      env:
+        APSA_TARGET: ${{ inputs.path }}
+        APSA_POLICY: ${{ inputs.policy }}
+        APSA_BASELINE_FILE: ${{ inputs.baseline-file }}
+        APSA_BASELINE_SHA256: ${{ inputs.baseline-sha256 }}
+        APSA_FAIL_ON: ${{ inputs.fail-on }}
+        APSA_ONLINE: ${{ inputs.online }}
+        APSA_SARIF: ${{ inputs.sarif-file }}
+      run: |
+        set +e
+        python="$(uv tool dir)/apsa/bin/python"
+        helper="$GITHUB_ACTION_PATH/scripts/action_summary.py"
+        root=$("$python" -I "$helper" --sarif-root "$APSA_TARGET" "$GITHUB_WORKSPACE") || exit 2
+        args=(--json --home "$RUNNER_TEMP/apsa-home" scan "$APSA_TARGET" --format sarif --out "$APSA_SARIF" --sarif-root "$root")
+        if [ -n "$APSA_POLICY" ]; then
+          args+=(--policy "$APSA_POLICY" --decision-out "$RUNNER_TEMP/apsa.decision.json")
+          if [ -n "$APSA_BASELINE_FILE" ]; then
+            args+=(--baseline-file "$APSA_BASELINE_FILE" --baseline-sha256 "$APSA_BASELINE_SHA256")
+          fi
+        elif [ -n "$APSA_FAIL_ON" ]; then
+          args+=(--fail-on "$APSA_FAIL_ON")
+        fi
+        if [ "$APSA_ONLINE" = "true" ]; then
+          args+=(--online)
+        fi
+        apsa "${args[@]}" > "$RUNNER_TEMP/apsa-result.json"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        if [ -s "$APSA_SARIF" ]; then
+          echo "sarif-file=$APSA_SARIF" >> "$GITHUB_OUTPUT"
+        fi
+        "$python" -I "$helper" --report-id "$RUNNER_TEMP/apsa-result.json" >> "$GITHUB_OUTPUT"
+        "$python" -I "$helper" --summary "$RUNNER_TEMP/apsa-result.json" "$code" >> "$GITHUB_STEP_SUMMARY"
+        exit 0
+
+    - name: Upload SARIF to code scanning
+      if: inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-file }}
+        category: ${{ inputs.category }}
+        checkout_path: ${{ github.workspace }}
+
+    - name: Apply the APSA result
+      shell: bash
+      env:
+        CODE: ${{ steps.scan.outputs.exit-code }}
+        FAIL_ON_INCOMPLETE: ${{ inputs.fail-on-incomplete }}
+        SARIF: ${{ inputs.sarif-file }}
+      run: |
+        if [ ! -s "$SARIF" ]; then
+          echo "::error::APSA did not write a SARIF file (exit code ${CODE:-unknown})." >&2
+          exit 1
+        fi
+        case "$CODE" in
+          0) exit 0 ;;
+          3) if [ "$FAIL_ON_INCOMPLETE" = "true" ]; then
+               echo "::error::APSA reported a partial or incomplete audit. Review coverage before treating the result as complete." >&2
+               exit 3
+             fi
+             echo "::warning::APSA reported a partial or incomplete audit." ;;
+          4) echo "::error::APSA findings exceed the policy or threshold." >&2; exit 4 ;;
+          *) echo "::error::APSA failed with exit code ${CODE:-unknown}." >&2; exit 1 ;;
+        esac

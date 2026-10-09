@@ -55,7 +55,11 @@ def parser() -> Parser:
         "--device-info", type=Path, help="Observed environment JSON; no OS state inferred from targetSdk"
     )
     scan_parser.add_argument("--out", type=Path)
-    scan_parser.add_argument("--format", choices=["json", "markdown", "sarif"], default="json")
+    scan_parser.add_argument("--format", choices=["json", "markdown", "sarif", "maswe"], default="json")
+    scan_parser.add_argument(
+        "--sarif-root",
+        help="Repository-relative path of the target, used for SARIF locations (code scanning upload)",
+    )
     scan_parser.add_argument("--fail-on", choices=["low", "medium", "high", "critical"])
     scan_parser.add_argument("--policy", type=Path, help="Apply a project TOML/JSON CI policy")
     scan_parser.add_argument("--baseline", help="Baseline report ID for policy only_new")
@@ -139,7 +143,13 @@ def parser() -> Parser:
     export = reports.add_parser("export")
     export.add_argument("id")
     export.add_argument("--out", type=Path, required=True)
-    export.add_argument("--format", choices=["json", "markdown", "sarif", "baseline"], default="markdown")
+    export.add_argument(
+        "--format", choices=["json", "markdown", "sarif", "maswe", "baseline"], default="markdown"
+    )
+    export.add_argument(
+        "--sarif-root",
+        help="Repository-relative path of the scanned target, used for SARIF locations",
+    )
     export.add_argument("--approved-by")
     export.add_argument("--approval-reference")
     comparison = reports.add_parser("compare")
@@ -316,12 +326,20 @@ def demo_target(directory: Path) -> Path:
     return directory
 
 
-def export_report(report: dict, path: Path, format_: str):
+def export_report(report: dict, path: Path, format_: str, sarif_root: str | None = None):
+    if sarif_root is not None and format_ != "sarif":
+        raise UsageError("--sarif-root applies only to --format sarif")
     if format_ == "markdown":
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(markdown(report), encoding="utf-8")
+    elif format_ == "sarif":
+        write_json(path, sarif(report, sarif_root))
+    elif format_ == "maswe":
+        from .maswe import coverage_matrix
+
+        write_json(path, {"report_id": report["id"], **coverage_matrix(report)})
     else:
-        write_json(path, sarif(report) if format_ == "sarif" else report)
+        write_json(path, report)
 
 
 def policy_baseline(args, store: Store) -> dict | None:
@@ -422,7 +440,9 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             source_module=args.source_module,
         )
         if args.out:
-            export_report(result, args.out, args.format)
+            export_report(result, args.out, args.format, args.sarif_root)
+        elif args.sarif_root is not None:
+            raise UsageError("--sarif-root requires --out")
         if policy is not None:
             gate = evaluate(result, policy, baseline)
             decision = decision_artifact(result, gate, baseline, policy)
@@ -539,6 +559,8 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             return refresh_report(store, args.id), 0
         if args.action == "export":
             if args.format == "baseline":
+                if args.sarif_root is not None:
+                    raise UsageError("--sarif-root applies only to --format sarif")
                 artifact = baseline_artifact(
                     store.report(args.id), args.approved_by or "", args.approval_reference or ""
                 )
@@ -549,7 +571,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                     "sha256": digest(args.out.read_bytes()),
                     "approval": artifact["approval"],
                 }, 0
-            export_report(store.report(args.id), args.out, args.format)
+            export_report(store.report(args.id), args.out, args.format, args.sarif_root)
             return {"path": str(args.out), "format": args.format}, 0
     if cmd == "runtime":
         if args.action == "devices":

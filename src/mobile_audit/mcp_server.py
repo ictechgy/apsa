@@ -12,8 +12,9 @@ from mcp.types import ToolAnnotations
 from . import __version__, jobs
 from .audit import compare, refresh_report, scan
 from .baselines import baseline_artifact, load_baseline
-from .core import digest, open_directory, read_json
+from .core import canonical_json, digest, open_directory, read_json
 from .intel import fetch_record, query_dependencies, source_health, sync
+from .model_context import SECTIONS
 from .model_context import finding_context as assistant_finding
 from .model_context import report_context as assistant_context
 from .policy import evaluate, load_policy
@@ -22,9 +23,25 @@ from .runtime import devices, plan, run, validate_scenario
 from .selection import select_source_module
 from .store import Store
 
-READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
+READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 LOCAL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 NETWORK = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
+
+
+def tool_manifest(server: FastMCP) -> list[dict[str, Any]]:
+    """Tool names, descriptions, input schemas and annotations exactly as served."""
+    return sorted(
+        (
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "inputSchema": tool.parameters,
+                "annotations": tool.annotations.model_dump(exclude_none=True) if tool.annotations else {},
+            }
+            for tool in server._tool_manager.list_tools()
+        ),
+        key=lambda item: item["name"],
+    )
 
 
 def create_server(
@@ -88,17 +105,12 @@ def create_server(
             "report_response": {
                 "default_limit": 20,
                 "default_max_bytes": 65536,
-                "sections": [
-                    "findings",
-                    "coverage",
-                    "environment_advisories",
-                    "intel_snapshot",
-                    "runtime",
-                    "warnings",
-                ],
+                "sections": list(SECTIONS),
                 "cursor_scope": "immutable report ID, section and filters",
             },
             "path_roots": [str(p) for p in allowed],
+            # The tool set is fixed for a server process (tools.listChanged is false).
+            "tool_manifest_sha256": digest(canonical_json(tool_manifest(server)).encode()),
             "intelligence_sources": ["apple", "android", "cve", "kev", "owasp", "osv"],
             "states": [
                 "candidate",

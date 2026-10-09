@@ -1,0 +1,333 @@
+{
+  "note": "Regenerate deliberately when an MCP tool name, description, input schema or annotation changes; publish the new hash in docs/MCP_SECURITY.md.",
+  "default": {
+    "sha256": "8d0c7e6c348f8fa645236b1b9818a82fb3a3bcc00ef5511950116c217eb11e76",
+    "tools": [
+      [
+        "audit_reassess",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "audit_scan",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "audit_start",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "capabilities",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "dependency_check",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": true
+        }
+      ],
+      [
+        "intelligence_get",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": true
+        }
+      ],
+      [
+        "intelligence_search",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "intelligence_sync",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": true
+        }
+      ],
+      [
+        "jobs_cancel",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "jobs_list",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "jobs_status",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "policy_evaluate",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "reports_compare",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "reports_export_baseline",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "reports_get",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "reports_list",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "runtime_devices",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "runtime_plan",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ]
+    ]
+  },
+  "runtime": {
+    "sha256": "9350051d455b536e07515f9c1bfe8122b5de3d47a1524614358251ca6f89e0c0",
+    "tools": [
+      [
+        "audit_reassess",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "audit_scan",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "audit_start",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "capabilities",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "dependency_check",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": true
+        }
+      ],
+      [
+        "intelligence_get",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": true
+        }
+      ],
+      [
+        "intelligence_search",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "intelligence_sync",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": true
+        }
+      ],
+      [
+        "jobs_cancel",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "jobs_list",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "jobs_status",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "policy_evaluate",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "reports_compare",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "reports_export_baseline",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "reports_get",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "reports_list",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "runtime_devices",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "runtime_execute",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "openWorldHint": true
+        }
+      ],
+      [
+        "runtime_plan",
+        {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      ],
+      [
+        "runtime_start",
+        {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "openWorldHint": true
+        }
+      ]
+    ]
+  }
+}

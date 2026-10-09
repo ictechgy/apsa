@@ -29,7 +29,7 @@ Linux 실행은 `python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc8
 | IPA | Mach-O fixture와 직접 빌드한 iOS 시뮬레이터 앱, 1.2의 내장 framework·확장 메타데이터, 1.3의 합성 CodeDirectory fixture | Mach-O·서명/entitlement·ATS 및 일부 바이너리 증거. 1.3은 CodeDirectory 페이지·entitlement 해시를 재계산하지만 CMS 서명·인증서 체인은 인증하지 않음. 암호화된 실행 파일, scatter, 모든 native 함수의 의미와 실제 iOS 기기 실행은 보장하지 않음 |
 | Android 런타임 | ARM64 `google_apis` API 37 에뮬레이터, 관찰 OS Android 17·보안 패치 2026-05-05; fixture는 SDK platform 36으로 컴파일 | 승인된 테스트 앱의 설치·package/hash 연결, 보관·로그인 상태 fixture, 증거 캡처. 앱 fixture 범위의 로컬 상태 검사이며 서버 세션 폐기 증명 아님 |
 | iOS 런타임 | iPhone 18 Pro / iOS 27.0 시뮬레이터, 직접 빌드한 fixture | app container·현재 상태·바이너리 해시 연결. UI 구동·시스템 로그 캡처는 `not-run`, 실제 iOS 기기는 미지원 |
-| 모델 연결 | 실제 Codex CLI MCP stdio에서 capabilities·reports_list·reports_get 실행 | 표준 MCP 연결 통로. Claude/Gemini 등 다른 모델 클라이언트는 실제 연결 검증 전 |
+| 모델 연결 | 실제 Codex CLI MCP stdio에서 capabilities·reports_list·reports_get 실행. 1.4 개발 중 새 합성 프로젝트로 Claude Code 2.1.295(개발용 플러그인 `--plugin-dir`, `${CLAUDE_PROJECT_DIR}` root)와 Codex CLI 0.162.0에서 capabilities·audit_scan 실행 | 표준 MCP 연결 통로. Gemini·Cursor 등 다른 클라이언트와 마켓플레이스 설치 경로 자체는 실제 연결 검증 전 |
 | 독립 정확도 corpus | 31개의 수작업 사례, rule/status별 ground truth | 10개 AST/DEX 규칙의 유한 회귀 사례. 모집단 정확도·운영 앱 탐지율·MASVS 인증으로 일반화 불가 |
 
 런타임 증거의 기기 ID·앱 해시는 보고서에 보관합니다. 지원 표에 앱 비밀이나 canary 값을 복제하지 않습니다. 테스트 장치와 앱을 바꾸면 새 기기 증거로 다시 검사하십시오. CVE는 관찰한 OS/패치·실제 빌드 의존성과 공개된 공식 인텔을 대조하며 `version-affected`도 exploit 재현을 뜻하지 않습니다. 공개 전 제로데이 발견·즉시 전달·OWASP MASVS 인증·전체 MASTG 통과를 주장하지 않습니다.

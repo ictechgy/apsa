@@ -6,6 +6,8 @@
 
 This English README is the source of truth. The Korean README follows it.
 
+<!-- mcp-name: io.github.ictechgy/apsa -->
+
 APSA helps developers and security teams audit their own mobile apps. It inspects source code and APK/AAB/IPA builds, correlates public vulnerability information, and keeps evidence, coverage, and report history together. Use the CLI, terminal UI, or the same audit engine through MCP and reusable skills.
 
 Pronounced **“ap-sah”**; Korean name **앱사**. The name connects “app + audit” with **App Security Audit**. APSA combines the earlier Quaygate lint engine and Mobile Audit workflows in one package.
@@ -90,6 +92,24 @@ and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/
   overlapping a normalized preprocessor conditional is skipped as uncertain.
   Unmodified 1.2 skills upgrade with `apsa skill install`.
 
+APSA 1.4 is easier to put in front of developers and coding agents. A GitHub
+Action uploads SARIF to code scanning with stable fingerprints, security
+severity, MASWE tags and evidence status; every report carries an
+[OWASP MASWE v1.0](https://mas.owasp.org/MASWE/) coverage matrix that names the
+weaknesses APSA did not assess; and the MCP server is packaged for the MCP
+Registry and as a Claude Code plugin, with a documented
+[MCP security model](https://github.com/ictechgy/apsa/blob/main/docs/MCP_SECURITY.md).
+
+**Upgrading from 1.3.** SARIF exports now list a descriptor for every rule with
+results (help, `security-severity`, precision, MASVS/MASWE tags), add
+`partialFingerprints` from the finding identity, report not-run and partial
+coverage as tool execution notifications, and use `--sarif-root` to make
+locations repository-relative; binary findings point at the APK/AAB/IPA with the
+archive member as a logical location. Code scanning may therefore show
+re-keyed alerts once. Rule metadata gains MASWE v1.0 identifiers, model context
+and `capabilities` gain a `maswe` section, and Markdown reports gain a MASWE
+coverage table. Unmodified 1.3 skills upgrade with `apsa skill install`.
+
 ## What it checks
 
 | Area | Available checks |
@@ -113,7 +133,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.3.0
+uv tool install --python 3.12 apsa==1.4.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -205,7 +225,43 @@ Unreadable source directories and files leave warnings and incomplete coverage; 
 | `4` | Findings exceeded the configured CI threshold |
 | `130` | Interrupted |
 
-`--json` emits an envelope containing `ok`, `data` or `error`, and `exit_code`; watch emits one JSON envelope per cycle (NDJSON). `ok` is `true` for codes `0` and `4`; code `4` means evaluation succeeded but the CI threshold was exceeded. CI must check `exit_code` and the policy result. Reports may still be produced for codes `3` and `4`. See the [CI example](https://github.com/ictechgy/apsa/blob/main/docs/ci-example.yml) and [operations guide](https://github.com/ictechgy/apsa/blob/main/docs/OPERATIONS.md) (Korean) for policies, backup, limits, and troubleshooting.
+`--json` emits an envelope containing `ok`, `data` or `error`, and `exit_code`; watch emits one JSON envelope per cycle (NDJSON). `ok` is `true` for codes `0` and `4`; code `4` means evaluation succeeded but the CI threshold was exceeded. CI must check `exit_code` and the policy result. Reports may still be produced for codes `3` and `4`.
+
+### GitHub code scanning
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+steps:
+  - uses: actions/checkout@v7
+  - uses: ictechgy/apsa@<commit-sha> # v1.4.0; pin the full commit SHA
+    with:
+      path: android            # source folder, or a built APK/AAB/IPA in the workspace
+      fail-on-incomplete: "true"
+```
+
+The action installs `apsa` from PyPI at the matching version, runs `scan` with
+`--format sarif --sarif-root`, writes a job summary, uploads the SARIF file to
+code scanning and then applies the exit code: `4` fails on a policy or
+threshold, `3` fails on an incomplete audit unless `fail-on-incomplete` is
+`"false"`. Use `policy` (with `baseline-file` and `baseline-sha256`) for team
+gates, or `fail-on` for a severity threshold that excludes candidates.
+`intel-sync` fetches public advisories first; `online` sends dependency names
+and versions to OSV (see [network use](#public-intelligence-and-network-use)).
+Private repositories need GitHub Code Security to upload SARIF; set
+`upload-sarif: "false"` to keep only the file. Alerts uploaded to code scanning
+can receive GitHub's AI fix suggestions where that feature is enabled; APSA's
+evidence status stays in each alert's properties.
+
+Without the action:
+
+```sh
+apsa scan android --format sarif --out apsa.sarif --sarif-root android
+apsa reports export latest --format maswe --out maswe.json
+```
+
+See the [CI example](https://github.com/ictechgy/apsa/blob/main/docs/ci-example.yml) and [operations guide](https://github.com/ictechgy/apsa/blob/main/docs/OPERATIONS.md) (Korean) for policies, backup, limits, and troubleshooting.
 
 ## MCP and skills
 
@@ -229,6 +285,18 @@ Use `integrations` to generate a configuration with the installed executable pat
 }
 ```
 
+### Install for agents
+
+| Client | Install |
+| --- | --- |
+| Claude Code | `/plugin marketplace add ictechgy/apsa`, then `/plugin install apsa@apsa`. The plugin runs `uvx --python 3.12 apsa@VERSION mcp --root <current project>` and adds the skill. |
+| Any MCP client | Use the configuration from `apsa integrations`, or the MCP Registry entry `io.github.ictechgy/apsa` (PyPI package, `uvx`, required `--root`). |
+| Codex and other skill runtimes | `apsa skill install`, plus the `integrations` configuration. |
+
+Claude Code 2.1.295 and Codex CLI 0.162.0 were each verified calling
+`capabilities` and `audit_scan` on a freshly generated synthetic project. Other
+clients are not yet verified.
+
 MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. `integrations` defaults to the current directory when no root is supplied. Roots restrict audited targets and access to their reports and jobs. `--allow-any-root` explicitly removes that restriction. APSA does not change model-client configuration automatically; client authentication belongs to the client.
 
 | Purpose | MCP tools |
@@ -239,6 +307,12 @@ MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. 
 | Intelligence | `intelligence_sync`, `intelligence_search`, `intelligence_get`, `dependency_check` |
 | Policy | `policy_evaluate` |
 | Runtime planning | `runtime_plan`, `runtime_devices` |
+
+`capabilities` reports `tool_manifest_sha256`, a hash of the served tool names,
+descriptions, input schemas and annotations; the tool set never changes within
+a process. Read-only tools are annotated read-only and idempotent, network tools
+open-world. App content and advisory text are treated as untrusted data and
+model context omits source excerpts; see the [MCP security model](https://github.com/ictechgy/apsa/blob/main/docs/MCP_SECURITY.md).
 
 Resources include `apsa://rules` and `apsa://reports/{report_id}`. The previous `quaygate://` and `mobile-audit://` resource schemes remain compatible.
 

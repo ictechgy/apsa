@@ -146,6 +146,51 @@ jobs:
           packages-dir: dist/
           attestations: true
 
+  mcp-registry:
+    name: List the published version in the MCP Registry
+    needs: [validate, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # No PyPI environment here: this OIDC token cannot satisfy the PyPI trusted publisher.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Require server.json and the README marker to match the release
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          server = json.loads(Path("server.json").read_text())
+          version = os.environ["VERSION"]
+          if server["name"] != "io.github.ictechgy/apsa" or server["version"] != version:
+              raise SystemExit("server.json name or version does not match the release")
+          if [p["version"] for p in server["packages"]] != [version]:
+              raise SystemExit("server.json package version does not match the release")
+          if "mcp-name: io.github.ictechgy/apsa" not in Path("README.md").read_text():
+              raise SystemExit("README.md lacks the MCP Registry ownership marker")
+          PY
+      - name: Install the pinned MCP Registry publisher
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 --output mcp-publisher.tar.gz \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz
+          echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  mcp-publisher.tar.gz" | sha256sum --check -
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Publish server.json after PyPI serves the release
+        run: |
+          ./mcp-publisher login github-oidc
+          for attempt in 1 2 3 4 5; do
+            ./mcp-publisher publish && exit 0
+            sleep 60
+          done
+          exit 1
+
   github-release:
     name: Attach the verified release downloads
     needs: [validate, build, publish]

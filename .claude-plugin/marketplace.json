@@ -1,0 +1,15 @@
+{
+  "name": "apsa",
+  "owner": {
+    "name": "ictechgy",
+    "url": "https://github.com/ictechgy"
+  },
+  "description": "APSA (앱사): local, evidence-graded Android/iOS app security audits for coding agents.",
+  "plugins": [
+    {
+      "name": "apsa",
+      "source": "./plugins/apsa",
+      "description": "APSA MCP server restricted to the current project, plus the packaged audit skill."
+    }
+  ]
+}

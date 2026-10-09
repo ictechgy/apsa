@@ -1,0 +1,47 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ictechgy/apsa",
+  "title": "APSA mobile app security audit",
+  "description": "Local, evidence-graded Android/iOS security audits of source, APK, AAB and IPA for AI agents.",
+  "repository": {
+    "url": "https://github.com/ictechgy/apsa",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/ictechgy/apsa",
+  "version": "1.4.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "apsa",
+      "version": "1.4.0",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--python",
+          "value": "3.12",
+          "description": "APSA supports CPython 3.11 and 3.12."
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "named",
+          "name": "--root",
+          "valueHint": "project_directory",
+          "description": "Owned app project or build directory the server may read. Repeat for more roots.",
+          "format": "filepath",
+          "isRequired": true,
+          "isRepeated": true
+        }
+      ]
+    }
+  ]
+}

@@ -4,6 +4,19 @@
 
 # Third-party notices
 
+## Bundled data
+
+`src/mobile_audit/data/maswe.json` is adapted from the
+[OWASP Mobile Application Security Weakness Enumeration (MASWE) v1.0.0](https://github.com/OWASP/maswe/releases/tag/v1.0.0)
+by the OWASP Foundation, licensed under
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). It keeps only weakness
+identifiers, titles, platforms, profiles and MASVS/CWE mappings from the release's
+`OWASP_MASWE.yaml` (SHA-256 recorded in the file); `scripts/update_maswe.py`
+regenerates it. The adapted file is shared under the same CC BY-SA 4.0 licence. This
+data licence does not apply to APSA's code or change its licensing.
+
+## Runtime dependencies
+
 APSA 1.2.0 adds the runtime dependency `tree-sitter-objc==3.0.2`. Its row below
 was added from that version's installed distribution metadata (`License: MIT`
 with a bundled `LICENSE` file); the other rows come from the earlier generated

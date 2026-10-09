@@ -170,3 +170,61 @@ jobs:
           else
             "$RUNNER_TEMP/venv/bin/python" -I "$RUNNER_TEMP/probe.py"
           fi
+
+  action-selftest:
+    name: GitHub Action / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Generate a fresh synthetic project inside the workspace
+        run: |
+          mkdir -p selftest/app
+          cp src/mobile_audit/data/demo/* selftest/app/
+      - name: Run the action from this checkout without uploading
+        id: apsa
+        uses: ./
+        with:
+          path: selftest/app
+          package: ${{ github.workspace }}
+          upload-sarif: "false"
+          fail-on-incomplete: "false"
+          sarif-file: apsa.sarif
+      - name: Check outputs and code scanning constraints
+        env:
+          CODE: ${{ steps.apsa.outputs.exit-code }}
+          REPORT: ${{ steps.apsa.outputs.report-id }}
+          SARIF: ${{ steps.apsa.outputs.sarif-file }}
+        run: |
+          test "$CODE" = 0 -o "$CODE" = 3
+          test -n "$REPORT"
+          test "$SARIF" = apsa.sarif
+          python3 -I scripts/check_sarif.py apsa.sarif
+          python3 -I -c 'import json; r = json.load(open("apsa.sarif"))["runs"][0]; uris = {l["physicalLocation"]["artifactLocation"]["uri"] for x in r["results"] for l in x["locations"]}; assert uris and all(u.startswith("selftest/app/") for u in uris), uris; assert r["properties"]["maswe"]["summary"], r["properties"]["maswe"]'
+      - name: Validate SARIF with the Microsoft SARIF multitool
+        if: runner.os == 'Linux'
+        run: npx --yes @microsoft/sarif-multitool@5.7.0 validate apsa.sarif --level Error --output "$RUNNER_TEMP/sarif-validation.sarif"
+      - name: A severity threshold fails the job
+        id: gate
+        continue-on-error: true
+        uses: ./
+        with:
+          path: selftest/app
+          package: ${{ github.workspace }}
+          upload-sarif: "false"
+          fail-on: medium
+          fail-on-incomplete: "false"
+          sarif-file: gate.sarif
+      - name: Check the threshold result
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+          CODE: ${{ steps.gate.outputs.exit-code }}
+        run: |
+          test "$OUTCOME" = failure
+          test "$CODE" = 4

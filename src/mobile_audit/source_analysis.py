@@ -17,6 +17,7 @@ from pathlib import PurePath
 from typing import Any
 
 from .core import code_excerpt, finding
+from .maswe import weaknesses_for
 
 MAX_AST_BYTES = 2 * 1024 * 1024
 MAX_AST_TOTAL = 32 * 1024 * 1024
@@ -465,7 +466,7 @@ class Analyzer:
                 analysis_limits=LIMITS_NOTE,
                 mapping_scope="partial",
                 mastg_tests=[],
-                maswe=[],
+                maswe=list(weaknesses_for(rule)),
             )
         )
 

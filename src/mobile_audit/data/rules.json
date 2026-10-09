@@ -45,7 +45,8 @@
       "MASTG-TEST-0332"
     ],
     "maswe": [
-      "MASWE-0029"
+      "MASWE-0029",
+      "MASWE-0035"
     ],
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step"
   },
@@ -93,7 +94,9 @@
     "mastg_tests": [
       "MASTG-TEST-0335"
     ],
-    "maswe": [],
+    "maswe": [
+      "MASWE-0034"
+    ],
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step"
   },
   {
@@ -168,7 +171,9 @@
       "https://developer.apple.com/documentation/security/keychain-services"
     ],
     "mastg_tests": [],
-    "maswe": [],
+    "maswe": [
+      "MASWE-0001"
+    ],
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step"
   }
 ]
