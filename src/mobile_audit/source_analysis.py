@@ -246,6 +246,18 @@ class Analyzer:
                 return entry
         return fallback
 
+    def pending_intent_mutability(self, node: Any) -> str | None:
+        """How a literal flags argument leaves a PendingIntent mutable; None when immutable or unknown."""
+        flags = self.text(node)
+        if "FLAG_MUTABLE" in flags:
+            return "FLAG_MUTABLE"
+        # Literal flags without FLAG_IMMUTABLE: mutable by default before Android 12, and
+        # rejected at creation for targetSdk 31+. A flags variable is not followed.
+        if "FLAG_IMMUTABLE" not in flags and re.fullmatch(r"[\w.\s|()]+", flags):
+            if flags.strip() == "0" or re.search(r"\bFLAG_\w+", flags):
+                return "default (no FLAG_IMMUTABLE)"
+        return None
+
     def intent_expression(self, node: Any, call_node: Any) -> tuple[str, str]:
         """Text that builds the Intent passed to a PendingIntent, following a local variable."""
         text = self.text(node)
@@ -801,7 +813,7 @@ class Analyzer:
             in {"getActivity", "getActivities", "getBroadcast", "getService", "getForegroundService"}
             and self.key(call.receiver) in {"PendingIntent", "android.app.PendingIntent"}
             and len(call.args) >= 4
-            and "FLAG_MUTABLE" in self.text(call.args[3])
+            and (mutability := self.pending_intent_mutability(call.args[3]))
         ):
             wrapped, basis = self.intent_expression(call.args[2], call.node)
             explicit = re.search(
@@ -814,6 +826,7 @@ class Analyzer:
                     call.node,
                     factory=f"PendingIntent.{call.name}",
                     intent_argument=basis,
+                    mutability=mutability,
                     target_sdk_note="Android 14+ rejects mutable implicit PendingIntents for targetSdk 34+",
                 )
         logging = (self.key(call.receiver) == "Log" and call.name in {"d", "i", "v", "e", "w"}) or (

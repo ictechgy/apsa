@@ -369,13 +369,25 @@ def test_pending_intent_variables_are_followed_in_the_function(store, project):
         "    fun passed(context: android.content.Context, given: Intent) {\n"
         "        PendingIntent.getService(context, 3, given, PendingIntent.FLAG_MUTABLE)\n"
         "    }\n"
+        "    fun defaults(context: android.content.Context, flags: Int) {\n"
+        '        PendingIntent.getActivity(context, 4, Intent("a"), PendingIntent.FLAG_UPDATE_CURRENT)\n'
+        '        PendingIntent.getActivity(context, 5, Intent("b"), 0)\n'
+        '        PendingIntent.getActivity(context, 6, Intent("c"), flags)\n'
+        "        PendingIntent.getActivity(\n"
+        '            context, 7, Intent("d"), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE\n'
+        "        )\n"
+        "    }\n"
         "}\n"
     )
-    found = {
-        f["evidence"][0]["line"]: f["evidence"][0]["intent_argument"]
+    evidence = {
+        f["evidence"][0]["line"]: f["evidence"][0]
         for f in by_rule(scan(store, project), "AST-PENDINGINTENT-MUTABLE")
         if f["evidence"][0]["path"].endswith("Alarms.kt")
     }
-    assert set(found) == {12, 15}
+    found = {line: item["intent_argument"] for line, item in evidence.items()}
+    # Literal flags without FLAG_IMMUTABLE are mutable before Android 12; a flags variable is unknown.
+    assert set(found) == {12, 15, 18, 19}
+    assert evidence[18]["mutability"] == evidence[19]["mutability"] == "default (no FLAG_IMMUTABLE)"
+    assert evidence[12]["mutability"] == "FLAG_MUTABLE"
     assert "where the Intent variable is built" in found[12]
     assert "not built in this function" in found[15]
