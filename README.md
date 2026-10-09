@@ -75,7 +75,9 @@ and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/
   `DEPENDENCY-CVE` rule cannot pass, the online audit is incomplete and the
   default `fail_on_partial` policy exits 3. Repeated runs within a day advance
   through the remainder, and a package with an OSV result from the last day
-  counts as checked.
+  counts as checked. Unresolved catalog aliases and ecosystems OSV does not
+  support are reported as online errors on every run, so they keep the online
+  audit incomplete however many runs follow.
 - IPA reports gain `BINARY-IOS-CODE-INTEGRITY`. Consistent hashes do not prove
   authenticity, because a modified binary that was re-signed is consistent. A
   mismatch adds a warning, not a finding; App Store encrypted and unsigned

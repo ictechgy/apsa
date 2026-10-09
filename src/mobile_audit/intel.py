@@ -827,10 +827,18 @@ def query_dependencies(
             errors.append(f"{len(unresolved) - 100} more unresolved/unsupported dependencies not listed")
         skipped = {id(dep) for dep in unresolved}
         health = {feed["source"]: feed for feed in source_health(store)}
+        # Coverage counts a result as checked for a day; leaving out only results with an
+        # hour of that left keeps them checked when the report is assembled.
+        margin = datetime.now(timezone.utc) - timedelta(hours=23)
 
         def fresh(dep: dict) -> bool:
             feed = health.get(f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}")
-            return bool(feed and feed["status"] == "ok" and not feed["stale"])
+            if not feed or feed["status"] != "ok" or feed["stale"]:
+                return False
+            try:
+                return _timestamp(feed["succeeded"], "feed succeeded") >= margin
+            except (ValueError, TypeError):
+                return False
 
         # Superseded and unqueryable entries use no query budget. Packages without a
         # fresh result go first, so repeated runs advance; within them, packages declared

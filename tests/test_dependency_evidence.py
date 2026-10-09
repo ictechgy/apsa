@@ -699,3 +699,30 @@ def test_repeated_online_runs_advance_past_fresh_results(store):
     third, errors = _osv_queries(store, deps)
     assert third[:50] == [item["name"] for item in deps[200:]] and len(third) == 100
     assert errors == []
+
+
+def test_results_near_the_freshness_boundary_are_queried_again(store):
+    from datetime import datetime, timedelta, timezone
+
+    deps = [
+        {
+            "ecosystem": "Maven",
+            "name": f"androidx.lib:lib{index:03}",
+            "version": "1.0",
+            "path": "app/gradle.lockfile",
+            "confidence": "exact",
+            "version_source": "gradle-lockfile-resolved",
+        }
+        for index in range(101)
+    ]
+    _osv_queries(store, deps[:1])
+    # Checked 23.5 hours ago: valid now, but it could expire before the report is assembled,
+    # so it is queried again and the package left out instead is counted as unchecked.
+    aged = (datetime.now(timezone.utc) - timedelta(hours=23, minutes=30)).isoformat()
+    with store.db:
+        store.db.execute(
+            "UPDATE feeds SET succeeded=? WHERE source=?", (aged, f"osv:Maven:{deps[0]['name']}:1.0")
+        )
+    queried, errors = _osv_queries(store, deps)
+    assert deps[0]["name"] in queried and deps[100]["name"] not in queried
+    assert errors == ["Dependency query limit of 100 reached; 1 remaining packages not checked"]

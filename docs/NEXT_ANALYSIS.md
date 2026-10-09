@@ -139,7 +139,8 @@ Compatibility and privacy notes:
   `DEPENDENCY-CVE` rule cannot pass and the online audit is incomplete (exit 3
   under the default `fail_on_partial` policy). Repeated runs within a day
   advance through the remainder; a package with an OSV result from the last day
-  counts as checked. Batch querying would change the
+  counts as checked. Unresolved aliases and unsupported ecosystems remain online
+  errors on every run and keep the audit incomplete. Batch querying would change the
   recorded per-package OSV request format that the frozen replay depends on,
   so it is later work together with an exclusion control.
 - Lockfile matches are exact and therefore `version-affected`; the default
@@ -258,7 +259,8 @@ OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 
   OSV 결과가 없는 패키지를 먼저, 그중 빌드 파일에 선언된 패키지(lockfile로 대체된 선언 포함)를
   lockfile 좌표보다 먼저 조회합니다. 한 번의 실행으로 남은 패키지는 `not-run`이며 경고에 개수를
   표시하고, 필수 `DEPENDENCY-CVE` 규칙은 통과할 수 없으며 온라인 감사는 불완전합니다. 하루 안에
-  반복 실행하면 남은 패키지를 이어서 조회합니다.
+  반복 실행하면 남은 패키지를 이어서 조회하지만, 미확인 alias·미지원 생태계는 매번 오류로 남아
+  감사를 불완전하게 유지합니다.
 - **기준선·lockfile 전제.** lockfile 대조 결과는 위치가 바뀌어 `only_new`에서 새 항목이 되고
   이전 예외와 일치하지 않습니다. APSA는 dependency locking 활성화·lockfile 최신 여부를 확인하지
   않으며 모든 application 모듈의 release runtime classpath를 합칩니다. `--source-module`은 그
