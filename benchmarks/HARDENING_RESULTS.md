@@ -5,6 +5,10 @@ English is the source of truth. [한국어](HARDENING_RESULTS.ko.md) ·
 [Rerun JSON](results/2026-10-09-public-real-world-hardened.json) ·
 [Execution and review evidence](results/2026-10-09-hardening-evidence.json).
 
+Subsequent parser/function and Apple branch work is recorded separately in
+[Coverage extension results](COVERAGE_RESULTS.md); the historical measurements
+below remain tied to the dev2 snapshot.
+
 The four prioritized integration repairs passed the same frozen public-source
 corpus and selected CVE checks. All six app scans completed; all six still report
 incomplete audits. This is a **development rerun after the labels were seen**,

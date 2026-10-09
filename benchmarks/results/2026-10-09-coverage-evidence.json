@@ -1,0 +1,605 @@
+{
+  "ci": {
+    "conclusion": "success",
+    "distinct_test_count": 832,
+    "head_sha": "3da9b8a99c14b638040c4361bb567fdd34453b6c",
+    "job_log_sha256": "c0237c18b3178b95e70d71ffae4b2658a41991c2fff7bc99038de43f697d6bca",
+    "jobs": [
+      {
+        "conclusion": "success",
+        "id": 113688507100,
+        "name": "macos-15 / Python 3.11.15",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "id": 113688507173,
+        "name": "ubuntu-24.04 / Python 3.11.15",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "id": 113688507233,
+        "name": "ubuntu-24.04 / Python 3.12.13",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "id": 113688507286,
+        "name": "macos-15 / Python 3.12.13",
+        "status": "completed"
+      }
+    ],
+    "run_id": 37889988833,
+    "test_count_evidence_job_id": 113688507173,
+    "url": "https://github.com/ictechgy/apsa/actions/runs/37889988833"
+  },
+  "committed_result": {
+    "bytes": 176252,
+    "path": "benchmarks/results/2026-10-09-public-coverage-extension.json",
+    "representation": "Exact emitted APSA_COVERAGE_RESULT job-log JSON parsed with Python, sorted/indented and trailing newline; not a directly downloaded artifact-summary byte hash",
+    "sha256": "499910bb95bbb25bd596a235ec571dfe98f853906f3aa094e1e01a554880267d"
+  },
+  "frozen_original": {
+    "input_and_original_truth_labels_unchanged": true,
+    "input_manifest_sha256": "190a6798ad094e3f2ff65c57e9d4cfa253db0cce28ab4d2e308d5cfb6d213e1e",
+    "merged_osv_manifest_sha256": "f35c7459384896150a24f3dee8c9a68d52b83aea9e2b083b9fa6ba292c0ad145",
+    "new_osv_captures": 0,
+    "spec_sha256": "dee900f64f18513d283c8a3581a86152f804910a535175e4198ff208573514fc",
+    "summary_sha256": "a08769d89866515d3af1e772260cb944b970746f2599e77415a39c77747b2d32"
+  },
+  "limits": [
+    "Development rerun after labels were seen; not a fresh independent holdout or general accuracy measure",
+    "All six audits remain incomplete; adapted files remain partial",
+    "Function counts cover recognized AST function nodes only; unsupported languages, parse errors and budgets can hide callables",
+    "Fourteen new cases cover one CVE and synthetic environments/vendor records, with linked Apple labels, not captured HTTP bytes or actual devices",
+    "Outside the published affected range is branch-specific evidence, not proof that a device is patched or safe",
+    "Original OS labels remain frozen; two formerly unknown states deliberately changed and frozen agreement is 9/11",
+    "No new OSV capture; original 29 and one previously frozen separate-time jsoup supplement reused",
+    "No MobSF rerun, upstream builds, app/backend/device execution, registry release, whole-app exploitability or zero-day scoring",
+    "Remaining Kotlin/Swift syntax gaps, Objective-C, configuration budgets, AAB/IPA embedded binaries and OS sandbox need later evidence",
+    "Public replay artifacts expire; preserve inputs before expiry for full offline reconstruction"
+  ],
+  "local_validation": {
+    "base_head": "93bf36199a88861f2c7e01bc500888d31495b669",
+    "base_tree": "54a79c11f43b5f4dcd10cd021b7782a81fd006ee",
+    "focused_tests": 241,
+    "focused_tests_conclusion": "passed",
+    "frozen_results": {
+      "2026-10-09-public-real-world-hardened.json": "a52623cff0fefab268c56e2263beebab88ac92a90f04018373200874acc74eee",
+      "2026-10-09-public-real-world-initial.json": "a08769d89866515d3af1e772260cb944b970746f2599e77415a39c77747b2d32"
+    },
+    "ios_branch_fixture_agreement": {
+      "correct": 14,
+      "spec_sha256": "3c57c1b87c407e164bef5c371d0e372faf90be0a260119c8ecc7915f06b82c08",
+      "total": 14
+    },
+    "native_full_suite": "Hosted CI required: native process RSS checks are unavailable under the private media guard; no guard weakening or native network used",
+    "new_regression_cases_collected": 48,
+    "pyright": "0 errors",
+    "reviewed_head": "f5c05db5c271805c518979454bf3673c035ff439",
+    "reviewed_tree": "18bf3101701d3a894ea3506936229e82a307a663",
+    "ruff": "passed",
+    "schema": "apsa-coverage-extension-local-validation-v1",
+    "scope": "candidate hardening branch; no upstream builds/devices/main merge/release",
+    "workflow_yaml": "parsed"
+  },
+  "measurement": {
+    "apps": [
+      {
+        "audit_incomplete": true,
+        "id": "newpipe",
+        "input_sha256": "310036384125adad2bd72aed5221b481b75d9ee11adedae3e88ef9968149a20b",
+        "scan_state": "completed",
+        "source_analysis": {
+          "adapted_files": 0,
+          "function_inventory_complete": false,
+          "functions": {
+            "analyzed": 4471,
+            "observed": 4735,
+            "skipped": 0,
+            "without_body": 264
+          },
+          "native_function_nodes": 4735,
+          "native_function_nodes_with_errors": 0,
+          "native_parse_error_files": 0,
+          "remaining_parse_error_files": 0,
+          "remaining_source_records": 0,
+          "unparsed_files": 0
+        }
+      },
+      {
+        "audit_incomplete": true,
+        "id": "antennapod",
+        "input_sha256": "04efb938a408782d1fab21dedd22f5e806cc7d2cb4278c78b8fe9b60bd9aab83",
+        "scan_state": "completed",
+        "source_analysis": {
+          "adapted_files": 0,
+          "function_inventory_complete": true,
+          "functions": {
+            "analyzed": 4404,
+            "observed": 4576,
+            "skipped": 0,
+            "without_body": 172
+          },
+          "native_function_nodes": 4576,
+          "native_function_nodes_with_errors": 0,
+          "native_parse_error_files": 0,
+          "remaining_parse_error_files": 0,
+          "remaining_source_records": 0,
+          "unparsed_files": 0
+        }
+      },
+      {
+        "audit_incomplete": true,
+        "id": "k9",
+        "input_sha256": "33d8c1609a980c1b1d8c58d743a21d7ea8b336accba454a49ef9f38007601d6c",
+        "scan_state": "completed",
+        "source_analysis": {
+          "adapted_files": 4,
+          "function_inventory_complete": false,
+          "functions": {
+            "analyzed": 10925,
+            "observed": 11625,
+            "skipped": 1,
+            "without_body": 699
+          },
+          "native_function_nodes": 11526,
+          "native_function_nodes_with_errors": 6,
+          "native_parse_error_files": 6,
+          "remaining_parse_error_files": 2,
+          "remaining_source_records": 0,
+          "unparsed_files": 0
+        }
+      },
+      {
+        "audit_incomplete": true,
+        "id": "nextcloudios",
+        "input_sha256": "ec92d96076c91c0836dcc0bab943296898301d5ffe13c00a1effd61878daa7d5",
+        "scan_state": "completed",
+        "source_analysis": {
+          "adapted_files": 0,
+          "function_inventory_complete": false,
+          "functions": {
+            "analyzed": 2369,
+            "observed": 2369,
+            "skipped": 0,
+            "without_body": 0
+          },
+          "native_function_nodes": 2369,
+          "native_function_nodes_with_errors": 0,
+          "native_parse_error_files": 0,
+          "remaining_parse_error_files": 0,
+          "remaining_source_records": 0,
+          "unparsed_files": 0
+        }
+      },
+      {
+        "audit_incomplete": true,
+        "id": "firefox",
+        "input_sha256": "a474d12390d883c24d988589d5a93005049f58c86e545650c2206f86054d3f5d",
+        "scan_state": "completed",
+        "source_analysis": {
+          "adapted_files": 14,
+          "function_inventory_complete": false,
+          "functions": {
+            "analyzed": 26844,
+            "observed": 26885,
+            "skipped": 41,
+            "without_body": 0
+          },
+          "native_function_nodes": 26885,
+          "native_function_nodes_with_errors": 67,
+          "native_parse_error_files": 78,
+          "remaining_parse_error_files": 66,
+          "remaining_source_records": 0,
+          "unparsed_files": 0
+        }
+      },
+      {
+        "audit_incomplete": true,
+        "id": "icecubes",
+        "input_sha256": "0ad3132befa94435a69fe2f6f22822fb641cb2e1bb4847d257589237283e5034",
+        "scan_state": "completed",
+        "source_analysis": {
+          "adapted_files": 0,
+          "function_inventory_complete": false,
+          "functions": {
+            "analyzed": 1035,
+            "observed": 1037,
+            "skipped": 2,
+            "without_body": 0
+          },
+          "native_function_nodes": 1037,
+          "native_function_nodes_with_errors": 2,
+          "native_parse_error_files": 2,
+          "remaining_parse_error_files": 2,
+          "remaining_source_records": 0,
+          "unparsed_files": 0
+        }
+      }
+    ],
+    "completed_apps": 6,
+    "incomplete_apps": 6,
+    "independent_dependency_cve_score": {
+      "completed_recall": 1.0,
+      "correct_abstentions": 5,
+      "end_to_end_recall": 1.0,
+      "failed": 0,
+      "failed_affected": 0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "tn": 19,
+      "tp": 8,
+      "unknown": 5,
+      "unstable": 0
+    },
+    "ios_branch_extension": {
+      "cases": [
+        {
+          "correct": true,
+          "document": "ios18",
+          "expected": "version-affected",
+          "finding_statuses": [
+            "version-affected"
+          ],
+          "id": "ios18-affected",
+          "observed_states": [
+            "version-affected"
+          ],
+          "reachability": [
+            "unknown"
+          ],
+          "version": "18.3.1"
+        },
+        {
+          "correct": true,
+          "document": "ios18",
+          "expected": "outside-published-affected-range",
+          "finding_statuses": [],
+          "id": "ios18-boundary",
+          "observed_states": [
+            "outside-published-affected-range"
+          ],
+          "reachability": [],
+          "version": "18.3.2"
+        },
+        {
+          "correct": true,
+          "document": "ios18",
+          "expected": "outside-published-affected-range",
+          "finding_statuses": [],
+          "id": "ios18-later",
+          "observed_states": [
+            "outside-published-affected-range"
+          ],
+          "reachability": [],
+          "version": "18.4.0"
+        },
+        {
+          "correct": true,
+          "document": "ios16",
+          "expected": "version-affected",
+          "finding_statuses": [
+            "version-affected"
+          ],
+          "id": "ios16-affected",
+          "observed_states": [
+            "version-affected"
+          ],
+          "reachability": [
+            "unknown"
+          ],
+          "version": "16.7.10"
+        },
+        {
+          "correct": true,
+          "document": "ios16",
+          "expected": "outside-published-affected-range",
+          "finding_statuses": [],
+          "id": "ios16-boundary",
+          "observed_states": [
+            "outside-published-affected-range"
+          ],
+          "reachability": [],
+          "version": "16.7.11"
+        },
+        {
+          "correct": true,
+          "document": "ios15",
+          "expected": "version-affected",
+          "finding_statuses": [
+            "version-affected"
+          ],
+          "id": "ios15-affected",
+          "observed_states": [
+            "version-affected"
+          ],
+          "reachability": [
+            "unknown"
+          ],
+          "version": "15.8.3"
+        },
+        {
+          "correct": true,
+          "document": "ios15",
+          "expected": "outside-published-affected-range",
+          "finding_statuses": [],
+          "id": "ios15-boundary",
+          "observed_states": [
+            "outside-published-affected-range"
+          ],
+          "reachability": [],
+          "version": "15.8.4"
+        },
+        {
+          "correct": true,
+          "document": "ipad17",
+          "expected": "version-affected",
+          "finding_statuses": [
+            "version-affected"
+          ],
+          "id": "ipad17-affected",
+          "observed_states": [
+            "version-affected"
+          ],
+          "os_product": "ipados",
+          "reachability": [
+            "unknown"
+          ],
+          "version": "17.7.5"
+        },
+        {
+          "correct": true,
+          "document": "ipad17",
+          "expected": "outside-published-affected-range",
+          "finding_statuses": [],
+          "id": "ipad17-boundary",
+          "observed_states": [
+            "outside-published-affected-range"
+          ],
+          "os_product": "ipados",
+          "reachability": [],
+          "version": "17.7.6"
+        },
+        {
+          "correct": true,
+          "document": "ipad17",
+          "expected": "applicability-unknown",
+          "finding_statuses": [],
+          "id": "ipad17-requires-product",
+          "observed_states": [
+            "applicability-unknown"
+          ],
+          "reachability": [],
+          "version": "17.7.5"
+        },
+        {
+          "correct": true,
+          "document": "ios18",
+          "expected": "applicability-unknown",
+          "finding_statuses": [],
+          "id": "other-major",
+          "observed_states": [
+            "applicability-unknown"
+          ],
+          "reachability": [],
+          "version": "26.0"
+        },
+        {
+          "correct": true,
+          "document": "ios18",
+          "expected": "applicability-unknown",
+          "finding_statuses": [],
+          "id": "other-bulletin-branch",
+          "observed_states": [
+            "applicability-unknown"
+          ],
+          "reachability": [],
+          "version": "16.7.10"
+        },
+        {
+          "correct": true,
+          "document": "ios18",
+          "expected": "applicability-unknown",
+          "finding_statuses": [],
+          "id": "unordered-beta",
+          "observed_states": [
+            "applicability-unknown"
+          ],
+          "reachability": [],
+          "version": "18.3.1beta"
+        },
+        {
+          "correct": true,
+          "document": "ios18",
+          "expected": "simulator-only",
+          "finding_statuses": [],
+          "id": "simulator",
+          "observed_states": [
+            "simulator-only"
+          ],
+          "reachability": [],
+          "simulator": true,
+          "version": "18.3.1"
+        }
+      ],
+      "correct": 14,
+      "documents": {
+        "ios15": {
+          "label": "iOS 15.8.4",
+          "url": "https://support.apple.com/en-us/122345"
+        },
+        "ios16": {
+          "label": "iOS 16.7.11",
+          "url": "https://support.apple.com/en-us/122346"
+        },
+        "ios18": {
+          "label": "iOS 18.3.2",
+          "url": "https://support.apple.com/en-us/122281"
+        },
+        "ipad17": {
+          "label": "iPadOS 17.7.6",
+          "url": "https://support.apple.com/en-us/122372"
+        }
+      },
+      "fixture_kind": "Synthetic environment and vendor-record fixtures; bulletin labels verified against linked Apple pages, not newly captured HTTP bytes or actual devices.",
+      "primary_sha256": "971fd42da9e0c278cce7d79580f05a396c744694dbc6c5a83c25946395430904",
+      "spec_sha256": "3c57c1b87c407e164bef5c371d0e372faf90be0a260119c8ecc7915f06b82c08",
+      "total": 14
+    },
+    "legacy_os_frozen_agreement": {
+      "correct": 9,
+      "expected_labels_unchanged": true,
+      "intended_state_upgrades": [
+        {
+          "frozen_expected_states": [
+            "applicability-unknown"
+          ],
+          "id": "ios-custom-cna-range",
+          "new_states": [
+            "version-affected"
+          ],
+          "old_states": [
+            "applicability-unknown"
+          ]
+        },
+        {
+          "frozen_expected_states": [
+            "applicability-unknown"
+          ],
+          "id": "ios-fixed-label-not-universal-bound",
+          "new_states": [
+            "outside-published-affected-range"
+          ],
+          "old_states": [
+            "applicability-unknown"
+          ]
+        }
+      ],
+      "total": 11
+    },
+    "repeats_per_app": 3,
+    "selected_actual_app_cve_score": {
+      "completed_recall": 1.0,
+      "correct_abstentions": 0,
+      "end_to_end_recall": 1.0,
+      "failed": 0,
+      "failed_affected": 0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "tn": 3,
+      "tp": 1,
+      "unknown": 0,
+      "unstable": 0
+    },
+    "selected_config_facts_correct": 6,
+    "selected_dependency_declaration_count": 10,
+    "selected_dependency_declarations_extracted": 10
+  },
+  "previous_result": {
+    "path": "benchmarks/results/2026-10-09-public-real-world-hardened.json",
+    "sha256": "a52623cff0fefab268c56e2263beebab88ac92a90f04018373200874acc74eee",
+    "unchanged": true
+  },
+  "replay": {
+    "artifact": {
+      "archive_download_url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11598057271/zip",
+      "created_at": "2026-10-09T05:46:07Z",
+      "digest": "sha256:e96ffe7ccce1491760ff9f53b344e69b1232b8e9727e745da603a902cc78e005",
+      "expired": false,
+      "expires_at": "2026-11-08T05:46:04Z",
+      "id": 11598057271,
+      "name": "public-coverage-replay",
+      "size_in_bytes": 17874509,
+      "updated_at": "2026-10-09T05:46:07Z",
+      "url": "https://api.github.com/repos/ictechgy/apsa/actions/artifacts/11598057271",
+      "workflow_run": {
+        "head_branch": "hardening/real-app-cve-v1",
+        "head_repository_id": 1406574335,
+        "head_sha": "3da9b8a99c14b638040c4361bb567fdd34453b6c",
+        "id": 37889988853,
+        "repository_id": 1406574335
+      }
+    },
+    "conclusion": "success",
+    "coverage_extension_provenance": {
+      "kind": "development-rerun-after-labels-seen",
+      "legacy_os_expected_states": "Frozen unchanged; two formerly unknown iOS cases now intentionally produce supported branch decisions. Inspect legacy correctness separately from the new branch fixtures.",
+      "previous_summary_sha256": "a52623cff0fefab268c56e2263beebab88ac92a90f04018373200874acc74eee",
+      "source_function_counts": "Recognized function nodes only, with raw grammar counts and adapted analysis counts; not a complete callable inventory. Adapted files remain partial."
+    },
+    "head_sha": "3da9b8a99c14b638040c4361bb567fdd34453b6c",
+    "job_id": 113688507386,
+    "job_log_sha256": "39f660e565a0237b745cecbb3dcab46b7e3d84c14b3c4b38fb39e7052e47f852",
+    "provenance": {
+      "comparator": "APSA only; original MobSF observations were not rerun",
+      "kind": "development-rerun-after-labels-seen",
+      "original_input_manifest_sha256": "190a6798ad094e3f2ff65c57e9d4cfa253db0cce28ab4d2e308d5cfb6d213e1e",
+      "original_osv_manifest_sha256": "6e6fbb050eddfdf5c30b6a424e6d325946235ff18565695d3503e81f96c5fb10",
+      "original_run_id": 37879443007,
+      "original_source_revision": "5513aa0d4466f8ce0413c4720a3f2e470e417924",
+      "original_summary_sha256": "a08769d89866515d3af1e772260cb944b970746f2599e77415a39c77747b2d32",
+      "supplemental_capture_artifact_digest": "sha256:702bc75b66943974adda7467ea67fb0a8be44bcbf50a04913f70e66efd6667ab",
+      "supplemental_capture_artifact_id": 11596401157,
+      "supplemental_capture_run_id": 37885440079,
+      "supplemental_osv": {
+        "responses": [
+          {
+            "bytes": 10073,
+            "captured_at": "2026-10-09T04:46:41.465519+00:00",
+            "key": "d429018e216c29ba40a9279792fa0e0a0a859975e26ae931bd5e7d1f236582dd",
+            "payload": {
+              "package": {
+                "ecosystem": "Maven",
+                "name": "org.jsoup:jsoup"
+              },
+              "version": "1.15.1"
+            },
+            "sha256": "822b30c31a2b254704bf6f18a081a9709aff5106a4288c0668a90ae07b1a1678",
+            "status": 200
+          }
+        ],
+        "schema": "apsa-osv-http-snapshot-v1"
+      },
+      "supplemental_osv_manifest_sha256": "604ef9085abaca3dc460bd20bdcf3fb075b08efbd66256d86101fab6d0d3c5fe"
+    },
+    "run_id": 37889988853,
+    "url": "https://github.com/ictechgy/apsa/actions/runs/37889988853"
+  },
+  "reviews": [
+    {
+      "base": "93bf36199a88861f2c7e01bc500888d31495b669",
+      "head": "f5c05db5c271805c518979454bf3673c035ff439",
+      "lane": "code/spec/security",
+      "path": "benchmarks/reviews/2026-10-09-coverage-code.md",
+      "sha256": "b2d917128045a2e85047cbc3f74983d09509d2fa6f5c042e0806a4c10a705aff",
+      "tree": "18bf3101701d3a894ea3506936229e82a307a663",
+      "verdict": "APPROVE"
+    },
+    {
+      "base": "93bf36199a88861f2c7e01bc500888d31495b669",
+      "head": "f5c05db5c271805c518979454bf3673c035ff439",
+      "lane": "architecture",
+      "path": "benchmarks/reviews/2026-10-09-coverage-architecture.md",
+      "sha256": "facb726f13b3c403f4cf5c61bf1177d57605300e866af8a5674c89448f666b93",
+      "tree": "18bf3101701d3a894ea3506936229e82a307a663",
+      "verdict": "CLEAR"
+    }
+  ],
+  "runtime": {
+    "architecture_verdict": "CLEAR",
+    "base_local_head": "93bf36199a88861f2c7e01bc500888d31495b669",
+    "base_public_head": "e7fc05b7ef6d996bb79d71662ee7f985bb0c970d",
+    "code_verdict": "APPROVE",
+    "common_tree": "18bf3101701d3a894ea3506936229e82a307a663",
+    "local_head": "f5c05db5c271805c518979454bf3673c035ff439",
+    "public_head": "3da9b8a99c14b638040c4361bb567fdd34453b6c",
+    "readiness": "Independent implementation reviews and four hosted CI lanes passed; frozen replay succeeded; hardening branch only",
+    "schema": "apsa-coverage-runtime-publication-v1",
+    "scope": "no main merge, tag, registry publication or upstream app/device execution"
+  },
+  "schema": "apsa-coverage-extension-evidence-v1"
+}

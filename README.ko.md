@@ -214,4 +214,9 @@ make release RELEASE_OUT=dist/apsa-local-release
 완료하고 측정한 연동 누락 네 가지를 수정했습니다. 관찰한 정답을 재사용한
 개발 검증이며, 남아 있는 불완전한 커버리지를 함께 기록했습니다.
 
+[커버리지 확장 평가](benchmarks/COVERAGE_RESULTS.ko.md)는 제한된 Swift/Kotlin
+구문 호환, 인식한 함수 수, Apple 근거에 따른 iOS/iPadOS 분기 판정을 기록합니다.
+호환 처리한 소스는 부분 분석으로 남으며, 선택한 사례로 일반적인 CVE 정확도를
+입증하지 않습니다.
+
 소스는 [GitHub](https://github.com/ictechgy/apsa)에 공개되어 있습니다. [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE)는 원래 Quaygate의 MIT 고지를 보존합니다. 이번 공개는 통합 제품에 추가 라이선스를 선언하지 않습니다.
