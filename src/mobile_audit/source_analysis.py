@@ -82,6 +82,13 @@ RULES = {
         "Replace collision-sensitive uses of MD5 or SHA-1. A digest API alone does not prove a security-sensitive use.",
         CRYPTO_REFERENCE,
     ),
+    "AST-PENDINGINTENT-MUTABLE": (
+        "Mutable PendingIntent wraps an Intent without a recognized explicit component",
+        "medium",
+        "Use FLAG_IMMUTABLE, or make the wrapped Intent explicit (class, component or package) when "
+        "mutability is required.",
+        "https://developer.android.com/privacy-and-security/risks/pending-intent",
+    ),
     "AST-SQL-CONCAT": (
         "Platform-controlled data reaches an Android raw SQL statement",
         "high",
@@ -743,6 +750,24 @@ class Analyzer:
                         statement_scope=f"argument {index} is SQL syntax; bound value arguments are not",
                         unknown_helpers_are_sanitizers=False,
                     )
+        if (
+            self.language in {"java", "kotlin"}
+            and call.name
+            in {"getActivity", "getActivities", "getBroadcast", "getService", "getForegroundService"}
+            and self.key(call.receiver) in {"PendingIntent", "android.app.PendingIntent"}
+            and len(call.args) >= 4
+            and "FLAG_MUTABLE" in self.text(call.args[3])
+        ):
+            wrapped = self.text(call.args[2])
+            explicit = re.search(r"::class|\.class\b|setClass|setComponent|setPackage|ComponentName", wrapped)
+            if not explicit:
+                self.emit(
+                    "AST-PENDINGINTENT-MUTABLE",
+                    call.node,
+                    factory=f"PendingIntent.{call.name}",
+                    intent_argument="no class, component or package in the argument expression",
+                    target_sdk_note="Android 14+ rejects mutable implicit PendingIntents for targetSdk 34+",
+                )
         logging = (self.key(call.receiver) == "Log" and call.name in {"d", "i", "v", "e", "w"}) or (
             call.receiver is None and call.name in {"print", "println", "NSLog"}
         )
@@ -1196,7 +1221,7 @@ def analyze_sources(sources: list[Any], specs: dict | None = None) -> dict:
         {
             "rule_id": rule,
             "state": "not-applicable"
-            if rule.endswith(("SSL-BYPASS", "JS-BRIDGE", "CRYPTO-ECB", "SQL-CONCAT"))
+            if rule.endswith(("SSL-BYPASS", "JS-BRIDGE", "CRYPTO-ECB", "SQL-CONCAT", "PENDINGINTENT-MUTABLE"))
             and seen_languages == {"swift"}
             and not unsupported
             else state,

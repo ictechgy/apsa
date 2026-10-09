@@ -365,5 +365,87 @@
     "references": [
       "https://developer.apple.com/documentation/webkit/wkwebview"
     ]
+  },
+  {
+    "id": "ANDROID-EXPORTED-COMPONENT",
+    "mode": "configuration",
+    "title": "Exported component without a permission",
+    "severity": "medium",
+    "status": "candidate",
+    "masvs": "MASVS-PLATFORM",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/android-exported"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Source and AAB manifests; launcher activities and permission-protected components excluded; no reachability analysis."
+  },
+  {
+    "id": "ANDROID-ALLOW-BACKUP",
+    "mode": "configuration",
+    "title": "Application backup explicitly allowed",
+    "severity": "low",
+    "status": "configuration-confirmed",
+    "masvs": "MASVS-STORAGE",
+    "references": [
+      "https://developer.android.com/identity/data/autobackup"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Explicit allowBackup=true in source and AAB manifests; backup rule files are not evaluated."
+  },
+  {
+    "id": "ANDROID-TARGET-SDK",
+    "mode": "configuration",
+    "title": "targetSdk below the current Google Play requirement",
+    "severity": "low",
+    "status": "configuration-confirmed",
+    "masvs": "MASVS-CODE",
+    "references": [
+      "https://developer.android.com/google/play/requirements/target-sdk"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Declared targetSdk compared with API 36 (Play requirement from 2026-08-31); lower levels raise severity."
+  },
+  {
+    "id": "IOS-PRIVACY-MANIFEST",
+    "mode": "source-pattern",
+    "title": "Required-reason API used without a privacy manifest declaration",
+    "severity": "medium",
+    "status": "candidate",
+    "masvs": "MASVS-PRIVACY",
+    "references": [
+      "https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Swift/Objective-C symbol names for Apple's five required-reason categories against NSPrivacyAccessedAPITypes in .xcprivacy files in the tree."
+  },
+  {
+    "id": "SOURCE-HARDCODED-SECRET",
+    "mode": "source-pattern",
+    "title": "Hard-coded credential in a known format",
+    "severity": "high",
+    "status": "candidate",
+    "masvs": "MASVS-STORAGE",
+    "references": [
+      "https://mas.owasp.org/MASWE/MASVS-STORAGE/MASWE-0004/"
+    ],
+    "mapping_scope": "partial",
+    "scope": "Private keys and AWS, GitHub, Slack, Stripe live, OpenAI, Anthropic and Google API key formats; values are masked in evidence."
+  },
+  {
+    "id": "AST-PENDINGINTENT-MUTABLE",
+    "mode": "ast",
+    "languages": [
+      "java",
+      "kotlin"
+    ],
+    "title": "Mutable PendingIntent wraps an Intent without a recognized explicit component",
+    "severity": "medium",
+    "status": "candidate",
+    "masvs": "MASVS-PLATFORM",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/pending-intent"
+    ],
+    "mapping_scope": "partial",
+    "scope": "PendingIntent factory call with FLAG_MUTABLE in the flags argument and no class, component or package on the wrapped Intent expression."
   }
 ]

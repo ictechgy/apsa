@@ -258,6 +258,7 @@ def android_manifest(raw: bytes, origin: str, inventory: dict) -> None:
         inventory["android_sdk"] = {
             "min": sdk.get(ANDROID_NS + "minSdkVersion", ""),
             "target": sdk.get(ANDROID_NS + "targetSdkVersion", ""),
+            "path": origin,
         }
     app = root.find("application")
     if app is None:
@@ -275,12 +276,22 @@ def android_manifest(raw: bytes, origin: str, inventory: dict) -> None:
         component_name = component.get(ANDROID_NS + "name", "")
         exported = component.get(ANDROID_NS + "exported", "unspecified")
         filters = component.findall("intent-filter")
+        launcher = any(
+            "android.intent.action.MAIN" in {a.get(ANDROID_NS + "name") for a in f.findall("action")}
+            and "android.intent.category.LAUNCHER"
+            in {c.get(ANDROID_NS + "name") for c in f.findall("category")}
+            for f in filters
+        )
         inventory["components"].append(
             {
                 "name": component_name,
                 "type": component.tag,
                 "exported": exported,
                 "permission": component.get(ANDROID_NS + "permission", ""),
+                "read_permission": component.get(ANDROID_NS + "readPermission", ""),
+                "write_permission": component.get(ANDROID_NS + "writePermission", ""),
+                "intent_filters": len(filters),
+                "launcher": launcher,
                 "path": origin,
             }
         )

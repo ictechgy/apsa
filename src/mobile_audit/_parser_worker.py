@@ -65,6 +65,11 @@ def analyze(
 
     structural = analyze_sources(sources, specs)
     findings, coverage = static_checks(inventory, sources, structural.get("pattern_exclusions"))
+    from .platform_checks import platform_checks
+
+    platform_findings, platform_coverage = platform_checks(inventory, sources)
+    findings.extend(platform_findings)
+    coverage.extend(platform_coverage)
     if inventory.get("aab_manifest", {}).get("unresolved_attributes"):
         for check in coverage:
             if check["rule_id"] == "ANDROID-CONFIG":

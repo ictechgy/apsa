@@ -114,7 +114,7 @@ coverage table. Unmodified 1.3 skills upgrade with `apsa skill install`.
 
 | Area | Available checks |
 | --- | --- |
-| Source code | Java/Kotlin/Swift AST analysis; bounded Objective-C `.m` candidates; WebView and deep-link patterns; Manifest, Info.plist, storage, and dependency inspection, including Gradle catalog usage and application lockfiles |
+| Source code | Java/Kotlin/Swift AST analysis; bounded Objective-C `.m` candidates; WebView and deep-link patterns; Manifest, Info.plist, storage, and dependency inspection, including Gradle catalog usage and application lockfiles; exported components, backup and targetSdk; Apple required-reason APIs against privacy manifests; known credential formats (masked); weak random for security values; mutable implicit PendingIntents |
 | Android builds | DEX calls and constant flow; AAB base and feature-module manifests and module DEX (always partial); resources and network configuration; exported components/providers; signing-block and v1 certificate evidence; ELF hardening |
 | iOS builds | Mach-O headers, including embedded framework/extension metadata; CodeDirectory page and entitlement hash integrity (not signature authentication); limited entitlement/configuration checks (embedded XML entitlements, ATS exceptions, provisioning indicators); PIE, canary, and string evidence |
 | Public intelligence | Apple/Android advisories with bounded Android bulletin backfill, CVE, CISA KEV, OWASP guidance, and OSV dependency correlation |
