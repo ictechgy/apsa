@@ -515,7 +515,7 @@ def test_partial_inventory_and_refresh_keep_superseded_semantics(store, tmp_path
         "path": "app/build.gradle.kts",
         "confidence": "declared",
     }
-    deps = [dict(lock), dict(declared)]
+    deps: list[dict] = [dict(lock), dict(declared)]
     supersede(deps, ModuleGraph(sources), partial=True)
     assert "resolution" not in deps[1] and deps[1]["confidence"] == "declared"
     deps = [dict(lock), dict(declared)]
