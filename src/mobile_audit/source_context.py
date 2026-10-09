@@ -566,7 +566,7 @@ def superseded(dep: dict) -> bool:
     return (dep.get("resolution") or {}).get("state") == "superseded-by-resolved-build"
 
 
-def supersede(dependencies: list[dict], graph: ModuleGraph | None) -> None:
+def supersede(dependencies: list[dict], graph: ModuleGraph | None, *, partial: bool = False) -> None:
     """Resolved application lockfiles replace declared candidates they cover.
 
     Only an application module's lockfile records what that app ships; other
@@ -589,7 +589,8 @@ def supersede(dependencies: list[dict], graph: ModuleGraph | None) -> None:
             dep["version_source"] = "gradle-lockfile-non-application-module"
             continue
         resolved.setdefault(dep["name"], {}).setdefault(module.as_posix(), set()).add(dep["version"])
-    if not graph:
+    if not graph or partial:
+        # Omitted build scripts could hide another shipping consumer.
         return
     for dep in dependencies:
         if dep["ecosystem"] != "Maven" or dep["name"] not in resolved or dep.get("confidence") != "declared":

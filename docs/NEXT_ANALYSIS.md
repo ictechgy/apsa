@@ -98,18 +98,35 @@ These changes are on the development branch and are not part of APSA 1.2.0.
   hashes are recomputed. Mismatch is reported as modified with a warning,
   except mismatches confined to an encrypted region, which stay unverifiable.
   The CMS signature, certificate chain, team and provisioning are not
-  authenticated; `signature_verified` stays false.
+  authenticated; `signature_verified` stays false. Encrypted (App Store) or
+  unsigned executables leave `BINARY-IOS-CODE-INTEGRITY` `not-run`, and a
+  malformed or oversized CodeDirectory is unverifiable rather than a failure.
 - **Android bulletin history and chipsets.** `apsa intel backfill --source
   android --since YYYY-MM [--until YYYY-MM]` fetches an explicit, bounded month
   range. Bulletin records keep a vendor scope. Device observation adds the SoC
-  manufacturer and vendor security patch level; chipset and kernel components
-  use the vendor patch level, and a different SoC vendor yields
-  `chipset-vendor-mismatch` rather than a non-applicability claim. Apple
+  manufacturer and vendor security patch level (also accepted from
+  `--device-info`); chipset and kernel components use the vendor patch level.
+  A SoC vendor match or mismatch is recorded in `chipset_vendor` beside the
+  patch-level state and never replaces it, because connectivity chips can come
+  from other vendors. Apple
   history, Pixel/OEM/chipset vendor bulletins and amended-entry tracking are
   not backfilled.
 - **Independent source pairs.** See [FPFN_RESULTS.md](../benchmarks/FPFN_RESULTS.md).
 - **Device evidence.** No physical device was used; see
   [DEVICE_EVIDENCE.md](DEVICE_EVIDENCE.md) for what approved evidence requires.
+
+Compatibility and privacy notes for a future release: catalog aliases used in
+shipped configurations and application-lockfile coordinates (including private
+group IDs) are sent to OSV by `scan --online` and `intel watch --online`;
+lockfile matches are exact and therefore `version-affected`, which default
+policies block; the 100-query OSV budget is smaller than a typical application
+lockfile (179-412 shipped coordinates measured), so online audits of such apps
+stay incomplete; cached Android bulletin records need a re-sync to gain a vendor
+scope. Before release, the head must be frozen, every evaluation harness
+(dependency, frozen replay, source pairs, competitive, real-world, next holdout,
+generated AAB) re-run on it, README/skills/support matrix updated, the version
+bumped, and independent code and architecture reviews repeated.
+
 
 # 분석 확장 (APSA 1.2)
 

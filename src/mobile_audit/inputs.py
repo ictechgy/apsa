@@ -798,7 +798,7 @@ def inspect_target(
             graph = None
             inventory["warnings"].append(f"Gradle module graph not resolved: {type(error).__name__}")
         inventory["warnings"].extend(resolve_catalog_usage(inventory["dependencies"], sources, graph))
-        supersede(inventory["dependencies"], graph)
+        supersede(inventory["dependencies"], graph, partial=inventory["partial"])
         references, warnings = plist_references(sources)
         inventory["warnings"].extend(warnings)
         inventory["partial"] |= bool(warnings)

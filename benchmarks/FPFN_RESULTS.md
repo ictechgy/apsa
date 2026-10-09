@@ -69,6 +69,11 @@ file copy) produced no findings in their labeled files.
 
 ## Limits
 
+The labeler knew APSA's rule family names and descriptions but not its code or
+results. The parser adaptations committed three minutes after the truth were
+derived from VLC iOS, Firefox iOS, Signal-iOS and WordPress-iOS parse errors;
+none of the labeled pair files was inspected for them.
+
 Eleven scored pairs from ten repositories cannot establish general recall or
 precision. The labels come from one research agent. File-level matching can
 credit a finding at another line of the same file, which is why line-level

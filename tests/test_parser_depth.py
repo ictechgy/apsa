@@ -250,3 +250,56 @@ def test_encrypted_pages_are_unverifiable_not_modified():
     signature = _macho_slice(bytes(raw), 0, len(raw))["code_signature"]
     assert signature["code_directories"][0]["integrity"] == "unverifiable-encrypted-pages"
     assert signature["integrity"] == "unverifiable"
+
+
+def large_signed_macho(pages):
+    import hashlib
+    import struct
+
+    page, slots, special = 4096, pages, 0
+    code_limit = page * pages
+    ident = b"audit.large\0"
+    hash_offset = 44 + len(ident)
+    cd_length = hash_offset + slots * 32
+    total = 20 + cd_length
+    code = bytearray(struct.pack("<IiiIIIII", 0xFEEDFACF, 0x100000C, 0, 2, 2, 40, 0x200000, 0))
+    code += struct.pack("<IIII", 0x1D, 16, code_limit, total)
+    code += struct.pack("<IIIIII", 0x2C, 24, page, page * (pages - 1), 1, 0)
+    code += bytes((index * 13) % 251 for index in range(code_limit - len(code)))
+    hashes = b"".join(hashlib.sha256(bytes(code[i * page : (i + 1) * page])).digest() for i in range(slots))
+    directory = (
+        struct.pack(
+            ">IIIIIIIIIBBBBI",
+            0xFADE0C02,
+            cd_length,
+            0x20001,
+            0,
+            hash_offset,
+            44,
+            special,
+            slots,
+            code_limit,
+            32,
+            2,
+            0,
+            12,
+            0,
+        )
+        + ident
+        + hashes
+    )
+    for index in range(1, pages):
+        code[index * page] ^= 0xFF  # stands in for FairPlay-encrypted pages
+    superblob = struct.pack(">III", 0xFADE0CC0, total, 1) + struct.pack(">II", 0, 20) + directory
+    return bytes(code) + superblob
+
+
+def test_large_encrypted_region_is_unverifiable_not_modified():
+    from mobile_audit.binary_analysis import _macho_slice
+
+    raw = large_signed_macho(80)
+    signature = _macho_slice(raw, 0, len(raw))["code_signature"]
+    directory = signature["code_directories"][0]
+    assert directory["pages_mismatched"] == 79 and len(directory["mismatched_pages"]) == 64
+    assert directory["integrity"] == "unverifiable-encrypted-pages"
+    assert signature["integrity"] == "unverifiable"

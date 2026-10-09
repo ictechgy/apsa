@@ -414,7 +414,7 @@ def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) ->
     if version >= 0x20300 and len(blob) >= 64:
         code_limit = struct.unpack_from(">Q", blob, 56)[0] or code_limit
     if slots > MAX_CODE_SLOTS or special > 64 or not 0 <= page_log <= 24:
-        raise BinaryFormatError("CodeDirectory slot or page budget exceeded")
+        return {"hash_type": CODE_HASHES[hash_type][0], "integrity": "unverifiable", "reason": "budget"}
     if hash_offset < special * hash_size or hash_offset + slots * hash_size > len(blob):
         raise BinaryFormatError("CodeDirectory hashes are outside the blob")
     algorithm, _ = CODE_HASHES[hash_type]
@@ -454,7 +454,8 @@ def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) ->
             if digest(chunk) != expected:
                 mismatched.append(index)
         result["pages_mismatched"] = len(mismatched)
-        result["mismatched_pages"] = mismatched[:64]
+        # The full list is needed to compare with an encrypted region; it is cut afterwards.
+        result["mismatched_pages"] = mismatched
         result["integrity"] = "consistent" if not mismatched else "modified"
     for slot, name in ((5, "entitlements"), (7, "der_entitlements")):
         if slot <= special and slot in entitlement_blobs:
@@ -511,9 +512,13 @@ def _code_signature(raw: bytes, code: bytes | None = None) -> dict:
         if blob_magic in (0xFADE7171, 0xFADE7172) and slot_type in (5, 7):
             entitlement_blobs[slot_type] = raw[offset : offset + blob_length]
     if directories:
-        result["code_directories"] = [
-            _code_directory(blob, code, entitlement_blobs) for blob in directories[:5]
-        ]
+        result["code_directories"] = []
+        for blob in directories[:5]:
+            try:
+                result["code_directories"].append(_code_directory(blob, code, entitlement_blobs))
+            except BinaryFormatError as error:
+                # A malformed directory leaves integrity unverified; it does not fail the binary.
+                result["code_directories"].append({"integrity": "unverifiable", "reason": str(error)[:120]})
         states = {d.get("integrity") for d in result["code_directories"]}
         result["integrity"] = (
             "modified"
@@ -615,20 +620,24 @@ def _macho_slice(raw: bytes, offset: int, size: int) -> dict:
         cursor += command_size
     encryption = metadata["encryption"]
     signature = metadata["code_signature"]
-    if encryption["state"] == "encrypted" and signature.get("code_directories"):
-        # App Store encryption follows signing; the kernel checks decrypted pages.
-        start, end = encryption["offset"], encryption["offset"] + encryption["size"]
+    if signature.get("code_directories"):
+        encrypted = encryption["state"] == "encrypted"
+        start = encryption.get("offset", 0)
+        end = start + encryption.get("size", 0)
         for directory in signature["code_directories"]:
             page = directory.get("page_size") or 0
             pages = directory.get("mismatched_pages", [])
             if (
-                directory.get("integrity") == "modified"
+                encrypted
+                and directory.get("integrity") == "modified"
                 and page
-                and len(pages) == directory.get("pages_mismatched")
                 and all(index * page < end and (index + 1) * page > start for index in pages)
                 and directory.get("entitlements_bound", True)
             ):
+                # App Store encryption follows signing; the kernel checks decrypted pages.
                 directory["integrity"] = "unverifiable-encrypted-pages"
+            if "mismatched_pages" in directory:
+                directory["mismatched_pages"] = pages[:64]
         states = {d.get("integrity") for d in signature["code_directories"]}
         signature["integrity"] = (
             "modified"
@@ -927,10 +936,12 @@ def analyze_binary(path: Path, collected: dict) -> dict:
             result["coverage"].append(
                 _coverage(
                     "BINARY-IOS-CODE-INTEGRITY",
+                    # Encrypted or unsigned executables are not verified; that is not
+                    # a partial check of a verifiable one.
                     "checked"
                     if integrity and all(state in {"consistent", "modified"} for state in integrity)
                     else "partial"
-                    if integrity
+                    if any(state in {"consistent", "modified"} for state in integrity)
                     else "not-run",
                     "codedirectory-hashes",
                     "Recomputes CodeDirectory page and entitlement-slot hashes. Agreement is internal integrity only; the CMS signature, certificate chain, team identity and provisioning are not authenticated.",

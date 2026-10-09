@@ -151,7 +151,11 @@ an app without one could still be superseded, and that plugin detection missed
 candidate is now superseded only when every possible app that ships its
 declaring module (recognized applications and modules no other module consumes)
 resolved that package; plugin detection reads only application syntax, accepts
-versioned `apply false`, and lets library-plugin evidence win.
+versioned `apply false`, and lets library-plugin evidence win. Run
+[37915794598](https://github.com/ictechgy/apsa/actions/runs/37915794598) at
+head `3325523`, after both review rounds, reproduces the figures above for all
+three holdouts. The oracle workflow's case matrix was narrowed per holdout; each
+oracle run used the workflow revision committed with its cases.
 
 | Result file | Producing run | Head commit |
 | --- | --- | --- |

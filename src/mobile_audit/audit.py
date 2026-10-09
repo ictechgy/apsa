@@ -77,10 +77,18 @@ SOC_VENDORS = {
     "mediatek": ("mediatek", "mtk"),
     "unisoc": ("unisoc", "spreadtrum"),
     "nvidia": ("nvidia",),
-    "broadcom": ("broadcom",),
     "google": ("google", "tensor"),
     "samsung": ("samsung", "exynos"),
 }
+
+
+def dependency_coverage_state(dep: dict, health: dict | None) -> str:
+    """One rule for scans and refreshes: superseded entries are covered by resolved ones."""
+    if superseded(dep):
+        return "not-applicable"
+    if dep.get("confidence") != "unknown" and health and health["status"] == "ok" and not health["stale"]:
+        return "checked"
+    return "not-run"
 
 
 def os_cve_coverage(environment: dict | None, advisories: list[dict], feeds: list[dict]) -> dict:
@@ -156,6 +164,7 @@ def correlate(
         if platform not in inventory["platforms"]:
             continue
         state = "device-info-required"
+        chipset = "unknown"
         basis = "OS advisory; application files cannot establish installed platform patch state."
         if environment and environment.get("platform") == platform:
             if environment.get("simulator"):
@@ -187,13 +196,14 @@ def correlate(
                     basis = "Observed Android security patch level; old patch level alone does not prove this component is vulnerable."
                     if vendor_patch:
                         basis = "Observed vendor security patch level for a chipset or kernel component; patch level alone does not prove this component is vulnerable."
-                if scope in SOC_VENDORS and soc_vendor and soc_vendor != scope:
-                    state = "chipset-vendor-mismatch"
-                    basis = (
-                        f"Bulletin component targets {scope} chipsets; the device reports a {soc_vendor} SoC. "
-                        "Connectivity or peripheral chips from that vendor can still be present, "
-                        "so this is not proof of non-applicability."
-                    )
+                if scope in SOC_VENDORS and soc_vendor:
+                    # Recorded beside the patch-level state, never replacing it.
+                    chipset = "match" if soc_vendor == scope else "mismatch"
+                    if chipset == "mismatch":
+                        basis += (
+                            f" The component targets {scope} chipsets and the device reports a {soc_vendor} SoC;"
+                            " connectivity or peripheral chips can still come from that vendor."
+                        )
             elif platform == "ios":
                 cve = next((r for r in records if r["id"] == record["id"] and r["source"] == "cve"), None)
                 decisions = []
@@ -234,6 +244,8 @@ def correlate(
             "fixed_patch_level": record.get("fixed_patch_level", ""),
             "updated_aosp_versions": record.get("updated_aosp_versions", ""),
             "state": state,
+            "vendor_scope": record.get("vendor_scope", ""),
+            "chipset_vendor": chipset,
             "known_exploited": record["id"] in known,
             "exploitation_reported": record.get("exploitation_reported", False),
             "references": record.get("references", []),
@@ -354,6 +366,9 @@ def scan(
                 "simulator",
                 "observed_at",
                 "os_product",
+                "soc_manufacturer",
+                "soc_model",
+                "vendor_security_patch",
             }
         }
     analyzed = analyze_target(target, sbom, expected_target, configuration, report_home=store.home)
@@ -379,14 +394,7 @@ def scan(
             {
                 "rule_id": "DEPENDENCY-CVE",
                 "dependency": dep,
-                "state": "not-applicable"
-                if superseded(dep)
-                else "checked"
-                if dep.get("confidence") != "unknown"
-                and health
-                and health["status"] == "ok"
-                and not health["stale"]
-                else "not-run",
+                "state": dependency_coverage_state(dep, health),
                 "method": "OSV exact package/version query",
                 "note": "Declared source versions may differ from the built artifact. Reachability is not inferred from version matching.",
             }
@@ -455,7 +463,7 @@ def refresh_report(store: Store, report_id: str, *, save=True) -> dict:
         if check["rule_id"] == "DEPENDENCY-CVE" and check.get("dependency"):
             dep = check["dependency"]
             feed = health.get(f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}")
-            check["state"] = "checked" if feed and feed["status"] == "ok" and not feed["stale"] else "not-run"
+            check["state"] = dependency_coverage_state(dep, feed)
         elif check["rule_id"] == "OS-CVE":
             check.update(os_cve_coverage(report.get("environment"), advisories, report["intel_snapshot"]))
     report["warnings"] = [

@@ -86,6 +86,38 @@ def test_chipset_components_use_vendor_patch_level_and_flag_vendor_mismatch():
     assert states(behind)["CVE-2024-00002"] == "potentially-affected"
     assert states(behind)["CVE-2024-00001"] == "vendor-patch-level-satisfied"
     other = {**behind, "soc_manufacturer": "MediaTek"}
-    assert states(other)["CVE-2024-00002"] == "chipset-vendor-mismatch"
+    assert states(other)["CVE-2024-00002"] == "potentially-affected"
+    assert chipset(other)["CVE-2024-00002"] == "mismatch"
+    assert chipset(behind)["CVE-2024-00002"] == "match"
     unknown = {**behind, "soc_manufacturer": ""}
     assert states(unknown)["CVE-2024-00002"] == "potentially-affected"
+    assert chipset(unknown)["CVE-2024-00002"] == "unknown"
+
+
+def chipset(environment):
+    _, advisories = correlate({"platforms": ["android"], "dependencies": []}, records(), environment)
+    return {a["id"]: a["chipset_vendor"] for a in advisories}
+
+
+def test_scan_keeps_observed_chipset_and_vendor_patch_fields(store, tmp_path):
+    from mobile_audit.audit import scan
+
+    root = tmp_path / "owned"
+    root.mkdir()
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="audit.chip">'
+        "<application/></manifest>"
+    )
+    environment = {
+        "platform": "android",
+        "version": "14",
+        "security_patch": "2024-02-01",
+        "soc_manufacturer": "Qualcomm",
+        "soc_model": "SM8550",
+        "vendor_security_patch": "2023-12-05",
+        "unrelated": "dropped",
+    }
+    report = scan(store, root, environment=environment)
+    assert report["environment"]["soc_manufacturer"] == "Qualcomm"
+    assert report["environment"]["vendor_security_patch"] == "2023-12-05"
+    assert "unrelated" not in report["environment"]
