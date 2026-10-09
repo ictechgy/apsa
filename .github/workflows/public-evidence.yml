@@ -37,7 +37,7 @@ jobs:
           from benchmarks.real_world import read_prepared, engine_metadata
           root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "public-evidence"
           summary = root / "public-real-world-results/summary.json"
-          assert hashlib.sha256(summary.read_bytes()).hexdigest() == "e005c5ae5badb6f7b63fbb145838d606432c07bc854775a852c59558f821fd70"
+          assert hashlib.sha256(summary.read_bytes()).hexdigest() == "a08769d89866515d3af1e772260cb944b970746f2599e77415a39c77747b2d32"
           original = json.loads(summary.read_text())
           assert original["source_revision"] == "5513aa0d4466f8ce0413c4720a3f2e470e417924"
           assert engine_metadata(sys.executable)["source_sha256"] == original["apsa_engine"]["source_sha256"]
