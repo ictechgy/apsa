@@ -401,3 +401,60 @@ def test_partial_inventory_does_not_exclude_modules_by_consumption(tmp_path):
     assert ModuleGraph(sources).roles.get("core") == "non-shipping-module"
     partial = ModuleGraph(sources, partial=True)
     assert "core" not in partial.roles and partial.warnings
+
+
+def test_shared_module_is_not_superseded_by_one_apps_lockfile(tmp_path):
+    for name, build in [
+        ("a", 'plugins { id("com.android.application") }\ndependencies { implementation(projects.lib) }\n'),
+        ("b", 'plugins { id("com.android.application") }\ndependencies { implementation(projects.lib) }\n'),
+        (
+            "lib",
+            'plugins { id("com.android.library") }\n'
+            'dependencies { implementation("com.squareup.okhttp3:okhttp:3.12.0") }\n',
+        ),
+    ]:
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "build.gradle.kts").write_text(build)
+    (tmp_path / "a/gradle.lockfile").write_text(
+        "com.squareup.okhttp3:okhttp:4.12.0=releaseRuntimeClasspath\n"
+    )
+    inventory, _ = inspect_target(tmp_path)
+    shared = next(d for d in inventory["dependencies"] if d["path"] == "lib/build.gradle.kts")
+    assert shared["confidence"] == "declared"
+    assert shared["resolution"]["state"] == "resolved-in-other-module"
+    (tmp_path / "b/gradle.lockfile").write_text(
+        "com.squareup.okhttp3:okhttp:4.12.0=releaseRuntimeClasspath\n"
+    )
+    inventory, _ = inspect_target(tmp_path)
+    shared = next(d for d in inventory["dependencies"] if d["path"] == "lib/build.gradle.kts")
+    assert shared["resolution"]["state"] == "superseded-by-resolved-build"
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        "plugins {\n  id 'com.android.application' version '8.1.0' apply false\n}\n",
+        'plugins {\n  id("com.android.application") version "8.1.0" apply false\n}\n',
+        'plugins {\n  id("com.android.application").apply(false)\n}\n',
+    ],
+)
+def test_versioned_apply_false_does_not_make_root_an_application(tmp_path, root):
+    (tmp_path / "build.gradle.kts").write_text(root)
+    (tmp_path / "gradle.lockfile").write_text("org.example:root:1.0=runtimeClasspath\n")
+    inventory, _ = inspect_target(tmp_path)
+    entry = next(d for d in inventory["dependencies"] if d["name"] == "org.example:root")
+    assert entry["confidence"] == "declared"
+
+
+def test_plugin_id_mentions_and_library_evidence_are_not_applications(tmp_path):
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core/build.gradle.kts").write_text(
+        'plugins { id("com.android.library") }\npluginManager.withPlugin("com.android.application") { }\n'
+    )
+    (tmp_path / "core/gradle.lockfile").write_text(
+        "com.squareup.okhttp3:okhttp:4.9.0=releaseRuntimeClasspath\n"
+    )
+    inventory, _ = inspect_target(tmp_path)
+    entry = next(d for d in inventory["dependencies"] if d["name"] == "com.squareup.okhttp3:okhttp")
+    assert entry["confidence"] == "declared"
+    assert entry["version_source"] == "gradle-lockfile-non-application-module"

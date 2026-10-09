@@ -95,8 +95,8 @@ def lockfile_score(truth: dict, dependencies: list[dict]) -> dict:
         "missing": sorted(map(list, expected - observed))[:50],
         "unexpected": sorted(map(list, observed - expected))[:50],
         "unexpected_by_lockfile": sources,
-        "library_module_candidates": sum(
-            1 for d in dependencies if d.get("version_source") == "gradle-lockfile-library-module"
+        "non_application_lockfile_candidates": sum(
+            1 for d in dependencies if d.get("version_source") == "gradle-lockfile-non-application-module"
         ),
         "superseded_catalog_entries": superseded,
     }

@@ -877,7 +877,7 @@ def query_dependencies(
                 store.feed(
                     f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}", "error", error=errors[-1]
                 )
-        if len(unique) > 100:
+        if len(ordered) > 100:
             errors.append("Dependency query limit of 100 reached; remaining packages not checked")
     finally:
         fetcher.close()

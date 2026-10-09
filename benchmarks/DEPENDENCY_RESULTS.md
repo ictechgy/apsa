@@ -141,7 +141,17 @@ no longer superseded wholesale: 58 TP, 2 FP and 19 shipped abstentions, so the
 set reaches 121 TP, 2 FP and 24 shipped abstentions (98.4% precision, 83.4%
 shipped coverage). With its committed lockfiles, its 372 app coordinates stay
 exact and the only extra exact coordinates now come from the wear (59) and
-automotive (2) applications. The frozen six-app replay is unchanged.
+automotive (2) applications. The frozen six-app replay
+[37913317339](https://github.com/ictechgy/apsa/actions/runs/37913317339) is
+unchanged.
+
+A second review round found that a module shared by an app with a lockfile and
+an app without one could still be superseded, and that plugin detection missed
+`version "…" apply false` and matched plain plugin-id strings. A declared
+candidate is now superseded only when every possible app that ships its
+declaring module (recognized applications and modules no other module consumes)
+resolved that package; plugin detection reads only application syntax, accepts
+versioned `apply false`, and lets library-plugin evidence win.
 
 | Result file | Producing run | Head commit |
 | --- | --- | --- |
@@ -154,7 +164,9 @@ automotive (2) applications. The frozen six-app replay is unchanged.
 
 ## Limits
 
-Declared candidates keep `candidate` status in correlation. Variant selection,
+Declared candidates keep `candidate` status in correlation. Custom `projectDir`
+remapping in settings files is not read, so lockfiles of remapped modules stay
+candidates. Variant selection,
 conflict resolution, substitution rules, included builds, Kotlin Multiplatform
 targets and dynamic dependency notation are not evaluated. The oracle trusts the
 upstream build scripts it ran. Nine apps at one commit each are a narrow sample

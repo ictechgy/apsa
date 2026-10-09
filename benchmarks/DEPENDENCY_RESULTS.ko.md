@@ -123,8 +123,15 @@ application 모듈 lockfile만 exact로 취급하고, 선언한 모든 모듈이
 plugin이 선언한 Home Assistant catalog 항목이 더 이상 일괄 대체되지 않아 TP 58, FP 2, 출하
 보류 19가 되었고, 묶음 전체는 TP 121, FP 2, 출하 보류 24(정밀도 98.4%, 출하 커버리지
 83.4%)입니다. 커밋된 lockfile을 쓰면 앱 좌표 372개는 그대로 exact이며, 추가 exact 좌표는
-wear(59)·automotive(2) application에서만 나옵니다. 고정된 6개 앱 재실행은 변하지
+wear(59)·automotive(2) application에서만 나옵니다. 고정된 6개 앱 재실행
+[37913317339](https://github.com/ictechgy/apsa/actions/runs/37913317339)은 변하지
 않았습니다.
+
+2차 리뷰는 lockfile이 있는 앱과 없는 앱이 공유하는 모듈이 여전히 대체될 수 있고, 플러그인
+감지가 `version "…" apply false`를 놓치며 일반 플러그인 ID 문자열에도 반응함을 찾았습니다.
+이제 declared 후보는 선언 모듈을 출하할 수 있는 모든 앱(인식한 application과 다른 모듈이
+소비하지 않는 모듈)이 해당 패키지를 해석했을 때만 대체합니다. 플러그인 감지는 적용 구문만
+읽고, version이 붙은 `apply false`를 인식하며, library 플러그인 근거를 우선합니다.
 
 | 결과 파일 | 생성 실행 | head commit |
 | --- | --- | --- |
@@ -137,7 +144,8 @@ wear(59)·automotive(2) application에서만 나옵니다. 고정된 6개 앱 �
 
 ## 한계
 
-declared 후보는 대조에서 `candidate` 상태를 유지합니다. variant 선택, 충돌 해석,
+declared 후보는 대조에서 `candidate` 상태를 유지합니다. settings 파일의 사용자 지정
+`projectDir` 재매핑은 읽지 않으므로 재매핑된 모듈의 lockfile은 후보로 남습니다. variant 선택, 충돌 해석,
 substitution 규칙, included build, Kotlin Multiplatform target, 동적 의존성 표기는
 평가하지 않았습니다. oracle은 실행한 upstream 빌드 스크립트를 신뢰합니다. 각 1개
 commit의 앱 9개는 좁은 표본이며 일반 정확도를 입증하지 않습니다.

@@ -256,25 +256,29 @@ def _module_key(parts: list[str]) -> str:
 TOOLING = re.compile(
     r"`\s*kotlin\s*-\s*dsl\s*`|`\s*java\s*-\s*gradle\s*-\s*plugin\s*`|[\"']java-gradle-plugin[\"']"
 )
+# Plugin application syntax only (plugins-block id/alias, apply plugin:); a bare
+# string such as pluginManager.withPlugin("com.android.application") is not one.
+_APPLY = r"(?:\bid\s*\(?\s*|\bplugin\s*:\s*)"
 TEST_MODULE = re.compile(
-    r"[\"']com\.android\.test[\"']|\bplugins\s*\.\s*(?:\w+\s*\.\s*)*android\s*\.\s*test\b"
+    _APPLY + r"[\"']com\.android\.test[\"']|\bplugins\s*\.\s*(?:\w+\s*\.\s*)*android\s*\.\s*test\b"
 )
 APPLICATION = re.compile(
-    r"[\"']com\.android\.application[\"']|\bid\s*\(?\s*[\"'][\w.-]*application[\"']"
+    _APPLY + r"[\"'][\w.-]*application[\"']"
     r"|\bplugins\s*\.\s*(?:\w+\s*\.\s*)*application\b|\bapplicationId\s*(?:=|\(|[\"'])"
 )
 LIBRARY = re.compile(
-    r"[\"']com\.android\.library[\"']|[\"']?java-library[\"']?|\bid\s*\(?\s*[\"'][\w.-]*library[\"']"
+    _APPLY + r"[\"'][\w.-]*library[\"']|`\s*java\s*-\s*library\s*`"
     r"|\bplugins\s*\.\s*(?:\w+\s*\.\s*)*library\b|\bkotlin\s*\(\s*[\"']jvm[\"']"
+)
+NOT_APPLIED = re.compile(
+    r"\s*\)?\s*(?:version\s*\(?\s*[\"'][^\"']*[\"']\s*\)?\s*)?"
+    r"(?:apply\s+false\b|\.\s*apply\s*\(\s*false\s*\))"
 )
 
 
 def _declares(pattern: re.Pattern[str], code: str) -> bool:
     """A plugin applied to this project; `apply false` only adds it to the classpath."""
-    return any(
-        not re.match(r"\s*\)?\s*apply\s+false\b", code[match.end() : match.end() + 40])
-        for match in pattern.finditer(code)
-    )
+    return any(not NOT_APPLIED.match(code, match.end()) for match in pattern.finditer(code))
 
 
 class ModuleGraph:
@@ -313,10 +317,12 @@ class ModuleGraph:
                 roles[directory] = "build-tooling"
             elif _declares(TEST_MODULE, code):
                 roles[directory] = "non-shipping-module"
-            elif _declares(APPLICATION, code):
-                self.applications.add(directory)
-            if _declares(LIBRARY, code):
+            library = _declares(LIBRARY, code)
+            if library:
                 libraries.add(directory)
+            elif directory not in roles and _declares(APPLICATION, code):
+                # Library plugin evidence wins over an application-looking mention.
+                self.applications.add(directory)
             blocks: list[str] = []
             for index, (kind, value, line) in enumerate(stream):
                 if kind == "code" and value == "{":
@@ -381,20 +387,25 @@ class ModuleGraph:
         self.roles = {directory.as_posix(): role for directory, role in roles.items()}
         for directory in self.applications:
             self.roles[directory.as_posix()] = "application"
+        # Shipped reach from every possible app: recognized applications and any
+        # live module that no live module consumes (an unrecognized app, perhaps).
         self.reach: dict[str, set[str]] = {}
         shipped: dict[PurePosixPath, set[PurePosixPath]] = {}
+        consumed: set[PurePosixPath] = set()
         for target, consumers in edges.items():
             for consumer, state in consumers:
-                if state == "declared" and target in live:
+                if state == "declared" and target in live and consumer in live:
                     shipped.setdefault(consumer, set()).add(target)
-        for application in self.applications:
-            seen = {application}
-            pending = [application]
+                    consumed.add(target)
+        roots = self.applications | {directory for directory in live if directory not in consumed}
+        for root in roots:
+            seen = {root}
+            pending = [root]
             while pending:
                 for target in shipped.get(pending.pop(), set()) - seen:
                     seen.add(target)
                     pending.append(target)
-            self.reach[application.as_posix()] = {directory.as_posix() for directory in seen}
+            self.reach[root.as_posix()] = {directory.as_posix() for directory in seen}
 
 
 def _catalog_references(path: str, text: str, names: set[str]) -> list[dict]:
@@ -554,9 +565,10 @@ def supersede(dependencies: list[dict], graph: ModuleGraph | None) -> None:
 
     Only an application module's lockfile records what that app ships; other
     lockfiles are resolved in their own module's context and stay candidates.
-    A declared candidate is superseded only when every module that declares it
-    is that application or a module the application consumes for shipping.
-    Without a module graph nothing is exact and nothing is superseded.
+    A declared candidate is superseded only when every possible app that ships
+    a declaring module (recognized applications and unconsumed modules) resolved
+    that package in its own lockfile. Without a module graph nothing is exact and
+    nothing is superseded.
     """
     roles = graph.roles if graph else {}
     resolved: dict[str, dict[str, set[str]]] = {}
@@ -584,8 +596,10 @@ def supersede(dependencies: list[dict], graph: ModuleGraph | None) -> None:
             declaring = dep.get("declaring_modules")
         else:
             declaring = [PurePosixPath(dep["path"]).parent.as_posix()]
-        covered = set().union(*(graph.reach.get(app, {app}) for app in apps))
-        if declaring and all(module in covered for module in declaring):
+        shippers = {
+            root for module in declaring or [] for root, reach in graph.reach.items() if module in reach
+        }
+        if declaring and shippers and shippers <= set(apps):
             dep["confidence"] = "unknown"
             dep["resolution"] = {"state": "superseded-by-resolved-build", "resolved_versions": versions}
         else:
