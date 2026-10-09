@@ -1,0 +1,69 @@
+name: Public app sources and frozen CVE matching evaluation
+
+on:
+  push:
+    branches: ["benchmark/real-apps-cve-v1"]
+    paths:
+      - "benchmarks/real_world*"
+      - "tests/test_real_world.py"
+      - ".github/workflows/real-world-benchmark.yml"
+      - "src/mobile_audit/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - name: Install locked APSA and validate the evaluator
+        run: |
+          uv sync --locked --extra dev
+          uv run --locked python -m pytest -q tests/test_real_world.py tests/test_competitive.py
+          uv run --locked python -m ruff check benchmarks/real_world.py tests/test_real_world.py
+          uv run --locked python -m ruff format --check benchmarks/real_world.py tests/test_real_world.py
+          uv run --locked python -m pyright benchmarks/real_world.py tests/test_real_world.py
+      - name: Prepare fixed public source snapshots and vendor documents
+        run: |
+          uv run --locked python benchmarks/real_world.py prepare --fixtures "$RUNNER_TEMP/public-real-world"
+      - name: Start the fixed comparator without app backend access
+        run: |
+          docker pull opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c
+          docker image inspect opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c --format '{{json .RepoDigests}}' > "$RUNNER_TEMP/public-mobsf-digest.json"
+          echo "MOBSF_BENCHMARK_DIGEST=opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c" >> "$GITHUB_ENV"
+          docker network create --internal apsa-public-benchmark
+          docker run -d --name apsa-public-mobsf --network apsa-public-benchmark --memory 4g --cpus 2 --security-opt no-new-privileges --cap-drop ALL -e MOBSF_API_KEY=public-benchmark-only -e MOBSF_DISABLE_AUTHENTICATION=1 opensecurity/mobile-security-framework-mobsf@sha256:5113fbad0727445dda01afdccafea5e107bfa8632ead8a169492f5caa8aa1b7c
+          docker exec apsa-public-mobsf python -c 'import hashlib,pathlib; root=pathlib.Path("/home/mobsf/Mobile-Security-Framework-MobSF"); expected={"mobsf/StaticAnalyzer/views/android/rules/android_rules.yaml":"b5a2411ab48cec34a9743212aab300634f748cf4","mobsf/StaticAnalyzer/views/ios/rules/swift_rules.yaml":"f19571a3ac950bad02ecc4b8c44a9e91acfe889e"}; observed={name:hashlib.sha1(b"blob "+str(len(data)).encode()+b"\0"+data).hexdigest() for name in expected for data in [(root/name).read_bytes()]}; assert observed==expected, observed'
+          echo "MOBSF_BENCHMARK_IP=$(docker inspect apsa-public-mobsf --format '{{(index .NetworkSettings.Networks "apsa-public-benchmark").IPAddress}}')" >> "$GITHUB_ENV"
+      - name: Measure untouched detector and capture public OSV responses
+        env:
+          MOBSF_BENCHMARK_KEY: public-benchmark-only
+        run: |
+          uv run --locked python benchmarks/real_world.py run --fixtures "$RUNNER_TEMP/public-real-world" --out "$RUNNER_TEMP/public-real-world-results" --mobsf-url "http://$MOBSF_BENCHMARK_IP:8000" --mobsf-docker-ip "$MOBSF_BENCHMARK_IP" --capture-public-osv --repeats 3
+      - name: Preserve only public source inputs and newly generated evaluation data
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-real-world-evaluation
+          path: |
+            ${{ runner.temp }}/public-real-world
+            ${{ runner.temp }}/public-real-world-results
+            ${{ runner.temp }}/public-mobsf-digest.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Remove the benchmark-only service
+        if: always()
+        run: |
+          docker rm -f apsa-public-mobsf || true
+          docker network rm apsa-public-benchmark || true
+      # No app build scripts, devices, registry publishing, write-scoped tokens, or private data.
