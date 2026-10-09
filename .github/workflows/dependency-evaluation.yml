@@ -2,7 +2,7 @@ name: Catalog usage and lockfile evidence against the Gradle oracle
 
 on:
   push:
-    branches: ["dev/dependency-evidence"]
+    branches: ["dev/dependency-evidence", "dev/evidence-depth"]
     paths: ["src/**", "benchmarks/dependency_eval.py", "benchmarks/dependency_truth*.json", "benchmarks/dependency_locks/**", ".github/workflows/dependency-evaluation.yml"]
   workflow_dispatch:
 
