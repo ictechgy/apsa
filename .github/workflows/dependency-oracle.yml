@@ -26,6 +26,14 @@ jobs:
             java: "17"
           - case: fossify-calculator
             java: "17"
+          - case: ankidroid
+            java: "21"
+          - case: pocket-casts
+            java: "21"
+          - case: fossify-gallery
+            java: "21"
+          - case: element-x
+            java: "21"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -48,9 +56,10 @@ jobs:
           GRADLE
           cd "$(find "$RUNNER_TEMP/oracle/source" -mindepth 1 -maxdepth 1 -type d)"
           grep -h distributionUrl gradle/wrapper/gradle-wrapper.properties
-          rm -f app/gradle.lockfile
+          MODULE="$(python3 -c 'import json,sys; print(next(c["module"] for c in json.load(open(sys.argv[1]))["cases"] if c["id"] == sys.argv[2]))' "$GITHUB_WORKSPACE/apsa/benchmarks/dependency_cases.json" "${{ matrix.case }}")"
+          rm -f "$(echo "${MODULE#:}" | tr : /)/gradle.lockfile"
           ./gradlew --no-daemon --init-script "$RUNNER_TEMP/lock-all.gradle" \
-            :app:dependencies --write-locks > "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt" 2>&1 \
+            "$MODULE:dependencies" --write-locks > "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt" 2>&1 \
             || { tail -80 "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt"; exit 1; }
           java -version 2>&1 | head -1 > "$RUNNER_TEMP/oracle/${{ matrix.case }}.java.txt"
           ./gradlew --no-daemon --version >> "$RUNNER_TEMP/oracle/${{ matrix.case }}.java.txt"

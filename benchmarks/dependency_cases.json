@@ -4,9 +4,70 @@
   "selection_rule": "Public Android apps on GitHub with gradle/libs.versions.toml that were not used in earlier APSA evaluations; default-branch HEAD on the selection date. Chosen before any APSA scan or Gradle resolution of these sources.",
   "oracle": "Gradle itself resolves the :app module with dependency locking enabled for all configurations (gradle dependencies --write-locks). A coordinate is shipped when it appears in a release runtime classpath of :app; test, debug, benchmark and lint graphs are not shipped.",
   "cases": [
-    {"id": "nowinandroid", "repository": "android/nowinandroid", "commit": "a49ed253d75e61a2b6ab80a8da677b57437b08eb", "module": ":app", "java": "21"},
-    {"id": "mihon", "repository": "mihonapp/mihon", "commit": "ab7ee00c48ba1d514ecf73bfeb1e35e1faf23fa3", "module": ":app", "java": "21"},
-    {"id": "wikipedia", "repository": "wikimedia/apps-android-wikipedia", "commit": "f473a990e54664b9c2c8366da33c630cd7442e15", "module": ":app", "java": "17"},
-    {"id": "fossify-calculator", "repository": "FossifyOrg/Calculator", "commit": "5f394a24b1c812e290d7648ecedb8a66d1683dab", "module": ":app", "java": "17"}
-  ]
+    {
+      "id": "nowinandroid",
+      "repository": "android/nowinandroid",
+      "commit": "a49ed253d75e61a2b6ab80a8da677b57437b08eb",
+      "module": ":app",
+      "java": "21",
+      "set": "holdout-1"
+    },
+    {
+      "id": "mihon",
+      "repository": "mihonapp/mihon",
+      "commit": "ab7ee00c48ba1d514ecf73bfeb1e35e1faf23fa3",
+      "module": ":app",
+      "java": "21",
+      "set": "holdout-1"
+    },
+    {
+      "id": "wikipedia",
+      "repository": "wikimedia/apps-android-wikipedia",
+      "commit": "f473a990e54664b9c2c8366da33c630cd7442e15",
+      "module": ":app",
+      "java": "17",
+      "set": "holdout-1"
+    },
+    {
+      "id": "fossify-calculator",
+      "repository": "FossifyOrg/Calculator",
+      "commit": "5f394a24b1c812e290d7648ecedb8a66d1683dab",
+      "module": ":app",
+      "java": "17",
+      "set": "holdout-1"
+    },
+    {
+      "id": "ankidroid",
+      "repository": "ankidroid/Anki-Android",
+      "commit": "158f4c963867dde41c37b91d55ba8eeeaf7d567a",
+      "module": ":AnkiDroid",
+      "java": "21",
+      "set": "holdout-2"
+    },
+    {
+      "id": "pocket-casts",
+      "repository": "Automattic/pocket-casts-android",
+      "commit": "f04c13e991bf510c6d17658ae1c90c24149fe370",
+      "module": ":app",
+      "java": "21",
+      "set": "holdout-2"
+    },
+    {
+      "id": "fossify-gallery",
+      "repository": "FossifyOrg/Gallery",
+      "commit": "8a694ec55f019e70689ffd445cfe767c41400e2e",
+      "module": ":app",
+      "java": "21",
+      "set": "holdout-2"
+    },
+    {
+      "id": "element-x",
+      "repository": "element-hq/element-x-android",
+      "commit": "dc8d8c10b99f06fdad8a6c2cd63f28cfc18db1eb",
+      "module": ":app",
+      "java": "21",
+      "set": "holdout-2"
+    }
+  ],
+  "holdout_2_selection": "Selected 2026-10-09 after scoring holdout-1 and before changing the scanner in response; default-branch HEAD on that date. Their oracle is captured before the improved scanner is committed and is not inspected until then."
 }
