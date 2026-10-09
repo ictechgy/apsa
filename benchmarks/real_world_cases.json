@@ -1,0 +1,839 @@
+{
+  "schema": "apsa-real-world-spec-v1",
+  "engine_base_public": "ce8bd1201b2e01362ea8790dc049f1a3acf838ac",
+  "apps": [
+    {
+      "id": "newpipe",
+      "repository": "TeamNewPipe/NewPipe",
+      "commit": "c6e17218843e59f264f39d9cd719c1173a95abfd",
+      "platform": "android",
+      "revision_label": "v0.27.6",
+      "config_label": {
+        "path": "app/src/main/AndroidManifest.xml",
+        "rule": "ANDROID-CLEARTEXT",
+        "expected": false,
+        "line": 1,
+        "git_blob": "d11de9f478d3645ab75c8c0974b9fa6cfb7df66b"
+      },
+      "dependencies": [
+        {
+          "ecosystem": "Maven",
+          "name": "org.jsoup:jsoup",
+          "version": "1.17.2",
+          "path": "app/build.gradle",
+          "git_blob": "d03bd64e320eef26d45cea4362deada9816b4a2c"
+        },
+        {
+          "ecosystem": "Maven",
+          "name": "com.squareup.okhttp3:okhttp",
+          "version": "4.12.0",
+          "path": "app/build.gradle",
+          "git_blob": "d03bd64e320eef26d45cea4362deada9816b4a2c"
+        }
+      ]
+    },
+    {
+      "id": "antennapod",
+      "repository": "AntennaPod/AntennaPod",
+      "commit": "26175298968afabdd6555040f07a78c6e7524bf2",
+      "platform": "android",
+      "revision_label": "3.6.0",
+      "config_label": {
+        "path": "app/src/main/AndroidManifest.xml",
+        "rule": "ANDROID-CLEARTEXT",
+        "expected": true,
+        "line": 38,
+        "git_blob": "55b1eaeb96a070f37f0d4e11479290346aecb3e8"
+      },
+      "dependencies": [
+        {
+          "ecosystem": "Maven",
+          "name": "org.jsoup:jsoup",
+          "version": "1.15.1",
+          "path": "parser/feed/build.gradle",
+          "git_blob": "e06aa76372d2b432dd13e58c690162ee0e544333"
+        },
+        {
+          "ecosystem": "Maven",
+          "name": "com.squareup.okhttp3:okhttp",
+          "version": "4.12.0",
+          "path": "net/common/build.gradle",
+          "git_blob": "4d80916d2b714f7353a3627408fb8d2071ad9e65"
+        }
+      ],
+      "extra_anchors": [
+        {
+          "path": "build.gradle",
+          "git_blob": "6eaf7c0febdfd3ee72d00eb2ed2a7b99cb41e1ab",
+          "note": "jsoupVersion=1.15.1 line29 and okhttpVersion=4.12.0 line31"
+        }
+      ]
+    },
+    {
+      "id": "k9",
+      "repository": "thunderbird/thunderbird-android",
+      "commit": "62caaba78f7204278359b1d96d77f74f3c5d05f5",
+      "platform": "android",
+      "revision_label": "6.800",
+      "config_label": {
+        "path": "app/common/src/main/AndroidManifest.xml",
+        "rule": "ANDROID-CLEARTEXT",
+        "expected": true,
+        "line": 30,
+        "git_blob": "a097a240412528f2018f5f59d8ebc823ee9615dc"
+      },
+      "dependencies": [
+        {
+          "ecosystem": "Maven",
+          "name": "org.jsoup:jsoup",
+          "version": "1.15.4",
+          "path": "gradle/libs.versions.toml",
+          "git_blob": "2ecc23b55d766ef0d36992bf165a9efb4f505aaf"
+        },
+        {
+          "ecosystem": "Maven",
+          "name": "com.squareup.okio:okio",
+          "version": "3.7.0",
+          "path": "gradle/libs.versions.toml",
+          "git_blob": "2ecc23b55d766ef0d36992bf165a9efb4f505aaf"
+        }
+      ]
+    },
+    {
+      "id": "nextcloudios",
+      "repository": "nextcloud/ios",
+      "commit": "d590f07c5ec294b1f1bd3e120b88cf38ddb78fdb",
+      "platform": "ios",
+      "revision_label": "6.5.0",
+      "config_label": {
+        "path": "Brand/iOSClient.plist",
+        "rule": "IOS-ATS",
+        "expected": true,
+        "line": 62,
+        "git_blob": "dae6de554307b87bf0785e11c718404b51f170f2"
+      },
+      "dependencies": [],
+      "extra_anchors": [
+        {
+          "path": "Nextcloud.xcodeproj/project.pbxproj",
+          "git_blob": "ee34afa1ec15f6428c5c6165f9083124a81d7a93",
+          "note": "INFOPLIST_FILE selects Brand/iOSClient.plist in app build configurations"
+        }
+      ]
+    },
+    {
+      "id": "firefox",
+      "repository": "mozilla-mobile/firefox-ios",
+      "commit": "afcb46afdf55892e33638a2b81b3570cffb81a21",
+      "platform": "ios",
+      "revision_label": "2026-10-08 main snapshot",
+      "config_label": {
+        "path": "firefox-ios/Client/Info.plist",
+        "rule": "IOS-ATS",
+        "expected": true,
+        "line": 133,
+        "git_blob": "c9c4ab96c0db8d79f85b4ca734b17b4ffc473932"
+      },
+      "dependencies": [
+        {
+          "ecosystem": "SwiftURL",
+          "name": "https://github.com/onevcat/Kingfisher",
+          "version": "8.13.0",
+          "path": "firefox-ios/Client.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "git_blob": "fa9baec273413d766d37d27bb39586fcd3974e71"
+        },
+        {
+          "ecosystem": "SwiftURL",
+          "name": "https://github.com/getsentry/sentry-cocoa",
+          "version": "9.10.0",
+          "path": "firefox-ios/Client.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "git_blob": "fa9baec273413d766d37d27bb39586fcd3974e71"
+        }
+      ]
+    },
+    {
+      "id": "icecubes",
+      "repository": "Dimillian/IceCubesApp",
+      "commit": "2ad6e689125801abeb7e356360785c08a4864982",
+      "platform": "ios",
+      "revision_label": "2026-10-08 main snapshot",
+      "config_label": {
+        "path": "IceCubesApp/Info.plist",
+        "rule": "IOS-ATS",
+        "expected": false,
+        "line": 1,
+        "git_blob": "699c971320336d32428d347740b214b94e8c4b92"
+      },
+      "dependencies": [
+        {
+          "ecosystem": "SwiftURL",
+          "name": "https://github.com/stephencelis/SQLite.swift",
+          "version": "0.16.0",
+          "path": "IceCubesApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "git_blob": "3f893a80ae2a5824177d6b1d0cd154f0dd2c8c5d"
+        },
+        {
+          "ecosystem": "SwiftURL",
+          "name": "https://github.com/evgenyneu/keychain-swift",
+          "version": "24.0.0",
+          "path": "IceCubesApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+          "git_blob": "3f893a80ae2a5824177d6b1d0cd154f0dd2c8c5d"
+        }
+      ]
+    }
+  ],
+  "dependency_cases": [
+    {
+      "id": "gson-affected",
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "name": "com.google.code.gson:gson",
+        "version": "2.8.8",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "affected",
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "id": "gson-fixed-boundary",
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "name": "com.google.code.gson:gson",
+        "version": "2.8.9",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "id": "gson-newer",
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "name": "com.google.code.gson:gson",
+        "version": "2.10.1",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "id": "gson-different-group",
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "name": "org.example:gson",
+        "version": "2.8.8",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "id": "gson-different-ecosystem",
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "name": "gson",
+        "version": "2.8.8",
+        "ecosystem": "npm",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "id": "gson-unresolved",
+      "cve": "CVE-2022-25647",
+      "dependency": {
+        "name": "com.google.code.gson:gson",
+        "version": "$version",
+        "ecosystem": "Maven",
+        "confidence": "unknown",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unknown",
+      "truth_sources": [
+        "https://github.com/google/gson/pull/1991",
+        "https://github.com/google/gson/releases/tag/gson-parent-2.8.9"
+      ]
+    },
+    {
+      "id": "jsoup-affected",
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "name": "org.jsoup:jsoup",
+        "version": "1.15.2",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "affected",
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "id": "jsoup-fixed-boundary",
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "name": "org.jsoup:jsoup",
+        "version": "1.15.3",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "id": "jsoup-newer",
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "name": "org.jsoup:jsoup",
+        "version": "1.17.2",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "id": "jsoup-different-group",
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "name": "org.example:jsoup",
+        "version": "1.15.2",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "id": "jsoup-different-ecosystem",
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "name": "jsoup",
+        "version": "1.15.2",
+        "ecosystem": "npm",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "id": "jsoup-unresolved",
+      "cve": "CVE-2022-36033",
+      "dependency": {
+        "name": "org.jsoup:jsoup",
+        "version": "$version",
+        "ecosystem": "Maven",
+        "confidence": "unknown",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unknown",
+      "truth_sources": [
+        "https://github.com/jhy/jsoup/security/advisories/GHSA-gp7f-rwcx-9369"
+      ]
+    },
+    {
+      "id": "okio-legacy-affected",
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "name": "com.squareup.okio:okio",
+        "version": "1.17.5",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "affected",
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "id": "okio-legacy-fixed",
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "name": "com.squareup.okio:okio",
+        "version": "1.17.6",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "id": "okio-modern-affected",
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "name": "com.squareup.okio:okio",
+        "version": "3.3.0",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "affected",
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "id": "okio-modern-fixed",
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "name": "com.squareup.okio:okio",
+        "version": "3.4.0",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "id": "okio-different-artifact",
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "name": "com.squareup.okio:okhttp",
+        "version": "3.3.0",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "id": "okio-different-ecosystem",
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "name": "okio",
+        "version": "3.3.0",
+        "ecosystem": "npm",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "id": "okio-unresolved",
+      "cve": "CVE-2023-3635",
+      "dependency": {
+        "name": "com.squareup.okio:okio",
+        "version": "$version",
+        "ecosystem": "Maven",
+        "confidence": "unknown",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unknown",
+      "truth_sources": [
+        "https://github.com/square/okio/commit/81bce1a30af244550b0324597720e4799281da7b",
+        "https://github.com/square/okio/commit/b4fa875dc24950680c386e4b1c593660ce4f7839"
+      ]
+    },
+    {
+      "id": "bc-bctls-jdk18on-affected",
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "name": "org.bouncycastle:bctls-jdk18on",
+        "version": "1.77",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "affected",
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "id": "bc-bctls-jdk18on-fixed",
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "name": "org.bouncycastle:bctls-jdk18on",
+        "version": "1.78",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "id": "bc-bcprov-jdk18on-affected",
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "name": "org.bouncycastle:bcprov-jdk18on",
+        "version": "1.77",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "affected",
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "id": "bc-bcprov-jdk18on-fixed",
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "name": "org.bouncycastle:bcprov-jdk18on",
+        "version": "1.78",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "id": "bc-different-group",
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "name": "org.example:bctls-jdk18on",
+        "version": "1.77",
+        "ecosystem": "Maven",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "id": "bc-different-ecosystem",
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "name": "bctls-jdk18on",
+        "version": "1.77",
+        "ecosystem": "npm",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "id": "bc-unresolved",
+      "cve": "CVE-2024-30171",
+      "dependency": {
+        "name": "org.bouncycastle:bctls-jdk18on",
+        "version": "$version",
+        "ecosystem": "Maven",
+        "confidence": "unknown",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unknown",
+      "truth_sources": [
+        "https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902024%E2%80%9030171"
+      ]
+    },
+    {
+      "id": "swift-nio-canonical-affected",
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "name": "github.com/apple/swift-nio",
+        "version": "2.99.0",
+        "ecosystem": "SwiftURL",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "affected",
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    },
+    {
+      "id": "swift-nio-canonical-fixed",
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "name": "github.com/apple/swift-nio",
+        "version": "2.100.0",
+        "ecosystem": "SwiftURL",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    },
+    {
+      "id": "swift-nio-https-affected",
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "name": "https://github.com/apple/swift-nio",
+        "version": "2.99.0",
+        "ecosystem": "SwiftURL",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "affected",
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    },
+    {
+      "id": "swift-nio-https-fixed",
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "name": "https://github.com/apple/swift-nio",
+        "version": "2.100.0",
+        "ecosystem": "SwiftURL",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    },
+    {
+      "id": "swift-nio-different-repo",
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "name": "github.com/example/swift-nio",
+        "version": "2.99.0",
+        "ecosystem": "SwiftURL",
+        "confidence": "exact",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unaffected",
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    },
+    {
+      "id": "swift-nio-unresolved",
+      "cve": "CVE-2026-28970",
+      "dependency": {
+        "name": "https://github.com/apple/swift-nio",
+        "version": "",
+        "ecosystem": "SwiftURL",
+        "confidence": "unknown",
+        "path": "benchmark/SBOM"
+      },
+      "expected": "unknown",
+      "truth_sources": [
+        "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+      ]
+    }
+  ],
+  "os_cases": [
+    {
+      "id": "android-device-info-required",
+      "platform": "android",
+      "cve": "CVE-2024-32896",
+      "environment": null,
+      "expected_states": [
+        "device-info-required"
+      ]
+    },
+    {
+      "id": "android-old-patch",
+      "platform": "android",
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "version": "14",
+        "security_patch": "2024-08-05"
+      },
+      "expected_states": [
+        "potentially-affected"
+      ]
+    },
+    {
+      "id": "android-fixed-boundary",
+      "platform": "android",
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "version": "14",
+        "security_patch": "2024-09-01"
+      },
+      "expected_states": [
+        "vendor-patch-level-satisfied"
+      ]
+    },
+    {
+      "id": "android-newer-patch",
+      "platform": "android",
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "version": "14",
+        "security_patch": "2024-09-05"
+      },
+      "expected_states": [
+        "vendor-patch-level-satisfied"
+      ]
+    },
+    {
+      "id": "android-unlisted-release",
+      "platform": "android",
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "version": "11",
+        "security_patch": "2024-08-05"
+      },
+      "expected_states": [
+        "applicability-unknown"
+      ]
+    },
+    {
+      "id": "android-invalid-date",
+      "platform": "android",
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "version": "14",
+        "security_patch": "2024-99-99"
+      },
+      "expected_states": [
+        "device-info-required",
+        "applicability-unknown"
+      ]
+    },
+    {
+      "id": "android-missing-patch",
+      "platform": "android",
+      "cve": "CVE-2024-32896",
+      "environment": {
+        "platform": "android",
+        "version": "14"
+      },
+      "expected_states": [
+        "device-info-required"
+      ]
+    },
+    {
+      "id": "ios-device-info-required",
+      "platform": "ios",
+      "cve": "CVE-2025-24201",
+      "environment": null,
+      "expected_states": [
+        "device-info-required"
+      ]
+    },
+    {
+      "id": "ios-simulator",
+      "platform": "ios",
+      "cve": "CVE-2025-24201",
+      "environment": {
+        "platform": "ios",
+        "version": "18.3.1",
+        "simulator": true
+      },
+      "expected_states": [
+        "simulator-only"
+      ]
+    },
+    {
+      "id": "ios-custom-cna-range",
+      "platform": "ios",
+      "cve": "CVE-2025-24201",
+      "environment": {
+        "platform": "ios",
+        "version": "18.3.1"
+      },
+      "expected_states": [
+        "applicability-unknown"
+      ]
+    },
+    {
+      "id": "ios-fixed-label-not-universal-bound",
+      "platform": "ios",
+      "cve": "CVE-2025-24201",
+      "environment": {
+        "platform": "ios",
+        "version": "18.3.2"
+      },
+      "expected_states": [
+        "applicability-unknown"
+      ]
+    }
+  ],
+  "vendor_documents": [
+    {
+      "id": "android",
+      "url": "https://source.android.com/docs/security/bulletin/2024-09-01"
+    },
+    {
+      "id": "apple",
+      "url": "https://support.apple.com/en-us/122281",
+      "label": "iOS 18.3.2"
+    },
+    {
+      "id": "swift-nio",
+      "url": "https://github.com/apple/swift-nio/security/advisories/GHSA-cq87-8r7h-962v"
+    }
+  ],
+  "limits": [
+    "Six convenience-selected public source snapshots; not representative apps or a complete vulnerability truth set.",
+    "Whole source archives include tests, build variants and library modules; no merged release build or reachability proof.",
+    "Selected configuration labels concern explicit source declarations only; broad exceptions may be deliberate product behavior.",
+    "CVE labels are frozen from primary vendor/CNA evidence before scanners run; OSV supplies the engine's matching service, not the scoring oracle.",
+    "Unknown, unsupported, failed, or unstable inputs are not true negatives.",
+    "OS environments are newly generated fixtures, not observations from actual devices.",
+    "No APK/IPA/AAB builds, dynamic testing, exploitation, user apps, private data, or publication of new vulnerabilities."
+  ]
+}
