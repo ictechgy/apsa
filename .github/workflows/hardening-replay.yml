@@ -1,4 +1,4 @@
-name: Replay frozen public evidence after hardening
+name: Replay frozen public evidence and coverage extension
 
 on:
   push:
@@ -6,6 +6,9 @@ on:
     paths:
       - "src/**"
       - "benchmarks/hardening_replay.py"
+      - "benchmarks/coverage_replay.py"
+      - "benchmarks/ios_branch_cases.json"
+      - "benchmarks/real_world.py"
       - ".github/workflows/hardening-replay.yml"
   workflow_dispatch:
 
@@ -45,7 +48,7 @@ jobs:
           APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/parser-locks
           APSA_DEVICE_LOCK_DIR: ${{ runner.temp }}/device-locks
         run: |
-          uv run --locked python -m benchmarks.hardening_replay \
+          uv run --locked python -m benchmarks.coverage_replay \
             --artifact "${{ runner.temp }}/original-public-evidence" \
             --supplement-artifact "${{ runner.temp }}/captured-public-supplement" \
             --work "${{ runner.temp }}/hardening-inputs" \
@@ -53,7 +56,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: public-hardening-replay
+          name: public-coverage-replay
           path: |
             ${{ runner.temp }}/hardening-inputs
             ${{ runner.temp }}/hardening-results

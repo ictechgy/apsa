@@ -166,6 +166,7 @@ class Analyzer:
         self.safe_local_types: set[str] = set()
         self.defined_functions: set[str] = set()
         self.pattern_exclusions: dict[str, set[tuple[int, int]]] = {}
+        self.function_counts = {"observed": 0, "analyzed": 0, "skipped": 0, "without_body": 0}
 
     def text(self, node: Any) -> str:
         return self.raw[node.start_byte : node.end_byte].decode("utf-8", errors="replace") if node else ""
@@ -876,7 +877,16 @@ class Analyzer:
             if node.type in FUNCTIONS:
                 self.defined_functions.add(self.text(_field(node, "name")))
         for function in _walk(root):
-            if function.type not in FUNCTIONS or function.has_error:
+            if function.type not in FUNCTIONS:
+                continue
+            self.function_counts["observed"] += 1
+            parent = function.parent
+            uncertain = function.has_error
+            while parent:
+                uncertain = uncertain or parent.type == "ERROR"
+                parent = parent.parent
+            if uncertain:
+                self.function_counts["skipped"] += 1
                 continue
             name = _field(function, "name")
             self.scope = self.text(name)
@@ -928,6 +938,7 @@ class Analyzer:
                 (node for node in function.named_children if node.type == "function_body"), None
             )
             if body:
+                self.function_counts["analyzed"] += 1
                 # Primitive selection needs no closure dataflow model. Inspect
                 # Swift trailing closures syntactically without blessing guards.
                 if self.language == "swift" and "CommonCrypto" in self.imports:
@@ -946,6 +957,8 @@ class Analyzer:
                                 security_purpose="unverified",
                             )
                 self.visit(body, frame, {}, [])
+            else:
+                self.function_counts["without_body"] += 1
 
 
 def analyze_sources(sources: list[Any]) -> dict:
@@ -963,7 +976,11 @@ def analyze_sources(sources: list[Any]) -> dict:
     seen_languages: set[str] = set()
     unsupported: set[str] = set()
     pattern_exclusions: dict[str, dict[str, list[dict[str, int]]]] = {}
-    for source in sources:
+    file_metrics = []
+    function_totals = {"observed": 0, "analyzed": 0, "skipped": 0, "without_body": 0}
+    normalized_files = 0
+    remaining_records = 0
+    for source_index, source in enumerate(sources):
         if isinstance(source, dict):
             path, text = source.get("path"), source.get("text")
         elif isinstance(source, (tuple, list)) and len(source) == 2:
@@ -984,8 +1001,11 @@ def analyze_sources(sources: list[Any]) -> dict:
                 skipped += 1
             continue
         seen_languages.add(language)
+        metric = {"path": path, "language": language, "state": "skipped", "functions": None}
+        file_metrics.append(metric)
         size = len(text.encode("utf-8"))
         if size > MAX_AST_BYTES or total + size > MAX_AST_TOTAL:
+            metric["reason"] = "parser byte budget exceeded"
             warnings.append(f"AST analysis skipped {path}: parser byte budget exceeded.")
             skipped += 1
             continue
@@ -1003,24 +1023,57 @@ def analyze_sources(sources: list[Any]) -> dict:
             except (ImportError, AttributeError, ValueError) as error:
                 unavailable[language] = type(error).__name__
         if language in unavailable:
+            metric["reason"] = "grammar unavailable: " + unavailable[language]
             skipped += 1
             continue
         try:
             tree = parsers[language].parse(text.encode("utf-8"))
             if tree is None:
                 raise ValueError("native parser deadline exceeded")
+            nodes = []
             for count, _node in enumerate(_walk(tree.root_node), 1):
                 if count > MAX_AST_NODES:
                     raise ValueError("AST node budget exceeded")
+                nodes.append(_node)
+            metric["native_functions"] = {
+                "observed": sum(n.type in FUNCTIONS for n in nodes),
+                "with_errors": sum(n.type in FUNCTIONS and n.has_error for n in nodes),
+            }
+            metric["native_parse_errors"] = tree.root_node.has_error
+            adaptations = []
+            if tree.root_node.has_error:
+                from .parser_compat import adapted_source
+
+                compatible, adaptations = adapted_source(text.encode("utf-8"), language, nodes)
+                if adaptations:
+                    parsers[language].reset()
+                    tree = parsers[language].parse(compatible)
+                    if tree is None:
+                        raise ValueError("compatibility parser deadline exceeded")
+                    for count, _node in enumerate(_walk(tree.root_node), 1):
+                        if count > MAX_AST_NODES:
+                            raise ValueError("compatibility AST node budget exceeded")
+                    normalized_files += 1
+                    warnings.append(
+                        f"AST parser compatibility in {path}: {adaptations}; source remains partial."
+                    )
+            metric["adaptations"] = adaptations
+            metric["parse_errors"] = tree.root_node.has_error
             if tree.root_node.has_error:
                 warnings.append(
                     f"AST syntax recovery in {path}: functions containing parse errors were skipped."
                 )
                 skipped += 1
+            elif adaptations:
+                skipped += 1
             analyzer = Analyzer(path, text, language)
             analyzer.analyze(tree.root_node)
+            metric["state"] = "partial" if tree.root_node.has_error or adaptations else "checked"
+            metric["functions"] = analyzer.function_counts
+            for name, value in analyzer.function_counts.items():
+                function_totals[name] += value
             findings.extend(analyzer.findings)
-            if not tree.root_node.has_error:
+            if not tree.root_node.has_error and not adaptations:
                 pattern_exclusions[path] = {
                     rule: [{"start": start, "end": end} for start, end in sorted(offsets)]
                     for rule, offsets in analyzer.pattern_exclusions.items()
@@ -1030,10 +1083,12 @@ def analyze_sources(sources: list[Any]) -> dict:
                 findings = findings[:MAX_AST_FINDINGS]
                 warnings.append("AST finding budget reached; remaining source functions were not checked.")
                 skipped += 1
+                remaining_records = len(sources) - source_index - 1
                 break
         except (ValueError, RecursionError) as error:
             parsers[language].reset()
             warnings.append(f"AST analysis skipped {path}: {error}.")
+            metric["reason"] = str(error)
             skipped += 1
     for language, reason in unavailable.items():
         warnings.append(
@@ -1058,6 +1113,12 @@ def analyze_sources(sources: list[Any]) -> dict:
             "unsupported_languages": sorted(unsupported),
             "parsed_files": parsed,
             "skipped_files": skipped,
+            "functions_observed": function_totals["observed"],
+            "functions_analyzed": function_totals["analyzed"],
+            "functions_skipped": function_totals["skipped"],
+            "functions_without_body": function_totals["without_body"],
+            "function_inventory_complete": bool(parsed) and not skipped,
+            "normalized_files": normalized_files,
             "note": LIMITS_NOTE
             + (
                 " Native interface check currently covers Android addJavascriptInterface."
@@ -1072,4 +1133,11 @@ def analyze_sources(sources: list[Any]) -> dict:
         "coverage": coverage,
         "warnings": warnings,
         "pattern_exclusions": pattern_exclusions,
+        "metadata": {
+            "files": file_metrics,
+            "functions": function_totals,
+            "function_inventory_complete": bool(parsed) and not skipped,
+            "remaining_source_records": remaining_records,
+            "note": "Counts cover recognized AST function declarations only; errors, unsupported languages and budgets can hide additional functions. Adaptations retain original evidence offsets and remain partial. Closures and initializers are not a complete callable inventory.",
+        },
     }

@@ -12,6 +12,36 @@ Resolve `latest` once, then use the returned `report_id` for every page. Keep th
 
 `dependency_check` also bounds its error sample, preserving the full error count and an explicit truncation flag. Runtime execution returns a bounded runtime context; local report exports preserve all saved evidence.
 
+## Source function coverage and Apple branch decisions
+
+AST coverage now reports recognized, analyzed, skipped and bodyless function
+declarations. Local exports retain per-file counts in `inventory.source_analysis`;
+coverage/context pages expose aggregate counts. Parser errors, unavailable
+grammars, unsupported languages and budgets can hide additional functions, so
+these counts are not a complete inventory of callables. Closures and initializers
+are outside that count. An unparsed file has unknown function counts, not zero.
+
+The compatibility layer handles Kotlin `open` identifiers and Swift
+`nonisolated(unsafe)` variable declarations for local flow checks. It retains
+original bytes and evidence offsets, does not execute source, keeps adapted
+files partial and does not use adapted trees to suppress legacy pattern findings.
+It does not model concurrency isolation or repair arbitrary malformed code.
+
+Observed device-info JSON may use `"os_product": "ipados"` with `"platform": "ios"`;
+the default product is iOS. iPadOS-only CNA products require the explicit product.
+Apple zero-based `custom` ranges require Apple assigner/CNA identities, an exact
+supported product, one boundary in the observed major, and an official bulletin
+reference and release label matching that boundary. Unknown/ambiguous ranges,
+other branches, missing identity in older cached records and simulators abstain.
+Refetch the CVE record to populate CNA identity evidence in older caches.
+`outside-published-affected-range` describes that published branch, not proof that
+the device is patched. Fixed labels alone never establish a range. The branch
+interpretation is limited to this vendor-specific form, grounded in the
+[iOS 18.3.2](https://support.apple.com/en-us/122281),
+[16.7.11](https://support.apple.com/en-us/122346) and
+[15.8.4](https://support.apple.com/en-us/122345) bulletins and the preserved Apple
+CNA record; custom ordering in general remains unsupported.
+
 ## Portable approved baselines
 
 Export a completed audit for one explicit app identity:

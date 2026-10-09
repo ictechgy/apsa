@@ -1,0 +1,27 @@
+{
+  "schema": "apsa-ios-branch-extension-v1",
+  "cve": "CVE-2025-24201",
+  "fixture_kind": "Synthetic environment and vendor-record fixtures; bulletin labels verified against linked Apple pages, not newly captured HTTP bytes or actual devices.",
+  "documents": {
+    "ios18": {"label": "iOS 18.3.2", "url": "https://support.apple.com/en-us/122281"},
+    "ios16": {"label": "iOS 16.7.11", "url": "https://support.apple.com/en-us/122346"},
+    "ios15": {"label": "iOS 15.8.4", "url": "https://support.apple.com/en-us/122345"},
+    "ipad17": {"label": "iPadOS 17.7.6", "url": "https://support.apple.com/en-us/122372"}
+  },
+  "cases": [
+    {"id": "ios18-affected", "document": "ios18", "version": "18.3.1", "expected": "version-affected"},
+    {"id": "ios18-boundary", "document": "ios18", "version": "18.3.2", "expected": "outside-published-affected-range"},
+    {"id": "ios18-later", "document": "ios18", "version": "18.4.0", "expected": "outside-published-affected-range"},
+    {"id": "ios16-affected", "document": "ios16", "version": "16.7.10", "expected": "version-affected"},
+    {"id": "ios16-boundary", "document": "ios16", "version": "16.7.11", "expected": "outside-published-affected-range"},
+    {"id": "ios15-affected", "document": "ios15", "version": "15.8.3", "expected": "version-affected"},
+    {"id": "ios15-boundary", "document": "ios15", "version": "15.8.4", "expected": "outside-published-affected-range"},
+    {"id": "ipad17-affected", "document": "ipad17", "version": "17.7.5", "os_product": "ipados", "expected": "version-affected"},
+    {"id": "ipad17-boundary", "document": "ipad17", "version": "17.7.6", "os_product": "ipados", "expected": "outside-published-affected-range"},
+    {"id": "ipad17-requires-product", "document": "ipad17", "version": "17.7.5", "expected": "applicability-unknown"},
+    {"id": "other-major", "document": "ios18", "version": "26.0", "expected": "applicability-unknown"},
+    {"id": "other-bulletin-branch", "document": "ios18", "version": "16.7.10", "expected": "applicability-unknown"},
+    {"id": "unordered-beta", "document": "ios18", "version": "18.3.1beta", "expected": "applicability-unknown"},
+    {"id": "simulator", "document": "ios18", "version": "18.3.1", "simulator": true, "expected": "simulator-only"}
+  ]
+}

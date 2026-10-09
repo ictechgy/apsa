@@ -21,6 +21,7 @@ from .core import (
 )
 from .engine import analyze_target
 from .intel import query_dependencies, source_health
+from .ios_ranges import PRODUCTS, apple_branch_range, apple_cna, custom_boundaries, numeric_version
 from .store import Store
 
 
@@ -160,16 +161,34 @@ def correlate(
             elif platform == "ios":
                 cve = next((r for r in records if r["id"] == record["id"] and r["source"] == "cve"), None)
                 decisions = []
+                os_product = environment.get("os_product", "ios")
+                if not isinstance(os_product, str):
+                    os_product = ""
                 for product in (cve or {}).get("affected", []):
-                    if product.get("product", "").lower() in {"ios", "ipados", "iphone os"}:
-                        decisions.append(in_cve_range(environment.get("version", ""), product))
+                    label = " ".join(product.get("product", "").casefold().split())
+                    if label in PRODUCTS.get(os_product, set()):
+                        decision = in_cve_range(environment.get("version", ""), product)
+                        if decision is None and cve:
+                            current = numeric_version(environment.get("version", ""))
+                            boundaries = custom_boundaries(product)
+                            if (
+                                current
+                                and boundaries
+                                and apple_cna(cve, product)
+                                and not any(end[0] == current[0] for end in boundaries)
+                            ):
+                                continue
+                            decision = apple_branch_range(
+                                environment.get("version", ""), product, cve, record, os_product
+                            )
+                        decisions.append(decision)
                 if True in decisions:
                     state = "version-affected"
                 elif decisions and all(d is False for d in decisions):
                     state = "outside-published-affected-range"
                 else:
                     state = "applicability-unknown"
-                basis = "Observed iOS version compared with explicit CNA ranges where supported; fixed-release labels are not used as universal lower bounds."
+                basis = "Observed Apple mobile OS version compared with explicit CNA ranges; zero-based Apple custom ranges require matching major, product, Apple CNA identity and a vendor bulletin boundary/reference. Other branches remain unknown; outside-range is not proof of patching."
         entry = {
             "id": record["id"],
             "title": record["title"],
@@ -282,6 +301,10 @@ def scan(
     if environment:
         if environment.get("platform") not in {"android", "ios"}:
             raise ValueError("Device info requires platform: android or ios")
+        if "os_product" in environment and (
+            not isinstance(environment["os_product"], str) or environment["os_product"] not in PRODUCTS
+        ):
+            raise ValueError("Device info os_product must be ios or ipados")
         environment = {
             k: v
             for k, v in environment.items()
@@ -294,6 +317,7 @@ def scan(
                 "model",
                 "simulator",
                 "observed_at",
+                "os_product",
             }
         }
     analyzed = analyze_target(target, sbom, expected_target, configuration)

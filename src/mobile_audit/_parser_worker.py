@@ -71,6 +71,7 @@ def analyze(target: Path, sbom: Path | None, configuration: str | None = None) -
     findings.extend(structural["findings"])
     coverage.extend(structural["coverage"])
     inventory["warnings"].extend(structural["warnings"])
+    inventory["source_analysis"] = structural["metadata"]
     if target.suffix.lower() in {".apk", ".ipa"}:
         from .binary_analysis import analyze_binary
 

@@ -226,6 +226,9 @@ def normalize_cve(value: dict) -> dict:
         _text(cna.get(key, ""), f"CVE CNA {key}")
     for key in ("dateUpdated", "state"):
         _text(metadata.get(key, ""), f"CVE metadata {key}")
+    assigner = _text(metadata.get("assignerOrgId", ""), "CVE assigner org ID")
+    provider = _object(cna.get("providerMetadata", {}), "CVE CNA provider metadata")
+    provider_id = _text(provider.get("orgId", ""), "CVE CNA provider org ID")
     description = next((d.get("value", "") for d in descriptions if d.get("lang", "").startswith("en")), "")
     return {
         "id": identifier,
@@ -237,6 +240,8 @@ def normalize_cve(value: dict) -> dict:
         "affected": cna.get("affected", []),
         "references": [r["url"] for r in cna.get("references", []) if "url" in r],
         "metrics": cna.get("metrics", []),
+        "assigner_org_id": assigner,
+        "cna_org_id": provider_id,
     }
 
 

@@ -408,6 +408,26 @@ def evaluate_os(root: Path) -> list[dict]:
     return output
 
 
+def compact_source_analysis(report: dict) -> dict | None:
+    metadata = report["inventory"].get("source_analysis")
+    if metadata is None:
+        return None
+    files = metadata["files"]
+    return {
+        "functions": metadata["functions"],
+        "function_inventory_complete": metadata["function_inventory_complete"],
+        "native_function_nodes": sum(f.get("native_functions", {}).get("observed", 0) for f in files),
+        "native_function_nodes_with_errors": sum(
+            f.get("native_functions", {}).get("with_errors", 0) for f in files
+        ),
+        "native_parse_error_files": sum(bool(f.get("native_parse_errors")) for f in files),
+        "remaining_parse_error_files": sum(bool(f.get("parse_errors")) for f in files),
+        "adapted_files": sum(bool(f.get("adaptations")) for f in files),
+        "unparsed_files": sum(f["state"] == "skipped" for f in files),
+        "remaining_source_records": metadata["remaining_source_records"],
+    }
+
+
 def compact_apsa(report: dict) -> dict:
     return {
         "files_scanned": report["inventory"]["files_scanned"],
@@ -423,6 +443,7 @@ def compact_apsa(report: dict) -> dict:
         "coverage": [{"rule": c["rule_id"], "state": c["state"]} for c in report["coverage"]],
         "warnings": report["warnings"],
         "inventory_warnings": report["inventory"]["warnings"],
+        "source_analysis": compact_source_analysis(report),
     }
 
 
