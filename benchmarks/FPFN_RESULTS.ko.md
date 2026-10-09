@@ -57,6 +57,19 @@ commit을 GitHub에서 내려받아 symlink 없이 풀고, 라벨된 파일의 �
 범위 밖 2쌍(FairEmail 첨부 경로 순회, Tasks 공유 링크 파일 복사)은 라벨된 파일에서
 발견 항목이 없었습니다.
 
+## 1.4 개발 재실행
+
+1.4.0 런타임 후보 `803220d`에서 같은 고정 정답과 보정으로 다시 잰
+[실행 37949344101](https://github.com/ictechgy/apsa/actions/runs/37949344101) 결과는 **TP 6, FN 5, FP 2,
+TN 9**, 줄 단위 TP 4, 오류·미채점 0입니다. 이미 본 라벨에서의 개발 재실행이며 새 측정이 아닙니다.
+
+바뀐 쌍은 Nextcloud 하나입니다. 1.4는 외부에 노출된 content provider의 호출자 인자에 대해
+`SQLiteDatabase.delete`·`update`·`query`와 `SQLiteQueryBuilder.appendWhere`를 SQL sink로 추가해 취약
+쪽이 줄 단위 TP가 됩니다. 수정 쪽은 FP가 됩니다. 수정
+([GHSA-vjp2-f63v-w479](https://github.com/nextcloud/android/security/advisories/GHSA-vjp2-f63v-w479))은 같은
+호출을 유지한 채 호출자의 selection을 SQLite tokenizer로 검증하는데, APSA는 이를 sanitizer로 모델링하지
+않습니다. OpenClaw 브리지처럼 호출 위치 규칙으로는 볼 수 없는 방어 코드 기반 수정입니다.
+
 ## 놓친 이유
 
 - **파일 간 흐름.** 두 Element X 쌍은 deep link URL이 parser와 navigation 계층을 거친

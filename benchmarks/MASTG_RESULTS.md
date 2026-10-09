@@ -89,6 +89,10 @@ flags without `FLAG_IMMUTABLE` as mutable, because PendingIntents are mutable by
 default before Android 12; the demo's implicit Intents with flags `0` and
 `FLAG_UPDATE_CURRENT` are flagged and its explicit and immutable ones are not.
 
+The 1.4.0 runtime candidate `803220d`
+([run 37949319562](https://github.com/ictechgy/apsa/actions/runs/37949319562)) produced the same counts
+after the PendingIntent check moved to flag bit values.
+
 The remaining 42 misses are mostly modes APSA still has no rule for: iOS
 cleartext use outside ATS (MASWE-0026) and WebView file access (0034), untrusted
 data beyond the modeled sinks (0050), and intent, deep-link, WebView-loading and

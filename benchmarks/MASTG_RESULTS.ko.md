@@ -52,6 +52,9 @@ Intent + `FLAG_MUTABLE`(약점이 아님)을 잡아 TP였습니다. 검사가 In
 이제 `FLAG_IMMUTABLE` 없는 리터럴 flags도 Android 12 이전 기본값에 따라 mutable로 보므로, flags `0`·
 `FLAG_UPDATE_CURRENT`인 암시적 Intent는 잡고 명시적·immutable 호출은 잡지 않습니다.
 
+1.4.0 런타임 후보 `803220d`([실행 37949319562](https://github.com/ictechgy/apsa/actions/runs/37949319562))도
+PendingIntent 검사를 플래그 비트 값 기준으로 바꾼 뒤 같은 수치를 냈습니다.
+
 남은 FN 42개는 대부분 아직 규칙이 없는 유형입니다. ATS 밖 iOS 평문 통신(MASWE-0026), WebView 파일
 접근(0034), 모델링한 sink 밖의 신뢰할 수 없는 데이터(0050), 인텐트·딥링크·WebView 로딩·UI 노출(0029,
 0032, 0035, 0036)입니다.

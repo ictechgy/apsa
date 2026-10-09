@@ -1,5 +1,65 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## APSA 1.4.0 adoption, agent verification and benchmarks — candidate, 2026-10-10
+
+1.4.0 packages the three roadmap phases developed on `dev/adoption` and `dev/phase3` after 1.3.0:
+
+- **Distribution and integration.** A GitHub Action that uploads SARIF to code scanning, and an [OWASP MASWE v1.0](https://mas.owasp.org/MASWE/) coverage matrix in every report. The MCP server is packaged for the MCP Registry and as a Claude Code plugin, with a documented [MCP security model](docs/MCP_SECURITY.md) and a normalized tool-manifest hash.
+- **Agent verification.** `verify_finding`, project taint specifications and more provider SQL sinks.
+- **New source checks.** Exported components, backup, `targetSdk`, privacy manifests, ATS exceptions, hard-coded secrets, insecure randomness, trust-all TLS, external storage, Java deserialization and mutable `PendingIntent`.
+- **Reports and records.** A CycloneDX 1.6 SBOM with embedded VEX, external SARIF ingestion, checklist views with finding history (with a Korean inspection guide), and a pinned OWASP MASTG v2.0 demo benchmark.
+
+Upgrade effects are listed in the README ("Upgrading from 1.3"). Benchmark method and results are in [MASTG_RESULTS.md](benchmarks/MASTG_RESULTS.md) and [FPFN_RESULTS.md](benchmarks/FPFN_RESULTS.md).
+
+The evaluated runtime is public `803220d743c4b5294512915d4334010208c50799` (`src` tree `7e8fc2d9697c3053063ef291268fb958f43b8d85`, package/rule version `1.4.0` / `2026.10.09.apsa.140`). Its [CI 37949319624](https://github.com/ictechgy/apsa/actions/runs/37949319624) passed all eleven jobs (the nine release jobs plus the two Action self-test jobs) with 1057 distinct tests. Later commits may change only documentation and recorded results. The tag must leave `src`, `apsa`, `quaygate`, `pyproject.toml`, `uv.lock`, `requirements-release.txt`, `action.yml`, `server.json`, `plugins` and `.claude-plugin` identical to this commit.
+
+Every evaluation harness was re-run on this runtime (`benchmarks/results/2026-10-10-release-140-harnesses.json`). These are development reruns on truth already seen, not new blind measurements; first blind results keep their own files.
+
+| Harness | Run | Result |
+| --- | --- | --- |
+| Gradle oracle comparison, three holdouts | [37949339300](https://github.com/ictechgy/apsa/actions/runs/37949339300) | Identical to `dependency-final-head.json` |
+| Frozen six-app replay | [37949353951](https://github.com/ictechgy/apsa/actions/runs/37949353951) | 8 TP / 0 FP / 0 FN / 19 TN / 5 correct abstentions; selected app CVE 1 TP / 3 TN |
+| Independent vulnerable/fixed source pairs | [37949344101](https://github.com/ictechgy/apsa/actions/runs/37949344101) | TP 6 / FN 5 / FP 2 / TN 9, line-level TP 4, no errors or unscored sides. Against 1.3.0 (5 / 6 / 1 / 10): the new provider SQL sinks catch the Nextcloud vulnerable side at line level; its fixed side, which validates the selection with an SQLite tokenizer APSA does not model, becomes an FP |
+| Next holdout replay | [37949358821](https://github.com/ictechgy/apsa/actions/runs/37949358821) | 4 / 4 declared facts, 16 / 16 Apple CVE boundary decisions, stable over three repeats; Tusky unresolved dependencies 15, parse-error files 0 |
+| Generated AAPT2 AAB | [37949349503](https://github.com/ictechgy/apsa/actions/runs/37949349503) | Identical to `next-generated-aab-verified.json` |
+| Public real-world sources, fresh OSV capture | [37949363191](https://github.com/ictechgy/apsa/actions/runs/37949363191) | 6 / 6 APSA scans completed, 6 / 6 configuration labels; 8 TP / 0 FP / 0 FN / 19 TN / 5 correct abstentions; selected app CVE 1 TP / 3 TN |
+| Synthetic APSA/MobSF comparison | [37949334891](https://github.com/ictechgy/apsa/actions/runs/37949334891) | APSA 1.4.0 source 18 / 18 risks, 0 / 22 control alerts; APK 3 / 3, 0 / 3. MobSF 12 / 18 with 4 control alerts. Released 1.1.0 baseline 14 / 18 with 4 |
+| OWASP MASTG v2.0 demos (development rerun) | [37949319562](https://github.com/ictechgy/apsa/actions/runs/37949319562) | In scope TP 26 / FN 42 / TN 4 / FP 1 (recall 38%, precision 96%); the first blind result was 15 / 53 / 4 / 1 ([37942539599](https://github.com/ictechgy/apsa/actions/runs/37942539599)) |
+
+The earlier candidate runtime `b5bd301` ran the same harnesses before the PendingIntent flag-value fix, and all passed. Its run IDs are listed in the summary file.
+
+Reviews were all Claude subagent reviews, not an external lane:
+
+- **Phase 1 code review:** requested changes on `1c46091`. Those were the action gate hidden by an incomplete audit, overstated MASWE states, SARIF locations and the MCP supply-chain claims. It approved the fixes `78e0910` through `3f56593`.
+- **Architecture review:** returned BLOCK on `1c46091` for the same gate and MASWE issues. It moved to WATCH on `78e0910` (policy reasons downgraded by `fail-on-incomplete`, and candidate `security-severity` tripping default code-scanning checks), and to CLEAR on `8a21f73`.
+- **Phase 2 code review:**
+  - Requested changes on `1c46091`: malformed privacy manifests, Gradle `targetSdk`, finding identities and SQL sink identity.
+  - Requested changes again on `7439ce7`, because further plist exception types still aborted a scan. A shared safe-plist helper now covers every plist parse.
+  - Approved `21824ec`, `4464c0d`, `b5bd301` and the runtime `803220d`, after rounds on PendingIntent flag parsing and `verify_finding` path matching.
+
+Release steps, once approved:
+
+1. Tag `v1.4.0` on the release commit.
+2. The tag-context workflow publishes to PyPI by Trusted Publishing and to the MCP Registry by GitHub OIDC.
+3. Fast-forward `main` only after PyPI serves 1.4.0.
+
+After publication, record the following checks:
+
+- the Action from the release commit with its default version, including an upload to a test repository;
+- a cold `uvx apsa@1.4.0` start and the marketplace plugin install;
+- the registry listing.
+
+Deferred non-blocking items:
+
+- `verify_finding`: a claim on a nonexistent non-source file still reads not-observed, a reassigned Intent variable is not followed, and there is no report timestamp in its result.
+- `first_observed` reads up to 1000 full reports.
+- The Action hash-locks APSA's dependencies but not the APSA wheel itself, and the pinned upload-sarif step is not exercised in CI.
+- `capabilities` hashes the tool surface through the SDK's private tool manager; a test pins it against the public `tools/list`.
+- Candidate-quality items from the first Phase 2 review: PyPI purl normalization, `sortOrder` and `SQLiteQueryBuilder.query` sinks, a specification sink on a built-in sink, `//` inside strings and Objective-C `NSFile*` constants for required-reason APIs, and CycloneDX aggregate properties.
+- The remaining MASTG modes listed in MASTG_RESULTS.md.
+
+Publication is confirmed only by the tag-context release workflow, PyPI, the MCP Registry and the GitHub release downloads, and will be recorded once complete.
+
 ## Published 1.3.0 — 2026-10-09
 
 [1.3.0](https://github.com/ictechgy/apsa/releases/tag/v1.3.0) is bound to source commit `30bbceabaaba25b666b53ce805648836aafe8853` through a lightweight tag that was not moved; its `src`, `pyproject.toml` and `uv.lock` are identical to the evaluated runtime `a3506ca`. Public `main` was fast-forwarded to the same commit; that push skipped the main-context publish path as intended. The tag-context [release workflow 37931663043](https://github.com/ictechgy/apsa/actions/runs/37931663043) passed all nine CI jobs (Linux/macOS × Python 3.11/3.12, required-mode Linux/macOS parser isolation, Homebrew framework Python, nested Seatbelt and Ubuntu 24.04 bubblewrap compatibility), the verified package build, PyPI Trusted Publishing and the GitHub release downloads. PyPI lists `apsa-1.3.0-py3-none-any.whl` (sha256 `796013bec8cb7f567a3dcb2b6833c4044e2ac2c9a189c93548fe81be0e673f39`) and `apsa-1.3.0.tar.gz` (sha256 `0afdd3cf267bad804b65b36b5d708cc2218bbc5423e9fa32e21265d8c7c1fc42`). A fresh `uv pip install apsa==1.3.0` reported version 1.3.0 and rule version `2026.10.09.apsa.130`, its packaged skill matched the 1.3.0 fixture, and a scan of a newly generated synthetic project found the declared cleartext setting and read the application lockfile coordinate as exact. The release commit passed CI run [37931244005](https://github.com/ictechgy/apsa/actions/runs/37931244005).

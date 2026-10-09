@@ -64,6 +64,23 @@ recorded.
 Both out-of-scope pairs (FairEmail attachment path traversal, Tasks share-link
 file copy) produced no findings in their labeled files.
 
+## 1.4 development rerun
+
+[Run 37949344101](https://github.com/ictechgy/apsa/actions/runs/37949344101)
+on the 1.4.0 runtime candidate `803220d`, with the same frozen truth and
+amendment: **6 TP, 5 FN, 2 FP and 9 TN**, line-level TP 4, no errors or
+unscored sides. This is a development rerun on labels already seen, not a new
+measurement.
+
+The only changed pair is Nextcloud. 1.4 adds `SQLiteDatabase.delete`,
+`update`, `query` and `SQLiteQueryBuilder.appendWhere` as SQL sinks for
+caller-supplied arguments of exported content providers, so the vulnerable side
+becomes a line-level TP. Its fixed side becomes an FP: the fix
+([GHSA-vjp2-f63v-w479](https://github.com/nextcloud/android/security/advisories/GHSA-vjp2-f63v-w479))
+keeps the same calls and validates the caller's selection with an SQLite
+tokenizer, which APSA does not model as a sanitizer. Like the OpenClaw bridge,
+this is a guard-based fix that a call-site rule cannot see.
+
 ## Why each miss happened
 
 - **Cross-file flows.** Both Element X pairs move the deep-link URL through a

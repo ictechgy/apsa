@@ -1,0 +1,242 @@
+{
+  "ci": {
+    "distinct_tests": 1057,
+    "jobs_passed": 11,
+    "run": 37949319624
+  },
+  "fpfn_score": {
+    "errors": 0,
+    "fn": 5,
+    "fp": 2,
+    "line_level_tp": 4,
+    "scored_pairs": 11,
+    "tn": 9,
+    "tp": 6,
+    "unscored_sides": 0
+  },
+  "harnesses": {
+    "competitive_synthetic": {
+      "apsa_1_4_0": {
+        "apk": {
+          "cases": 6,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 3,
+          "tp": 3,
+          "unstable": 0
+        },
+        "source-zip": {
+          "cases": 40,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 22,
+          "tp": 18,
+          "unstable": 0
+        }
+      },
+      "mobsf": {
+        "apk": {
+          "cases": 6,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 3,
+          "tp": 3,
+          "unstable": 0
+        },
+        "source-zip": {
+          "cases": 40,
+          "failed": 0,
+          "fn": 6,
+          "fp": 4,
+          "tn": 18,
+          "tp": 12,
+          "unstable": 0
+        }
+      },
+      "released_apsa_1_1_0": {
+        "apk": {
+          "cases": 6,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 3,
+          "tp": 3,
+          "unstable": 0
+        },
+        "source-zip": {
+          "cases": 40,
+          "failed": 0,
+          "fn": 4,
+          "fp": 4,
+          "tn": 18,
+          "tp": 14,
+          "unstable": 0
+        }
+      },
+      "run": 37949334891,
+      "source_revision": "803220d743c4b5294512915d4334010208c50799",
+      "summary_sha256": "84ce45d4335cc42de188673c856710319a76e3410b4a140e991c114eb28c7e36"
+    },
+    "dependency_oracle_comparison": {
+      "identical": true,
+      "identical_to": "results/2026-10-09-dependency-final-head.json",
+      "result_sha256": "35eb0755d4d0b94c7e50d2c55d6d5888945a3dda27375b07ca525706de6d5fdc",
+      "run": 37949339300
+    },
+    "frozen_replay": {
+      "dependency_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 5,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 19,
+        "tp": 8,
+        "unknown": 5,
+        "unstable": 0
+      },
+      "run": 37949353951,
+      "selected_real_app_cve_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 0,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 3,
+        "tp": 1,
+        "unknown": 0,
+        "unstable": 0
+      },
+      "source_revision": "803220d743c4b5294512915d4334010208c50799",
+      "summary_sha256": "d107a811f4347c2323c04ed7dbececc8ef9afc3b132f54a9dd774602c72f8991"
+    },
+    "generated_aab": {
+      "identical": true,
+      "identical_to": "results/2026-10-09-next-generated-aab-verified.json",
+      "run": 37949349503,
+      "summary_sha256": "cc1102f6258aa584b2b01c368cd2573bdc91a1fb318eed7c0260cbbf8fb1389c"
+    },
+    "independent_source_pairs": {
+      "run": 37949344101,
+      "score": {
+        "errors": 0,
+        "fn": 5,
+        "fp": 2,
+        "line_level_tp": 4,
+        "scored_pairs": 11,
+        "tn": 9,
+        "tp": 6,
+        "unscored_sides": 0
+      }
+    },
+    "mastg_demos_development": {
+      "results_sha256": "6c2ff583212e16b3ab58019e337f46e35e2194688a468647a77cb2af74ab7c46",
+      "run": 37949319562,
+      "strict_pairs": {
+        "correct": 0,
+        "tests": 2
+      },
+      "summary": {
+        "fn": 42,
+        "fp": 1,
+        "no-sample": 38,
+        "not-assessed": 32,
+        "tn": 4,
+        "tp": 26,
+        "unlabeled": 14
+      }
+    },
+    "next_holdout_replay": {
+      "cve_boundary_decisions_correct": [
+        16,
+        16
+      ],
+      "declared_facts_extracted": [
+        4,
+        4
+      ],
+      "remaining_parse_error_files": {
+        "tusky": 0,
+        "vlc-ios": 0
+      },
+      "run": 37949358821,
+      "source_revision": "803220d743c4b5294512915d4334010208c50799",
+      "stable": true,
+      "summary_sha256": "d106350d36f16cd4d4bc6002cc1249a151002af8eb71a89006339f26a6b04c44",
+      "unresolved_dependencies": {
+        "tusky": 15,
+        "vlc-ios": 0
+      }
+    },
+    "public_real_world_fresh_osv_capture": {
+      "apsa_scans_completed": [
+        6,
+        6
+      ],
+      "config_labels_correct": [
+        6,
+        6
+      ],
+      "dependency_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 5,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 19,
+        "tp": 8,
+        "unknown": 5,
+        "unstable": 0
+      },
+      "run": 37949363191,
+      "selected_real_app_cve_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 0,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 3,
+        "tp": 1,
+        "unknown": 0,
+        "unstable": 0
+      },
+      "source_revision": "803220d743c4b5294512915d4334010208c50799",
+      "summary_sha256": "c91772f5f2990006999fcd0f6d09faa1377f80036921adca4fbea2f1f46409af"
+    }
+  },
+  "kind": "development-reruns-after-labels-seen",
+  "note": "Regression reruns of every evaluation harness on the frozen release runtime. They reuse truth that was already seen and are not new blind measurements; first blind results stay in their own files.",
+  "release": "1.4.0",
+  "runtime_commit": "803220d743c4b5294512915d4334010208c50799",
+  "runtime_src_tree": "7e8fc2d9697c3053063ef291268fb958f43b8d85",
+  "schema": "apsa-release-evaluation-v1",
+  "superseded_candidate_run": {
+    "b5bd301": {
+      "aab": 37949010597,
+      "ci": 37948983576,
+      "competitive": 37948996154,
+      "dependency": 37949001594,
+      "fpfn": 37949006214,
+      "holdout": 37949019242,
+      "mastg": 37948984443,
+      "real": 37949023527,
+      "replay": 37949014995
+    },
+    "note": "Candidate runtime b5bd301 ran every harness before the PendingIntent flag-value fix; all passed."
+  }
+}
