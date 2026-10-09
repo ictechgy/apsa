@@ -279,8 +279,8 @@ first; a partial sync is a warning) and `online` (send dependency names and
 versions to OSV, see [network use](#public-intelligence-and-network-use)).
 Private repositories need GitHub Code Security to upload SARIF; set
 `upload-sarif: "false"` to keep only the file. Pull requests from forks and
-from Dependabot get a read-only token, so the action skips the upload there and
-still writes the file and summary.
+every Dependabot-triggered run get a read-only token, so the action skips the
+upload there and still writes the file and summary.
 
 Each alert's fingerprint is APSA's finding identity: the rule plus the evidence
 location (file, line, function or archive member). Editing the flagged line or

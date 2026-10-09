@@ -250,8 +250,8 @@ Action은 같은 버전의 `apsa`를 릴리스의 해시 고정 의존성과 함
 기본값의 Action은 오프라인이라 CVE·의존성 공지 대조를 하지 않습니다. 의존성 발견에는 `intel-sync`(공개
 공지를 먼저 수집, 부분 동기화는 경고)와 `online`(의존성 이름·버전을 OSV에 전송)이 필요합니다. 비공개
 저장소의 SARIF 업로드에는 GitHub Code Security가 필요하며, `upload-sarif: "false"`면 파일만 남깁니다.
-fork와 Dependabot의 pull request는 읽기 전용 토큰을 받으므로 Action이 업로드를 건너뛰고 파일과 요약만
-남깁니다.
+fork의 pull request와 Dependabot이 실행한 모든 워크플로는 읽기 전용 토큰을 받으므로 Action이 업로드를
+건너뛰고 파일과 요약만 남깁니다.
 
 각 경고의 fingerprint는 APSA 발견 ID, 즉 규칙과 증거 위치(파일, 줄, 함수 또는 아카이브 내부 경로)입니다.
 표시된 줄을 고치거나 파일을 옮기면 경고 하나가 닫히고 새 경고가 열릴 수 있습니다. 후보 발견은

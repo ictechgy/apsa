@@ -446,7 +446,7 @@
       "https://developer.android.com/privacy-and-security/risks/pending-intent"
     ],
     "mapping_scope": "partial",
-    "scope": "PendingIntent factory call whose literal flags include FLAG_MUTABLE or omit FLAG_IMMUTABLE (mutable by default before Android 12), wrapping an Intent with no class, component or package where it is built in the same function. Flags variables are not followed."
+    "scope": "PendingIntent factory call whose flags, written only with framework flag names and integer literals, include FLAG_MUTABLE, or omit FLAG_IMMUTABLE (mutable by default on Android 11 and lower; not reported when the manifest declares minSdk 31+), wrapping an Intent with no class, component or package where it is built in the same function. Project constants and conditional flags are not followed, and default mutability is not reported for an Intent built elsewhere."
   },
   {
     "id": "IOS-ATS-EXCEPTION",

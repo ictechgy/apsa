@@ -38,6 +38,22 @@ STRINGS = {"string_literal", "line_string_literal", "multi_line_string_literal",
 IDENTIFIERS = {"identifier", "simple_identifier"}
 BLOCKS = {"block", "statements", "function_body"}
 URI_REFERENCE = "https://developer.android.com/privacy-and-security/risks/unsafe-uri-loading"
+# Framework flag names a PendingIntent flags expression may contain, with optional class prefix.
+PENDING_INTENT_FLAGS = {
+    "FLAG_ONE_SHOT",
+    "FLAG_NO_CREATE",
+    "FLAG_CANCEL_CURRENT",
+    "FLAG_UPDATE_CURRENT",
+    "FLAG_IMMUTABLE",
+    "FLAG_MUTABLE",
+    "FLAG_ALLOW_UNSAFE_IMPLICIT_INTENT",
+}
+FRAMEWORK_FLAG = re.compile(
+    r"(?:(?:android\.app\.)?PendingIntent\.|(?:android\.content\.)?Intent\.)?"
+    r"(FLAG_(?:ACTIVITY|RECEIVER|GRANT)_[A-Z_]+|" + "|".join(sorted(PENDING_INTENT_FLAGS)) + ")"
+)
+FLAG_TOKEN = re.compile(r"[A-Za-z_][\w.]*|0[xX][0-9A-Fa-f]+|\d+|\S")
+UNKNOWN_INTENT = "Intent variable not built in this function; its target is unknown"
 BRIDGE_REFERENCE = "https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges"
 SSL_REFERENCE = "https://developer.android.com/reference/android/webkit/WebViewClient#onReceivedSslError(android.webkit.WebView,%20android.webkit.SslErrorHandler,%20android.net.http.SslError)"
 CRYPTO_REFERENCE = "https://developer.android.com/privacy-and-security/cryptography"
@@ -188,8 +204,11 @@ class Analyzer:
         language: str,
         specs: dict | None = None,
         exposed_providers: set[str] | None = None,
+        android_levels: dict | None = None,
     ):
         self.path = path
+        # Declared minSdk/targetSdk as integers, or None when unknown.
+        self.android_levels = android_levels or {}
         self.specs = specs or {"source": [], "sink": []}
         # Simple class names of providers other apps can reach (exported, no permission).
         self.exposed_providers = exposed_providers or set()
@@ -247,16 +266,28 @@ class Analyzer:
         return fallback
 
     def pending_intent_mutability(self, node: Any) -> str | None:
-        """How a literal flags argument leaves a PendingIntent mutable; None when immutable or unknown."""
-        flags = self.text(node)
-        if "FLAG_MUTABLE" in flags:
+        """How a literal flags expression leaves a PendingIntent mutable; None when immutable or unknown.
+
+        Only framework flag names, integer literals, or/|/+ and parentheses are read; a
+        project constant or any other expression is a variable and is not followed.
+        """
+        names = set()
+        for token in FLAG_TOKEN.findall(self.text(node)):
+            flag = FRAMEWORK_FLAG.fullmatch(token)
+            if flag:
+                names.add(flag[1])
+            elif not (re.fullmatch(r"0[xX][0-9A-Fa-f]+|\d+", token) or token in {"or", "|", "+", "(", ")"}):
+                return None
+        if "FLAG_MUTABLE" in names:
             return "FLAG_MUTABLE"
-        # Literal flags without FLAG_IMMUTABLE: mutable by default before Android 12, and
-        # rejected at creation for targetSdk 31+. A flags variable is not followed.
-        if "FLAG_IMMUTABLE" not in flags and re.fullmatch(r"[\w.\s|()]+", flags):
-            if flags.strip() == "0" or re.search(r"\bFLAG_\w+", flags):
-                return "default (no FLAG_IMMUTABLE)"
-        return None
+        if "FLAG_IMMUTABLE" in names:
+            return None
+        # Without FLAG_IMMUTABLE a PendingIntent is mutable on Android 11 and lower; with
+        # targetSdk 31+ creating it throws on Android 12+. minSdk 31+ rules out the old devices.
+        minimum = self.android_levels.get("min")
+        if isinstance(minimum, int) and minimum >= 31:
+            return None
+        return "default (no FLAG_IMMUTABLE)"
 
     def intent_expression(self, node: Any, call_node: Any) -> tuple[str, str]:
         """Text that builds the Intent passed to a PendingIntent, following a local variable."""
@@ -289,7 +320,7 @@ class Analyzer:
             rf"\b{name}\s*\.\s*(?:setClass\w*|setComponent|setPackage|component\s*=|`?package`?\s*=)", body
         )
         if not parts:
-            return text, "Intent variable not built in this function; its target is unknown"
+            return text, UNKNOWN_INTENT
         return " ".join(parts), "no class, component or package where the Intent variable is built"
 
     def literal(self, node: Any) -> str | None:
@@ -825,14 +856,18 @@ class Analyzer:
                 r"::class|\.class\b|setClass|setComponent|setPackage|ComponentName|\b(?:component|`?package`?)\s*=",
                 wrapped,
             )
-            if not explicit:
+            # Default mutability on an Intent of unknown origin (a parameter, a field) is too weak
+            # to report: helpers commonly pass explicit Intents with FLAG_UPDATE_CURRENT.
+            if not explicit and not (mutability != "FLAG_MUTABLE" and basis == UNKNOWN_INTENT):
                 self.emit(
                     "AST-PENDINGINTENT-MUTABLE",
                     call.node,
                     factory=f"PendingIntent.{call.name}",
                     intent_argument=basis,
                     mutability=mutability,
-                    target_sdk_note="Android 14+ rejects mutable implicit PendingIntents for targetSdk 34+",
+                    target_sdk_note="Android 14+ rejects mutable implicit PendingIntents for targetSdk 34+"
+                    if mutability == "FLAG_MUTABLE"
+                    else "Mutable on Android 11 and lower; with targetSdk 31+ creation throws on Android 12+",
                 )
         logging = (self.key(call.receiver) == "Log" and call.name in {"d", "i", "v", "e", "w"}) or (
             call.receiver is None and call.name in {"print", "println", "NSLog"}
@@ -1136,7 +1171,10 @@ class Analyzer:
 
 
 def analyze_sources(
-    sources: list[Any], specs: dict | None = None, exposed_providers: set[str] | None = None
+    sources: list[Any],
+    specs: dict | None = None,
+    exposed_providers: set[str] | None = None,
+    android_levels: dict | None = None,
 ) -> dict:
     """Return candidate findings, explicit partial coverage, and parser warnings.
 
@@ -1253,7 +1291,7 @@ def analyze_sources(
                 skipped += 1  # Preprocessing, dynamic dispatch and unsupported flows remain partial.
                 metric["state"] = "partial"
             else:
-                analyzer = Analyzer(path, text, language, specs, exposed_providers)
+                analyzer = Analyzer(path, text, language, specs, exposed_providers, android_levels)
             analyzer.analyze(tree.root_node)
             metric["state"] = "partial" if tree.root_node.has_error or adaptations else "checked"
             if language == "objc":

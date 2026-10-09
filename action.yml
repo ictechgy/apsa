@@ -145,11 +145,11 @@ runs:
         exit 0
 
     - name: Upload SARIF to code scanning
-      # Fork and Dependabot pull requests get a read-only token that cannot upload.
+      # Fork pull requests and every Dependabot-triggered run get a read-only token that cannot upload.
       if: >-
         inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-file != '' &&
-        (github.event_name != 'pull_request' ||
-         (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'))
+        github.actor != 'dependabot[bot]' &&
+        (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
       uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
@@ -161,6 +161,7 @@ runs:
       env:
         CODE: ${{ steps.scan.outputs.exit-code }}
         THRESHOLD: ${{ steps.scan.outputs.threshold-exceeded }}
+        REASONS: ${{ steps.scan.outputs.gate-reasons }}
         FAIL_ON_INCOMPLETE: ${{ inputs.fail-on-incomplete }}
         SARIF: ${{ inputs.sarif-file }}
       run: |
@@ -170,7 +171,11 @@ runs:
         fi
         # An incomplete audit (exit 3) can also exceed the threshold; never let it mask that.
         if [ "$CODE" = 4 ] || [ "$THRESHOLD" = true ]; then
-          echo "::error::APSA findings exceed the policy or threshold." >&2
+          if [ -n "$REASONS" ]; then
+            echo "::error::APSA policy gate failed: $REASONS (see the job summary)." >&2
+          else
+            echo "::error::APSA findings exceed the fail-on threshold." >&2
+          fi
           exit 4
         fi
         case "$CODE" in

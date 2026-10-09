@@ -63,6 +63,21 @@ def threshold_exceeded(path: str, fail_on: str) -> bool:
     )
 
 
+def gate_reasons(path: str) -> list[str]:
+    """Policy gate reason codes that fail the job (every code except partial-audit)."""
+    result = envelope(path)
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    gate = data.get("gate") if isinstance(data, dict) else None
+    if not isinstance(gate, dict):
+        return []
+    codes = [
+        str(reason.get("code"))
+        for reason in gate.get("reasons") or []
+        if isinstance(reason, dict) and reason.get("code") != "partial-audit"
+    ]
+    return sorted(set(codes))
+
+
 def summary(path: str, code: str) -> str:
     result = envelope(path)
     report = report_of(result)
@@ -110,6 +125,9 @@ def main(argv: list[str]) -> int:
         return 0
     if argv[:1] == ["--threshold"] and len(argv) == 3:
         print(f"threshold-exceeded={'true' if threshold_exceeded(argv[1], argv[2]) else 'false'}")
+        # Reason codes are fixed identifiers; keep only safe characters for the output file.
+        codes = [c for c in gate_reasons(argv[1]) if c.replace("-", "").isalnum()]
+        print(f"gate-reasons={','.join(codes)}")
         return 0
     if argv[:1] == ["--summary"] and len(argv) == 3:
         sys.stdout.write(summary(argv[1], argv[2]))

@@ -386,6 +386,14 @@ def test_action_policy_failures_survive_fail_on_incomplete(tmp_path, reasons, ex
     envelope.write_text(json.dumps({"ok": True, "exit_code": 3, "data": {"gate": {"reasons": reasons}}}))
     # Tolerating partial parsing must not switch off required rules, waivers or baselines.
     assert threshold_exceeded(str(envelope), "") is expected
+    result = subprocess.run(
+        [sys.executable, "-I", str(SCRIPTS / "action_summary.py"), "--threshold", str(envelope), ""],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    codes = sorted({r["code"] for r in reasons} - {"partial-audit"})
+    assert result.stdout.splitlines()[-1] == f"gate-reasons={','.join(codes)}"
 
 
 def test_action_helper_paths_and_summary(tmp_path):

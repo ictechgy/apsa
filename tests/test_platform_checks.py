@@ -475,3 +475,39 @@ def test_pending_intent_lookup_is_byte_aligned_with_non_ascii_text(store, projec
     ]
     # setPackage after the call does not make the Intent explicit at creation.
     assert lines == [7]
+
+
+FLAGS = """import android.app.PendingIntent
+import android.content.Intent
+class P {
+    fun a(c: android.content.Context) {
+        PendingIntent.getActivity(c, 1, Intent("x"), Flags.FLAG_UPDATE_IMMUTABLE)
+        PendingIntent.getActivity(c, 2, Intent("x"), Flags.PI_FLAG_MUTABLE_SAFE)
+        PendingIntent.getActivity(c, 3, Intent("x"), PendingIntent.FLAG_UPDATE_CURRENT + PendingIntent.FLAG_ONE_SHOT)
+        PendingIntent.getActivity(c, 4, Intent("x"), 0x0)
+        PendingIntent.getActivity(c, 5, Intent("x"), if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0)
+        PendingIntent.getActivity(c, 6, Intent("x"), Intent.FLAG_ACTIVITY_NEW_TASK)
+        PendingIntent.getActivity(c, 7, Intent("x"), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        PendingIntent.getActivity(c, 8, Intent("x"), android.app.PendingIntent.FLAG_MUTABLE)
+    }
+    fun open(c: android.content.Context, i: Intent) = PendingIntent.getActivity(c, 0, i, PendingIntent.FLAG_UPDATE_CURRENT)
+}
+"""
+
+
+def test_pending_intent_flags_read_only_framework_literals():
+    from mobile_audit.source_analysis import analyze_sources
+
+    def found(levels):
+        result = analyze_sources([("P.kt", FLAGS)], None, None, levels)
+        return {f["evidence"][0]["line"]: f["evidence"][0] for f in result["findings"]}
+
+    unknown_levels = found(None)
+    # Project constants and conditional expressions are variables; a parameter Intent with
+    # default mutability has an unknown target and is not reported.
+    assert set(unknown_levels) == {7, 8, 10, 12}
+    assert unknown_levels[12]["mutability"] == "FLAG_MUTABLE"
+    assert "Android 11 and lower" in unknown_levels[7]["target_sdk_note"]
+    assert "Android 14+" in unknown_levels[12]["target_sdk_note"]
+    # minSdk 31+ never runs where the default is mutable.
+    assert set(found({"min": 31, "target": 34})) == {12}

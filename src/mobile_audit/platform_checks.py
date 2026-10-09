@@ -108,6 +108,16 @@ def _exposed(component: dict, target_level: int | None) -> bool:
     return bool((exported == "true" or implicit) and not protected)
 
 
+def android_levels(inventory: dict) -> dict:
+    """Manifest-declared minSdk and targetSdk as integers, None when absent or not literal."""
+    declared = inventory.get("android_sdk") or {}
+    levels: dict[str, int | None] = {}
+    for key in ("min", "target"):
+        value = str(declared.get(key) or "")
+        levels[key] = int(value) if value.isdigit() else None
+    return levels
+
+
 def exposed_providers(inventory: dict) -> set[str]:
     """Simple class names of declared providers that other apps can reach."""
     target = str((inventory.get("android_sdk") or {}).get("target") or "")
