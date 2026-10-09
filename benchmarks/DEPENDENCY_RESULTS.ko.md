@@ -43,8 +43,8 @@ archive에서 실패했고, Amaze는 NDK 설치가 필요해 제외했습니다.
 | holdout-2 | 90 | 9 | 126 | 77 | 90.9% | 41.7% |
 | holdout-3 | 63 | 1 | 82 | 85 | 98.4% | 43.4% |
 
-APSA 1.2.0은 catalog에만 있는 항목을 모두 보류하므로 같은 단위의 declared
-커버리지는 0입니다. TP 중 catalog 선언 버전과 Gradle 해석 버전이 다른 경우가
+APSA 1.2.0은 설계상 catalog에만 있는 항목을 모두 보류하므로 같은 단위의 declared
+커버리지는 0입니다. 이 기준값은 코드에서 따른 것이며 다시 측정하지 않았습니다. TP 중 catalog 선언 버전과 Gradle 해석 버전이 다른 경우가
 각각 198개 중 15개, 90개 중 2개, 63개 중 1개였습니다. declared 후보는 실제 출하되지
 않는 버전을 가리킬 수 있으므로 정확한 대조에는 여전히 해석된 근거가 필요합니다.
 
@@ -74,9 +74,11 @@ APSA 1.2.0은 catalog에만 있는 항목을 모두 보류하므로 같은 단�
 
 - `coreLibraryDesugaring`(앱마다 1개). desugaring 라이브러리 코드는 dex에 포함되지만
   runtime classpath 좌표가 아니어서 oracle이 출하로 세지 않습니다.
-- holdout-2의 27개 중 19개는 Pocket Casts의 **wear**·**tv** application 모듈에서
-  나왔습니다. 같은 저장소의 다른 APK가 출하하는 라이브러리이며, oracle은 휴대폰 앱만
-  측정합니다. 모듈을 선택하지 않은 소스 스캔은 저장소의 모든 앱을 합칩니다.
+- holdout-2의 27개 중 17개는 Pocket Casts의 **wear**·**tv** application 빌드
+  스크립트에서 나왔습니다. 같은 저장소의 다른 APK가 출하하는 라이브러리이며, oracle은
+  휴대폰 앱만 측정합니다. 모듈을 선택하지 않은 소스 스캔은 저장소의 모든 앱을 합칩니다.
+  2개는 루트 빌드 스크립트의 `implementation` 참조(`leakcanary`, debug 전용 설정으로
+  보임)와 `modules/services/qr`(`zxing`)에서 나왔습니다.
 - precompiled convention script로 소비되는 element-x annotation processor·테스트
   유틸리티 모듈. 모듈 그래프가 이 script를 읽지 않습니다.
 
@@ -86,8 +88,10 @@ Assistant의 대체 항목입니다.
 ## Lockfile 근거
 
 oracle lockfile을 앱 모듈에 두면 아홉 앱 모두에서 APSA의 exact 좌표가 Gradle의 출하
-좌표와 같습니다: 256, 378, 315, 179, 402, 214, 412, 384, 372개, 누락·초과 없음.
-Home Assistant가 공개한 lockfile을 그대로 쓰면 앱 좌표 372개가 모두 exact입니다.
+좌표를 모두 포함합니다(256, 378, 315, 179, 402, 214, 412, 384, 372개). 여덟 앱에서는
+초과도 없습니다. 이는 같은 Gradle 출력을 거의 같은 구성 필터로 읽는 파서 일관성
+검사이며 해석 결과에 대한 독립 근거가 아닙니다. Home Assistant가 공개한 lockfile을
+그대로 쓰면 앱 좌표 372개가 모두 exact입니다.
 APSA는 그 밖에 서로 다른 exact 좌표 149개를 더 보고합니다. wear(59개 항목)·
 automotive(2) application 모듈과 test·library 역할을 인식하지 못한 `testing-unit`(77)·
 `microwakeword`(22) 모듈에서 나왔습니다.
@@ -101,6 +105,26 @@ K-9의 catalog 전용 선언 2개(jsoup 1.15.4, okio 3.7.0)는 `app/core/build.g
 라벨과 일치해 선택한 실제 앱 CVE 경로는 1 TP / 3 TN, 보류 0이 됩니다. 라벨을 본 뒤의
 개발 재실행이며 최초 요약과 과거 결과 바이트는 바꾸지 않습니다. declared 후보는 여전히
 출하 버전을 증명하지 않습니다.
+
+## 리뷰 후속 수정(개발, 재블라인드 아님)
+
+이 브랜치의 독립 코드 리뷰는 역할을 인식하지 못한 모듈의 lockfile이 여전히 `exact`
+좌표(따라서 `version-affected` 발견)를 만들 수 있고, 대체가 패키지 이름만으로 저장소
+전체에 적용되며, 부분 입력이 비출하 판단으로 이어질 수 있음을 찾았습니다. 이제 스캐너는
+application 모듈 lockfile만 exact로 취급하고, 선언한 모든 모듈이 그 application이거나
+그 application이 출하용으로 소비하는 모듈일 때만 declared 후보를 대체합니다. 소비 관계로
+모듈을 제외하려면 library 플러그인 근거와 모든 빌드 스크립트 읽기가 필요하며,
+`constraints` 블록과 `apply false` 플러그인 줄은 무시하고, OSV 조회 예산에서 exact 좌표를
+먼저 처리합니다. oracle 워크플로는 upstream 빌드 코드 실행 전에 archive 해시를
+고정합니다. 이 수정 이후 재실행은 아래 실행 ID로 기록합니다.
+
+| 결과 파일 | 생성 실행 | head commit |
+| --- | --- | --- |
+| `results/2026-10-09-dependency-first-holdout1.json` | [37907202313](https://github.com/ictechgy/apsa/actions/runs/37907202313) | `6a86b95` |
+| `results/2026-10-09-dependency-first-holdout2.json` | [37908373608](https://github.com/ictechgy/apsa/actions/runs/37908373608) | `36213e0` |
+| `results/2026-10-09-dependency-first-holdout3.json` | [37909298008](https://github.com/ictechgy/apsa/actions/runs/37909298008) | `c24d1c3` |
+| `results/2026-10-09-dependency-development-rerun.json` | [37909811466](https://github.com/ictechgy/apsa/actions/runs/37909811466) | `8de1758` |
+| `results/2026-10-09-dependency-frozen-replay.json` | [37909997903](https://github.com/ictechgy/apsa/actions/runs/37909997903) | `ed02049`(패키지 버전 1.2.0 표기) |
 
 ## 한계
 

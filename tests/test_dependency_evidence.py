@@ -179,6 +179,7 @@ def test_gradle_lockfile_keeps_only_release_runtime_coordinates():
 def test_resolved_lockfile_supersedes_declared_and_catalog_versions(tmp_path):
     deps = project(
         tmp_path,
+        'plugins { id("com.android.application") }\n'
         "dependencies {\n  implementation(libs.okhttp)\n  implementation(libs.okio)\n}\n",
         {"app/gradle.lockfile": LOCKFILE},
     )
@@ -252,11 +253,16 @@ def test_module_roles_keep_tooling_test_and_test_support_declarations_out(tmp_pa
         '  testImplementation(project(":core:fixtures"))\n'
         "}\n",
         {
-            "core/data/build.gradle.kts": "dependencies { implementation(libs.okhttp) }\n",
-            "core/testing/build.gradle.kts": (
-                'dependencies {\n  api(libs.junit)\n  implementation(project(":core:fixtures"))\n}\n'
+            "core/data/build.gradle.kts": (
+                'plugins { id("com.android.library") }\ndependencies { implementation(libs.okhttp) }\n'
             ),
-            "core/fixtures/build.gradle.kts": "dependencies { implementation(libs.leakcanary) }\n",
+            "core/testing/build.gradle.kts": (
+                'plugins { id("com.android.library") }\n'
+                'dependencies {\n  api(libs.junit)\n  implementation(project(path: ":core:fixtures"))\n}\n'
+            ),
+            "core/fixtures/build.gradle": (
+                "plugins { id 'com.android.library' }\ndependencies { implementation libs.leakcanary }\n"
+            ),
             "benchmarks/build.gradle.kts": (
                 "plugins { alias(libs.plugins.synthetic.android.test) }\n"
                 "dependencies { implementation(libs.androidx.core.ktx) }\n"
@@ -309,24 +315,26 @@ def test_library_module_lockfiles_stay_candidates(tmp_path):
     deps = project(
         tmp_path,
         'plugins { id("io.example.android-compose-application") }\n'
-        "dependencies { implementation(projects.core) }\n",
+        "dependencies {\n  implementation(projects.core)\n  implementation(libs.okio)\n}\n",
         {
             "app/gradle.lockfile": "com.squareup.okio:okio:3.6.0=releaseRuntimeClasspath\n",
-            "core/build.gradle.kts": "dependencies { implementation(libs.okhttp) }\n",
+            "core/build.gradle.kts": (
+                'plugins { id("com.android.library") }\ndependencies { implementation(libs.okhttp) }\n'
+            ),
             "core/gradle.lockfile": "com.squareup.okhttp3:okhttp:4.11.0=releaseRuntimeClasspath\n",
         },
     )
     inventory, _ = inspect_target(tmp_path)
     by_source = {(d["name"], d.get("version_source"), d["confidence"]) for d in inventory["dependencies"]}
     assert ("com.squareup.okio:okio", "gradle-lockfile-resolved", "exact") in by_source
-    assert ("com.squareup.okhttp3:okhttp", "gradle-lockfile-library-module", "declared") in by_source
+    assert ("com.squareup.okhttp3:okhttp", "gradle-lockfile-non-application-module", "declared") in by_source
     # The app lockfile supersedes the okio catalog candidate; the library lockfile does not.
     assert deps["com.squareup.okio:okio"]["resolution"]["state"] == "superseded-by-resolved-build"
     assert deps["com.squareup.okhttp3:okhttp"]["confidence"] == "declared"
     assert "resolution" not in deps["com.squareup.okhttp3:okhttp"]
 
 
-def test_unrecognized_application_lockfile_stays_exact(tmp_path):
+def test_unrecognized_application_lockfile_stays_candidate(tmp_path):
     (tmp_path / "app").mkdir()
     (tmp_path / "app/build.gradle.kts").write_text('plugins { id("custom.convention") }\n')
     (tmp_path / "app/gradle.lockfile").write_text("com.squareup.okio:okio:3.6.0=releaseRuntimeClasspath\n")
@@ -334,4 +342,62 @@ def test_unrecognized_application_lockfile_stays_exact(tmp_path):
     (tmp_path / "wear/build.gradle.kts").write_text('plugins { id("com.android.application") }\n')
     inventory, _ = inspect_target(tmp_path)
     okio = next(d for d in inventory["dependencies"] if d["name"] == "com.squareup.okio:okio")
-    assert okio["confidence"] == "exact" and okio["version_source"] == "gradle-lockfile-resolved"
+    assert okio["confidence"] == "declared"
+    assert okio["version_source"] == "gradle-lockfile-non-application-module"
+
+
+def test_application_id_marks_an_application_and_root_apply_false_does_not(tmp_path):
+    (tmp_path / "build.gradle.kts").write_text(
+        'plugins {\n  // id("com.android.application")\n'
+        "  alias(libs.plugins.android.application) apply false\n}\n"
+    )
+    (tmp_path / "gradle.lockfile").write_text("org.example:root:1.0=runtimeClasspath\n")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/build.gradle").write_text("android { defaultConfig { applicationId 'audit.app' } }\n")
+    (tmp_path / "app/gradle.lockfile").write_text("com.squareup.okio:okio:3.6.0=releaseRuntimeClasspath\n")
+    inventory, _ = inspect_target(tmp_path)
+    state = {d["name"]: (d["confidence"], d["version_source"]) for d in inventory["dependencies"]}
+    assert state["com.squareup.okio:okio"] == ("exact", "gradle-lockfile-resolved")
+    assert state["org.example:root"] == ("declared", "gradle-lockfile-non-application-module")
+
+
+def test_resolution_from_one_app_does_not_supersede_another_apps_declaration(tmp_path):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/build.gradle.kts").write_text('plugins { id("com.android.application") }\n')
+    (tmp_path / "app/gradle.lockfile").write_text(
+        "com.squareup.okhttp3:okhttp:4.12.0=releaseRuntimeClasspath\n"
+    )
+    (tmp_path / "wear").mkdir()
+    (tmp_path / "wear/build.gradle").write_text(
+        "plugins { id 'com.android.application' }\n"
+        "dependencies { implementation 'com.squareup.okhttp3:okhttp:3.12.0' }\n"
+    )
+    inventory, _ = inspect_target(tmp_path)
+    wear = next(d for d in inventory["dependencies"] if d["path"] == "wear/build.gradle")
+    assert wear["confidence"] == "declared" and wear["version"] == "3.12.0"
+    assert wear["resolution"] == {"state": "resolved-in-other-module", "resolved_versions": ["4.12.0"]}
+    findings, _ = correlate(inventory, [record("com.squareup.okhttp3:okhttp", "3.12.0")])
+    assert [f["status"] for f in findings] == ["candidate"]
+
+
+def test_constraints_are_not_usage(tmp_path):
+    deps = project(
+        tmp_path,
+        "dependencies {\n  constraints {\n    implementation(libs.okhttp)\n  }\n}\n",
+    )
+    assert deps["com.squareup.okhttp3:okhttp"]["confidence"] == "unknown"
+
+
+def test_partial_inventory_does_not_exclude_modules_by_consumption(tmp_path):
+    from mobile_audit.source_context import ModuleGraph
+
+    sources = [
+        (
+            "app/build.gradle.kts",
+            'plugins { id("com.android.application") }\ndependencies { testImplementation(projects.core) }',
+        ),
+        ("core/build.gradle.kts", 'plugins { id("com.android.library") }'),
+    ]
+    assert ModuleGraph(sources).roles.get("core") == "non-shipping-module"
+    partial = ModuleGraph(sources, partial=True)
+    assert "core" not in partial.roles and partial.warnings

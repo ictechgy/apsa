@@ -38,8 +38,11 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
       - name: Fetch the pinned public source archive
+        id: fetch
         working-directory: apsa
-        run: python3 -I benchmarks/dependency_oracle.py prepare --case "${{ matrix.case }}" --work "$RUNNER_TEMP/oracle"
+        run: |
+          SHA="$(python3 -I benchmarks/dependency_oracle.py prepare --case "${{ matrix.case }}" --work "$RUNNER_TEMP/oracle")"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
       - name: Let Gradle resolve and lock every configuration of the app module
         run: |
           cat > "$RUNNER_TEMP/lock-all.gradle" <<'GRADLE'
@@ -59,7 +62,7 @@ jobs:
           ./gradlew --no-daemon --version >> "$RUNNER_TEMP/oracle/${{ matrix.case }}.java.txt"
       - name: Record the resolved oracle without running APSA
         working-directory: apsa
-        run: python3 -I benchmarks/dependency_oracle.py record --case "${{ matrix.case }}" --work "$RUNNER_TEMP/oracle"
+        run: python3 -I benchmarks/dependency_oracle.py record --case "${{ matrix.case }}" --work "$RUNNER_TEMP/oracle" --expected-sha256 "${{ steps.fetch.outputs.sha256 }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

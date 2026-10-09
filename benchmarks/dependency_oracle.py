@@ -137,16 +137,21 @@ def main() -> None:
     record = commands.add_parser("record")
     record.add_argument("--case", required=True)
     record.add_argument("--work", type=Path, required=True)
+    record.add_argument("--expected-sha256", default="")
     args = parser.parse_args()
     spec = case(args.case)
     archive_path = args.work / f"{spec['id']}.zip"
     if args.command == "prepare":
         archive = fetch(spec, archive_path)
         (args.work / f"{spec['id']}.archive.json").write_text(json.dumps(archive, indent=2) + "\n")
-        print(extract(archive_path, args.work / "source"))
+        extract(archive_path, args.work / "source")
+        print(archive["sha256"])
         return
     archive = json.loads((args.work / f"{spec['id']}.archive.json").read_text())
-    if sha(archive_path.read_bytes()) != archive["sha256"]:
+    # The hash comes from the fetch step's output, before any upstream build code ran.
+    if sha(archive_path.read_bytes()) != archive["sha256"] or (
+        args.expected_sha256 and archive["sha256"] != args.expected_sha256
+    ):
         raise ValueError("Source archive changed after capture")
     source = next(p for p in (args.work / "source").iterdir() if p.is_dir())
     module_dir = source / spec["module"].strip(":").replace(":", "/")

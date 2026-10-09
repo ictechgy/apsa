@@ -72,7 +72,16 @@ def shipped_runtime_configuration(name: str) -> bool:
     lowered = name.lower()
     return lowered.endswith("runtimeclasspath") and not any(
         word in lowered
-        for word in ("test", "debug", "benchmark", "lint", "kapt", "ksp", "annotationprocessor")
+        for word in (
+            "test",
+            "debug",
+            "benchmark",
+            "nonminified",
+            "lint",
+            "kapt",
+            "ksp",
+            "annotationprocessor",
+        )
     )
 
 
@@ -780,12 +789,16 @@ def inspect_target(
                 inventory["partial"] = True
         # Positive usage evidence is valid even when other files were omitted;
         # a missing reference never becomes evidence that a library is unused.
-        inventory["warnings"].extend(resolve_catalog_usage(inventory["dependencies"], sources))
+        from .source_context import ModuleGraph
+
         try:
-            supersede(inventory["dependencies"], sources)
-        except ValueError as error:
-            inventory["warnings"].append(f"Gradle module roles not resolved: {error}")
-            supersede(inventory["dependencies"])
+            graph = ModuleGraph(sources, partial=inventory["partial"])
+            inventory["warnings"].extend(graph.warnings)
+        except (ValueError, RecursionError) as error:
+            graph = None
+            inventory["warnings"].append(f"Gradle module graph not resolved: {type(error).__name__}")
+        inventory["warnings"].extend(resolve_catalog_usage(inventory["dependencies"], sources, graph))
+        supersede(inventory["dependencies"], graph)
         references, warnings = plist_references(sources)
         inventory["warnings"].extend(warnings)
         inventory["partial"] |= bool(warnings)
