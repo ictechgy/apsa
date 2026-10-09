@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -9,6 +10,35 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .core import MAX_FILE, canonical_json, digest, now, read_json, uid, write_json
+
+
+def _restrict(path: Path) -> None:
+    """Set 0600 without closing a lock-bearing descriptor of a live SQLite file.
+
+    Closing any ordinary descriptor drops this process's POSIX locks on that file,
+    including SQLite's WAL-index locks; another process may then reinitialize the
+    shared-memory file under a live mapping. lchmod and O_PATH avoid that.
+    """
+    info = os.lstat(path)
+    if stat.S_ISLNK(info.st_mode):
+        raise OSError(errno.ELOOP, "Audit database files must not be symlinks", str(path))
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("Audit database files must be regular files")
+    try:
+        # macOS lchmod; glibc emulates this for regular files through O_PATH.
+        os.chmod(path, 0o600, follow_symlinks=False)
+        return
+    except NotImplementedError:
+        pass
+    descriptor = os.open(path, getattr(os, "O_PATH", 0) | os.O_NOFOLLOW | os.O_RDONLY)
+    try:
+        if not getattr(os, "O_PATH", 0):
+            raise OSError(errno.ENOTSUP, "Lock-safe permission repair is unavailable", str(path))
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("Audit database files must be regular files")
+        os.chmod(f"/proc/self/fd/{descriptor}", 0o600)
+    finally:
+        os.close(descriptor)
 
 
 def default_home() -> Path:
@@ -29,22 +59,19 @@ class Store:
         self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
         # SQLite derives newly created WAL/SHM modes from the database. Secure
         # the main file before connecting, and repair sidecars from older runs.
-        for name in ("audit.sqlite3", "audit.sqlite3-wal", "audit.sqlite3-shm"):
-            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-            if name == "audit.sqlite3":
-                flags |= os.O_CREAT
+        main = self.home / "audit.sqlite3"
+        if not os.path.lexists(main):
             try:
-                descriptor = os.open(self.home / name, flags, 0o600)
+                # A new inode cannot carry locks of an existing connection.
+                os.close(os.open(main, os.O_RDONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+            except FileExistsError:
+                pass
+        for name in ("audit.sqlite3", "audit.sqlite3-wal", "audit.sqlite3-shm"):
+            try:
+                _restrict(self.home / name)
             except FileNotFoundError:
                 if name == "audit.sqlite3":
                     raise
-                continue
-            try:
-                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                    raise ValueError("Audit database files must be regular files")
-                os.fchmod(descriptor, 0o600)
-            finally:
-                os.close(descriptor)
         self.db = sqlite3.connect(self.home / "audit.sqlite3", timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")

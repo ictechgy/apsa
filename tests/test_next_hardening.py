@@ -724,3 +724,36 @@ def test_every_released_skill_fixture_is_a_known_upgrade_source(tmp_path):
         destination.mkdir()
         (destination / "SKILL.md").write_bytes(fixture.read_bytes())
         assert skill_status(name, destination) == "outdated", fixture.name
+
+
+def test_second_store_keeps_live_sqlite_wal_index_locks(tmp_path):
+    from mobile_audit.store import Store
+
+    home = tmp_path / "state"
+    first = Store(home)
+    try:
+        first.db.execute("SELECT count(*) FROM reports").fetchone()
+        assert (home / "audit.sqlite3-shm").is_file()
+        second = Store(home)
+        second.close()
+        # SQLite's dead-man-switch byte stays share-locked while a connection lives.
+        # Another process must not obtain it exclusively and reinitialize the mapping.
+        probe = (
+            "import fcntl, os, sys\n"
+            "fd = os.open(sys.argv[1], os.O_RDWR)\n"
+            "try:\n"
+            "    fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB, 1, 128)\n"
+            "except OSError:\n"
+            "    print('held')\n"
+            "else:\n"
+            "    print('released')\n"
+        )
+        result = __import__("subprocess").run(
+            [sys.executable, "-I", "-c", probe, str(home / "audit.sqlite3-shm")],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.stdout.strip() == "held", result
+    finally:
+        first.close()
