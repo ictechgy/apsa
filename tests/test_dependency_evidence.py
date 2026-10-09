@@ -532,3 +532,39 @@ def test_unreadable_build_script_counts_as_hidden_reference():
 
     graph = ModuleGraph([("app/build.gradle.kts", "x " * 200_001), ("lib/build.gradle.kts", "")])
     assert graph.unresolved_project_references and graph.warnings
+
+
+def test_osv_budget_queries_exact_first_and_counts_unchecked_packages(store):
+    import json
+
+    import httpx
+
+    from mobile_audit.audit import dependency_coverage_state
+    from mobile_audit.intel import query_dependencies
+
+    def dep(index, confidence, **extra):
+        return {
+            "ecosystem": "Maven",
+            "name": f"com.example:lib{index}",
+            "version": "1.0",
+            "path": "app/gradle.lockfile",
+            "confidence": confidence,
+            **extra,
+        }
+
+    superseded = dep(0, "declared", resolution={"state": "superseded-by-resolved-build"})
+    declared = [dep(index, "declared") for index in range(1, 4)]
+    exact = [dep(index, "exact") for index in range(4, 104)]
+    queried = []
+
+    def handler(request):
+        queried.append(json.loads(request.content)["package"]["name"])
+        return httpx.Response(200, json={"vulns": []})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        _, errors = query_dependencies(store, [superseded, *declared, *exact], client)
+    assert sorted(queried) == sorted(item["name"] for item in exact)
+    assert errors == ["Dependency query limit of 100 reached; 3 remaining packages not checked"]
+    health = {(feed["source"]): feed for feed in store.feeds()}
+    for item in declared:
+        assert dependency_coverage_state(item, health.get(f"osv:Maven:{item['name']}:1.0")) == "not-run"
