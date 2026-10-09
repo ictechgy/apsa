@@ -250,7 +250,7 @@ def create_server(
         report_id: str | None = None,
         rescan: bool = False,
     ) -> dict[str, Any]:
-        """Cross-check a mobile finding claimed elsewhere (for example by an AI code reviewer) against APSA evidence for target. Give a MASWE-NNNN or CWE-N weakness or an APSA rule ID, optionally with a file path and line. Uses the latest report for target unless report_id is given; rescan=true scans first and saves a report. Verdicts: corroborated, same-file-other-location, file-not-analyzed, not-observed, partial, not-run, not-assessed. APSA never refutes a claim."""
+        """Cross-check a mobile finding claimed elsewhere (for example by an AI code reviewer) against APSA evidence for target. Give a MASWE-NNNN or CWE-N weakness or an APSA rule ID, optionally with a file path and line. Uses the latest report for target unless report_id is given; rescan=true scans first and saves a report. Verdicts: corroborated, same-file-other-location, path-unmatched (see candidate_paths), file-not-analyzed, not-observed, partial, not-run, not-assessed. APSA never refutes a claim."""
         authorized_target = authorize(target)
         if report_id and rescan:
             raise ValueError("Choose report_id or rescan, not both")

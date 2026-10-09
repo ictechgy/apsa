@@ -391,3 +391,87 @@ def test_pending_intent_variables_are_followed_in_the_function(store, project):
     assert evidence[12]["mutability"] == "FLAG_MUTABLE"
     assert "where the Intent variable is built" in found[12]
     assert "not built in this function" in found[15]
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "<?xml version='1.0'?><plist version='1.0'><dict><key>d</key><date>soon</date></dict></plist>",
+        "<?xml version='1.0' encoding='UTF-8Y'?><plist version='1.0'><dict/></plist>",
+        "<plist version='1.0'><key>a</key></plist>",
+    ],
+)
+def test_malformed_plists_never_abort_a_scan(store, project, document):
+    (project / "PrivacyInfo.xcprivacy").write_text(document)
+    (project / "Info.plist").write_text(document)
+    report = scan(store, project)
+    coverage = next(c for c in report["coverage"] if c["rule_id"] == "IOS-PRIVACY-MANIFEST")
+    assert coverage["state"] == "partial"
+    assert any("Info.plist" in warning for warning in report["inventory"]["warnings"])
+
+
+def test_gradle_library_detection_uses_plugin_declarations(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    root = tmp_path / "deps"
+    root.mkdir()
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.d">'
+        "<application/></manifest>"
+    )
+    (root / "build.gradle").write_text(
+        'plugins { id "com.android.application" }\n'
+        "android {\n"
+        "    defaultConfig {\n"
+        '        buildConfigField "String", "BRACE", "\\"{\\""\n'
+        "        targetSdkVersion 30\n"
+        "    }\n"
+        "    testOptions { targetSdk 21 }\n"
+        "}\n"
+        'dependencies { implementation "io.github.acme:android-library:1.0" }\n'
+    )
+    target = by_rule(scan(store, root), "ANDROID-TARGET-SDK")
+    assert [(t["evidence"][0]["line"], t["evidence"][0]["target_sdk"]) for t in target] == [(5, 30)]
+
+
+def test_insecure_random_fields_quantities_and_pins(store, project):
+    (project / "src/Fields.kt").write_text(
+        "import java.util.Random\n"
+        "class Fields {\n"
+        "    var authToken = 0L\n"
+        "    fun reset() {\n"
+        "        this.authToken = Random().nextLong()\n"
+        "        val passwordLength = Random().nextInt(8)\n"
+        "        val pinCode = Random().nextInt(9999)\n"
+        "    }\n"
+        "}\n"
+    )
+    found = sorted(
+        (f["evidence"][0]["line"], f["evidence"][0]["variable"])
+        for f in by_rule(scan(store, project), "SOURCE-INSECURE-RANDOM")
+        if f["evidence"][0]["path"].endswith("Fields.kt")
+    )
+    assert found == [(5, "authToken"), (7, "pinCode")]
+
+
+def test_pending_intent_lookup_is_byte_aligned_with_non_ascii_text(store, project):
+    comment = "// " + "한글 주석입니다 " * 15 + "\n"
+    (project / "src/Wide.kt").write_text(
+        "import android.app.PendingIntent\n"
+        "import android.content.Intent\n"
+        "class Wide {\n"
+        "    fun schedule(context: android.content.Context) {\n"
+        '        val intent = Intent("com.example.WIDE")\n'
+        + "        "
+        + comment
+        + "        PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_MUTABLE)\n"
+        "        intent.setPackage(context.packageName)\n"
+        "    }\n"
+        "}\n"
+    )
+    lines = [
+        f["evidence"][0]["line"]
+        for f in by_rule(scan(store, project), "AST-PENDINGINTENT-MUTABLE")
+        if f["evidence"][0]["path"].endswith("Wide.kt")
+    ]
+    # setPackage after the call does not make the Intent explicit at creation.
+    assert lines == [7]

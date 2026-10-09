@@ -362,13 +362,18 @@ def demo_target(directory: Path) -> Path:
     return directory
 
 
-def first_observed(store: Store, report: dict, limit: int = 200) -> dict[str, str]:
-    """Earliest saved report time at which each finding ID appeared for the same target."""
+def first_observed(store: Store, report: dict, limit: int = 1000) -> dict:
+    """Earliest saved report time at which each finding ID appeared for the same target.
+
+    Reads at most ``limit`` reports, newest first; ``complete`` is false when
+    older reports exist, so a time can be later than the true first observation.
+    """
+    history = store.target_reports(report["target"], report["created"], limit + 1)
     seen: dict[str, str] = {}
-    for item in reversed(store.target_reports(report["target"], report["created"], limit)):
+    for item in reversed(history[:limit]):
         for finding_item in store.report(item["id"]).get("findings", []):
             seen.setdefault(finding_item["id"], item["created"])
-    return seen
+    return {"times": seen, "reports": min(len(history), limit), "complete": len(history) <= limit}
 
 
 def checked_sarif_root(value: str | None) -> str | None:

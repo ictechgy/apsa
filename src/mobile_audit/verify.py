@@ -7,6 +7,7 @@ did not run there. Absence of an APSA finding is not evidence of absence.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import PurePosixPath
 
@@ -17,7 +18,8 @@ STATUS_STRENGTH = ("candidate", "version-affected", "configuration-confirmed", "
 NOTE = (
     "APSA evidence can corroborate a claim; it cannot refute one. not-observed means the related "
     "checks ran without an APSA finding at that location, which is not proof that the weakness is absent. "
-    "file-not-analyzed means APSA's source analysis did not cover the claimed file."
+    "file-not-analyzed means APSA's source analysis did not cover the claimed file; path-unmatched means "
+    "the claimed path matches no analyzed file exactly, and candidate_paths lists analyzed files it may name."
 )
 AST_SUFFIXES = (".java", ".kt", ".kts", ".swift", ".m")
 
@@ -43,14 +45,29 @@ def _weaknesses(weakness: str | None, rule: str | None) -> list[str]:
     return found
 
 
-def _relative(path: str, target: str) -> str:
-    """The claimed path relative to the audited target; absolute paths must lie inside it."""
+def _relative(path: str, targets: list[str]) -> str | None:
+    """The claimed path relative to the audited target; absolute paths must lie inside it.
+
+    ``targets`` holds the target's spellings (resolved and as requested); an
+    absolute claim is also resolved, so a symlinked spelling still matches.
+    None means the claim names the audited file itself.
+    """
     value = path.replace("\\", "/")
-    root = target.replace("\\", "/").rstrip("/") + "/"
-    if value.startswith(root):
-        value = value[len(root) :]
-    elif value.startswith("/") or re.match(r"[A-Za-z]:/", value):
-        raise ValueError("path is outside the audited target")
+    if value.startswith("/") or re.match(r"[A-Za-z]:/", value):
+        spellings = {value, os.path.realpath(path).replace("\\", "/")}
+        for target in targets:
+            base = target.replace("\\", "/").rstrip("/")
+            for spelling in spellings:
+                if spelling == base:
+                    return None
+                if spelling.startswith(base + "/"):
+                    value = spelling[len(base) + 1 :]
+                    break
+            else:
+                continue
+            break
+        else:
+            raise ValueError("path is outside the audited target")
     parts = [part for part in value.split("/") if part not in {"", "."}]
     if not parts or ".." in parts:
         raise ValueError("path must name a file inside the audited target")
@@ -94,7 +111,8 @@ def verify_claim(
         | ({rule} if rule else set())
     )
     target = str(report.get("target", ""))
-    claimed = _relative(path, target) if path else None
+    spellings = [target] + [str(report["requested_target"])] * bool(report.get("requested_target"))
+    claimed = _relative(path, spellings) if path else None
     states: dict[str, set[str]] = {}
     for item in report.get("coverage", []):
         if item.get("rule_id") in checks and isinstance(item.get("state"), str):
@@ -125,12 +143,26 @@ def verify_claim(
         else:
             elsewhere.append(summary)
     file_state = None
+    candidates: list[str] = []
     if claimed is not None:
-        for record in (report.get("inventory", {}).get("source_analysis") or {}).get("files", []):
-            if isinstance(record, dict) and _same_file(str(record.get("path", "")), claimed, target):
+        records = [
+            r
+            for r in (report.get("inventory", {}).get("source_analysis") or {}).get("files", [])
+            if isinstance(r, dict) and isinstance(r.get("path"), str)
+        ]
+        for record in records:
+            if _same_file(record["path"], claimed, target):
                 file_state = record.get("state")
         if file_state is None and claimed.endswith(AST_SUFFIXES):
-            file_state = "not-analyzed"
+            # A claim relative to another root (a module, a bare file name) may name an analyzed
+            # file APSA cannot pick out; list the analyzed files it could mean.
+            name = claimed.rsplit("/", 1)[-1]
+            candidates = sorted(
+                r["path"]
+                for r in records
+                if r["path"] == name or r["path"].endswith("/" + claimed) or r["path"].endswith("/" + name)
+            )
+            file_state = "path-unmatched" if candidates else "not-analyzed"
     observed = set().union(*states.values()) if states else set()
     if matches:
         verdict = "corroborated"
@@ -138,6 +170,8 @@ def verify_claim(
         verdict = "not-assessed"
     elif elsewhere:
         verdict = "same-file-other-location"
+    elif file_state == "path-unmatched":
+        verdict = "path-unmatched"
     elif file_state in {"skipped", "not-analyzed"}:
         verdict = "file-not-analyzed"
     elif "partial" in observed or file_state == "partial":
@@ -160,6 +194,7 @@ def verify_claim(
         "weaknesses": [{"id": w, "title": titles[w]} for w in weaknesses],
         "related_checks": [{"rule_id": c, "states": sorted(states.get(c, set()))} for c in checks],
         "source_file_state": file_state,
+        "candidate_paths": candidates[:20],
         "matching_findings": matches[:50],
         "other_findings_in_file": elsewhere[:50],
         "note": NOTE,

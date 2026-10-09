@@ -21,6 +21,7 @@ from .core import (
     MAX_SOURCE_TOTAL,
     digest,
     file_digest,
+    load_plist,
     read_bounded,
     read_under,
 )
@@ -397,7 +398,7 @@ def feature_manifest(raw: bytes, origin: str, inventory: dict) -> None:
 
 
 def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True) -> None:
-    value = plistlib.loads(raw)
+    value = load_plist(raw)
     if not isinstance(value, dict):
         raise ValueError("Info.plist must be a dictionary")
     inventory["platforms"].append("ios")
@@ -575,7 +576,7 @@ def inspect_target(
                     ios_plist(raw, name, inventory)
                 else:
                     ios_plist(raw, name, inventory, primary=False)
-                    value = plistlib.loads(raw)
+                    value = load_plist(raw)
                     if isinstance(value, dict) and value.get("CFBundleIdentifier"):
                         inventory.setdefault("embedded_bundles", []).append(
                             {"package": value["CFBundleIdentifier"], "path": name}

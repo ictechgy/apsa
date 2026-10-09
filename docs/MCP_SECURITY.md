@@ -19,8 +19,8 @@ what remains the client's or user's responsibility. It describes APSA 1.4.0.
   (types, defaults, enums, items, required names), sorted by name. Schema titles
   and other details the MCP SDK generates are left out, so the value follows
   APSA's definitions rather than SDK formatting. For 1.4.0 it is
-  `032a5d339c9e85ebc0d35655bca1cf43caac516ecb25ac883998540e7d9f4181` by default
-  and `5024790fc46c918b6a2bd3111f3bb53dbff23ed17ca4df85c775f3cc816e533b` with
+  `fdb8e4a2fdcf13a35df71a9a7290336b50a2e7f7fad66eff782959b6b0ba9037` by default
+  and `818ab0bab3202f364478d866d094cd035e7d7b5c60b252c256bb2ade37d79a79` with
   `--allow-runtime`. A test pins both values and recomputes them from the
   `tools/list` response; any change to a tool's name, description, parameters or
   annotations must update them deliberately.

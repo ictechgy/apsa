@@ -4,7 +4,6 @@ import copy
 import io
 import json
 import os
-import plistlib
 import re
 import shlex
 import stat
@@ -23,6 +22,7 @@ from .core import (
     digest,
     file_digest,
     finding,
+    load_plist,
     now,
     read_bounded,
     read_json,
@@ -211,7 +211,7 @@ class IOS:
         version = info.get("runtime", "").split("iOS-")[-1].replace("-", ".")
         root = Path(self.simctl(["get_app_container", self.device, self.package, "app"]).decode().strip())
         info_raw = read_bounded(root / "Info.plist")
-        info_plist = plistlib.loads(info_raw)
+        info_plist = load_plist(info_raw)
         if info_plist.get("CFBundleIdentifier") != self.package:
             raise ValueError("Simulator installed app identity differs from audited bundle")
         app = {

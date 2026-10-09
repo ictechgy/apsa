@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import plistlib
 import re
 from pathlib import PurePosixPath
 from typing import Any
 
-from .core import digest, finding
+from .core import digest, finding, load_plist
 
 MAX_EMBEDDED = 128
 
@@ -48,7 +47,7 @@ def analyze_embedded(archive, main_apps: list[dict], names: set[str], byte_budge
         try:
             if kind == "bundle":
                 info_raw = _read_member(archive, archive.getinfo(path), MAX_PLIST_BYTES)
-                info = plistlib.loads(info_raw)
+                info = load_plist(info_raw)
                 if not isinstance(info, dict):
                     raise BinaryFormatError("Embedded plist is not a dictionary")
                 executable = info.get("CFBundleExecutable")

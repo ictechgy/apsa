@@ -141,7 +141,15 @@ def test_first_observed_reads_only_the_exact_target_before_limiting(store, proje
     for _ in range(3):
         scan(store, nested)
     latest = scan(store, project)
-    seen = first_observed(store, latest, limit=2)
-    assert seen and set(seen.values()) == {first["created"]}
+    window = first_observed(store, latest, limit=2)
+    seen = window["times"]
+    assert seen and set(seen.values()) == {first["created"]} and window["complete"] is True
+    truncated = first_observed(store, latest, limit=1)
+    assert truncated["complete"] is False and truncated["reports"] == 1
+    properties = {p["name"]: p["value"] for p in cyclonedx(latest, truncated)["metadata"]["properties"]}
+    assert (
+        properties["apsa:first-observed-window"]
+        == "1 saved reports of this target; older reports were not read"
+    )
     assert all(item["target"] == str(project) for item in store.target_reports(str(project)))
     assert [item["id"] for item in store.target_reports(str(project))] == [latest["id"], first["id"]]

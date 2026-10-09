@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import plistlib
 import re
 import stat
 import sys
@@ -138,6 +139,18 @@ def read_under(root: Path, relative: Path, limit: int = MAX_FILE) -> bytes:
         return raw
     finally:
         os.close(current)
+
+
+def load_plist(raw: bytes) -> Any:
+    """``plistlib.loads`` for untrusted input: every parser failure becomes ValueError.
+
+    Malformed property lists raise AttributeError, IndexError, LookupError,
+    ExpatError and others besides InvalidFileException; none may abort an audit.
+    """
+    try:
+        return plistlib.loads(raw)
+    except Exception as error:
+        raise ValueError(f"invalid property list ({type(error).__name__})") from None
 
 
 def canonical_json(value: Any) -> str:

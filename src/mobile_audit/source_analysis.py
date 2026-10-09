@@ -266,7 +266,12 @@ class Analyzer:
         function = call_node
         while function is not None and function.type not in FUNCTIONS:
             function = function.parent
-        body = self.text(function)[: call_node.start_byte - function.start_byte] if function else ""
+        # Byte offsets: slice the encoded source, not decoded text, so non-ASCII stays aligned.
+        body = (
+            self.raw[function.start_byte : call_node.start_byte].decode("utf-8", errors="replace")
+            if function
+            else ""
+        )
         name = re.escape(text)
         parts = []
         for match in re.finditer(rf"\b{name}\b\s*(?::\s*[\w.?]+\s*)?=(?!=)", body):

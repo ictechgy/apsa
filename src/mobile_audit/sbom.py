@@ -63,8 +63,10 @@ def _property(name: str, value: object) -> dict:
     return {"name": f"apsa:{name}", "value": str(value).lower() if isinstance(value, bool) else str(value)}
 
 
-def cyclonedx(report: dict, first_observed: dict[str, str] | None = None) -> dict:
-    """``first_observed`` maps finding IDs to the earliest report time that showed them."""
+def cyclonedx(report: dict, first_observed: dict | None = None) -> dict:
+    """``first_observed`` is ``cli.first_observed``: earliest report times by finding ID,
+    the number of reports read and whether that covered the target's whole history."""
+    observed = (first_observed or {}).get("times") or {}
     inventory = report["inventory"]
     application = {
         "type": "application",
@@ -127,8 +129,8 @@ def cyclonedx(report: dict, first_observed: dict[str, str] | None = None) -> dic
             _property("finding-id", item["id"]),
             _property("evidence-status", item["status"]),
         ]
-        if first_observed and item["id"] in first_observed:
-            entry["properties"].append(_property("first-observed", first_observed[item["id"]]))
+        if item["id"] in observed:
+            entry["properties"].append(_property("first-observed", observed[item["id"]]))
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
@@ -149,6 +151,17 @@ def cyclonedx(report: dict, first_observed: dict[str, str] | None = None) -> dic
             "properties": [
                 _property("report-id", report["id"]),
                 _property("audit-incomplete", report_incomplete(report)),
+                *(
+                    [
+                        _property(
+                            "first-observed-window",
+                            f"{first_observed['reports']} saved reports of this target"
+                            + ("" if first_observed["complete"] else "; older reports were not read"),
+                        )
+                    ]
+                    if first_observed
+                    else []
+                ),
                 _property(
                     "scope",
                     "Dependencies APSA discovered from source declarations, lockfiles, SBOM input and binaries; "

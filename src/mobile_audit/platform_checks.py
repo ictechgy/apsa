@@ -6,11 +6,9 @@ for source trees and AAB manifests, where that engine does not.
 
 from __future__ import annotations
 
-import plistlib
 import re
-from xml.parsers.expat import ExpatError
 
-from .core import finding
+from .core import finding, load_plist
 from .rules import strip_comments
 
 # Google Play: new apps and updates must target API 36 from 2026-08-31.
@@ -65,8 +63,22 @@ SECRET_SUFFIXES = (
 MAX_SECRET_FINDINGS = 50
 RANDOM_REFERENCE = "https://developer.android.com/privacy-and-security/risks/weak-prng"
 # Identifier words that name security values; matched as whole camelCase/snake_case words.
-SECURITY_WORDS = {"token", "nonce", "salt", "otp", "secret", "password", "passcode", "iv"}
-ASSIGNMENT = re.compile(r"(?<![\w.])([A-Za-z_]\w{0,63})\s*(?::\s*[\w<>?.]{1,60}\s*)?=(?!=)")
+SECURITY_WORDS = {"token", "nonce", "salt", "otp", "secret", "password", "passcode", "pin", "iv"}
+# Names ending in these words hold a size or setting, not the secret value itself.
+QUANTITY_WORDS = {
+    "length",
+    "len",
+    "size",
+    "count",
+    "index",
+    "idx",
+    "max",
+    "min",
+    "attempts",
+    "retries",
+    "timeout",
+}
+ASSIGNMENT = re.compile(r"(?<!\w)([A-Za-z_]\w{0,63})\s*(?::\s*[\w<>?.]{1,60}\s*)?=(?!=)")
 WEAK_RANDOM = re.compile(
     r"(?<!\w)Random\s*\(|\bMath\.random\s*\(|(?<!\w)Random\.(?:Default|next[A-Z]\w{0,20})\b"
     r"|\bThreadLocalRandom\.current\s*\("
@@ -107,6 +119,15 @@ def exposed_providers(inventory: dict) -> set[str]:
     }
 
 
+LIBRARY_PLUGIN = re.compile(
+    r"""\bid\s*\(?\s*["']com\.android\.library["']"""
+    r"""|\bapply\s+plugin\s*:\s*["']com\.android\.library["']"""
+    r"""|\balias\s*\(\s*libs\.plugins\.[\w.]*?\blibrary\b[\w.]*\s*\)"""
+    r"""|\bandroidLibrary\b"""
+)
+STRING_LITERAL = re.compile(r""""(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""")
+
+
 def _blocks(text: str, name: str):
     """Yield (start, end) of each ``name { ... }`` block, matching braces."""
     for match in re.finditer(rf"\b{name}\s*\{{", text):
@@ -119,10 +140,13 @@ def _blocks(text: str, name: str):
 
 def _gradle_targets(path: str, text: str) -> list[tuple[str, int | None, int]]:
     """Literal targetSdk in defaultConfig and productFlavors of application modules."""
-    cleaned = strip_comments(text)
-    # Library targetSdk does not set the app's target; root scripts only define variables.
-    if re.search(r"""com\.android\.library|\bandroid[.-]library\b|androidLibrary\b""", cleaned):
+    without_comments = strip_comments(text)
+    # A library module's targetSdk does not set the app's target. Only its plugin declaration
+    # counts, not dependency coordinates that happen to mention "android-library".
+    if LIBRARY_PLUGIN.search(without_comments):
         return []
+    # String contents are blanked (offsets kept) so braces inside strings do not nest blocks.
+    cleaned = STRING_LITERAL.sub(lambda m: m[0][0] + " " * (len(m[0]) - 2) + m[0][-1], without_comments)
     found = []
     for block in ("defaultConfig", "productFlavors"):
         for start, end in _blocks(cleaned, block):
@@ -257,15 +281,8 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
             continue
         manifests.append(path)
         try:
-            document = plistlib.loads(text.encode("utf-8"))
-        except (
-            plistlib.InvalidFileException,
-            ExpatError,
-            ValueError,
-            TypeError,
-            OverflowError,
-            UnicodeError,
-        ):
+            document = load_plist(text.encode("utf-8"))
+        except ValueError:
             unreadable.append(path)
             continue
         types = document.get("NSPrivacyAccessedAPITypes", []) if isinstance(document, dict) else None
@@ -496,6 +513,8 @@ def _insecure_random(inventory: dict, sources: list[tuple[str, str]]) -> tuple[l
         cleaned = strip_comments(text)
         for match in ASSIGNMENT.finditer(cleaned):
             words = _words(match[1])
+            if words and words[-1] in QUANTITY_WORDS:
+                continue
             if not (
                 SECURITY_WORDS & set(words)
                 or any(a == "session" and b == "id" for a, b in zip(words, words[1:], strict=False))

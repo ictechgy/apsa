@@ -190,12 +190,13 @@ class Ipa:
         if not names:
             raise IpaError("Payload/*.app/Info.plist 없음 — IPA가 아니거나 손상되었습니다")
         try:
-            return plistlib.loads(self.zipf.read(names[0]))
-        except (plistlib.InvalidFileException, ValueError, TypeError,
-                AttributeError, RecursionError) as exc:
-            raise IpaError(f"Info.plist 파싱 실패: {type(exc).__name__}: {exc}") from exc
+            raw = self.zipf.read(names[0])
         except (RuntimeError, NotImplementedError, EOFError, OSError, zipfile.BadZipFile) as exc:
             raise IpaError(f"Info.plist 읽기 실패: {type(exc).__name__}: {exc}") from exc
+        try:
+            return plistlib.loads(raw)
+        except Exception as exc:  # 손상된 plist는 여러 예외 타입을 던진다(AttributeError, LookupError 등)
+            raise IpaError(f"Info.plist 파싱 실패: {type(exc).__name__}: {exc}") from exc
 
     def app_binary(self) -> bytes:
         """실행 파일 앞부분(BINARY_SCAN_LIMIT). 초과분은 스트리밍으로 문자열/카나리만 수집."""
@@ -243,7 +244,7 @@ class Ipa:
                 return {}
             self._provisioning_state = "parsed-unverified"
             return value
-        except (plistlib.InvalidFileException, ValueError, TypeError, RecursionError):
+        except Exception:  # 손상된 프로비저닝 plist는 미확인으로 둔다
             return {}
 
     def binary_strings(self) -> list:

@@ -8,7 +8,6 @@ parses attacker-controlled data and its allocations cannot be bounded here alone
 from __future__ import annotations
 
 import hashlib
-import plistlib
 import re
 import struct
 import zipfile
@@ -16,7 +15,7 @@ import zlib
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .core import MAX_ARCHIVE_TOTAL, MAX_FILES, finding, redact
+from .core import MAX_ARCHIVE_TOTAL, MAX_FILES, finding, load_plist, redact
 
 MAX_DEX_BYTES = 32 * 1024 * 1024
 MAX_BINARY_BYTES = 128 * 1024 * 1024
@@ -477,7 +476,7 @@ def _code_signature(raw: bytes, code: bytes | None = None) -> dict:
     raw = raw[:length]
     if magic == 0xFADE7171:
         return {
-            "entitlements": _entitlement_summary(plistlib.loads(raw[8:])),
+            "entitlements": _entitlement_summary(load_plist(raw[8:])),
             "source": "embedded-xml",
             "signature_verified": False,
         }
@@ -499,9 +498,7 @@ def _code_signature(raw: bytes, code: bytes | None = None) -> dict:
         if blob_magic == 0xFADE7171:
             if "entitlements" in result:
                 raise BinaryFormatError("duplicate XML entitlement blobs")
-            result["entitlements"] = _entitlement_summary(
-                plistlib.loads(raw[offset + 8 : offset + blob_length])
-            )
+            result["entitlements"] = _entitlement_summary(load_plist(raw[offset + 8 : offset + blob_length]))
             result["source"] = "embedded-xml"
         elif blob_magic == 0xFADE7172:
             result["der_entitlements_present"] = True
@@ -701,7 +698,7 @@ def _profile_metadata(raw: bytes) -> dict:
     start, end = raw.find(b"<?xml"), raw.find(b"</plist>")
     if start < 0 or end < start:
         raise BinaryFormatError("provisioning profile has no observable XML plist")
-    value = plistlib.loads(raw[start : end + len(b"</plist>")])
+    value = load_plist(raw[start : end + len(b"</plist>")])
     if not isinstance(value, dict):
         raise BinaryFormatError("provisioning payload must be a dictionary")
     return {
@@ -805,7 +802,7 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                 app: dict[str, Any] = {"plist": item.filename}
                 try:
                     info_raw = _read_member(archive, item, MAX_PLIST_BYTES)
-                    info = plistlib.loads(info_raw)
+                    info = load_plist(info_raw)
                     from .core import digest
 
                     app["info_plist_sha256"] = digest(info_raw)

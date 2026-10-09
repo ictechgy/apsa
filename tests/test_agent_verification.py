@@ -237,7 +237,9 @@ def test_verify_matches_files_by_path_not_by_bare_name(store, tmp_path, monkeypa
     assert verify_claim(report, path="ios/feature/CallActivity.kt", **claim)["verdict"] != "corroborated"
     # A bare file name could be any CallActivity.kt.
     bare = verify_claim(report, path="CallActivity.kt", **claim)
-    assert bare["verdict"] == "file-not-analyzed" and bare["source_file_state"] == "not-analyzed"
+    assert bare["verdict"] == "path-unmatched" and bare["candidate_paths"] == ["feature/CallActivity.kt"]
+    module = verify_claim(report, path="src/feature/CallActivity.kt", **claim)
+    assert module["verdict"] == "path-unmatched" and "path-unmatched" in module["note"]
     assert verify_claim(report, path="feature/Missing.kt", **claim)["verdict"] == "file-not-analyzed"
     assert (
         verify_claim(report, path="AndroidManifest.xml", weakness="MASWE-0035")["verdict"]
@@ -253,3 +255,19 @@ def test_verify_matches_files_by_path_not_by_bare_name(store, tmp_path, monkeypa
         verify_claim(report, weakness="CWE-089")["weaknesses"]
         == verify_claim(report, weakness="CWE-89")["weaknesses"]
     )
+
+
+def test_verify_accepts_symlinked_and_whole_target_claims(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    real = tmp_path / "real"
+    (real / "feature").mkdir(parents=True)
+    (real / "feature/CallActivity.kt").write_text(WRAPPERS)
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    (tmp_path / "specs.toml").write_text(SPEC)
+    report = scan(store, link, specs=load_specs(tmp_path / "specs.toml"))
+    claim = {"line": 10, "weakness": "MASWE-0035"}
+    for spelling in (link / "feature/CallActivity.kt", real / "feature/CallActivity.kt"):
+        assert verify_claim(report, path=str(spelling), **claim)["verdict"] == "corroborated"
+    whole = verify_claim(report, path=str(link), weakness="MASWE-0035")
+    assert whole["claim"]["path"] is None and whole["verdict"] == "corroborated"
