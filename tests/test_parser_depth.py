@@ -101,3 +101,59 @@ def test_objc_dead_branch_is_not_the_kept_branch():
     )
     report = analyze_sources([("Handler.m", text)])
     assert not report["metadata"]["files"][0]["parse_errors"]
+
+
+def test_aab_feature_manifest_components_keep_module_and_delivery(tmp_path):
+    import zipfile
+
+    from mobile_audit.inputs import inspect_target
+    from tests.test_next_hardening import attribute, bundle, field, xmlnode
+
+    android = "http://schemas.android.com/apk/res/android"
+    dist = "http://schemas.android.com/apk/distribution"
+    true = field(7, field(8, 1))
+
+    def element(name, *, namespace="", attrs=b"", children=()):
+        body = (field(2, namespace) if namespace else b"") + field(3, name) + attrs
+        return field(1, body + b"".join(field(5, child) for child in children))
+
+    module = element(
+        "module",
+        namespace=dist,
+        attrs=attribute("title", "@string/feature_title", namespace=dist),
+        children=(element("delivery", namespace=dist, children=(element("on-demand", namespace=dist),)),),
+    )
+    view = xmlnode("action", attribute("name", "android.intent.action.VIEW", namespace=android))
+    data = xmlnode(
+        "data",
+        attribute("scheme", "https", namespace=android)
+        + attribute("host", "feature.example", namespace=android),
+    )
+    activity = xmlnode(
+        "activity",
+        attribute("name", "audit.synthetic.feature.Entry", namespace=android)
+        + attribute("exported", namespace=android, compiled=true),
+        children=(xmlnode("intent-filter", children=(view, data)),),
+    )
+    feature = xmlnode(
+        "manifest",
+        attribute("package", "audit.synthetic") + attribute("split", "feature"),
+        children=(module, xmlnode("application", children=(activity,))),
+    )
+    path = bundle(tmp_path)
+    with zipfile.ZipFile(path, "a") as archive:
+        archive.writestr("checkout/manifest/AndroidManifest.xml", feature)
+        archive.writestr("checkout/dex/classes.dex", b"")
+    inventory, _ = inspect_target(path)
+    assert inventory["package"] == "audit.synthetic"
+    assert len(inventory["android_config"]) == 1
+    entry = next(m for m in inventory["aab_feature_manifests"] if m["module"] == "checkout")
+    assert entry["split"] == "feature" and entry["installation_state"] == "unknown"
+    assert entry["delivery"] == "on-demand" and entry["title_resource"] == "@string/feature_title"
+    assert entry["components"] == 1 and entry["deep_links"] == 1
+    component = next(c for c in inventory["components"] if c.get("module") == "checkout")
+    assert component["name"] == "audit.synthetic.feature.Entry" and component["exported"] == "true"
+    assert component["module_delivery"] == "on-demand"
+    link = next(d for d in inventory["deep_links"] if d.get("module") == "checkout")
+    assert link["host"] == "feature.example"
+    assert inventory["partial"]

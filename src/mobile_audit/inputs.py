@@ -325,6 +325,54 @@ def android_manifest(raw: bytes, origin: str, inventory: dict) -> None:
                 )
 
 
+DIST_NS = "{http://schemas.android.com/apk/distribution}"
+
+
+def feature_manifest(raw: bytes, origin: str, inventory: dict) -> None:
+    """Record a bundle feature module's components with module provenance.
+
+    Feature manifests merge into the installed app only when that module is
+    delivered; the base manifest keeps app identity and application flags.
+    """
+    module = origin.split("/", 1)[0]
+    scratch = {
+        "platforms": [],
+        "apps": [],
+        "android_config": [],
+        "components": [],
+        "deep_links": [],
+    }
+    android_manifest(raw, origin, scratch)
+    root = ET.fromstring(raw)
+    delivery = "unspecified"
+    title = ""
+    dist = root.find(DIST_NS + "module")
+    if dist is not None:
+        title = dist.get(DIST_NS + "title", "")
+        node = dist.find(DIST_NS + "delivery")
+        if node is not None:
+            kinds = [child.tag.removeprefix(DIST_NS) for child in node]
+            delivery = ",".join(sorted(kinds)) or "unspecified"
+        elif dist.get(DIST_NS + "onDemand") is not None:
+            delivery = "on-demand" if dist.get(DIST_NS + "onDemand") == "true" else "install-time"
+    for item in scratch["components"]:
+        inventory["components"].append({**item, "module": module, "module_delivery": delivery})
+    for item in scratch["deep_links"]:
+        inventory["deep_links"].append({**item, "module": module, "module_delivery": delivery})
+    inventory.setdefault("aab_feature_manifests", []).append(
+        {
+            "module": module,
+            "path": origin,
+            "split": root.get("split", ""),
+            "delivery": delivery,
+            "title_resource": title,
+            "components": len(scratch["components"]),
+            "deep_links": len(scratch["deep_links"]),
+            "installation_state": "unknown",
+        }
+    )
+
+
 def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True) -> None:
     value = plistlib.loads(raw)
     if not isinstance(value, dict):
@@ -474,6 +522,17 @@ def inspect_target(
                         "unresolved_attributes": bool(notes),
                     }
                 android_manifest(raw, name, inventory)
+            elif (
+                target.suffix.lower() == ".aab"
+                and re.fullmatch(r"[^/]+/manifest/AndroidManifest\.xml", name)
+                and not raw.lstrip().startswith(b"<")
+            ):
+                from .aab_manifest import decode_manifest
+
+                raw, notes = decode_manifest(raw)
+                inventory["warnings"].extend(f"{name}: {note}" for note in notes)
+                inventory["partial"] |= bool(notes)
+                feature_manifest(raw, name, inventory)
             elif (
                 (name.endswith("Info.plist") or (source_input and name == configuration))
                 and (not configuration or name == configuration)
@@ -700,7 +759,7 @@ def inspect_target(
                     }
                 )
                 inventory["warnings"].append(
-                    "AAB base manifest and declared module DEX are inspected; resource/device split merging and installed feature reachability are not established."
+                    "AAB base manifest, feature module manifests and declared module DEX are inspected; resource/device split merging and installed feature reachability are not established."
                 )
         if target.suffix.lower() == ".ipa":
             inventory["warnings"].append(
