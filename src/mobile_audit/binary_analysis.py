@@ -392,7 +392,81 @@ def _entitlement_summary(value: Any) -> dict:
     return summary
 
 
-def _code_signature(raw: bytes) -> dict:
+CODE_HASHES = {1: ("sha1", 20), 2: ("sha256", 32), 3: ("sha256", 20), 4: ("sha384", 48)}
+MAX_CODE_SLOTS = 65_536
+
+
+def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) -> dict:
+    """Recompute CodeDirectory page and entitlement-slot hashes.
+
+    Agreement shows the signed code pages and embedded entitlements match this
+    directory; it does not authenticate the CMS signature, certificate chain,
+    team or provisioning, so signature_verified stays false.
+    """
+    if len(blob) < 44:
+        raise BinaryFormatError("truncated CodeDirectory")
+    version, _, hash_offset, ident_offset, special, slots, code_limit = struct.unpack_from(
+        ">IIIIIII", blob, 8
+    )
+    hash_size, hash_type, _, page_log = struct.unpack_from(">BBBB", blob, 36)
+    if hash_type not in CODE_HASHES or CODE_HASHES[hash_type][1] != hash_size:
+        return {"hash_type": hash_type, "integrity": "unsupported-hash"}
+    if version >= 0x20300 and len(blob) >= 64:
+        code_limit = struct.unpack_from(">Q", blob, 56)[0] or code_limit
+    if slots > MAX_CODE_SLOTS or special > 64 or not 0 <= page_log <= 24:
+        raise BinaryFormatError("CodeDirectory slot or page budget exceeded")
+    if hash_offset < special * hash_size or hash_offset + slots * hash_size > len(blob):
+        raise BinaryFormatError("CodeDirectory hashes are outside the blob")
+    algorithm, _ = CODE_HASHES[hash_type]
+    identifier = ""
+    if 0 < ident_offset < len(blob):
+        identifier = _safe_text(
+            blob[ident_offset : blob.find(b"\0", ident_offset, ident_offset + 256)].decode(
+                "utf-8", errors="replace"
+            )
+        )
+    result: dict[str, Any] = {
+        "version": version,
+        "hash_type": algorithm,
+        "page_size": 1 << page_log if page_log else 0,
+        "code_slots": slots,
+        "code_limit": code_limit,
+        "identifier": identifier,
+        "cdhash": hashlib.new(algorithm, blob).hexdigest()[:40],
+    }
+    if version >= 0x20200 and len(blob) >= 52:
+        team_offset = struct.unpack_from(">I", blob, 48)[0]
+        if 0 < team_offset < len(blob):
+            end = blob.find(b"\0", team_offset, team_offset + 64)
+            result["team_identifier_claim"] = _safe_text(blob[team_offset:end].decode("ascii", "replace"))
+
+    def digest(data: bytes) -> bytes:
+        return hashlib.new(algorithm, data).digest()[:hash_size]
+
+    mismatched: list[int] = []
+    if code is None or code_limit > len(code) or not page_log:
+        result["integrity"] = "unverifiable"
+    else:
+        page = 1 << page_log
+        for index in range(slots):
+            expected = blob[hash_offset + index * hash_size : hash_offset + (index + 1) * hash_size]
+            chunk = code[index * page : min((index + 1) * page, code_limit)]
+            if digest(chunk) != expected:
+                mismatched.append(index)
+        result["pages_mismatched"] = len(mismatched)
+        result["mismatched_pages"] = mismatched[:64]
+        result["integrity"] = "consistent" if not mismatched else "modified"
+    for slot, name in ((5, "entitlements"), (7, "der_entitlements")):
+        if slot <= special and slot in entitlement_blobs:
+            expected = blob[hash_offset - slot * hash_size : hash_offset - (slot - 1) * hash_size]
+            matches = digest(entitlement_blobs[slot]) == expected
+            result[name + "_bound"] = matches
+            if not matches:
+                result["integrity"] = "modified"
+    return result
+
+
+def _code_signature(raw: bytes, code: bytes | None = None) -> dict:
     if len(raw) < 8 or len(raw) > MAX_SIGNATURE_BYTES:
         raise BinaryFormatError("invalid code signature size")
     magic, length = struct.unpack_from(">II", raw)
@@ -412,8 +486,10 @@ def _code_signature(raw: bytes) -> dict:
     if count > 128 or 12 + count * 8 > length:
         raise BinaryFormatError("invalid code signature index table")
     result: dict[str, Any] = {"source": "embedded-signature", "signature_verified": False}
+    directories = []
+    entitlement_blobs: dict[int, bytes] = {}
     for index in range(count):
-        _, offset = struct.unpack_from(">II", raw, 12 + index * 8)
+        slot_type, offset = struct.unpack_from(">II", raw, 12 + index * 8)
         if offset < 12 + count * 8 or offset + 8 > length:
             raise BinaryFormatError("code signature sub-blob is outside the signature")
         blob_magic, blob_length = struct.unpack_from(">II", raw, offset)
@@ -428,6 +504,24 @@ def _code_signature(raw: bytes) -> dict:
             result["source"] = "embedded-xml"
         elif blob_magic == 0xFADE7172:
             result["der_entitlements_present"] = True
+        elif blob_magic == 0xFADE0C02 and (slot_type == 0 or 0x1000 <= slot_type < 0x1005):
+            directories.append(raw[offset : offset + blob_length])
+        elif blob_magic == 0xFADE0B01:
+            result["cms_signature_present"] = blob_length > 8
+        if blob_magic in (0xFADE7171, 0xFADE7172) and slot_type in (5, 7):
+            entitlement_blobs[slot_type] = raw[offset : offset + blob_length]
+    if directories:
+        result["code_directories"] = [
+            _code_directory(blob, code, entitlement_blobs) for blob in directories[:5]
+        ]
+        states = {d.get("integrity") for d in result["code_directories"]}
+        result["integrity"] = (
+            "modified"
+            if "modified" in states
+            else "consistent"
+            if states == {"consistent"}
+            else "unverifiable"
+        )
     return result
 
 
@@ -514,9 +608,35 @@ def _macho_slice(raw: bytes, offset: int, size: int) -> dict:
                 raise BinaryFormatError("code signature is outside slice or exceeds budget")
             metadata["code_signature"] = {
                 "state": "present",
-                **_code_signature(raw[offset + dataoff : offset + dataoff + datasize]),
+                **_code_signature(
+                    raw[offset + dataoff : offset + dataoff + datasize], raw[offset : offset + size]
+                ),
             }
         cursor += command_size
+    encryption = metadata["encryption"]
+    signature = metadata["code_signature"]
+    if encryption["state"] == "encrypted" and signature.get("code_directories"):
+        # App Store encryption follows signing; the kernel checks decrypted pages.
+        start, end = encryption["offset"], encryption["offset"] + encryption["size"]
+        for directory in signature["code_directories"]:
+            page = directory.get("page_size") or 0
+            pages = directory.get("mismatched_pages", [])
+            if (
+                directory.get("integrity") == "modified"
+                and page
+                and len(pages) == directory.get("pages_mismatched")
+                and all(index * page < end and (index + 1) * page > start for index in pages)
+                and directory.get("entitlements_bound", True)
+            ):
+                directory["integrity"] = "unverifiable-encrypted-pages"
+        states = {d.get("integrity") for d in signature["code_directories"]}
+        signature["integrity"] = (
+            "modified"
+            if "modified" in states
+            else "consistent"
+            if states == {"consistent"}
+            else "unverifiable"
+        )
     if cursor != commands_end:
         raise BinaryFormatError("Mach-O load command total disagrees with header")
     return metadata
@@ -796,6 +916,24 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                     "checked" if entitlements_complete else "partial" if signatures else "not-run",
                     "codesign-metadata",
                     "Embedded XML entitlement observation only. DER entitlements and cryptographic signature verification are not implemented. Provisioning profile values are permissions, not effective app entitlements.",
+                )
+            )
+            integrity = [signature.get("integrity", "unverifiable") for signature in signatures]
+            if "modified" in integrity:
+                result["warnings"].append(
+                    "Main executable code pages or entitlements do not match their CodeDirectory hashes; "
+                    "the binary changed after signing or is corrupt."
+                )
+            result["coverage"].append(
+                _coverage(
+                    "BINARY-IOS-CODE-INTEGRITY",
+                    "checked"
+                    if integrity and all(state in {"consistent", "modified"} for state in integrity)
+                    else "partial"
+                    if integrity
+                    else "not-run",
+                    "codedirectory-hashes",
+                    "Recomputes CodeDirectory page and entitlement-slot hashes. Agreement is internal integrity only; the CMS signature, certificate chain, team identity and provisioning are not authenticated.",
                 )
             )
             result["coverage"].append(

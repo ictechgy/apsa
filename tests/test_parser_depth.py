@@ -157,3 +157,96 @@ def test_aab_feature_manifest_components_keep_module_and_delivery(tmp_path):
     link = next(d for d in inventory["deep_links"] if d.get("module") == "checkout")
     assert link["host"] == "feature.example"
     assert inventory["partial"]
+
+
+def signed_macho(*, tamper_code=False, tamper_entitlements=False):
+    import hashlib
+    import plistlib
+    import struct
+
+    entitlements = plistlib.dumps({"get-task-allow": False})
+    blob = struct.pack(">II", 0xFADE7171, len(entitlements) + 8) + entitlements
+    code_limit, page, slots, special = 4196, 4096, 2, 5
+    ident = b"audit.synthetic\0"
+    hash_offset = 44 + len(ident) + special * 32
+    cd_length = hash_offset + slots * 32
+    total = 28 + cd_length + len(blob)
+    header = struct.pack("<IiiIIIII", 0xFEEDFACF, 0x100000C, 0, 2, 1, 16, 0x200000, 0)
+    command = struct.pack("<IIII", 0x1D, 16, code_limit, total)
+    code = bytearray(header + command)
+    code += bytes((index * 7) % 251 for index in range(code_limit - len(code)))
+    pages = b"".join(
+        hashlib.sha256(bytes(code[i * page : min((i + 1) * page, code_limit)])).digest() for i in range(slots)
+    )
+    specials = hashlib.sha256(blob).digest() + bytes(32 * 4)
+    directory = (
+        struct.pack(
+            ">IIIIIIIIIBBBBI",
+            0xFADE0C02,
+            cd_length,
+            0x20001,
+            0,
+            hash_offset,
+            44,
+            special,
+            slots,
+            code_limit,
+            32,
+            2,
+            0,
+            12,
+            0,
+        )
+        + ident
+        + specials
+        + pages
+    )
+    if tamper_code:
+        code[300] ^= 1
+    if tamper_entitlements:
+        blob = blob.replace(b"<false/>", b"<true/> ")
+    superblob = (
+        struct.pack(">III", 0xFADE0CC0, total, 2)
+        + struct.pack(">II", 0, 28)
+        + struct.pack(">II", 5, 28 + cd_length)
+        + directory
+        + blob
+    )
+    return bytes(code) + superblob
+
+
+@pytest.mark.parametrize(
+    "tamper,integrity,bound",
+    [
+        ({}, "consistent", True),
+        ({"tamper_code": True}, "modified", True),
+        ({"tamper_entitlements": True}, "modified", False),
+    ],
+)
+def test_code_directory_page_and_entitlement_hashes_are_recomputed(tamper, integrity, bound):
+    from mobile_audit.binary_analysis import _macho_slice
+
+    raw = signed_macho(**tamper)
+    signature = _macho_slice(raw, 0, len(raw))["code_signature"]
+    directory = signature["code_directories"][0]
+    assert directory["hash_type"] == "sha256" and directory["code_slots"] == 2
+    assert directory["identifier"] == "audit.synthetic"
+    assert directory["entitlements_bound"] is bound
+    assert signature["integrity"] == integrity
+    assert signature["signature_verified"] is False
+
+
+def test_encrypted_pages_are_unverifiable_not_modified():
+    import struct
+
+    from mobile_audit.binary_analysis import _macho_slice
+
+    raw = bytearray(signed_macho())
+    # Add an encryption command over the first page; that page no longer matches.
+    assert struct.unpack_from("<I", raw, 16)[0] == 1
+    command = struct.pack("<IIIIII", 0x2C, 24, 64, 4000, 1, 0)
+    raw[16:24] = struct.pack("<II", 2, 40)
+    raw[48:72] = command
+    signature = _macho_slice(bytes(raw), 0, len(raw))["code_signature"]
+    assert signature["code_directories"][0]["integrity"] == "unverifiable-encrypted-pages"
+    assert signature["integrity"] == "unverifiable"
