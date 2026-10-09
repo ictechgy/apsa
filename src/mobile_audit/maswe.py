@@ -115,6 +115,11 @@ def weakness_index() -> dict:
     return json.loads(files("mobile_audit").joinpath("data", "maswe.json").read_text())
 
 
+def from_beta(identifier: str) -> tuple[str, ...]:
+    """MASWE v1 identifiers that absorbed a beta identifier (MASTG v2.0 tests use beta IDs)."""
+    return tuple(w["id"] for w in weakness_index()["weaknesses"] if identifier in w.get("beta", []))
+
+
 def weaknesses_for(rule_id: str) -> tuple[str, ...]:
     if rule_id.startswith(ADVISORY_PREFIXES):
         return RULE_WEAKNESSES["DEPENDENCY-CVE"]

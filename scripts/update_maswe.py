@@ -35,6 +35,8 @@ def build(raw: bytes, version: str) -> dict:
                 "profiles": list(entry.get("profiles") or []),
                 "masvs": list(mappings.get("masvs-v2") or []),
                 "cwe": [f"CWE-{value}" for value in mappings.get("cwe") or [] if value != ""],
+                # Beta identifiers still used by MASTG v2.0 tests.
+                "beta": list(mappings.get("maswe-beta") or []),
             }
         )
     return {

@@ -1,0 +1,36 @@
+name: OWASP MASTG v2.0 demo evaluation
+
+on:
+  push:
+    branches: ["dev/phase3"]
+    paths: ["src/**", "benchmarks/mastg_demos.py", ".github/workflows/mastg-demos.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - run: uv sync --locked --extra dev
+      - name: Scan each labeled demo of the pinned MASTG release with APSA
+        run: |
+          uv run --locked python -m benchmarks.mastg_demos \
+            --work "$RUNNER_TEMP/mastg-work" --out "$RUNNER_TEMP/mastg/results.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mastg-demo-evaluation
+          path: ${{ runner.temp }}/mastg
+          if-no-files-found: error
+          retention-days: 90
