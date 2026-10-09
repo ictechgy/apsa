@@ -534,7 +534,7 @@ def test_unreadable_build_script_counts_as_hidden_reference():
     assert graph.unresolved_project_references and graph.warnings
 
 
-def test_osv_budget_queries_exact_first_and_counts_unchecked_packages(store):
+def test_osv_budget_queries_declared_packages_before_transitive_lockfile_coordinates(store):
     import json
 
     import httpx
@@ -542,19 +542,25 @@ def test_osv_budget_queries_exact_first_and_counts_unchecked_packages(store):
     from mobile_audit.audit import dependency_coverage_state
     from mobile_audit.intel import query_dependencies
 
-    def dep(index, confidence, **extra):
+    def dep(name, confidence, **extra):
         return {
             "ecosystem": "Maven",
-            "name": f"com.example:lib{index}",
+            "name": name,
             "version": "1.0",
-            "path": "app/gradle.lockfile",
+            "path": "app/build.gradle",
             "confidence": confidence,
             **extra,
         }
 
-    superseded = dep(0, "declared", resolution={"state": "superseded-by-resolved-build"})
-    declared = [dep(index, "declared") for index in range(1, 4)]
-    exact = [dep(index, "exact") for index in range(4, 104)]
+    lock = {"path": "app/gradle.lockfile", "version_source": "gradle-lockfile-resolved"}
+    transitive = [dep(f"androidx.lib:lib{index:03}", "exact", **lock) for index in range(120)]
+    # A build-file declaration superseded by the lockfile still marks its coordinate as direct.
+    superseded = dep(
+        "com.squareup.okhttp3:okhttp", "declared", resolution={"state": "superseded-by-resolved-build"}
+    )
+    resolved = dep("com.squareup.okhttp3:okhttp", "exact", **lock)
+    declared = dep("org.example:direct", "declared")
+    unresolved = [dep(f"org.example:catalog{index}", "unknown") for index in range(3)]
     queried = []
 
     def handler(request):
@@ -562,9 +568,57 @@ def test_osv_budget_queries_exact_first_and_counts_unchecked_packages(store):
         return httpx.Response(200, json={"vulns": []})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        _, errors = query_dependencies(store, [superseded, *declared, *exact], client)
-    assert sorted(queried) == sorted(item["name"] for item in exact)
-    assert errors == ["Dependency query limit of 100 reached; 3 remaining packages not checked"]
-    health = {(feed["source"]): feed for feed in store.feeds()}
-    for item in declared:
+        _, errors = query_dependencies(
+            store, [*transitive, superseded, resolved, declared, *unresolved], client
+        )
+    assert len(queried) == 100
+    assert queried[:2] == ["com.squareup.okhttp3:okhttp", "org.example:direct"]
+    assert queried[2:] == [item["name"] for item in transitive[:98]]
+    assert [e for e in errors if e.startswith("Unresolved/unsupported")] == [
+        f"Unresolved/unsupported dependency: Maven {item['name']} 1.0" for item in unresolved
+    ]
+    assert errors[-1] == "Dependency query limit of 100 reached; 22 remaining packages not checked"
+    health = {feed["source"]: feed for feed in store.feeds()}
+    for item in transitive[98:]:
         assert dependency_coverage_state(item, health.get(f"osv:Maven:{item['name']}:1.0")) == "not-run"
+
+
+def test_application_lockfile_keeps_library_declarations_within_the_osv_budget(tmp_path, store):
+    import json
+
+    import httpx
+
+    from mobile_audit.intel import query_dependencies
+
+    androidx = "".join(f"androidx.lib:lib{index:03}:1.0=releaseRuntimeClasspath\n" for index in range(120))
+    project(
+        tmp_path,
+        'plugins { id("com.android.application") }\ndependencies { implementation(project(":core")) }\n',
+        {
+            "settings.gradle.kts": 'rootProject.name = "synthetic"\ninclude(":app", ":core")\n',
+            "app/gradle.lockfile": androidx
+            + "com.squareup.okhttp3:okhttp:4.9.0=releaseRuntimeClasspath\n"
+            + "org.bouncycastle:bcprov-jdk18on:1.77=releaseRuntimeClasspath\n",
+            "core/build.gradle.kts": 'plugins { id("com.android.library") }\n'
+            "dependencies {\n"
+            '  implementation("com.squareup.okhttp3:okhttp:4.9.0")\n'
+            "  implementation(libs.bcprov)\n}\n",
+        },
+    )
+    catalog = tmp_path / "gradle/libs.versions.toml"
+    catalog.write_text(
+        catalog.read_text().replace(
+            "[bundles]",
+            'bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version = "1.77" }\n\n[bundles]',
+        )
+    )
+    inventory, _ = inspect_target(tmp_path)
+    queried = []
+
+    def handler(request):
+        queried.append(json.loads(request.content)["package"]["name"])
+        return httpx.Response(200, json={"vulns": []})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        query_dependencies(store, inventory["dependencies"], client)
+    assert {"com.squareup.okhttp3:okhttp", "org.bouncycastle:bcprov-jdk18on"} <= set(queried[:2])

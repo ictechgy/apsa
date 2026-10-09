@@ -4,7 +4,7 @@ English is the source of truth. [한국어](FPFN_RESULTS.ko.md) ·
 [Truth](fpfn_truth.json) · [Evaluation](fpfn_eval.py) ·
 [First result JSON](results/2026-10-09-fpfn-first.json).
 
-This development evaluation (unreleased; not part of APSA 1.2.0) measures source
+This evaluation of the APSA 1.3.0 development work (not part of 1.2.0) measures source
 findings on real security fixes in public Android and iOS apps. It is a narrow
 sample, not a production detection rate.
 
@@ -53,7 +53,7 @@ recorded.
 | OpenClaw Android canvas bridge (CVE-2026-35643) | JS bridge | TP (line) | FP |
 | Tiddloid editor file-URL access | WebView file access | TP (line) | TN |
 | Amaze File Manager `usesCleartextTraffic` | Android cleartext | TP (file) | TN |
-| Wikipedia iOS `NSAllowsArbitraryLoads` | iOS ATS | TP (file) | unscored (path label) |
+| Wikipedia iOS `NSAllowsArbitraryLoads` | iOS ATS | TP (file) | unscored in the first result (path label); TN in the rerun |
 | Home Assistant `MyActivity` WebView URL (CVE-2023-41898) | Untrusted WebView URL | FN | TN |
 | Element X Android call intent URL (CVE-2025-27599) | Untrusted WebView URL | FN | TN |
 | Element X iOS call deep link (CVE-2026-55644) | Untrusted WebView URL | FN | TN |

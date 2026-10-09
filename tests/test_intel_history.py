@@ -121,3 +121,20 @@ def test_scan_keeps_observed_chipset_and_vendor_patch_fields(store, tmp_path):
     assert report["environment"]["soc_manufacturer"] == "Qualcomm"
     assert report["environment"]["vendor_security_patch"] == "2023-12-05"
     assert "unrelated" not in report["environment"]
+
+
+def test_records_cached_before_vendor_scopes_derive_scope_from_component():
+    legacy = [{k: v for k, v in record.items() if k != "vendor_scope"} for record in records()]
+    environment = {
+        "platform": "android",
+        "version": "14",
+        "security_patch": "2024-03-05",
+        "soc_manufacturer": "Qualcomm",
+        "vendor_security_patch": "2023-12-05",
+    }
+    _, advisories = correlate({"platforms": ["android"], "dependencies": []}, legacy, environment)
+    by_id = {a["id"]: a for a in advisories}
+    assert by_id["CVE-2024-00002"]["state"] == "potentially-affected"
+    assert by_id["CVE-2024-00002"]["vendor_scope"] == "qualcomm"
+    assert by_id["CVE-2024-00001"]["state"] == "vendor-patch-level-satisfied"
+    assert by_id["CVE-2024-00001"]["vendor_scope"] == "platform"

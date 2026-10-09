@@ -20,7 +20,7 @@ from .core import (
     uid,
 )
 from .engine import analyze_target
-from .intel import query_dependencies, source_health
+from .intel import query_dependencies, source_health, vendor_scope
 from .ios_ranges import PRODUCTS, apple_branch_range, apple_cna, custom_boundaries, numeric_version
 from .source_context import superseded
 from .store import Store
@@ -89,6 +89,11 @@ def dependency_coverage_state(dep: dict, health: dict | None) -> str:
     if dep.get("confidence") != "unknown" and health and health["status"] == "ok" and not health["stale"]:
         return "checked"
     return "not-run"
+
+
+def android_scope(record: dict) -> str:
+    """Records cached before vendor scopes existed derive it from their component."""
+    return record.get("vendor_scope") or vendor_scope(str(record.get("component") or ""))
 
 
 def os_cve_coverage(environment: dict | None, advisories: list[dict], feeds: list[dict]) -> dict:
@@ -171,7 +176,7 @@ def correlate(
                 state = "simulator-only"
                 basis = "Simulator observations cannot establish the security patch state of physical iOS devices."
             elif platform == "android" and record.get("fixed_patch_level"):
-                scope = record.get("vendor_scope", "platform")
+                scope = android_scope(record)
                 observed_soc = str(environment.get("soc_manufacturer") or "").lower()
                 soc_vendor = next(
                     (
@@ -254,7 +259,9 @@ def correlate(
             "fixed_patch_level": record.get("fixed_patch_level", ""),
             "updated_aosp_versions": record.get("updated_aosp_versions", ""),
             "state": state,
-            "vendor_scope": record.get("vendor_scope", ""),
+            "vendor_scope": android_scope(record)
+            if platform == "android"
+            else record.get("vendor_scope", ""),
             "chipset_vendor": chipset,
             "known_exploited": record["id"] in known,
             "exploitation_reported": record.get("exploitation_reported", False),

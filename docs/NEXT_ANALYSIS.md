@@ -123,23 +123,41 @@ in APSA 1.3.0. They are not part of APSA 1.2.0 or earlier packages.
 - **Device evidence.** No physical device was used; see
   [DEVICE_EVIDENCE.md](DEVICE_EVIDENCE.md) for what approved evidence requires.
 
-Compatibility and privacy notes: catalog aliases used in shipped
-configurations and application-lockfile coordinates (including private group
-IDs) are sent to OSV by `scan --online` and `intel watch --online`. Lockfile
-matches are exact and therefore `version-affected`; the default policy fails on
-high and critical ones. The OSV budget stays at 100 package queries per run, as
-in 1.2.0, with exact coordinates queried first. It is smaller than a typical
-application lockfile (179-412 shipped coordinates measured), so the remaining
-packages stay `not-run`, the warning states how many were skipped, and online
-audits of such apps are incomplete (exit 3 under the default `fail_on_partial`
-policy). Batch querying would change the recorded per-package OSV request
-format that the frozen replay depends on, so it is later work. Cached Android
-bulletin records need a re-sync or backfill to gain a vendor scope.
+Compatibility and privacy notes:
+
+- `scan --online` and `intel watch --online` send catalog aliases used in
+  shipped configurations and transitive application-lockfile coordinates,
+  including private group IDs, to OSV; there is no exclusion list. The budget
+  stays at 100 package queries per run, as in 1.2.0. Packages declared in build
+  files (including declarations a lockfile superseded) are queried first, then
+  lockfile coordinates in lockfile order; unresolved or unsupported entries use
+  no budget. A typical application lockfile (179-412 shipped coordinates
+  measured) exceeds it, so the remaining packages stay `not-run`, the warning
+  states how many were skipped, repeated runs query the same set, a required
+  `DEPENDENCY-CVE` rule cannot pass and the online audit is incomplete (exit 3
+  under the default `fail_on_partial` policy). Batch querying would change the
+  recorded per-package OSV request format that the frozen replay depends on,
+  so it is later work together with an exclusion control.
+- Lockfile matches are exact and therefore `version-affected`; the default
+  policy fails on high and critical ones. Their finding identity includes the
+  lockfile path, so `only_new` baselines treat them as new and waivers for the
+  earlier declared finding no longer match.
+- APSA does not check that dependency locking is enabled or that a lockfile is
+  current. All release runtime classpaths of every application module are
+  merged (flavors and wear, TV or automotive apps). `--source-module` scans
+  only that directory, leaving a root catalog and library-module declarations
+  unread.
+- Consistent CodeDirectory hashes do not prove authenticity: a modified binary
+  that was re-signed is consistent. A mismatch is a warning, not a finding.
+- `intel sync` refreshes only the recent Android bulletin window; older months
+  need `intel backfill`. Records cached by 1.2.0 derive their vendor scope from
+  the component name; entries outside chipset and kernel sections are evaluated
+  on the platform patch level only.
 
 Release evaluation: every harness (dependency oracle comparison, frozen
 replay, independent source pairs, competitive comparison, public real-world
-sources, next holdout and generated AAB) was re-run on runtime commit
-`aaac2cb`; see `RELEASE_READINESS.md` for runs and results.
+sources, next holdout and generated AAB) was re-run on the frozen release
+runtime; see `RELEASE_READINESS.md` for runs and results.
 
 
 # 분석 확장 (APSA 1.2)
@@ -225,7 +243,17 @@ OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 
   명시한 기간만 수집합니다. 칩셋·커널 항목은 플랫폼과 vendor 패치 수준 중 오래된 쪽을 쓰며,
   `chipset_vendor` 일치·불일치는 패치 수준 상태를 대체하지 않습니다. Apple 이력과
   Pixel/OEM/칩셋 vendor 공지는 소급하지 않습니다.
-- **호환성·개인정보.** `--online`은 catalog·lockfile 좌표(비공개 group ID 포함)를 OSV에
-  보냅니다. OSV 조회는 1.2.0과 같이 실행당 최대 100개이며 정확한 좌표를 먼저 조회합니다.
-  나머지는 `not-run`으로 남고 경고에 건너뛴 개수를 표시하며, 온라인 감사는 불완전합니다.
+- **호환성·개인정보.** `--online`은 catalog alias와 application lockfile의 전이 좌표(비공개
+  group ID 포함)를 OSV에 보내며 제외 목록은 없습니다. OSV 조회는 1.2.0과 같이 실행당 최대
+  100개이며, 빌드 파일에 선언된 패키지(lockfile로 대체된 선언 포함)를 먼저, 그다음 lockfile
+  좌표를 순서대로 조회합니다. 미확인·미지원 항목은 한도를 쓰지 않습니다. 나머지는 `not-run`으로
+  남고 경고에 건너뛴 개수를 표시하며, 반복 실행해도 같은 집합을 조회하므로 필수
+  `DEPENDENCY-CVE` 규칙은 통과할 수 없고 온라인 감사는 불완전합니다.
+- **기준선·lockfile 전제.** lockfile 대조 결과는 위치가 바뀌어 `only_new`에서 새 항목이 되고
+  이전 예외와 일치하지 않습니다. APSA는 dependency locking 활성화·lockfile 최신 여부를 확인하지
+  않으며 모든 application 모듈의 release runtime classpath를 합칩니다. `--source-module`은 그
+  폴더만 검사합니다.
+- **무결성·공지.** CodeDirectory 해시 일치는 진위를 증명하지 않으며(재서명된 수정 바이너리도
+  일치), 불일치는 발견 항목이 아닌 경고입니다. `intel sync`는 최근 공지만 갱신하고, 1.2.0이
+  캐시한 공지는 컴포넌트 이름에서 vendor 범위를 도출합니다.
   실기기는 사용하지 않았습니다([DEVICE_EVIDENCE.md](DEVICE_EVIDENCE.md)).

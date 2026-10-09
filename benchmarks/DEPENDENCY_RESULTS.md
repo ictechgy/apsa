@@ -4,7 +4,7 @@ English is the source of truth. [한국어](DEPENDENCY_RESULTS.ko.md) ·
 [Cases](dependency_cases.json) · [Oracle](dependency_oracle.py) ·
 [Evaluation](dependency_eval.py).
 
-This development work (unreleased; not part of APSA 1.2.0) links Gradle version
+This work (shipped in APSA 1.3.0; not part of 1.2.0) links Gradle version
 catalog aliases to the build configurations that use them and reads Gradle
 lockfiles as resolved build evidence. It measures how far source declarations
 alone can identify shipped libraries, and whether lockfile coordinates match

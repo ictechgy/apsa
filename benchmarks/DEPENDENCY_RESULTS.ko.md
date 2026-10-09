@@ -4,7 +4,7 @@
 [사례](dependency_cases.json) · [Oracle](dependency_oracle.py) ·
 [평가](dependency_eval.py).
 
-이 개발 작업(미배포, APSA 1.2.0에 포함되지 않음)은 Gradle version catalog
+이 작업(APSA 1.3.0에 포함, 1.2.0에는 없음)은 Gradle version catalog
 alias를 실제로 사용하는 빌드 구성과 연결하고, Gradle lockfile을 해석된 빌드
 근거로 읽습니다. 소스 선언만으로 출하 라이브러리를 어디까지 식별하는지, lockfile
 좌표가 Gradle의 실제 해석과 일치하는지 측정합니다. 취약점 탐지율을 측정하지

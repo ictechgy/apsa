@@ -4,7 +4,7 @@
 [정답](fpfn_truth.json) · [평가](fpfn_eval.py) ·
 [최초 결과 JSON](results/2026-10-09-fpfn-first.json).
 
-이 개발 평가(미배포, APSA 1.2.0에 포함되지 않음)는 공개 Android·iOS 앱의 실제 보안
+이 평가(APSA 1.3.0 개발 작업 대상, 1.2.0에는 없음)는 공개 Android·iOS 앱의 실제 보안
 수정에서 소스 발견 항목을 측정합니다. 좁은 표본이며 운영 탐지율이 아닙니다.
 
 ## 방법
@@ -46,7 +46,7 @@ commit을 GitHub에서 내려받아 symlink 없이 풀고, 라벨된 파일의 �
 | OpenClaw Android canvas bridge(CVE-2026-35643) | JS bridge | TP(행) | FP |
 | Tiddloid 편집기 file URL 접근 | WebView 파일 접근 | TP(행) | TN |
 | Amaze File Manager `usesCleartextTraffic` | Android cleartext | TP(파일) | TN |
-| Wikipedia iOS `NSAllowsArbitraryLoads` | iOS ATS | TP(파일) | 미채점(경로 라벨) |
+| Wikipedia iOS `NSAllowsArbitraryLoads` | iOS ATS | TP(파일) | 최초 결과 미채점(경로 라벨), 재측정 TN |
 | Home Assistant `MyActivity` WebView URL(CVE-2023-41898) | 신뢰할 수 없는 WebView URL | FN | TN |
 | Element X Android 통화 intent URL(CVE-2025-27599) | 신뢰할 수 없는 WebView URL | FN | TN |
 | Element X iOS 통화 deep link(CVE-2026-55644) | 신뢰할 수 없는 WebView URL | FN | TN |

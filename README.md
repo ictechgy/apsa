@@ -46,24 +46,42 @@ vendor patch-level context. See the
 the [independent source pairs](https://github.com/ictechgy/apsa/blob/main/benchmarks/FPFN_RESULTS.md)
 and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/NEXT_ANALYSIS.md).
 
-**Upgrading from 1.2.** Catalog aliases referenced from shipped configurations
-become `declared` candidates and can receive CVE matches again; unreferenced,
-test-only and build-tooling aliases stay unresolved. Application-module lockfile
-coordinates are exact, so their matches are `version-affected`, and the default
-policy fails on high and critical ones. A declared candidate that
-every shipping application resolved is marked superseded and leaves CVE
-correlation; library-module lockfiles, partial inputs and unparsed project
-references never supersede. With `--online`, catalog and lockfile coordinates,
-including private group IDs, are sent to OSV. One run still queries at most 100
-packages, exact coordinates first. Measured application lockfiles hold 179–412
-shipped coordinates, so the rest stay `not-run`, the online audit is incomplete,
-and the default `fail_on_partial` policy exits 3. IPA reports gain
-`BINARY-IOS-CODE-INTEGRITY` (modified code pages add a warning; App Store
-encrypted and unsigned executables stay `not-run`). Cached Android bulletin
-records need a new `intel sync` or `intel backfill` to gain a vendor scope.
-Adapted Swift and Objective-C files stay partial, and an Objective-C function
-overlapping a normalized preprocessor conditional is skipped as uncertain.
-Unmodified 1.2 skills upgrade with `apsa skill install`.
+**Upgrading from 1.2.**
+
+- Catalog aliases referenced from shipped configurations become `declared`
+  candidates and can receive CVE matches again; unreferenced, test-only and
+  build-tooling aliases stay unresolved. Application-module lockfile coordinates
+  are exact, so their matches are `version-affected`, and the default policy
+  fails on high and critical ones. A declared candidate that every shipping
+  application resolved is superseded and leaves CVE correlation; library-module
+  lockfiles, partial inputs and unparsed project references never supersede.
+- Lockfile assumptions: APSA does not check that dependency locking is enabled
+  or that the lockfile is current, and it merges the release runtime classpaths
+  of every application module (flavors and wear, TV or automotive apps).
+  `--source-module` scans only that module's directory, so a root version
+  catalog and library-module declarations outside it are not read.
+- Baselines and waivers: a lockfile-resolved finding has a new location
+  (`gradle.lockfile`) and status, so `only_new` treats it as new and waivers for
+  the old finding ID no longer match. Re-approve baselines after upgrading.
+- `--online` sends catalog aliases used in shipped configurations and
+  transitive application-lockfile coordinates, including private group IDs, to
+  OSV; there is no exclusion list. One run queries at most 100 packages:
+  build-file declarations first, then lockfile coordinates in lockfile order.
+  Repeated runs query the same set. Measured application lockfiles hold 179–412
+  shipped coordinates, so the rest stay `not-run`, a required `DEPENDENCY-CVE`
+  rule cannot pass, the online audit is incomplete and the default
+  `fail_on_partial` policy exits 3.
+- IPA reports gain `BINARY-IOS-CODE-INTEGRITY`. Consistent hashes do not prove
+  authenticity, because a modified binary that was re-signed is consistent. A
+  mismatch adds a warning, not a finding; App Store encrypted and unsigned
+  executables stay `not-run`.
+- `intel sync` refreshes only the recent Android bulletin window; use
+  `intel backfill` for older months. Records cached by 1.2 derive their vendor
+  scope from the component name; entries outside chipset and kernel sections use
+  the platform patch level only. AAB feature-module installation stays unknown.
+- Adapted Swift and Objective-C files stay partial, and an Objective-C function
+  overlapping a normalized preprocessor conditional is skipped as uncertain.
+  Unmodified 1.2 skills upgrade with `apsa skill install`.
 
 ## What it checks
 
@@ -136,7 +154,7 @@ A default `scan` reads local files and cached intelligence without uploading sou
 | `apsa intel sync` | Fetches public vulnerability sources |
 | `apsa intel watch` | Polls public sources and reassesses saved inventories; does not reread app files or implicitly query OSV |
 | `apsa intel backfill --source android --since YYYY-MM` | Fetches an explicit, bounded range of monthly Android security bulletins |
-| `apsa scan TARGET --online` | Sends discovered dependency names and versions to OSV, including Gradle catalog aliases used in shipped configurations and application-lockfile coordinates; at most 100 packages per run |
+| `apsa scan TARGET --online` | Sends discovered dependency names and versions to OSV, including Gradle catalog aliases used in shipped configurations and transitive application-lockfile coordinates; at most 100 packages per run, build-file declarations first |
 | `apsa intel watch --online` | Also sends saved dependency names and versions to OSV, with the same budget |
 
 ```sh

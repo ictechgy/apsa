@@ -787,6 +787,7 @@ def query_dependencies(
     found = []
     errors = []
     unique = {}
+    direct = set()
     for index, dep in enumerate(dependencies):
         if index >= 10_000:
             errors.append("Dependency input limit reached; remaining packages not checked")
@@ -796,6 +797,8 @@ def query_dependencies(
         ):
             errors.append("Malformed dependency requires string ecosystem, name and version")
             continue
+        if dep.get("version_source") != "gradle-lockfile-resolved":
+            direct.add((dep["ecosystem"], dep["name"]))
         key = (dep["ecosystem"], dep["name"], dep["version"])
         rank = {"unknown": 0, "declared": 1, "exact": 2}
         if key not in unique or rank.get(dep.get("confidence", "unknown"), 0) > rank.get(
@@ -804,25 +807,35 @@ def query_dependencies(
             unique[key] = dep
     try:
         rank = {"unknown": 0, "declared": 1, "exact": 2}
-        # Superseded candidates use no query budget; exact coordinates go first.
+        candidates = [
+            dep
+            for dep in unique.values()
+            if (dep.get("resolution") or {}).get("state") != "superseded-by-resolved-build"
+        ]
+        unresolved = [
+            dep
+            for dep in candidates
+            if dep["ecosystem"] not in OSV_ECOSYSTEMS
+            or dep.get("confidence", "unknown") == "unknown"
+            or not dep["version"]
+        ]
+        errors.extend(
+            f"Unresolved/unsupported dependency: {dep['ecosystem']} {dep['name']} {dep['version']}"
+            for dep in unresolved[:100]
+        )
+        if len(unresolved) > 100:
+            errors.append(f"{len(unresolved) - 100} more unresolved/unsupported dependencies not listed")
+        skipped = {id(dep) for dep in unresolved}
+        # Superseded and unqueryable entries use no query budget. Packages declared in
+        # build files go first so transitive lockfile coordinates cannot crowd them out.
         ordered = sorted(
-            (
-                dep
-                for dep in unique.values()
-                if (dep.get("resolution") or {}).get("state") != "superseded-by-resolved-build"
+            (dep for dep in candidates if id(dep) not in skipped),
+            key=lambda dep: (
+                (dep["ecosystem"], dep["name"]) not in direct,
+                -rank.get(dep.get("confidence", "unknown"), 0),
             ),
-            key=lambda dep: -rank.get(dep.get("confidence", "unknown"), 0),
         )
         for dep in ordered[:100]:
-            if (
-                dep["ecosystem"] not in OSV_ECOSYSTEMS
-                or dep.get("confidence", "unknown") == "unknown"
-                or not dep["version"]
-            ):
-                errors.append(
-                    f"Unresolved/unsupported dependency: {dep['ecosystem']} {dep['name']} {dep['version']}"
-                )
-                continue
             try:
                 from .source_context import osv_package_name
 
