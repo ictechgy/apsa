@@ -1,5 +1,24 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## Published 1.4.0 — 2026-10-10
+
+[1.4.0](https://github.com/ictechgy/apsa/releases/tag/v1.4.0) is bound to source commit `5bed4e5b02e4b60fd49573dbe51628c0e4d1455c` through a lightweight tag that was not moved. These paths are identical to the evaluated runtime `803220d`: `src`, `apsa`, `quaygate`, `pyproject.toml`, `uv.lock`, `requirements-release.txt`, `action.yml`, `server.json`, `plugins` and `.claude-plugin`. Public `main` was fast-forwarded to the same commit, and that push skipped the main-context publish path as intended ([37955636178](https://github.com/ictechgy/apsa/actions/runs/37955636178)).
+
+The tag-context [release workflow 37955019531](https://github.com/ictechgy/apsa/actions/runs/37955019531) passed all 17 jobs:
+
+- **CI:** the eleven CI jobs (Linux/macOS × Python 3.11/3.12, required-mode Linux/macOS parser isolation, Homebrew framework Python, nested Seatbelt, Ubuntu 24.04 bubblewrap, and the Linux/macOS Action self-tests).
+- **Packaging and publication:** the verified package build, PyPI Trusted Publishing, MCP Registry publication by GitHub OIDC and the GitHub release downloads.
+
+PyPI lists `apsa-1.4.0-py3-none-any.whl` (sha256 `c4ab219a18409323377dcdd0de2e2d36222354cb95207f150c59de0b325868be`) and `apsa-1.4.0.tar.gz` (sha256 `105a422d6c94c36d5c49079a4968a73ba2616b0239f8137da769f23757586cca`). The MCP Registry lists `io.github.ictechgy/apsa` 1.4.0 as active.
+
+Post-publication checks ran on a newly generated synthetic project:
+
+- **Action install path:** uv 0.12.1 installed the release's hash-locked `requirements-release.txt` and then `apsa==1.4.0` from PyPI, as the Action does. The SARIF scan exited 0, and the SARIF passed `scripts/check_sarif.py` with repository-relative URIs and a MASWE summary.
+- **Cold start:** `uvx --python 3.12 apsa@1.4.0` with an empty cache reported 1.4.0. Over MCP stdio it served 23 tools. The `tool_manifest_sha256` from `capabilities` equalled both the hash recomputed from `tools/list` and the published default in [MCP_SECURITY.md](docs/MCP_SECURITY.md), and `audit_scan` completed.
+- **Plugin:** Claude Code 2.1.295, with an isolated configuration directory, ran `claude plugin marketplace add ictechgy/apsa` and `claude plugin install apsa@apsa`. It installed plugin 1.4.0 with its skill and its MCP server, whose command is the `uvx` command above.
+
+Not yet done: a GitHub-hosted run of `uses: ictechgy/apsa@<sha>` with the default `version` that uploads SARIF to a test repository's code scanning. The release's Action self-tests install the checked-out package and do not upload.
+
 ## APSA 1.4.0 adoption, agent verification and benchmarks — candidate, 2026-10-10
 
 1.4.0 packages the three roadmap phases developed on `dev/adoption` and `dev/phase3` after 1.3.0:
