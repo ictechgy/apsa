@@ -15,10 +15,24 @@ APSA 1.1 adds bounded model report pages, portable approved baselines, exported 
 Mixed unsupported source languages and truncated pattern results are incomplete. Declared Gradle versions remain candidates until resolved-build evidence is supplied. OS-CVE correlation reports a bounded recent window, so feed freshness alone cannot satisfy historical coverage.
 
 APSA 1.2 adds AAB base-manifest/module DEX analysis, embedded IPA Mach-O
-metadata, bounded Objective-C `.m` candidates and optional parser OS isolation.
+metadata, bounded Objective-C `.m` candidates and parser OS isolation that is
+on by default where it can start.
 Every AAB audit stays partial, and embedded IPA metadata does not authenticate
-signatures. See [analysis scope and limits](docs/NEXT_ANALYSIS.md) and the
-[independent holdout](benchmarks/NEXT_RESULTS.md).
+signatures. See [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/NEXT_ANALYSIS.md) and the
+[independent holdout](https://github.com/ictechgy/apsa/blob/main/benchmarks/NEXT_RESULTS.md).
+
+**Upgrading from 1.1.** With the default `APSA_PARSER_SANDBOX=auto`, the parser
+runs under macOS Seatbelt or Linux bubblewrap after an input-free activation
+probe succeeds. If the backend is missing or cannot start (for example inside
+another sandbox or with blocked user namespaces), the report records
+`parser_isolation.state: unavailable` with the reason and parses with resource
+limits only. `required` refuses such audits; `off` skips the backend. A parser
+failure after isolation has started aborts the audit without an unsandboxed
+retry. Dependencies declared only in a Gradle version catalog no longer receive
+CVE matches until build usage or resolved versions are supplied. New rules
+(`AST-CRYPTO-ECB`, `AST-CRYPTO-WEAK-HASH`, `AST-SQL-CONCAT`,
+`OBJC-CRYPTO-WEAK-HASH`, `OBJC-WEBVIEW-UNTRUSTED-REQUEST`) can add findings
+relative to existing 1.1 baselines.
 
 ## What it checks
 

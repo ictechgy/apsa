@@ -89,3 +89,84 @@ jobs:
           APSA_SANDBOX_TEST: "1"
           APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/isolated-parser-locks
         run: uv run --locked --extra dev pytest -q
+
+  isolation-compatibility:
+    name: Parser isolation compatibility / ${{ matrix.case }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            case: framework-python
+          - os: macos-15
+            case: nested-seatbelt
+          - os: ubuntu-24.04
+            case: bubblewrap-ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - name: Build the wheel under test
+        run: uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+      - name: Install into the interpreter under test
+        env:
+          CASE: ${{ matrix.case }}
+        run: |
+          if [ "$CASE" = framework-python ]; then
+            brew list python@3.12 >/dev/null 2>&1 || brew install python@3.12
+            PY="$(brew --prefix python@3.12)/bin/python3.12"
+            "$PY" -c 'import sys, sysconfig; print(sys.base_prefix); assert sysconfig.get_config_var("PYTHONFRAMEWORK"), "not a framework build"'
+          else
+            uv python install 3.12.13
+            PY="$(uv python find 3.12.13)"
+          fi
+          if [ "$CASE" = bubblewrap-ubuntu-24.04 ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y bubblewrap
+          fi
+          uv venv --python "$PY" "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" "$RUNNER_TEMP"/dist/apsa-*.whl
+      - name: Audit a fresh synthetic source in auto and required modes
+        env:
+          CASE: ${{ matrix.case }}
+        run: |
+          cat > "$RUNNER_TEMP/probe.py" <<'PY'
+          import json, os, sys, tempfile
+          from pathlib import Path
+          from mobile_audit.engine import analyze_target
+          outcome = {}
+          with tempfile.TemporaryDirectory() as directory:
+              root = Path(directory).resolve()
+              (root / "Main.java").write_text("class Synthetic {}")
+              os.environ["APSA_PARSER_LOCK_DIR"] = str(root.parent / "apsa-compat-locks")
+              for mode in ("auto", "required"):
+                  os.environ["APSA_PARSER_SANDBOX"] = mode
+                  try:
+                      outcome[mode] = analyze_target(root)["inventory"]["parser_isolation"]
+                  except ValueError as error:
+                      outcome[mode] = {"error": str(error)}
+          print(json.dumps(outcome, indent=2))
+          auto, required = outcome["auto"], outcome["required"]
+          assert "error" not in auto, "auto mode must complete with explicit isolation state"
+          if auto["state"] == "enforced":
+              assert auto["activation_probe"] == "passed" and required.get("state") == "enforced"
+          else:
+              assert auto["state"] == "unavailable" and auto["activation_probe"] == "failed"
+              assert auto["network_denied_by_os"] is False
+              assert "could not start; audit refused" in required.get("error", "")
+          expected = {"framework-python": "enforced", "nested-seatbelt": None, "bubblewrap-ubuntu-24.04": None}
+          if expected[os.environ["CASE"]]:
+              assert auto["state"] == expected[os.environ["CASE"]], auto
+          PY
+          if [ "$CASE" = nested-seatbelt ]; then
+            /usr/bin/sandbox-exec -p '(version 1)(allow default)' "$RUNNER_TEMP/venv/bin/python" -I "$RUNNER_TEMP/probe.py"
+          else
+            "$RUNNER_TEMP/venv/bin/python" -I "$RUNNER_TEMP/probe.py"
+          fi

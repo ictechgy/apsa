@@ -7,7 +7,9 @@ import plistlib
 import socket
 import struct
 import sys
+import tomllib
 import zipfile
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -534,9 +536,102 @@ def test_sandbox_launch_failure_never_retries_without_isolation(monkeypatch, tmp
         raise ValueError("Synthetic namespace denial")
 
     monkeypatch.setattr(engine, "command", failed)
+    monkeypatch.setattr(
+        parser_sandbox, "activate", lambda command, args, metadata, scratch: (command, metadata)
+    )
     with pytest.raises(ValueError, match="namespace denial"):
         engine.analyze_target(target)
     assert len(calls) == 1 and calls[0][0] == "/usr/bin/bwrap"
+
+
+def _failed_probe(monkeypatch, calls):
+    def run(args, **kwargs):
+        calls.append(args)
+        return parser_sandbox.subprocess.CompletedProcess(args, 1, b"", b"bwrap: synthetic uid map denial")
+
+    monkeypatch.setattr(parser_sandbox.subprocess, "run", run)
+
+
+def test_activation_probe_is_input_free_and_auto_records_unavailable(monkeypatch, tmp_path):
+    target, scratch = tmp_path / "input", tmp_path / "work"
+    target.mkdir()
+    scratch.mkdir()
+    monkeypatch.setattr(parser_sandbox, "backend", lambda: "/usr/bin/bwrap")
+    monkeypatch.setattr(parser_sandbox.sys, "platform", "linux")
+    args = [sys.executable, "-I", "-B", "-m", "mobile_audit._parser_worker", str(target)]
+    wrapped, metadata = parser_sandbox.sandbox_command(args, target, None, scratch, mode="auto")
+    probes = []
+    _failed_probe(monkeypatch, probes)
+    command, isolation = parser_sandbox.activate(wrapped, args, metadata, scratch)
+    assert len(probes) == 1 and probes[0][0] == "/usr/bin/bwrap"
+    assert probes[0][-5:] == [sys.executable, "-I", "-B", "-c", "pass"]
+    assert "mobile_audit._parser_worker" not in probes[0]
+    assert command == args
+    assert isolation["state"] == "unavailable" and isolation["backend"] == "resource-limits-only"
+    assert isolation["attempted_backend"] == "bubblewrap" and isolation["activation_probe"] == "failed"
+    assert "uid map denial" in isolation["unavailable_reason"]
+    assert isolation["network_denied_by_os"] is False and isolation["filesystem_restricted_by_os"] is False
+    wrapped, metadata = parser_sandbox.sandbox_command(args, target, None, scratch, mode="required")
+    with pytest.raises(ValueError, match="could not start; audit refused.*APSA_PARSER_SANDBOX"):
+        parser_sandbox.activate(wrapped, args, metadata, scratch)
+
+
+def test_successful_probe_keeps_enforced_command(monkeypatch, tmp_path):
+    monkeypatch.setattr(parser_sandbox, "backend", lambda: "/usr/bin/bwrap")
+    monkeypatch.setattr(parser_sandbox.sys, "platform", "linux")
+    monkeypatch.setattr(
+        parser_sandbox.subprocess,
+        "run",
+        lambda args, **kwargs: parser_sandbox.subprocess.CompletedProcess(args, 0, b"", b""),
+    )
+    args = [sys.executable, "-c", "pass"]
+    wrapped, metadata = parser_sandbox.sandbox_command(args, tmp_path, None, tmp_path, mode="auto")
+    command, isolation = parser_sandbox.activate(wrapped, args, metadata, tmp_path)
+    assert command == wrapped and isolation["state"] == "enforced"
+    assert isolation["activation_probe"] == "passed"
+
+
+def test_auto_audit_continues_with_limits_after_failed_probe(monkeypatch, tmp_path):
+    target = tmp_path / "input"
+    target.mkdir()
+    (target / "Main.java").write_text("class Synthetic {}")
+    monkeypatch.setenv("APSA_PARSER_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "auto")
+    monkeypatch.setattr(parser_sandbox, "backend", lambda: "/usr/bin/bwrap")
+    monkeypatch.setattr(parser_sandbox.sys, "platform", "linux")
+    _failed_probe(monkeypatch, [])
+    launched = []
+
+    def parser(args, **kwargs):
+        launched.append(args)
+        return json.dumps({"inventory": {"warnings": [], "partial": False}, "findings": []}).encode()
+
+    monkeypatch.setattr(engine, "command", parser)
+    result = engine.analyze_target(target)
+    assert len(launched) == 1 and launched[0][0] == sys.executable
+    assert result["inventory"]["parser_isolation"]["state"] == "unavailable"
+    assert result["inventory"]["parser_isolation"]["activation_probe"] == "failed"
+
+
+def test_enforced_parser_failure_explains_sandbox_without_retry(monkeypatch, tmp_path):
+    target = tmp_path / "input"
+    target.mkdir()
+    monkeypatch.setenv("APSA_PARSER_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setattr(parser_sandbox, "backend", lambda: "/usr/bin/bwrap")
+    monkeypatch.setattr(parser_sandbox.sys, "platform", "linux")
+    monkeypatch.setattr(
+        parser_sandbox, "activate", lambda command, args, metadata, scratch: (command, metadata)
+    )
+    calls = []
+
+    def failed(args, **kwargs):
+        calls.append(args)
+        raise ValueError(f"Command failed ({args[0]}, exit 1); check input")
+
+    monkeypatch.setattr(engine, "command", failed)
+    with pytest.raises(ValueError, match="bubblewrap; the audit was not retried without OS isolation"):
+        engine.analyze_target(target)
+    assert len(calls) == 1
 
 
 @pytest.mark.skipif(
@@ -615,10 +710,16 @@ def test_110_skills_upgrade_and_preserve_user_customizations(tmp_path, name):
 
 
 def test_every_released_skill_fixture_is_a_known_upgrade_source(tmp_path):
+    current = f"-{tomllib.loads((Path(__file__).parents[1] / 'pyproject.toml').read_text())['project']['version']}.md"
     fixtures = sorted((Path(__file__).parent / "fixtures/skills").glob("*.md"))
     assert fixtures
     for fixture in fixtures:
         name = fixture.name.rsplit("-", 1)[0]
+        packaged = files("mobile_audit").joinpath("data", "skills", name, "SKILL.md").read_bytes()
+        if fixture.name.endswith(current):
+            # A changed skill needs a new fixture, which forces registering the old hash.
+            assert fixture.read_bytes() == packaged, fixture.name
+            continue
         destination = tmp_path / fixture.stem
         destination.mkdir()
         (destination / "SKILL.md").write_bytes(fixture.read_bytes())

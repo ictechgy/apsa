@@ -167,8 +167,8 @@ artifact `11602045160` expires `2026-11-08T07:32:19Z`, digest
 approved the complete implementation snapshot for hosted validation; their
 reports preserve the then-pending CI conditions. They are native Codex lanes,
 not Claude, Devin or Agy invocations. Documentation/evidence closure applies
-separately to the later snapshot with unchanged runtime. The development branch
-has not been merged to main, tagged or published to PyPI.
+separately to the later snapshot with unchanged runtime. At measurement time,
+the development branch had not been merged to main, tagged or published to PyPI.
 
 Remaining scope includes AAB resource/device split merging, native instruction
 analysis, signature authentication, Objective-C preprocessing/dynamic dispatch

@@ -8,7 +8,6 @@
 
 APSA는 개발자와 보안팀이 자기 모바일 앱을 감사하는 도구입니다. 소스 코드와 APK·AAB·IPA 빌드를 검사하고, 공개 취약점 정보를 대조하며, 근거·검사 범위·보고서 이력을 함께 관리합니다. CLI, 터미널 UI, MCP, 재사용 가능한 스킬에서 같은 감사 엔진을 사용합니다.
 
-
 영어 발음은 **“ap-sah”**, 한글 이름은 **앱사**입니다. “앱 + 감사”를 연결한 이름이며 **App Security Audit**라는 의미도 담았습니다. 기존 Quaygate 린트 엔진과 Mobile Audit 작업 흐름을 한 패키지에 통합했습니다.
 
 APSA 1.1은 모델 보고서의 제한된 페이지 조회, 승인된 휴대형 기준선, 정책 판정 내보내기, 소스 모듈·설정 선택을 제공합니다. 계약과 예제는 영문 원본 [모델·팀 워크플로](docs/MODEL_WORKFLOWS.md), 이후 분석 단계는 [릴리스 순서](docs/ROADMAP.md)를 참고하십시오.
@@ -16,10 +15,21 @@ APSA 1.1은 모델 보고서의 제한된 페이지 조회, 승인된 휴대형 
 미지원 언어가 혼합된 소스와 잘린 패턴 결과는 불완전 검사로 표시합니다. Gradle 선언 버전은 실제 빌드에서 확인되기 전까지 후보이며, OS-CVE는 최근 공지 범위만 대조하므로 피드가 최신이어도 역사적 커버리지를 충족하지 않습니다.
 
 APSA 1.2는 AAB base 매니페스트·모듈 DEX 분석, IPA 내장 Mach-O 메타데이터,
-제한된 Objective-C `.m` 후보와 선택적 파서 OS 격리를 추가합니다. AAB 감사는
+제한된 Objective-C `.m` 후보와 실행 가능한 환경에서 기본으로 켜지는 파서 OS 격리를 추가합니다. AAB 감사는
 항상 부분 감사이며, IPA 내장 메타데이터는 서명 진위를 인증하지 않습니다.
-[분석 범위와 한계](docs/NEXT_ANALYSIS.md)와 [독립 holdout 결과](benchmarks/NEXT_RESULTS.ko.md)를
+[분석 범위와 한계](https://github.com/ictechgy/apsa/blob/main/docs/NEXT_ANALYSIS.md)와 [독립 holdout 결과](https://github.com/ictechgy/apsa/blob/main/benchmarks/NEXT_RESULTS.ko.md)를
 참고하세요.
+
+**1.1에서 업그레이드할 때.** 기본값 `APSA_PARSER_SANDBOX=auto`는 입력 없이 실행하는
+활성화 검사가 성공하면 파서를 macOS Seatbelt 또는 Linux bubblewrap 아래에서
+실행합니다. 백엔드가 없거나 시작하지 못하면(예: 다른 sandbox 내부, user namespace
+차단) 보고서에 `parser_isolation.state: unavailable`과 이유를 기록하고 자원 제한만으로
+파싱합니다. `required`는 이런 감사를 거부하고 `off`는 백엔드를 사용하지 않습니다.
+격리가 시작된 뒤의 파서 실패는 격리 없이 재시도하지 않고 감사를 중단합니다. Gradle
+version catalog에만 선언된 의존성은 빌드 사용 근거나 해결 버전을 제공하기 전까지 CVE를
+대조하지 않습니다. 새 규칙(`AST-CRYPTO-ECB`, `AST-CRYPTO-WEAK-HASH`, `AST-SQL-CONCAT`,
+`OBJC-CRYPTO-WEAK-HASH`, `OBJC-WEBVIEW-UNTRUSTED-REQUEST`)은 기존 1.1 기준선 대비
+새 발견 항목을 추가할 수 있습니다.
 
 ## 검사 범위
 

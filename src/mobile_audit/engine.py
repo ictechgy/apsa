@@ -83,17 +83,26 @@ def analyze_target(
             str(scratch),
             configuration or "",
         ]
-        from .parser_sandbox import sandbox_command
+        from .parser_sandbox import activate, sandbox_command
 
-        args, isolation = sandbox_command(args, staged, staged_sbom, scratch, report_home=report_home)
-        raw = command(
-            args,
-            timeout=PARSER_TIMEOUT,
-            max_bytes=MAX_RESULT,
-            max_rss=1024 * 1024 * 1024,
-            cwd=scratch,
-            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TMPDIR": str(scratch)},
-        )
+        wrapped, isolation = sandbox_command(args, staged, staged_sbom, scratch, report_home=report_home)
+        wrapped, isolation = activate(wrapped, args, isolation, scratch)
+        try:
+            raw = command(
+                wrapped,
+                timeout=PARSER_TIMEOUT,
+                max_bytes=MAX_RESULT,
+                max_rss=1024 * 1024 * 1024,
+                cwd=scratch,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TMPDIR": str(scratch)},
+            )
+        except ValueError as error:
+            if isolation["state"] == "enforced" and str(error).startswith("Command failed"):
+                raise ValueError(
+                    f"Sandboxed parser failed under {isolation['backend']}; the audit was not retried "
+                    f"without OS isolation. {error} APSA_PARSER_SANDBOX=off runs with resource limits only."
+                ) from None
+            raise
         if resolved.resolve() != expected_target or identity(resolved) != snapshot["identity"]:
             raise ValueError("Authorized input moved or became a symlink; audit refused")
     try:

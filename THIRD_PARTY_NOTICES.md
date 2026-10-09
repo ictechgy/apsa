@@ -4,12 +4,12 @@
 
 # Third-party notices
 
-The unreleased analysis branch additionally pins `tree-sitter-objc==3.0.2`;
-its [upstream package metadata](https://pypi.org/project/tree-sitter-objc/3.0.2/)
-declares MIT. The historical generated table below predates this addition.
-Release validation regenerates notices and copies declared license files from
-the actual installed distributions; this note does not claim those new files
-were copied into this checkout.
+APSA 1.2.0 adds the runtime dependency `tree-sitter-objc==3.0.2`. Its row below
+was added from that version's installed distribution metadata (`License: MIT`
+with a bundled `LICENSE` file); the other rows come from the earlier generated
+table. Release validation regenerates notices and copies declared license files
+from the actual installed distributions into the release bundle; this checkout
+does not contain those copied files.
 
 이 목록은 잠긴 Python 런타임 의존성의 실제 설치 메타데이터와 배포본에 포함된 라이선스 파일에서 생성했습니다.
 라이선스 이름, 표현식, 저작권을 추측하거나 자체 제품의 라이선스를 지정하지 않습니다.
@@ -91,6 +91,7 @@ were copied into this checkout.
 | tree-sitter-java | 0.23.5 | MIT | files-copied |
 | tree-sitter-json | 0.24.8 | MIT | files-copied |
 | tree-sitter-kotlin | 1.1.0 | MIT | files-copied |
+| tree-sitter-objc | 3.0.2 | MIT | files-copied |
 | tree-sitter-swift | 0.7.4 | MIT | files-copied |
 | typing_extensions | 4.16.0 | PSF-2.0 | files-copied |
 | typing-inspection | 0.4.4 | MIT | files-copied |

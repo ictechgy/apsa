@@ -7,7 +7,7 @@ Status on 2026-10-09: [1.0.6](https://github.com/ictechgy/apsa/releases/tag/v1.0
 1. **1.0.6 — evidence correctness.** Isolated MCP Python fallback, incomplete mixed-language AST and truncated pattern coverage, bounded OS-advisory coverage, declared dependency candidates, and unified CI example. Release only after regression tests and independent snapshot-bound review.
 2. **1.1.0 — model and team workflows.** Bounded/paginated model report context, portable integrity-checked baseline artifacts, exported policy decisions, and explicit source app/module selection. Release only after contract, authorization and clean-install validation.
 3. **1.2.0 — bounded analysis and parser isolation.** AAB protobuf base manifest and module DEX inventory; embedded IPA executable metadata; Objective-C `.m` local candidates; platform OS sandbox with explicit unavailable/failure behavior. Resource limits are not an OS permission sandbox. See [scope and limits](NEXT_ANALYSIS.md) and the [independent holdout](../benchmarks/NEXT_RESULTS.md).
-4. **Later milestones.** Resolved Gradle/SBOM dependency evidence for catalog aliases; independently labeled FP/FN evaluation with truth frozen before scanning; AAB resource/feature/device split merging; IPA signature authentication and native flow; Objective-C preprocessing, dynamic dispatch and `.mm`; historical CVE backfill and amendments; authorized physical-device evidence.
+4. **Later milestones.** Resolved Gradle/SBOM dependency evidence for catalog aliases; broader independently labeled security-finding FP/FN evaluation with truth frozen before scanning; AAB resource/feature/device split merging; IPA signature authentication and native flow; Objective-C preprocessing, dynamic dispatch and `.mm`; historical CVE backfill and amendments; authorized physical-device evidence.
 
 The historical CVE catalog, representative production accuracy, full
 interprocedural analysis, and physical iOS device tests remain separate work.
@@ -20,7 +20,7 @@ Publish 1.0.6 before advancing the 1.1 release branch to public main. For each r
 
 1.1 adds section pagination with explicit omissions, independently pinned portable baselines, reviewable policy decision artifacts, and source module/configuration selection. Its baseline approval metadata does not authenticate a reviewer; an externally reviewed artifact hash is required. Its source selection does not merge build variants.
 
-After 1.1 publication, the following stages were implemented in order for 1.2.0. Each received separate fixtures, coverage states, documentation and independent review before support was declared; the table remains the gate for extending them:
+After 1.1 publication, the following stages were implemented in order for 1.2.0 in bounded, partial form. [NEXT_ANALYSIS.md](NEXT_ANALYSIS.md) and [NEXT_RESULTS.md](../benchmarks/NEXT_RESULTS.md) record which gate evidence 1.2.0 meets; for example, the compiled AAB check used a fresh base-only bundle, not base/feature bundles. The table remains the gate for extending each stage:
 
 | Stage | Deliverable | Required evidence and failure behavior |
 | --- | --- | --- |

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -92,6 +93,12 @@ def sandbox_command(
             "(allow process-fork)",
             "(allow sysctl-read)",
             "(allow process-exec (literal " + quoted(Path(sys.executable).resolve()) + "))",
+            *(
+                # Framework builds (python.org, Homebrew) re-exec this app-bundle interpreter.
+                "(allow process-exec (literal " + quoted(app.resolve()) + "))"
+                for app in [Path(sys.base_prefix) / "Resources/Python.app/Contents/MacOS/Python"]
+                if app.is_file()
+            ),
             '(allow process-exec (literal "/usr/bin/openssl"))',
             '(allow file-read* file-test-existence (literal "/usr/bin/openssl"))',
             "(allow file-read-metadata)",
@@ -158,4 +165,49 @@ def sandbox_command(
         "filesystem_restricted_by_os": True,
         "policy_sha256": hashlib.sha256(policy_bytes).hexdigest(),
         "scope": "authorized input/SBOM and trusted Python runtime read-only; runtime/file-input parent directory listing; scratch read/write; no host report-store mount",
+    }
+
+
+def activate(command: list[str], args: list[str], metadata: dict, scratch: Path) -> tuple[list[str], dict]:
+    """Start an input-free interpreter under the exact policy before parsing.
+
+    The probe decides availability; it never runs the parser. In auto mode a
+    backend that cannot start (nested Seatbelt, blocked user namespaces) is
+    recorded as unavailable. Once the parser itself launches under isolation,
+    a failure aborts the audit without an unsandboxed retry.
+    """
+    if metadata.get("state") != "enforced":
+        return command, metadata
+    probe = command[: len(command) - len(args)] + [sys.executable, "-I", "-B", "-c", "pass"]
+    try:
+        result = subprocess.run(
+            probe,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=15,
+            cwd=scratch,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TMPDIR": str(scratch)},
+        )
+        returncode = result.returncode
+        detail = result.stderr[:300].decode("utf-8", errors="replace").strip()
+    except (OSError, subprocess.SubprocessError) as error:
+        returncode, detail = None, type(error).__name__
+    if returncode == 0:
+        return command, {**metadata, "activation_probe": "passed"}
+    reason = f"{metadata['backend']} activation probe failed (exit {returncode}): {detail or 'no diagnostic'}"
+    if metadata["mode"] == "required":
+        raise ValueError(
+            f"Required parser OS sandbox could not start; audit refused. {reason}. "
+            "APSA_PARSER_SANDBOX=auto or off runs the parser with resource limits only."
+        )
+    return args, {
+        "mode": metadata["mode"],
+        "backend": "resource-limits-only",
+        "state": "unavailable",
+        "attempted_backend": metadata["backend"],
+        "activation_probe": "failed",
+        "unavailable_reason": reason,
+        "network_denied_by_os": False,
+        "filesystem_restricted_by_os": False,
     }

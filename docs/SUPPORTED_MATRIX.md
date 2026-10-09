@@ -1,6 +1,6 @@
 # 지원 범위와 검증 상태
 
-이 표의 호스트·CI 행은 배포된 1.1.0의 검증 기록입니다. 1.2.0의 AAB·IPA 내장 바이너리,
+아래 호스트·CI 행은 배포된 1.1.0의 검증 기록이며, 대상 표에는 1.2의 범위를 함께 표시합니다. 1.2.0의 AAB·IPA 내장 바이너리,
 Objective-C `.m`·OS 격리 범위는 [분석 확장](NEXT_ANALYSIS.md)과
 [별도 검증 결과](../benchmarks/NEXT_RESULTS.ko.md)에 기록하며, 1.2.0 배포 확인은
 `RELEASE_READINESS.md`의 태그 워크플로 기록을 따릅니다.
@@ -22,9 +22,10 @@ Linux 실행은 `python@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc8
 | 대상 | 실제 검사 / 증거 | 범위와 제한 |
 | --- | --- | --- |
 | Android 소스 | Java/Kotlin 구조 분석과 소스 설정 fixture | WebView·딥링크 관련 함수 내 흐름 후보, Manifest/네트워크 설정·의존성. 클래스 간 완전한 taint·반사·redirect·전체 앱 실행 증명 없음 |
-| iOS 소스 | Swift 구조 분석과 설정 fixture | WKWebView/URL·호스트 검사 후보와 ATS·의존성. Objective-C/C/C++·Dart·JavaScript·프로젝트 전체 의미 분석은 미지원 범위를 표시 |
+| iOS 소스 | Swift 구조 분석, 1.2의 제한된 Objective-C `.m` CST 후보와 설정 fixture | WKWebView/URL·호스트 검사 후보와 ATS·의존성. Objective-C `.m`은 항상 부분 분석이며 `.mm`·매크로·동적 dispatch·C/C++·Dart·JavaScript·프로젝트 전체 의미 분석은 미지원 범위를 표시 |
 | APK | 직접 생성한 안전/위험 DEX fixture와 실제 APK | Android 설정, DEX 구조·호출·제어 흐름 후보, 인증서·빌드 의존성. 난독화·동적 로드·native 동작은 제한 |
-| IPA | Mach-O fixture와 직접 빌드한 iOS 시뮬레이터 앱 | Mach-O·서명/entitlement·ATS 및 일부 바이너리 증거. 암호화된 실행 파일, 모든 native 함수의 의미와 실제 iOS 기기 실행은 보장하지 않음 |
+| AAB (1.2) | 새로 생성한 합성 base-only AAB와 AAPT2 `dump xmltree` 교차검증 | AAPT2 protobuf base 매니페스트·모듈 DEX. 항상 부분 감사이며 리소스·feature 병합, 기기 targeting, 설치 split, APK 서명·ELF lint는 미지원 |
+| IPA | Mach-O fixture와 직접 빌드한 iOS 시뮬레이터 앱, 1.2의 내장 framework·확장 메타데이터 | Mach-O·서명/entitlement·ATS 및 일부 바이너리 증거. 암호화된 실행 파일, 모든 native 함수의 의미와 실제 iOS 기기 실행은 보장하지 않음 |
 | Android 런타임 | ARM64 `google_apis` API 37 에뮬레이터, 관찰 OS Android 17·보안 패치 2026-05-05; fixture는 SDK platform 36으로 컴파일 | 승인된 테스트 앱의 설치·package/hash 연결, 보관·로그인 상태 fixture, 증거 캡처. 앱 fixture 범위의 로컬 상태 검사이며 서버 세션 폐기 증명 아님 |
 | iOS 런타임 | iPhone 18 Pro / iOS 27.0 시뮬레이터, 직접 빌드한 fixture | app container·현재 상태·바이너리 해시 연결. UI 구동·시스템 로그 캡처는 `not-run`, 실제 iOS 기기는 미지원 |
 | 모델 연결 | 실제 Codex CLI MCP stdio에서 capabilities·reports_list·reports_get 실행 | 표준 MCP 연결 통로. Claude/Gemini 등 다른 모델 클라이언트는 실제 연결 검증 전 |
