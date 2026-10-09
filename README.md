@@ -266,7 +266,10 @@ release's hash-locked dependencies, runs `scan` with `--format sarif
 and then applies the result. A policy failure or a `fail-on` threshold fails
 the job even when the audit is also incomplete (exit code `3` can hide a
 threshold failure, so the action reads the report rather than the exit code
-alone); otherwise `3` fails unless `fail-on-incomplete` is `"false"`. Use
+alone). With a policy, every unmet policy condition (required rules, required
+intelligence, expired waivers, baseline checks) fails the job; only a partial
+audit is left to `fail-on-incomplete`, which fails on exit `3` unless set to
+`"false"`. Use
 `policy` (with `baseline-file` and `baseline-sha256`) for team gates, or
 `fail-on` for a severity threshold that excludes candidates.
 
@@ -275,14 +278,18 @@ correlation, and dependency findings need `intel-sync` (fetch public advisories
 first; a partial sync is a warning) and `online` (send dependency names and
 versions to OSV, see [network use](#public-intelligence-and-network-use)).
 Private repositories need GitHub Code Security to upload SARIF; set
-`upload-sarif: "false"` to keep only the file. Pull requests from forks get a
-read-only token, so the action skips the upload there and still writes the file
-and summary.
+`upload-sarif: "false"` to keep only the file. Pull requests from forks and
+from Dependabot get a read-only token, so the action skips the upload there and
+still writes the file and summary.
 
 Each alert's fingerprint is APSA's finding identity: the rule plus the evidence
 location (file, line, function or archive member). Editing the flagged line or
 moving the file can therefore close one alert and open another. Candidate
-findings are uploaded at `warning` level and tagged `candidate`. Code scanning
+findings are uploaded at `warning` level and tagged `candidate`, and a rule
+whose results are all candidates carries no `security-severity`, so it does not
+trip code scanning's default check for High or Critical alerts. A rule with
+confirmed results takes its `security-severity` from those, and its candidate
+alerts share that rating. Code scanning
 tracks alerts per `category` (default `apsa`); if you uploaded APSA SARIF
 before under another category, keep that value, because a new category starts
 new alerts and leaves the old category's alerts open until you delete its
@@ -356,11 +363,11 @@ Use `integrations` to generate a configuration with the installed executable pat
 | Any MCP client | Use the configuration from `apsa integrations`, or the MCP Registry entry `io.github.ictechgy/apsa` (PyPI package, `uvx`, required `--root`). |
 | Codex and other skill runtimes | `apsa skill install`, plus the `integrations` configuration. |
 
-Before release, Claude Code 2.1.295 and Codex CLI 0.162.0 were each verified
-calling `capabilities` and `audit_scan` against a local build of this version
-on a freshly generated synthetic project, using the `apsa integrations`
-configuration. The plugin and MCP Registry installs are checked after the
-package is published. Other clients are not yet verified.
+Before release, Claude Code 2.1.295 (this plugin loaded from the checkout with
+`--plugin-dir`, root `${CLAUDE_PROJECT_DIR}`) and Codex CLI 0.162.0 were each
+verified calling `capabilities` and `audit_scan` against a local build of this
+version on a freshly generated synthetic project. Marketplace and MCP Registry
+installs are checked after the package is published. Other clients are not yet verified.
 
 MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. `integrations` defaults to the current directory when no root is supplied. Roots restrict audited targets and access to their reports and jobs. `--allow-any-root` explicitly removes that restriction. APSA does not change model-client configuration automatically; client authentication belongs to the client.
 

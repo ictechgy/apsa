@@ -23,7 +23,7 @@ from mobile_audit.output import markdown, sarif
 from mobile_audit.output import sarif_root as output_sarif_root
 from mobile_audit.rules import rules
 from mobile_audit.store import Store
-from scripts.action_summary import sarif_root, summary
+from scripts.action_summary import sarif_root, summary, threshold_exceeded
 from scripts.check_sarif import problems
 
 ROOT = Path(__file__).parents[1]
@@ -100,7 +100,8 @@ def test_sarif_meets_code_scanning_constraints_for_source_targets(demo_report):
         )
         assert result["properties"]["status"] == finding["status"]
     ssl = descriptors["WEBVIEW-SSL-BYPASS"]["properties"]
-    assert ssl["security-severity"] == "8.0" and "MASWE-0027" in ssl["tags"] and ssl["precision"] == "medium"
+    # Candidate-only rules carry no security-severity, so they cannot fail default code scanning checks.
+    assert "security-severity" not in ssl and "MASWE-0027" in ssl["tags"] and ssl["precision"] == "medium"
     notes = run["invocations"][0]["toolExecutionNotifications"]
     assert {n["associatedRule"]["id"] for n in notes if "associatedRule" in n} >= {"DEPENDENCY-CVE", "OS-CVE"}
     assert run["properties"]["maswe"]["summary"] == coverage_matrix(demo_report)["summary"]
@@ -191,6 +192,24 @@ def test_sarif_keeps_candidates_below_error_and_tags_candidate_rules(demo_report
     assert rules["WEBVIEW-SSL-BYPASS"]["defaultConfiguration"]["level"] == "warning"
     assert "candidate" not in rules["SOURCE-TRUST-ALL-CERTS"]["properties"]["tags"]
     assert rules["SOURCE-TRUST-ALL-CERTS"]["defaultConfiguration"]["level"] == "error"
+    assert "security-severity" not in rules["WEBVIEW-SSL-BYPASS"]["properties"]
+    assert rules["SOURCE-TRUST-ALL-CERTS"]["properties"]["security-severity"] == "8.0"
+    mixed = sarif(
+        {
+            **demo_report,
+            "findings": [
+                _finding(
+                    "SOURCE-TRUST-ALL-CERTS", status="configuration-confirmed", severity="medium", path="b.kt"
+                ),
+                _finding("SOURCE-TRUST-ALL-CERTS", status="candidate", severity="critical", path="c.kt"),
+            ],
+        }
+    )["runs"][0]["tool"]["driver"]["rules"][0]
+    # Only non-candidate evidence rates the rule.
+    assert (
+        mixed["properties"]["security-severity"] == "5.5"
+        and mixed["defaultConfiguration"]["level"] == "warning"
+    )
 
 
 @pytest.mark.parametrize(
@@ -350,6 +369,23 @@ def test_cli_exports_maswe_and_validates_sarif_root(tmp_path, demo, monkeypatch,
     # Rejected before scanning: no report was saved.
     assert len(saved.reports(100)) == before
     saved.close()
+
+
+@pytest.mark.parametrize(
+    ("reasons", "expected"),
+    [
+        ([], False),
+        ([{"code": "partial-audit"}], False),
+        ([{"code": "partial-audit"}, {"code": "required-rule-incomplete"}], True),
+        ([{"code": "expired-waiver"}], True),
+        ([{"code": "severity-threshold"}], True),
+    ],
+)
+def test_action_policy_failures_survive_fail_on_incomplete(tmp_path, reasons, expected):
+    envelope = tmp_path / "result.json"
+    envelope.write_text(json.dumps({"ok": True, "exit_code": 3, "data": {"gate": {"reasons": reasons}}}))
+    # Tolerating partial parsing must not switch off required rules, waivers or baselines.
+    assert threshold_exceeded(str(envelope), "") is expected
 
 
 def test_action_helper_paths_and_summary(tmp_path):

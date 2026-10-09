@@ -166,9 +166,11 @@ def sarif(report: dict, root: str | None = None) -> dict:
         maswe = list(finding_weaknesses(item))
         rule = rules.setdefault(
             item["rule_id"],
-            {"severities": set(), "statuses": set(), "maswe": set(), "finding": item},
+            {"severities": set(), "rated": set(), "statuses": set(), "maswe": set(), "finding": item},
         )
         rule["severities"].add(item["severity"])
+        if item["status"] != "candidate":
+            rule["rated"].add(item["severity"])
         rule["statuses"].add(item["status"])
         rule["maswe"].update(maswe)
         results.append(
@@ -198,7 +200,11 @@ def sarif(report: dict, root: str | None = None) -> dict:
             seen["statuses"], key=lambda status: order.index(status) if status in order else len(order)
         )
         candidate_only = seen["statuses"] <= {"candidate"}
-        level = _result_level({"severity": severity, "status": "candidate" if candidate_only else ""})
+        # Code scanning rates security alerts by security-severity, and its default checks fail
+        # on High or above. Only non-candidate evidence sets it; candidate-only rules keep the
+        # warning level instead.
+        rated = max(seen["rated"], key=severity_rank) if seen["rated"] else None
+        level = _level(rated) if rated else _result_level({"severity": severity, "status": "candidate"})
         tags = ["security", "mobile", seen["finding"].get("masvs") or meta.get("masvs", "")]
         tags += sorted(seen["maswe"]) + (["candidate"] if candidate_only else [])
         properties: dict = {
@@ -206,8 +212,8 @@ def sarif(report: dict, root: str | None = None) -> dict:
             "precision": PRECISION.get(weakest, "medium"),
             "problem.severity": {"error": "error", "warning": "warning"}.get(level, "recommendation"),
         }
-        if severity in SECURITY_SEVERITY:
-            properties["security-severity"] = SECURITY_SEVERITY[severity]
+        if rated in SECURITY_SEVERITY:
+            properties["security-severity"] = SECURITY_SEVERITY[rated]
         references = seen["finding"].get("references") or meta.get("references") or []
         descriptor: dict = {
             "id": rule_id,
@@ -294,7 +300,11 @@ def maswe_markdown(report: dict) -> list[str]:
         "| --- | --- | --- | --- | --- |",
     ]
     for row in matrix["weaknesses"]:
-        checks = ", ".join(f"`{rule}`" for rule in row["checks"]) or "none"
+        checks = ", ".join(f"`{rule}`" for rule in row["checks_with_coverage"]) or "none"
+        if len(row["checks"]) > len(row["checks_with_coverage"]):
+            checks += (
+                f" (+{len(row['checks']) - len(row['checks_with_coverage'])} without coverage for this input)"
+            )
         lines.append(
             f"| {row['id']} {row['title']} | {row['state']} | {row['scope']} | {checks} | {row['finding_count']} |"
         )

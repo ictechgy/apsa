@@ -190,7 +190,8 @@ def coverage_matrix(report: dict) -> dict:
         elif not checks:
             state = "not-assessed"
         else:
-            # Checks that never reported coverage for this input count as not run.
+            # Only checks that reported coverage for this input are aggregated; when none did,
+            # the weakness is not run. checks_with_coverage names the ones that count.
             state = aggregate_states(
                 [rule_state(states.get(rule, set())) for rule in checks if rule in states] or ["not-run"]
             )

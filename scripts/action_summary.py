@@ -39,13 +39,18 @@ RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
 def threshold_exceeded(path: str, fail_on: str) -> bool:
-    """Whether a policy or severity threshold failed, independent of audit completeness."""
+    """Whether a policy or severity threshold failed, independent of audit completeness.
+
+    With a policy, every gate reason counts except partial-audit, which the
+    policy's own setting and fail-on-incomplete govern: tolerating partial
+    parsing must not switch off required rules, waivers or baseline checks.
+    """
     result = envelope(path)
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     gate = data.get("gate") if isinstance(data, dict) else None
     if isinstance(gate, dict):
         return any(
-            isinstance(reason, dict) and reason.get("code") == "severity-threshold"
+            isinstance(reason, dict) and reason.get("code") != "partial-audit"
             for reason in gate.get("reasons") or []
         )
     if fail_on not in RANK:

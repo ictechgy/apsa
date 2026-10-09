@@ -242,17 +242,22 @@ Action은 같은 버전의 `apsa`를 릴리스의 해시 고정 의존성과 함
 `scan --format sarif --sarif-root`를 실행한 뒤 작업 요약을 쓰고 SARIF를 code scanning에 업로드하며,
 마지막에 결과를 적용합니다. 정책 실패나 `fail-on` 임계값 초과는 감사가 불완전하더라도 작업을
 실패시킵니다(종료 코드 `3`이 임계값 실패를 가릴 수 있어 Action은 종료 코드만이 아니라 보고서를
-읽습니다). 그 밖의 `3`은 `fail-on-incomplete: "false"`가 아니면 실패합니다. 팀 게이트는
+읽습니다). 정책을 쓰면 필수 규칙·필수 취약점 정보·만료된 예외·기준선 검사 등 충족하지 못한 정책
+조건은 모두 작업을 실패시키고, 부분 감사만 `fail-on-incomplete`에 맡깁니다. 이 값이 `"false"`가 아니면
+종료 코드 `3`도 실패합니다. 팀 게이트는
 `policy`(필요 시 `baseline-file`, `baseline-sha256`), 단순 임계값은 후보를 제외하는 `fail-on`을 쓰세요.
 
 기본값의 Action은 오프라인이라 CVE·의존성 공지 대조를 하지 않습니다. 의존성 발견에는 `intel-sync`(공개
 공지를 먼저 수집, 부분 동기화는 경고)와 `online`(의존성 이름·버전을 OSV에 전송)이 필요합니다. 비공개
 저장소의 SARIF 업로드에는 GitHub Code Security가 필요하며, `upload-sarif: "false"`면 파일만 남깁니다.
-fork에서 온 pull request는 읽기 전용 토큰을 받으므로 Action이 업로드를 건너뛰고 파일과 요약만 남깁니다.
+fork와 Dependabot의 pull request는 읽기 전용 토큰을 받으므로 Action이 업로드를 건너뛰고 파일과 요약만
+남깁니다.
 
 각 경고의 fingerprint는 APSA 발견 ID, 즉 규칙과 증거 위치(파일, 줄, 함수 또는 아카이브 내부 경로)입니다.
 표시된 줄을 고치거나 파일을 옮기면 경고 하나가 닫히고 새 경고가 열릴 수 있습니다. 후보 발견은
-`warning` 수준과 `candidate` 태그로 올라갑니다. code scanning은 `category`(기본 `apsa`)별로 경고를
+`warning` 수준과 `candidate` 태그로 올라가며, 결과가 모두 후보인 규칙에는 `security-severity`를 넣지 않아
+code scanning 기본 검사(High·Critical 경고에서 실패)를 일으키지 않습니다. 확인된 결과가 있는 규칙은 그
+결과로 `security-severity`를 정하며, 같은 규칙의 후보 경고도 그 등급을 공유합니다. code scanning은 `category`(기본 `apsa`)별로 경고를
 추적하므로, 이전에 다른 category로 APSA SARIF를 올렸다면 그 값을 유지하세요. 새 category는 새 경고를
 만들고, 이전 category의 경고는 해당 분석을 삭제할 때까지 열려 있습니다. 요금제에 따라 GitHub가 서드파티
 경고에 [Copilot Autofix](https://docs.github.com/en/code-security/code-scanning/managing-code-scanning-alerts/responsible-use-autofix-code-scanning)
@@ -314,9 +319,10 @@ apsa context --report latest --section findings --limit 20 --json
 | 모든 MCP 클라이언트 | `apsa integrations` 설정 또는 MCP Registry 항목 `io.github.ictechgy/apsa`(PyPI 패키지, `uvx`, 필수 `--root`). |
 | Codex 등 스킬 런타임 | `apsa skill install`과 `integrations` 설정. |
 
-릴리스 전에 Claude Code 2.1.295와 Codex CLI 0.162.0에서 이 버전의 로컬 빌드와 `apsa integrations`
-설정으로, 새로 만든 합성 프로젝트에 대해 `capabilities`·`audit_scan` 호출을 각각 확인했습니다.
-플러그인과 MCP Registry 설치는 패키지 게시 후 확인합니다. 다른 클라이언트는 아직 검증하지 않았습니다.
+릴리스 전에 Claude Code 2.1.295(체크아웃의 플러그인을 `--plugin-dir`로 로드, root
+`${CLAUDE_PROJECT_DIR}`)와 Codex CLI 0.162.0에서 이 버전의 로컬 빌드로, 새로 만든 합성 프로젝트에 대해
+`capabilities`·`audit_scan` 호출을 각각 확인했습니다. 마켓플레이스와 MCP Registry 설치는 패키지 게시 후
+확인합니다. 다른 클라이언트는 아직 검증하지 않았습니다.
 
 MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 root는 옵션을 반복해서 지정합니다. `integrations`에 root를 주지 않으면 현재 폴더를 사용합니다. Root는 검사 대상과 해당 보고서·작업 접근을 제한합니다. `--allow-any-root`는 이 제한을 명시적으로 해제합니다. APSA는 모델 클라이언트 설정을 자동 변경하지 않으며, 클라이언트 인증은 클라이언트가 관리합니다.
 
