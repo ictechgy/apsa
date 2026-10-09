@@ -66,7 +66,8 @@ def main():
         inventory["package"] == "audit.generated"
         and configuration["debuggable"] == "true"
         and configuration["cleartext"] == "false"
-        and inventory["android_sdk"] == {"min": "21", "target": "35"}
+        # The SDK record may carry its source path; compare only the declared levels.
+        and {k: inventory["android_sdk"].get(k) for k in ("min", "target")} == {"min": "21", "target": "35"}
         and independent.get("package") == inventory["package"]
         and independent.get("debuggable") == configuration["debuggable"]
         and independent.get("usesCleartextTraffic") == configuration["cleartext"]
