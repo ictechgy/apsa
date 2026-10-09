@@ -229,6 +229,17 @@ class Store:
             )
         ]
 
+    def target_reports(self, target: str, until: str | None = None, limit=200) -> list[dict]:
+        """Newest reports of exactly this target, optionally created at or before ``until``."""
+        return [
+            dict(r)
+            for r in self.db.execute(
+                "SELECT id,created,target FROM reports WHERE target=? AND (? IS NULL OR created<=?) "
+                "ORDER BY created DESC,rowid DESC LIMIT ?",
+                (target, until, until, limit),
+            )
+        ]
+
     @staticmethod
     def _intel_branch(record: dict) -> str:
         if record.get("source") not in {"apple", "android"}:

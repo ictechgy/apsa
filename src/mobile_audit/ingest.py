@@ -14,7 +14,7 @@ import re
 from pathlib import Path, PurePosixPath
 
 from .core import digest, finding, now, read_bounded, redact, severity_rank, uid
-from .maswe import weakness_index, weaknesses_for
+from .maswe import finding_weaknesses, weakness_index
 
 MAX_SARIF_BYTES = 16 * 1024 * 1024
 MAX_RESULTS = 5000
@@ -84,7 +84,9 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
     for weakness in weakness_index()["weaknesses"]:
         for cwe in weakness["cwe"]:
             cwe_to_maswe.setdefault(cwe, []).append(weakness["id"])
-    root = root.strip("/")
+    from .output import sarif_root
+
+    root = sarif_root(root) or ""
     label = _slug(tool, 40)
     findings, drivers, skipped, total = [], [], 0, 0
     for run in document.get("runs") or []:
@@ -189,8 +191,7 @@ def ingest(store, report_id: str, sarif_path: Path, tool: str, root: str = "") -
         matches = [
             f
             for f in native
-            if set(external.get("maswe") or []) & set(f.get("maswe") or weaknesses_for(f["rule_id"]))
-            and _near(external, f)
+            if set(external.get("maswe") or []) & set(finding_weaknesses(f)) and _near(external, f)
         ]
         external["evidence"][0]["corroborated_by"] = [f["id"] for f in matches][:20]
         for match in matches:

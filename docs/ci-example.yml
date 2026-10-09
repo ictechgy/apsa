@@ -30,7 +30,8 @@ jobs:
         run: |
           # Commit a reviewed apsa.toml; do not generate a permissive policy here.
           # Public intelligence is a bounded recent window, not a historical catalog.
-          apsa intel sync --json > intel-status.json || exit "$?"
+          # Exit 3 means a partial sync (for example a CVE backlog); coverage records it.
+          apsa intel sync --json > intel-status.json || [ "$?" -eq 3 ] || exit 1
           set +e
           apsa scan app/build/outputs/apk/release/app-release.apk \
             --policy apsa.toml --format sarif --out apsa.sarif --json > audit-decision.json

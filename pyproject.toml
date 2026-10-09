@@ -46,7 +46,7 @@ Changelog = "https://github.com/ictechgy/apsa/releases"
 packages = ["apsa", "quaygate", "src/mobile_audit"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/apsa", "/quaygate", "/src", "/tests", "/benchmarks", "/scripts", "/docs", "/examples", "/.agents", "/.github", "/pyproject.toml", "/uv.lock", "/requirements-release.txt", "/Makefile", "/README.md", "/README.ko.md", "/NAMING.md", "/DESIGN.md", "/PRODUCT_REQUIREMENTS.md", "/THIRD_PARTY_NOTICES.md", "/LICENSE", "/RELEASE_READINESS.md"]
+include = ["/apsa", "/quaygate", "/src", "/tests", "/benchmarks", "/scripts", "/docs", "/examples", "/.agents", "/.github", "/.claude-plugin", "/plugins", "/action.yml", "/server.json", "/pyproject.toml", "/uv.lock", "/requirements-release.txt", "/Makefile", "/README.md", "/README.ko.md", "/NAMING.md", "/DESIGN.md", "/PRODUCT_REQUIREMENTS.md", "/THIRD_PARTY_NOTICES.md", "/LICENSE", "/RELEASE_READINESS.md"]
 exclude = ["**/__pycache__", "**/*.pyc"]
 
 [tool.pytest.ini_options]

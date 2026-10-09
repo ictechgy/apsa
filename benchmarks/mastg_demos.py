@@ -110,7 +110,7 @@ def stage(directory: Path, target: Path) -> list[str]:
 
 def evaluate(entries: list[dict], work: Path) -> dict:
     from mobile_audit.audit import scan
-    from mobile_audit.maswe import RULE_WEAKNESSES, from_beta, weaknesses_for
+    from mobile_audit.maswe import RULE_WEAKNESSES, finding_weaknesses, from_beta
     from mobile_audit.store import Store
 
     checked = {w for mapped in RULE_WEAKNESSES.values() for w in mapped}
@@ -135,11 +135,7 @@ def evaluate(entries: list[dict], work: Path) -> dict:
                 row["error"] = str(error)[:300]
                 rows.append(row)
                 continue
-            related = [
-                f
-                for f in report["findings"]
-                if set(weaknesses) & set(f.get("maswe") or weaknesses_for(f["rule_id"]))
-            ]
+            related = [f for f in report["findings"] if set(weaknesses) & set(finding_weaknesses(f))]
             row["flagged"] = bool(related)
             row["findings"] = sorted({f["rule_id"] for f in related})
             row["other_findings"] = sorted({f["rule_id"] for f in report["findings"]} - set(row["findings"]))

@@ -69,7 +69,7 @@ RULE_WEAKNESSES: dict[str, tuple[str, ...]] = {
     "QG-APP-ALLOWBACKUP": ("MASWE-0006",),
     "QG-APP-CLEARTEXT": ("MASWE-0026",),
     "QG-APP-NSC-USER-TRUST": ("MASWE-0027",),
-    "QG-APP-NSC-DEBUG-OVERRIDES": ("MASWE-0027",),
+    "QG-APP-NSC-DEBUG-OVERRIDES": ("MASWE-0063",),
     "QG-APP-EXPORTED": ("MASWE-0018",),
     "QG-APP-DEEPLINK": ("MASWE-0029",),
     "QG-APP-PROVIDER-GRANT": ("MASWE-0018",),
@@ -126,20 +126,43 @@ def from_beta(identifier: str) -> tuple[str, ...]:
     return tuple(w["id"] for w in weakness_index()["weaknesses"] if identifier in w.get("beta", []))
 
 
-def weaknesses_for(rule_id: str) -> tuple[str, ...]:
-    if rule_id.startswith(ADVISORY_PREFIXES):
+def weaknesses_for(rule_id: str, origin: str | None = None) -> tuple[str, ...]:
+    if origin == "intelligence" or rule_id.startswith(ADVISORY_PREFIXES):
         return RULE_WEAKNESSES["DEPENDENCY-CVE"]
     return RULE_WEAKNESSES.get(rule_id, ())
 
 
-def _state(states: set[str]) -> str:
-    if "partial" in states:
+def finding_weaknesses(item: dict) -> tuple[str, ...]:
+    """A finding's own MASWE mapping, else its rule's."""
+    if item.get("origin") == "intelligence" and item.get("scope") == "environment":
+        return ()
+    mapped = item.get("maswe")
+    return tuple(mapped) if mapped else weaknesses_for(str(item.get("rule_id") or ""), item.get("origin"))
+
+
+def rule_state(states: set[str]) -> str:
+    """One rule's state across its coverage entries; not-applicable entries are neutral."""
+    effective = states - {"not-applicable"}
+    if not effective:
+        return "not-applicable" if states else "not-run"
+    if "partial" in effective or ("checked" in effective and effective != {"checked"}):
         return "partial"
-    if "checked" in states:
+    return "checked" if effective == {"checked"} else "not-run"
+
+
+def aggregate_states(rule_states: list[str]) -> str:
+    """Across related rules: every ran fully -> checked; some ran -> partial."""
+    effective = [s for s in rule_states if s != "not-applicable"]
+    if not effective:
+        return "not-applicable" if rule_states else "not-run"
+    if all(s == "checked" for s in effective):
         return "checked"
-    if states and states <= {"not-applicable"}:
-        return "not-applicable"
+    if any(s in {"checked", "partial"} for s in effective):
+        return "partial"
     return "not-run"
+
+
+MAX_ROW_FINDINGS = 50
 
 
 def coverage_matrix(report: dict) -> dict:
@@ -148,26 +171,32 @@ def coverage_matrix(report: dict) -> dict:
     platforms = set(report.get("inventory", {}).get("platforms") or [])
     states: dict[str, set[str]] = {}
     for item in report.get("coverage", []):
-        rule = item.get("rule_id")
+        rule = item.get("rule_id") if isinstance(item, dict) else None
         if isinstance(rule, str) and isinstance(item.get("state"), str):
             states.setdefault(rule, set()).add(item["state"])
     findings: dict[str, list[str]] = {}
     for item in report.get("findings", []):
-        for weakness in item.get("maswe") or weaknesses_for(item.get("rule_id", "")):
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            continue
+        for weakness in finding_weaknesses(item):
             findings.setdefault(weakness, []).append(item["id"])
     rows = []
     for weakness in index["weaknesses"]:
         checks = sorted(rule for rule, mapped in RULE_WEAKNESSES.items() if weakness["id"] in mapped)
+        related = [rule for rule in checks if rule in states]
+        found = sorted(set(findings.get(weakness["id"], [])))
         if platforms and not platforms & set(weakness["platform"]):
             state = "not-applicable"
         elif not checks:
             state = "not-assessed"
         else:
-            observed = set().union(*(states.get(rule, set()) for rule in checks))
-            state = _state(observed)
-            if findings.get(weakness["id"]) and state in {"not-run", "not-applicable"}:
-                # A finding is evidence that some related check executed.
-                state = "checked"
+            # Checks that never reported coverage for this input count as not run.
+            state = aggregate_states(
+                [rule_state(states.get(rule, set())) for rule in checks if rule in states] or ["not-run"]
+            )
+            if found and state in {"not-run", "not-applicable"}:
+                # A finding shows some related check ran, never that all of them did.
+                state = "partial"
         rows.append(
             {
                 "id": weakness["id"],
@@ -175,9 +204,11 @@ def coverage_matrix(report: dict) -> dict:
                 "masvs": weakness["masvs"],
                 "platform": weakness["platform"],
                 "checks": checks,
+                "checks_with_coverage": related,
                 "state": state,
                 "scope": "partial" if checks else "none",
-                "findings": sorted(set(findings.get(weakness["id"], []))),
+                "findings": found[:MAX_ROW_FINDINGS],
+                "finding_count": len(found),
             }
         )
     summary: dict[str, int] = {}
@@ -187,7 +218,10 @@ def coverage_matrix(report: dict) -> dict:
         "source": index["source"],
         "url": index["url"],
         "license": index["license"],
-        "note": "A related check covers part of a weakness, not every MASTG test for it. not-assessed means APSA has no related check; not-run and partial never mean safe.",
+        "note": "States describe APSA's related checks, which cover part of each weakness (scope partial), "
+        "never every MASTG test. checked means every related check that applied to this input ran fully; "
+        "a mix of run and not-run checks is partial. not-assessed means APSA has no related check; "
+        "not-run and partial never mean safe.",
         "summary": summary,
         "weaknesses": rows,
     }

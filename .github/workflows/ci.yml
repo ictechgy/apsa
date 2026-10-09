@@ -228,3 +228,23 @@ jobs:
         run: |
           test "$OUTCOME" = failure
           test "$CODE" = 4
+      - name: Make the synthetic project partial with an Objective-C file
+        run: printf '@implementation Legacy\n- (void)run { [self broken:; }\n@end\n' > selftest/app/Legacy.m
+      - name: An incomplete audit still fails on the threshold
+        id: partial
+        continue-on-error: true
+        uses: ./
+        with:
+          path: selftest/app
+          package: ${{ github.workspace }}
+          upload-sarif: "false"
+          fail-on: medium
+          fail-on-incomplete: "false"
+          sarif-file: partial.sarif
+      - name: Check that incompleteness did not mask the threshold
+        env:
+          OUTCOME: ${{ steps.partial.outcome }}
+          CODE: ${{ steps.partial.outputs.exit-code }}
+        run: |
+          test "$CODE" = 3
+          test "$OUTCOME" = failure

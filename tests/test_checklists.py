@@ -1,4 +1,4 @@
-"""Checklist views and finding history (1.5)."""
+"""Checklist views and finding history (1.4)."""
 
 from __future__ import annotations
 
@@ -30,6 +30,25 @@ def test_template_statuses_never_claim_a_pass(store, demo, monkeypatch):
     assert status["EX-CODE-01"] == "not-run"
     assert status["EX-STORAGE-01"] == "no-findings-in-checked-scope"
     assert "pass" not in json.dumps(view["summary"])
+
+
+def test_checklist_status_follows_the_weakest_related_check(store, demo, monkeypatch, tmp_path):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    report = scan(store, demo)
+    path = tmp_path / "c.toml"
+    path.write_text('version = 1\nname = "x"\n[[item]]\nid = "ecb"\nrules = ["AST-CRYPTO-ECB"]\n')
+    checklist = load_checklist(str(path))
+    others = [c for c in report["coverage"] if c.get("rule_id") != "AST-CRYPTO-ECB"]
+
+    def status(*states):
+        coverage = others + [{"rule_id": "AST-CRYPTO-ECB", "state": s} for s in states]
+        return checklist_view({**report, "coverage": coverage}, checklist)["items"][0]["status"]
+
+    assert status("checked") == "no-findings-in-checked-scope"
+    assert status("checked", "not-run") == "partial"
+    assert status("checked", "not-applicable") == "no-findings-in-checked-scope"
+    assert status("not-run") == "not-run"
+    assert status() == "not-run"
 
 
 @pytest.mark.parametrize(

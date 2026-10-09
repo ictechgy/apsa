@@ -100,15 +100,31 @@ weaknesses APSA did not assess; and the MCP server is packaged for the MCP
 Registry and as a Claude Code plugin, with a documented
 [MCP security model](https://github.com/ictechgy/apsa/blob/main/docs/MCP_SECURITY.md).
 
-**Upgrading from 1.3.** SARIF exports now list a descriptor for every rule with
-results (help, `security-severity`, precision, MASVS/MASWE tags), add
-`partialFingerprints` from the finding identity, report not-run and partial
-coverage as tool execution notifications, and use `--sarif-root` to make
-locations repository-relative; binary findings point at the APK/AAB/IPA with the
-archive member as a logical location. Code scanning may therefore show
-re-keyed alerts once. Rule metadata gains MASWE v1.0 identifiers, model context
-and `capabilities` gain a `maswe` section, and Markdown reports gain a MASWE
-coverage table. Unmodified 1.3 skills upgrade with `apsa skill install`.
+**Upgrading from 1.3.**
+
+- SARIF exports now list a descriptor for every rule with results (help,
+  `security-severity`, precision, MASVS/MASWE tags), add `partialFingerprints`
+  from the finding identity, and report not-run and partial coverage as tool
+  execution notifications. Candidate findings are `warning` rather than `error`
+  and their rules are tagged `candidate`. `--sarif-root` makes locations
+  repository-relative; URIs are percent-encoded, and APK/AAB/IPA members and
+  files outside the target appear as logical locations on the target. Code
+  scanning may therefore show re-keyed alerts once.
+- New source checks (exported components, backup, `targetSdk`, privacy
+  manifests, ATS exceptions, hard-coded secrets, insecure randomness, trust-all
+  TLS, external storage, Java deserialization, more SQL sinks, mutable
+  `PendingIntent`) add findings and coverage entries. A policy with
+  `required_rules` or a severity gate can fail where 1.3 passed; review the first
+  1.4 report before tightening gates.
+- Rule metadata gains MASWE v1.0 identifiers; model context and `capabilities`
+  gain a `maswe` section, and Markdown reports a MASWE coverage table. Reports
+  derived by `reports ingest` add `external_inputs` and findings with
+  `origin: external`; existing fields keep their meaning.
+- The MCP server adds `verify_finding`, `specs_validate`,
+  `reports_ingest_sarif`, `reports_checklist` and `reports_history`.
+  `tool_manifest_sha256` now covers a normalized APSA-owned surface, so its
+  value changes; update any pinned hash. Unmodified 1.3 skills upgrade with
+  `apsa skill install`.
 
 ## What it checks
 
@@ -233,26 +249,48 @@ Unreadable source directories and files leave warnings and incomplete coverage; 
 permissions:
   contents: read
   security-events: write
+  actions: read            # private repositories: lets the upload read the workflow run
 steps:
   - uses: actions/checkout@v7
+    with:
+      persist-credentials: false
   - uses: ictechgy/apsa@<commit-sha> # v1.4.0; pin the full commit SHA
     with:
       path: android            # source folder, or a built APK/AAB/IPA in the workspace
       fail-on-incomplete: "true"
 ```
 
-The action installs `apsa` from PyPI at the matching version, runs `scan` with
-`--format sarif --sarif-root`, writes a job summary, uploads the SARIF file to
-code scanning and then applies the exit code: `4` fails on a policy or
-threshold, `3` fails on an incomplete audit unless `fail-on-incomplete` is
-`"false"`. Use `policy` (with `baseline-file` and `baseline-sha256`) for team
-gates, or `fail-on` for a severity threshold that excludes candidates.
-`intel-sync` fetches public advisories first; `online` sends dependency names
-and versions to OSV (see [network use](#public-intelligence-and-network-use)).
+The action installs `apsa` from PyPI at the matching version with the
+release's hash-locked dependencies, runs `scan` with `--format sarif
+--sarif-root`, writes a job summary, uploads the SARIF file to code scanning
+and then applies the result. A policy failure or a `fail-on` threshold fails
+the job even when the audit is also incomplete (exit code `3` can hide a
+threshold failure, so the action reads the report rather than the exit code
+alone); otherwise `3` fails unless `fail-on-incomplete` is `"false"`. Use
+`policy` (with `baseline-file` and `baseline-sha256`) for team gates, or
+`fail-on` for a severity threshold that excludes candidates.
+
+By default the action is offline: it does no CVE or dependency-advisory
+correlation, and dependency findings need `intel-sync` (fetch public advisories
+first; a partial sync is a warning) and `online` (send dependency names and
+versions to OSV, see [network use](#public-intelligence-and-network-use)).
 Private repositories need GitHub Code Security to upload SARIF; set
-`upload-sarif: "false"` to keep only the file. Alerts uploaded to code scanning
-can receive GitHub's AI fix suggestions where that feature is enabled; APSA's
-evidence status stays in each alert's properties.
+`upload-sarif: "false"` to keep only the file. Pull requests from forks get a
+read-only token, so the action skips the upload there and still writes the file
+and summary.
+
+Each alert's fingerprint is APSA's finding identity: the rule plus the evidence
+location (file, line, function or archive member). Editing the flagged line or
+moving the file can therefore close one alert and open another. Candidate
+findings are uploaded at `warning` level and tagged `candidate`. Code scanning
+tracks alerts per `category` (default `apsa`); if you uploaded APSA SARIF
+before under another category, keep that value, because a new category starts
+new alerts and leaves the old category's alerts open until you delete its
+analyses. GitHub may offer
+[Copilot Autofix](https://docs.github.com/en/code-security/code-scanning/managing-code-scanning-alerts/responsible-use-autofix-code-scanning)
+suggestions on third-party alerts where your plan enables it; this has not been
+tested with APSA alerts, and APSA's evidence status stays in each alert's
+properties.
 
 Without the action:
 
@@ -318,9 +356,11 @@ Use `integrations` to generate a configuration with the installed executable pat
 | Any MCP client | Use the configuration from `apsa integrations`, or the MCP Registry entry `io.github.ictechgy/apsa` (PyPI package, `uvx`, required `--root`). |
 | Codex and other skill runtimes | `apsa skill install`, plus the `integrations` configuration. |
 
-Claude Code 2.1.295 and Codex CLI 0.162.0 were each verified calling
-`capabilities` and `audit_scan` on a freshly generated synthetic project. Other
-clients are not yet verified.
+Before release, Claude Code 2.1.295 and Codex CLI 0.162.0 were each verified
+calling `capabilities` and `audit_scan` against a local build of this version
+on a freshly generated synthetic project, using the `apsa integrations`
+configuration. The plugin and MCP Registry installs are checked after the
+package is published. Other clients are not yet verified.
 
 MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. `integrations` defaults to the current directory when no root is supplied. Roots restrict audited targets and access to their reports and jobs. `--allow-any-root` explicitly removes that restriction. APSA does not change model-client configuration automatically; client authentication belongs to the client.
 
@@ -335,9 +375,10 @@ MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. 
 
 `verify_finding` (CLI `apsa verify`) cross-checks a finding claimed by another tool or AI reviewer against APSA's evidence and never refutes it. Project taint specifications name project-specific sources and sinks, such as a deep-link parser or an in-app browser wrapper, for APSA to follow deterministically; see [project specifications](https://github.com/ictechgy/apsa/blob/main/docs/PROJECT_SPECS.md).
 
-`capabilities` reports `tool_manifest_sha256`, a hash of the served tool names,
-descriptions, input schemas and annotations; the tool set never changes within
-a process. Read-only tools are annotated read-only and idempotent, network tools
+`capabilities` reports `tool_manifest_sha256`, a hash of the APSA-owned tool
+surface (names, descriptions, annotation hints and parameter shapes); the tool
+set never changes within a process. Compare a hash computed from `tools/list`
+with the published values rather than trusting the server's own report. Read-only tools are annotated read-only and idempotent, network tools
 open-world. App content and advisory text are treated as untrusted data and
 model context omits source excerpts; see the [MCP security model](https://github.com/ictechgy/apsa/blob/main/docs/MCP_SECURITY.md).
 

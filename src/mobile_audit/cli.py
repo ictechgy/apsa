@@ -18,7 +18,7 @@ from .baselines import baseline_artifact, load_baseline
 from .core import canonical_json, digest, read_json, redact, report_incomplete, severity_rank, write_json
 from .intel import DEFAULT_SOURCES, Fetcher, fetch_record, source_health, sync
 from .model_context import SECTIONS, report_context
-from .output import markdown, sarif
+from .output import markdown, sarif, sarif_root
 from .policy import evaluate, load_policy, template
 from .rules import rules
 from .runtime import devices, plan, run, validate_scenario
@@ -365,25 +365,27 @@ def demo_target(directory: Path) -> Path:
 def first_observed(store: Store, report: dict, limit: int = 200) -> dict[str, str]:
     """Earliest saved report time at which each finding ID appeared for the same target."""
     seen: dict[str, str] = {}
-    history = [
-        item
-        for item in store.reports(limit, roots=[Path(report["target"])])
-        if item["target"] == report["target"] and item["created"] <= report["created"]
-    ]
-    for item in reversed(history):
+    for item in reversed(store.target_reports(report["target"], report["created"], limit)):
         for finding_item in store.report(item["id"]).get("findings", []):
             seen.setdefault(finding_item["id"], item["created"])
     return seen
 
 
-def export_report(report: dict, path: Path, format_: str, sarif_root: str | None = None):
-    if sarif_root is not None and format_ != "sarif":
+def checked_sarif_root(value: str | None) -> str | None:
+    try:
+        return sarif_root(value)
+    except ValueError as error:
+        raise UsageError(str(error)) from None
+
+
+def export_report(report: dict, path: Path, format_: str, root: str | None = None):
+    if root is not None and format_ != "sarif":
         raise UsageError("--sarif-root applies only to --format sarif")
     if format_ == "markdown":
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(markdown(report), encoding="utf-8")
     elif format_ == "sarif":
-        write_json(path, sarif(report, sarif_root))
+        write_json(path, sarif(report, root))
     elif format_ == "maswe":
         from .maswe import coverage_matrix
 
@@ -453,6 +455,9 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
         result = jobs.cancel(store, args.id) if args.action == "cancel" else jobs.get(store, args.id)
         return result, 3 if result["state"] in {"failed", "interrupted"} else 0
     if cmd == "scan":
+        if args.sarif_root is not None and (not args.out or args.format != "sarif"):
+            raise UsageError("--sarif-root requires --out with --format sarif")
+        args.sarif_root = checked_sarif_root(args.sarif_root)
         if (
             args.baseline or args.baseline_file or args.baseline_sha256 or args.decision_out
         ) and not args.policy:
@@ -493,8 +498,6 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
         )
         if args.out:
             export_report(result, args.out, args.format, args.sarif_root)
-        elif args.sarif_root is not None:
-            raise UsageError("--sarif-root requires --out")
         if policy is not None:
             gate = evaluate(result, policy, baseline)
             decision = decision_artifact(result, gate, baseline, policy)
@@ -647,6 +650,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 "external_input": result["external_inputs"][-1],
             }, 0
         if args.action == "export":
+            args.sarif_root = checked_sarif_root(args.sarif_root)
             if args.format == "baseline":
                 if args.sarif_root is not None:
                     raise UsageError("--sarif-root applies only to --format sarif")

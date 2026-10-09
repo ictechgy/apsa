@@ -35,6 +35,29 @@ def report_of(result: dict) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def threshold_exceeded(path: str, fail_on: str) -> bool:
+    """Whether a policy or severity threshold failed, independent of audit completeness."""
+    result = envelope(path)
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    gate = data.get("gate") if isinstance(data, dict) else None
+    if isinstance(gate, dict):
+        return any(
+            isinstance(reason, dict) and reason.get("code") == "severity-threshold"
+            for reason in gate.get("reasons") or []
+        )
+    if fail_on not in RANK:
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("status") != "candidate"
+        and RANK.get(item.get("severity", ""), -1) >= RANK[fail_on]
+        for item in report_of(result).get("findings", [])
+    )
+
+
 def summary(path: str, code: str) -> str:
     result = envelope(path)
     report = report_of(result)
@@ -42,7 +65,7 @@ def summary(path: str, code: str) -> str:
     if not report:
         error = (result.get("error") or {}).get("message", "no report was produced")
         return "\n".join(lines + [f"APSA did not complete: {error} (exit code {code})."]) + "\n"
-    incomplete = code == "3"
+    incomplete = bool((report.get("summary") or {}).get("incomplete", code == "3"))
     lines += [
         f"- Report: `{report.get('id')}` · APSA {report.get('tool_version')} · rules `{report.get('rule_version')}`",
         f"- Audit execution: **{'incomplete' if incomplete else 'complete for the stated scope'}** (exit code {code})",
@@ -80,11 +103,15 @@ def main(argv: list[str]) -> int:
         if isinstance(report_id, str):
             print(f"report-id={report_id}")
         return 0
+    if argv[:1] == ["--threshold"] and len(argv) == 3:
+        print(f"threshold-exceeded={'true' if threshold_exceeded(argv[1], argv[2]) else 'false'}")
+        return 0
     if argv[:1] == ["--summary"] and len(argv) == 3:
         sys.stdout.write(summary(argv[1], argv[2]))
         return 0
     raise SystemExit(
-        "usage: action_summary.py --sarif-root TARGET WORKSPACE | --report-id RESULT | --summary RESULT CODE"
+        "usage: action_summary.py --sarif-root TARGET WORKSPACE | --report-id RESULT"
+        " | --threshold RESULT FAIL_ON | --summary RESULT CODE"
     )
 
 

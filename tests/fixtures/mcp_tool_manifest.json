@@ -1,7 +1,7 @@
 {
   "note": "Regenerate deliberately when an MCP tool name, description, input schema or annotation changes; publish the new hash in docs/MCP_SECURITY.md.",
   "default": {
-    "sha256": "c47c15d562e4a23a178bdf71782259d69d9b12318ccb26de7421fdb9a16b00fd",
+    "sha256": "032a5d339c9e85ebc0d35655bca1cf43caac516ecb25ac883998540e7d9f4181",
     "tools": [
       [
         "audit_reassess",
@@ -201,7 +201,7 @@
     ]
   },
   "runtime": {
-    "sha256": "b488d5fefc7605708a8a5fefb086f296867aba4a9e6fe6479f70a7fc2adba9db",
+    "sha256": "5024790fc46c918b6a2bd3111f3bb53dbff23ed17ca4df85c775f3cc816e533b",
     "tools": [
       [
         "audit_reassess",

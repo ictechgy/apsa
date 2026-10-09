@@ -30,10 +30,58 @@ LOCAL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint
 NETWORK = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
 
 
-def tool_manifest(server: FastMCP) -> list[dict[str, Any]]:
-    """Tool names, descriptions, input schemas and annotations exactly as served."""
+def _shape(schema: Any) -> Any:
+    """A JSON Schema reduced to what APSA defines: types, defaults, enums, items and properties."""
+    if not isinstance(schema, dict):
+        return schema if isinstance(schema, bool) else None
+    shape: dict[str, Any] = {key: schema[key] for key in ("type", "default", "enum", "$ref") if key in schema}
+    if isinstance(schema.get("anyOf"), list):
+        shape["anyOf"] = sorted((_shape(option) for option in schema["anyOf"]), key=canonical_json)
+    for key in ("items", "additionalProperties"):
+        if key in schema:
+            shape[key] = _shape(schema[key])
+    for key in ("properties", "$defs"):
+        if isinstance(schema.get(key), dict):
+            shape[key] = {name: _shape(value) for name, value in schema[key].items()}
+    if "properties" in shape:
+        shape["required"] = sorted(schema.get("required") or [])
+    return shape
+
+
+def normalized_manifest(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The APSA-owned surface of a ``tools/list`` result.
+
+    Names, descriptions, annotation hints and parameter shapes are kept; titles
+    and other details the MCP SDK adds to generated schemas are dropped, so the
+    hash changes when APSA's tools change, not when the SDK formats them anew.
+    """
     return sorted(
         (
+            {
+                "name": tool["name"],
+                "description": tool.get("description") or "",
+                "input": _shape(tool.get("inputSchema") or {}),
+                "annotations": {
+                    key: value
+                    for key, value in (tool.get("annotations") or {}).items()
+                    if key.endswith("Hint")
+                },
+            }
+            for tool in tools
+        ),
+        key=lambda item: item["name"],
+    )
+
+
+def manifest_sha256(tools: list[dict[str, Any]]) -> str:
+    """SHA-256 of the canonical JSON of ``normalized_manifest(tools)``."""
+    return digest(canonical_json(normalized_manifest(tools)).encode())
+
+
+def tool_manifest(server: FastMCP) -> list[dict[str, Any]]:
+    """Normalized manifest of the tools this server serves."""
+    return normalized_manifest(
+        [
             {
                 "name": tool.name,
                 "description": tool.description,
@@ -41,8 +89,7 @@ def tool_manifest(server: FastMCP) -> list[dict[str, Any]]:
                 "annotations": tool.annotations.model_dump(exclude_none=True) if tool.annotations else {},
             }
             for tool in server._tool_manager.list_tools()
-        ),
-        key=lambda item: item["name"],
+        ]
     )
 
 
@@ -113,6 +160,7 @@ def create_server(
             "path_roots": [str(p) for p in allowed],
             # The tool set is fixed for a server process (tools.listChanged is false).
             "tool_manifest_sha256": digest(canonical_json(tool_manifest(server)).encode()),
+            "tool_manifest_method": "SHA-256 of canonical JSON of mobile_audit.mcp_server.normalized_manifest(tools/list)",
             "intelligence_sources": ["apple", "android", "cve", "kev", "owasp", "osv"],
             "states": [
                 "candidate",
@@ -172,7 +220,7 @@ def create_server(
 
     @server.tool(annotations=READ)
     def reports_checklist(report_id: str = "latest", checklist: str = "masvs-v2") -> dict[str, Any]:
-        """Map a report onto a checklist: masvs-v2 (built in) or a checklist TOML inside an MCP root that maps items to MASWE identifiers and APSA rules. Statuses are findings, partial, no-findings-in-checked-scope, not-run or not-assessed; none is a pass."""
+        """Map a report onto a checklist: masvs-v2 (built in) or a checklist TOML inside an MCP root that maps items to MASWE identifiers and APSA rules. Statuses are findings, partial, no-findings-in-checked-scope, not-run, not-applicable or not-assessed; none is a pass."""
         from .checklists import checklist_view, load_checklist
 
         source = checklist if checklist == "masvs-v2" else str(authorize(checklist))
@@ -202,7 +250,7 @@ def create_server(
         report_id: str | None = None,
         rescan: bool = False,
     ) -> dict[str, Any]:
-        """Cross-check a mobile finding claimed elsewhere (for example by an AI code reviewer) against APSA evidence for target. Give a MASWE-NNNN or CWE-N weakness or an APSA rule ID, optionally with a file path and line. Uses the latest report for target unless report_id is given; rescan=true scans first and saves a report. Verdicts: corroborated, same-file-other-location, not-observed, partial, not-run, not-assessed. APSA never refutes a claim."""
+        """Cross-check a mobile finding claimed elsewhere (for example by an AI code reviewer) against APSA evidence for target. Give a MASWE-NNNN or CWE-N weakness or an APSA rule ID, optionally with a file path and line. Uses the latest report for target unless report_id is given; rescan=true scans first and saves a report. Verdicts: corroborated, same-file-other-location, file-not-analyzed, not-observed, partial, not-run, not-assessed. APSA never refutes a claim."""
         authorized_target = authorize(target)
         if report_id and rescan:
             raise ValueError("Choose report_id or rescan, not both")

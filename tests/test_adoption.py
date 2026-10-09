@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import subprocess
@@ -19,7 +20,9 @@ from mobile_audit.core import canonical_json, digest
 from mobile_audit.maswe import RULE_WEAKNESSES, UNMAPPED, coverage_matrix, weakness_index, weaknesses_for
 from mobile_audit.model_context import report_context
 from mobile_audit.output import markdown, sarif
+from mobile_audit.output import sarif_root as output_sarif_root
 from mobile_audit.rules import rules
+from mobile_audit.store import Store
 from scripts.action_summary import sarif_root, summary
 from scripts.check_sarif import problems
 
@@ -99,7 +102,7 @@ def test_sarif_meets_code_scanning_constraints_for_source_targets(demo_report):
     ssl = descriptors["WEBVIEW-SSL-BYPASS"]["properties"]
     assert ssl["security-severity"] == "8.0" and "MASWE-0027" in ssl["tags"] and ssl["precision"] == "medium"
     notes = run["invocations"][0]["toolExecutionNotifications"]
-    assert {n["descriptor"]["id"] for n in notes} >= {"DEPENDENCY-CVE", "OS-CVE"}
+    assert {n["associatedRule"]["id"] for n in notes if "associatedRule" in n} >= {"DEPENDENCY-CVE", "OS-CVE"}
     assert run["properties"]["maswe"]["summary"] == coverage_matrix(demo_report)["summary"]
 
 
@@ -128,8 +131,122 @@ def test_sarif_notifications_are_aggregated_and_bounded(demo_report):
     notes = sarif({**demo_report, "coverage": many})["runs"][0]["invocations"][0][
         "toolExecutionNotifications"
     ]
-    assert len(notes) == 200
+    assert len(notes) == 201 and "101 more" in notes[-1]["message"]["text"]
     assert any("(50 entries)" in n["message"]["text"] for n in notes)
+    assert all(n["associatedRule"]["id"] for n in notes[:-1])
+    unnamed = sarif(
+        {**demo_report, "coverage": [{"rule_id": None, "state": "not-run"}, {"state": "partial"}]}
+    )
+    assert {
+        n["associatedRule"]["id"] for n in unnamed["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+    } == {"unknown"}
+
+
+def _finding(rule_id, status="candidate", severity="high", **evidence):
+    return {
+        "id": f"{rule_id}-id",
+        "rule_id": rule_id,
+        "title": rule_id,
+        "severity": severity,
+        "status": status,
+        "evidence": [evidence],
+        "remediation": "Fix it.",
+        "masvs": "MASVS-CODE",
+        "references": [],
+    }
+
+
+def test_sarif_locations_are_encoded_relative_and_never_local_paths(demo_report):
+    findings = [
+        _finding("WEBVIEW-SSL-BYPASS", path="src/My Activity#1.kt", line=3),
+        _finding("SOURCE-TRUST-ALL-CERTS", path="/Users/someone/build/Gen.java"),
+        _finding("ANDROID-ALLOW-BACKUP", path="../outside/AndroidManifest.xml"),
+        _finding("DEPENDENCY-CVE", status="version-affected", dependency={"path": "app/build.gradle"}),
+    ]
+    run = sarif({**demo_report, "findings": findings}, "./apps//mobile/")["runs"][0]
+    uris = [r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] for r in run["results"]]
+    assert uris == [
+        "apps/mobile/src/My%20Activity%231.kt",
+        "apps/mobile",
+        "apps/mobile",
+        "apps/mobile/app/build.gradle",
+    ]
+    assert run["results"][1]["locations"][0]["logicalLocations"] == [
+        {"fullyQualifiedName": "Gen.java", "kind": "resource"}
+    ]
+    assert "/Users/" not in json.dumps(run["results"])
+    assert problems(json.dumps({"version": "2.1.0", "runs": [run]}).encode()) == []
+
+
+def test_sarif_keeps_candidates_below_error_and_tags_candidate_rules(demo_report):
+    findings = [
+        _finding("WEBVIEW-SSL-BYPASS", path="a.kt"),
+        _finding("SOURCE-TRUST-ALL-CERTS", status="configuration-confirmed", path="b.kt"),
+        _finding("SOURCE-TRUST-ALL-CERTS", status="candidate", path="c.kt"),
+    ]
+    run = sarif({**demo_report, "findings": findings})["runs"][0]
+    assert [r["level"] for r in run["results"]] == ["warning", "error", "warning"]
+    rules = {rule["id"]: rule for rule in run["tool"]["driver"]["rules"]}
+    assert "candidate" in rules["WEBVIEW-SSL-BYPASS"]["properties"]["tags"]
+    assert rules["WEBVIEW-SSL-BYPASS"]["defaultConfiguration"]["level"] == "warning"
+    assert "candidate" not in rules["SOURCE-TRUST-ALL-CERTS"]["properties"]["tags"]
+    assert rules["SOURCE-TRUST-ALL-CERTS"]["defaultConfiguration"]["level"] == "error"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, None), ("", ""), (".", ""), ("./a//b/", "a/b"), ("a\\b", "a/b")],
+)
+def test_sarif_root_normalizes_repository_paths(value, expected):
+    assert output_sarif_root(value) == expected
+
+
+@pytest.mark.parametrize("value", ["/abs", "C:/repo", "c:", "a/../../b", "..", "https://x/y"])
+def test_sarif_root_rejects_paths_outside_the_repository(value):
+    with pytest.raises(ValueError):
+        output_sarif_root(value)
+
+
+def test_maswe_states_never_overstate_execution(demo_report):
+    rows = lambda report: {r["id"]: r for r in coverage_matrix(report)["weaknesses"]}  # noqa: E731
+    checked_only = [c for c in demo_report["coverage"] if c.get("rule_id") != "AST-CRYPTO-ECB"]
+    mixed = {
+        **demo_report,
+        "coverage": [
+            *checked_only,
+            {"rule_id": "AST-CRYPTO-ECB", "state": "checked"},
+            {"rule_id": "AST-CRYPTO-ECB", "state": "not-run"},
+        ],
+    }
+    assert rows(mixed)["MASWE-0007"]["state"] == "partial"
+    neutral = {
+        **demo_report,
+        "coverage": [
+            *checked_only,
+            {"rule_id": "AST-CRYPTO-ECB", "state": "checked"},
+            {"rule_id": "AST-CRYPTO-ECB", "state": "not-applicable"},
+        ],
+    }
+    assert (
+        rows(neutral)["MASWE-0007"]["state"]
+        == rows(
+            {**demo_report, "coverage": [*checked_only, {"rule_id": "AST-CRYPTO-ECB", "state": "checked"}]}
+        )["MASWE-0007"]["state"]
+    )
+    found = {
+        **demo_report,
+        "coverage": [c for c in demo_report["coverage"] if c.get("rule_id") != "DEPENDENCY-CVE"],
+        "findings": [_finding("CVE-2099-0001", status="version-affected") | {"origin": "intelligence"}],
+    }
+    row = rows(found)["MASWE-0044"]
+    assert row["state"] == "partial" and row["findings"] == ["CVE-2099-0001-id"]
+    many = {
+        **demo_report,
+        "findings": [_finding("WEBVIEW-SSL-BYPASS") | {"id": f"f{n:03d}"} for n in range(80)],
+    }
+    capped = rows(many)["MASWE-0027"]
+    assert len(capped["findings"]) == 50 and capped["finding_count"] == 80
+    assert "| partial |" in markdown(demo_report) or "| checked |" in markdown(demo_report)
 
 
 def test_check_sarif_rejects_what_code_scanning_rejects(demo_report):
@@ -210,6 +327,29 @@ def test_cli_exports_maswe_and_validates_sarif_root(tmp_path, demo, monkeypatch,
         == 2
     )
     assert main(["--json", "--home", home, "scan", str(demo), "--sarif-root", "x"]) == 2
+    saved = Store(Path(home))
+    before = len(saved.reports(100))
+    for bad in ("/abs", "../up"):
+        capsys.readouterr()
+        code = main(
+            [
+                "--json",
+                "--home",
+                home,
+                "scan",
+                str(demo),
+                "--format",
+                "sarif",
+                "--out",
+                str(out),
+                "--sarif-root",
+                bad,
+            ]
+        )
+        assert code == 2 and "repository" in capsys.readouterr().out
+    # Rejected before scanning: no report was saved.
+    assert len(saved.reports(100)) == before
+    saved.close()
 
 
 def test_action_helper_paths_and_summary(tmp_path):
@@ -274,7 +414,7 @@ def test_registry_and_plugin_metadata_follow_the_package_version():
 
 
 def test_mcp_tool_surface_is_fixed_and_annotated(tmp_path):
-    from mobile_audit.mcp_server import create_server, tool_manifest
+    from mobile_audit.mcp_server import create_server, manifest_sha256, tool_manifest
 
     snapshot = json.loads((ROOT / "tests/fixtures/mcp_tool_manifest.json").read_text())
     root = tmp_path / "root"
@@ -292,6 +432,11 @@ def test_mcp_tool_surface_is_fixed_and_annotated(tmp_path):
                 assert tool["annotations"].get("idempotentHint") is True
         options = server._mcp_server.create_initialization_options()
         assert options.capabilities.tools and options.capabilities.tools.listChanged is False
+        # A client recomputes the hash from tools/list exactly as served.
+        served = [
+            tool.model_dump(by_alias=True, exclude_none=True) for tool in asyncio.run(server.list_tools())
+        ]
+        assert manifest_sha256(served) == snapshot[variant]["sha256"]
 
 
 def test_mcp_security_document_publishes_the_pinned_manifest_hashes():

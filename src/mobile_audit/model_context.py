@@ -115,7 +115,10 @@ def report_context(
             for f in values
             if (not severity or f["severity"] == severity) and (not status or f["status"] == status)
         ]
-    base = {k: context[k] for k in ("report_id", "created", "summary", "input", "engines", "instructions")}
+    base = {
+        k: context[k]
+        for k in ("report_id", "created", "summary", "input", "engines", "maswe_source", "instructions")
+    }
     base["section_counts"] = {name: len(context[name]) for name in SECTIONS}
     base["coverage_summary"] = {
         state: sum(c["state"] == state for c in report["coverage"])

@@ -13,7 +13,7 @@ import tomllib
 from pathlib import Path
 
 from .core import digest, read_bounded
-from .maswe import RULE_WEAKNESSES, coverage_matrix, weakness_index
+from .maswe import RULE_WEAKNESSES, aggregate_states, coverage_matrix, rule_state, weakness_index
 
 MAX_CHECKLIST_BYTES = 256 * 1024
 MAX_ITEMS = 500
@@ -90,28 +90,40 @@ def checklist_view(report: dict, checklist: dict) -> dict:
     matrix = {row["id"]: row for row in coverage_matrix(report)["weaknesses"]}
     states: dict[str, set[str]] = {}
     for item in report.get("coverage", []):
-        if isinstance(item.get("rule_id"), str) and isinstance(item.get("state"), str):
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("rule_id"), str)
+            and isinstance(item.get("state"), str)
+        ):
             states.setdefault(item["rule_id"], set()).add(item["state"])
     rows = []
     for item in checklist["items"]:
         weakness_rows = [matrix[w] for w in item["maswe"] if w in matrix]
         checks = sorted({c for row in weakness_rows for c in row["checks"]} | set(item["rules"]))
-        observed = set().union(*(states.get(c, set()) for c in checks)) if checks else set()
         findings = sorted(
             {f for row in weakness_rows for f in row["findings"]}
             | {f["id"] for f in report.get("findings", []) if f["rule_id"] in item["rules"]}
         )
+        state = aggregate_states([rule_state(states[c]) for c in checks if c in states] or ["not-run"])
         if findings:
             status = "findings"
         elif not checks:
             status = "not-assessed"
-        elif "partial" in observed:
-            status = "partial"
-        elif "checked" in observed:
-            status = "no-findings-in-checked-scope"
+        elif (
+            weakness_rows and not item["rules"] and all(r["state"] == "not-applicable" for r in weakness_rows)
+        ):
+            status = "not-applicable"
         else:
-            status = "not-run"
-        rows.append({**item, "checks": checks, "status": status, "findings": findings})
+            status = {"checked": "no-findings-in-checked-scope", "partial": "partial"}.get(state, "not-run")
+        rows.append(
+            {
+                **item,
+                "checks": checks,
+                "status": status,
+                "findings": findings[:50],
+                "finding_count": len(findings),
+            }
+        )
     summary: dict[str, int] = {}
     for row in rows:
         summary[row["status"]] = summary.get(row["status"], 0) + 1
@@ -119,8 +131,9 @@ def checklist_view(report: dict, checklist: dict) -> dict:
         "report_id": report["id"],
         "checklist": {k: checklist[k] for k in ("name", "source") if k in checklist}
         | ({"sha256": checklist["sha256"]} if "sha256" in checklist else {}),
-        "note": "Status reflects APSA's related checks only. no-findings-in-checked-scope is not a pass; items "
-        "outside APSA's checks need other evidence.",
+        "note": "Status reflects APSA's related checks only. no-findings-in-checked-scope means every related "
+        "check that applied ran fully without findings; it is not a pass. A mix of run and not-run checks is "
+        "partial; items outside APSA's checks need other evidence.",
         "summary": summary,
         "items": rows,
     }
@@ -138,15 +151,13 @@ def checklist_markdown(view: dict) -> str:
     for row in view["items"]:
         title = f"{row['id']} {row['title']}".strip().replace("|", "\\|")
         checks = ", ".join(f"`{c}`" for c in row["checks"]) or "none"
-        lines.append(f"| {title} | {row['status']} | {checks} | {len(row['findings'])} |")
+        lines.append(f"| {title} | {row['status']} | {checks} | {row['finding_count']} |")
     return "\n".join(lines) + "\n"
 
 
 def timeline(store, target: str, limit: int = 200) -> dict:
     """First and last observation of each finding across saved reports of one target."""
-    history = [
-        item for item in reversed(store.reports(limit, roots=[Path(target)])) if item["target"] == target
-    ]
+    history = list(reversed(store.target_reports(target, limit=limit)))
     entries: dict[str, dict] = {}
     report_ids = []
     for item in history:

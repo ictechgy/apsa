@@ -84,13 +84,25 @@ APSA 1.4는 개발자와 코딩 에이전트가 바로 쓸 수 있도록 배포 
 않은 약점까지 명시합니다. MCP 서버는 MCP Registry와 Claude Code 플러그인으로 배포되며
 [MCP 보안 모델](https://github.com/ictechgy/apsa/blob/main/docs/MCP_SECURITY.md)을 문서화했습니다.
 
-**1.3에서 업그레이드할 때.** SARIF 내보내기는 결과가 있는 규칙마다 descriptor(도움말,
-`security-severity`, precision, MASVS/MASWE 태그)를 넣고, 발견 ID로 `partialFingerprints`를 만들며,
-not-run·partial 커버리지를 tool execution notification으로 보고합니다. `--sarif-root`로 위치를
-저장소 기준 상대 경로로 만들고, 바이너리 발견은 APK/AAB/IPA 파일을 위치로, 내부 경로를 logical
-location으로 표시합니다. 이 때문에 code scanning 경고가 한 번 새 키로 다시 생성될 수 있습니다. 규칙
-메타데이터에 MASWE v1.0 ID가 추가되고, 모델 context와 `capabilities`에 `maswe` 섹션이, Markdown
-보고서에 MASWE 커버리지 표가 추가됩니다. 수정하지 않은 1.3 스킬은 `apsa skill install`로 업그레이드됩니다.
+**1.3에서 업그레이드할 때.**
+
+- SARIF 내보내기는 결과가 있는 규칙마다 descriptor(도움말, `security-severity`, precision,
+  MASVS/MASWE 태그)를 넣고, 발견 ID로 `partialFingerprints`를 만들며, not-run·partial 커버리지를 tool
+  execution notification으로 보고합니다. 후보 발견은 `error`가 아닌 `warning`이며 규칙에 `candidate`
+  태그가 붙습니다. `--sarif-root`로 위치를 저장소 기준 상대 경로로 만들고, URI는 퍼센트 인코딩하며,
+  APK/AAB/IPA 내부 경로와 대상 밖 파일은 대상 위치의 logical location으로 표시합니다. 이 때문에 code
+  scanning 경고가 한 번 새 키로 다시 생성될 수 있습니다.
+- 새 소스 검사(외부 노출 컴포넌트, 백업, `targetSdk`, 개인정보 매니페스트, ATS 예외, 하드코딩된 비밀,
+  안전하지 않은 난수, 모든 인증서 신뢰, 외부 저장소, Java 역직렬화, 추가 SQL sink, mutable
+  `PendingIntent`)가 발견과 커버리지 항목을 추가합니다. `required_rules`나 심각도 게이트가 있는 정책은
+  1.3에서 통과했어도 실패할 수 있으니, 게이트를 강화하기 전에 첫 1.4 보고서를 검토하세요.
+- 규칙 메타데이터에 MASWE v1.0 ID가, 모델 context와 `capabilities`에 `maswe` 섹션이, Markdown
+  보고서에 MASWE 커버리지 표가 추가됩니다. `reports ingest`로 만든 보고서에는 `external_inputs`와
+  `origin: external` 발견이 추가되며 기존 필드의 의미는 그대로입니다.
+- MCP 서버에 `verify_finding`, `specs_validate`, `reports_ingest_sarif`, `reports_checklist`,
+  `reports_history`가 추가됩니다. `tool_manifest_sha256`은 이제 정규화한 APSA 소유 도구 정의의
+  해시이므로 값이 바뀝니다. 고정해 둔 해시를 갱신하세요. 수정하지 않은 1.3 스킬은
+  `apsa skill install`로 업그레이드됩니다.
 
 ## 검사 범위
 
@@ -215,22 +227,36 @@ apsa jobs status JOB_ID --json
 permissions:
   contents: read
   security-events: write
+  actions: read            # 비공개 저장소: 업로드가 워크플로 실행 정보를 읽을 수 있게 함
 steps:
   - uses: actions/checkout@v7
+    with:
+      persist-credentials: false
   - uses: ictechgy/apsa@<commit-sha> # v1.4.0; 전체 커밋 SHA로 고정
     with:
       path: android            # 소스 폴더 또는 workspace 안의 APK/AAB/IPA
       fail-on-incomplete: "true"
 ```
 
-Action은 같은 버전의 `apsa`를 PyPI에서 설치하고 `scan --format sarif --sarif-root`를 실행한 뒤
-작업 요약을 쓰고 SARIF를 code scanning에 업로드하며, 마지막에 종료 코드를 적용합니다. `4`는 정책·
-임계값 실패, `3`은 불완전한 감사로 실패합니다(`fail-on-incomplete: "false"`면 경고만 남김). 팀 게이트는
+Action은 같은 버전의 `apsa`를 릴리스의 해시 고정 의존성과 함께 PyPI에서 설치하고
+`scan --format sarif --sarif-root`를 실행한 뒤 작업 요약을 쓰고 SARIF를 code scanning에 업로드하며,
+마지막에 결과를 적용합니다. 정책 실패나 `fail-on` 임계값 초과는 감사가 불완전하더라도 작업을
+실패시킵니다(종료 코드 `3`이 임계값 실패를 가릴 수 있어 Action은 종료 코드만이 아니라 보고서를
+읽습니다). 그 밖의 `3`은 `fail-on-incomplete: "false"`가 아니면 실패합니다. 팀 게이트는
 `policy`(필요 시 `baseline-file`, `baseline-sha256`), 단순 임계값은 후보를 제외하는 `fail-on`을 쓰세요.
-`intel-sync`는 공개 공지를 먼저 수집하고, `online`은 의존성 이름·버전을 OSV에 보냅니다. 비공개
+
+기본값의 Action은 오프라인이라 CVE·의존성 공지 대조를 하지 않습니다. 의존성 발견에는 `intel-sync`(공개
+공지를 먼저 수집, 부분 동기화는 경고)와 `online`(의존성 이름·버전을 OSV에 전송)이 필요합니다. 비공개
 저장소의 SARIF 업로드에는 GitHub Code Security가 필요하며, `upload-sarif: "false"`면 파일만 남깁니다.
-기능이 켜진 저장소에서는 업로드된 경고에 GitHub의 AI 수정 제안이 붙을 수 있으며, APSA 증거 상태는
-각 경고의 properties에 남습니다.
+fork에서 온 pull request는 읽기 전용 토큰을 받으므로 Action이 업로드를 건너뛰고 파일과 요약만 남깁니다.
+
+각 경고의 fingerprint는 APSA 발견 ID, 즉 규칙과 증거 위치(파일, 줄, 함수 또는 아카이브 내부 경로)입니다.
+표시된 줄을 고치거나 파일을 옮기면 경고 하나가 닫히고 새 경고가 열릴 수 있습니다. 후보 발견은
+`warning` 수준과 `candidate` 태그로 올라갑니다. code scanning은 `category`(기본 `apsa`)별로 경고를
+추적하므로, 이전에 다른 category로 APSA SARIF를 올렸다면 그 값을 유지하세요. 새 category는 새 경고를
+만들고, 이전 category의 경고는 해당 분석을 삭제할 때까지 열려 있습니다. 요금제에 따라 GitHub가 서드파티
+경고에 [Copilot Autofix](https://docs.github.com/en/code-security/code-scanning/managing-code-scanning-alerts/responsible-use-autofix-code-scanning)
+제안을 붙일 수 있지만 APSA 경고로는 시험하지 않았으며, APSA 증거 상태는 각 경고의 properties에 남습니다.
 
 Action 없이:
 
@@ -288,8 +314,9 @@ apsa context --report latest --section findings --limit 20 --json
 | 모든 MCP 클라이언트 | `apsa integrations` 설정 또는 MCP Registry 항목 `io.github.ictechgy/apsa`(PyPI 패키지, `uvx`, 필수 `--root`). |
 | Codex 등 스킬 런타임 | `apsa skill install`과 `integrations` 설정. |
 
-Claude Code 2.1.295와 Codex CLI 0.162.0에서 새로 만든 합성 프로젝트로 `capabilities`·`audit_scan`
-호출을 각각 확인했습니다. 다른 클라이언트는 아직 검증하지 않았습니다.
+릴리스 전에 Claude Code 2.1.295와 Codex CLI 0.162.0에서 이 버전의 로컬 빌드와 `apsa integrations`
+설정으로, 새로 만든 합성 프로젝트에 대해 `capabilities`·`audit_scan` 호출을 각각 확인했습니다.
+플러그인과 MCP Registry 설치는 패키지 게시 후 확인합니다. 다른 클라이언트는 아직 검증하지 않았습니다.
 
 MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 root는 옵션을 반복해서 지정합니다. `integrations`에 root를 주지 않으면 현재 폴더를 사용합니다. Root는 검사 대상과 해당 보고서·작업 접근을 제한합니다. `--allow-any-root`는 이 제한을 명시적으로 해제합니다. APSA는 모델 클라이언트 설정을 자동 변경하지 않으며, 클라이언트 인증은 클라이언트가 관리합니다.
 
@@ -304,8 +331,9 @@ MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 ro
 
 `verify_finding`(CLI `apsa verify`)은 다른 도구나 AI 리뷰어가 주장한 발견을 APSA 증거와 대조하며 반박하지 않습니다. 프로젝트 taint 명세는 딥링크 파서나 인앱 브라우저 래퍼 같은 프로젝트 고유 source·sink를 지정해 APSA가 결정적으로 추적하게 합니다. [프로젝트 명세](https://github.com/ictechgy/apsa/blob/main/docs/PROJECT_SPECS.md)를 참고하세요.
 
-`capabilities`는 제공 중인 도구 이름·설명·입력 스키마·annotation의 해시 `tool_manifest_sha256`을
-알려 주며, 한 프로세스 안에서 도구 목록은 바뀌지 않습니다. 읽기 전용 도구는 read-only·idempotent,
+`capabilities`는 APSA가 정의한 도구 이름·설명·annotation·파라미터 형태를 정규화한 해시
+`tool_manifest_sha256`을 알려 주며, 한 프로세스 안에서 도구 목록은 바뀌지 않습니다. 서버가 스스로
+보고한 값을 믿기보다 `tools/list`로 계산한 해시를 공개 값과 비교하세요. 읽기 전용 도구는 read-only·idempotent,
 네트워크 도구는 open-world로 표시합니다. 앱 내용과 공지 문구는 신뢰하지 않는 데이터로 다루며 모델
 context에는 원문 발췌가 없습니다. [MCP 보안 모델](https://github.com/ictechgy/apsa/blob/main/docs/MCP_SECURITY.md)을 참고하세요.
 
