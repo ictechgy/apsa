@@ -71,6 +71,46 @@ installed patch safety, comprehensive production accuracy or OWASP certification
 The VLC repository-search absence claim is provisional and unscored; the full
 pinned archive independently records any checked-in Info.plist paths.
 
+## Unreleased development after 1.2.0
+
+These changes are on the development branch and are not part of APSA 1.2.0.
+
+- **Gradle dependency evidence.** Catalog aliases used in shipped configurations
+  become declared candidates; application-module lockfiles give exact
+  coordinates. See [DEPENDENCY_RESULTS.md](../benchmarks/DEPENDENCY_RESULTS.md).
+- **Parser adaptations.** Byte-preserving adaptations cover Swift
+  `@_documentation(visibility:)`, `#warning`/`#error`, empty-tuple values and
+  token-level `nonisolated(unsafe)`, and Objective-C `typedef NS_ENUM`-family
+  macros, `comment:` labels in `NSLocalizedString` and one kept branch per
+  preprocessor conditional (conditional imports are removed, a literal `#if 0`
+  keeps its alternative). Adapted files stay partial. On the already analyzed
+  VLC iOS and Firefox iOS sources, files with remaining errors drop from 22 to
+  0 and from 66 to 7. On two fresh repositories measured once without tuning,
+  the adaptations recover 83 of 223 Signal-iOS Swift error files (1.2.0: 2),
+  39 of 98 WordPress-iOS Swift files (1.2.0: 1) and 4 of 11 WordPress-iOS
+  Objective-C files (1.2.0: 0); Signal-iOS Objective-C remains 0 of 32, mainly
+  `NS_ASSUME_NONNULL_BEGIN`.
+- **AAB feature modules.** Each non-base module's protobuf manifest is decoded;
+  its components and deep links carry the module name and declared delivery
+  (install-time, on-demand, fast-follow). App identity and application flags
+  still come only from the base manifest; installation state stays unknown.
+- **Mach-O code integrity.** CodeDirectory page hashes and entitlement-slot
+  hashes are recomputed. Mismatch is reported as modified with a warning,
+  except mismatches confined to an encrypted region, which stay unverifiable.
+  The CMS signature, certificate chain, team and provisioning are not
+  authenticated; `signature_verified` stays false.
+- **Android bulletin history and chipsets.** `apsa intel backfill --source
+  android --since YYYY-MM [--until YYYY-MM]` fetches an explicit, bounded month
+  range. Bulletin records keep a vendor scope. Device observation adds the SoC
+  manufacturer and vendor security patch level; chipset and kernel components
+  use the vendor patch level, and a different SoC vendor yields
+  `chipset-vendor-mismatch` rather than a non-applicability claim. Apple
+  history, Pixel/OEM/chipset vendor bulletins and amended-entry tracking are
+  not backfilled.
+- **Independent source pairs.** See [FPFN_RESULTS.md](../benchmarks/FPFN_RESULTS.md).
+- **Device evidence.** No physical device was used; see
+  [DEVICE_EVIDENCE.md](DEVICE_EVIDENCE.md) for what approved evidence requires.
+
 # 분석 확장 (APSA 1.2)
 
 영어가 원본이며 이 절은 번역입니다. 변경은 `hardening/real-app-cve-v1`

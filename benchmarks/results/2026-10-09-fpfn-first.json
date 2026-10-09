@@ -1,0 +1,911 @@
+{
+  "pairs": [
+    {
+      "expected_rules": [
+        "AST-WEBVIEW-UNTRUSTED-URL"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 72,
+            "rule_id": "WEBVIEW-HOST-MATCH",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 20065345,
+          "sha256": "5f1b20d6d7081872df1a7911494e8150c22b873f1ca58757bb85d0eb476b3b6a",
+          "url": "https://codeload.github.com/home-assistant/android/zip/201931b91e0ec9c53298543ae0550df0becdc955"
+        },
+        "audit_incomplete": null,
+        "commit": "201931b91e0ec9c53298543ae0550df0becdc955",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/java/io/homeassistant/companion/android/launch/my/MyActivity.kt": "checked"
+        },
+        "scan_root": "app"
+      },
+      "id": "home-assistant-android-myactivity-webview-url",
+      "outcome": {
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "home-assistant/android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 62,
+            "rule_id": "WEBVIEW-HOST-MATCH",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 20065264,
+          "sha256": "165db1978158ffa4708bc1d7dfca2e400621f423769deb488870307595f11330",
+          "url": "https://codeload.github.com/home-assistant/android/zip/c11f2da26f29c57372929b2aa86e741b700947cf"
+        },
+        "audit_incomplete": null,
+        "commit": "c11f2da26f29c57372929b2aa86e741b700947cf",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/java/io/homeassistant/companion/android/launch/my/MyActivity.kt": "checked"
+        },
+        "scan_root": "app"
+      }
+    },
+    {
+      "expected_rules": [
+        "AST-WEBVIEW-UNTRUSTED-URL"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 20539765,
+          "sha256": "618c6a9868f561bb6aa5052a62b40f39c8fba4d276454020c8d9da536561d8d2",
+          "url": "https://codeload.github.com/element-hq/element-x-android/zip/dc058544d7e693c04298191c1aadd5b39c9be52e"
+        },
+        "audit_incomplete": null,
+        "commit": "dc058544d7e693c04298191c1aadd5b39c9be52e",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "call/impl/src/main/kotlin/io/element/android/features/call/impl/ui/CallScreenView.kt": "checked",
+          "call/impl/src/main/kotlin/io/element/android/features/call/impl/ui/ElementCallActivity.kt": "checked",
+          "call/impl/src/main/kotlin/io/element/android/features/call/impl/utils/CallIntentDataParser.kt": "checked"
+        },
+        "scan_root": "features"
+      },
+      "id": "element-x-android-call-intent-url-allowlist",
+      "outcome": {
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "element-hq/element-x-android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 20539251,
+          "sha256": "600e1d5a49f44c5add48efdaacb5f5627fab31bd250e2ab93a33171121449a54",
+          "url": "https://codeload.github.com/element-hq/element-x-android/zip/c0a1d8d586c8ae7d5beca7583ec74601e300a95e"
+        },
+        "audit_incomplete": null,
+        "commit": "c0a1d8d586c8ae7d5beca7583ec74601e300a95e",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "call/impl/src/main/kotlin/io/element/android/features/call/impl/ui/CallScreenView.kt": "checked",
+          "call/impl/src/main/kotlin/io/element/android/features/call/impl/ui/ElementCallActivity.kt": "checked",
+          "call/impl/src/main/kotlin/io/element/android/features/call/impl/utils/CallIntentDataParser.kt": "checked"
+        },
+        "scan_root": "features"
+      }
+    },
+    {
+      "expected_rules": [
+        "AST-WEBVIEW-UNTRUSTED-URL"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 106,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 335,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 8915143,
+          "sha256": "722524d5c600d0c094dcee87dc76531efadec9f2d27620f079774bf93af4341f",
+          "url": "https://codeload.github.com/element-hq/element-x-ios/zip/63592e48c1a1e47f75693045efd85a7d4468ea84"
+        },
+        "audit_incomplete": null,
+        "commit": "63592e48c1a1e47f75693045efd85a7d4468ea84",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "Sources/Application/Navigation/AppRoutes.swift": "checked",
+          "Sources/Screens/CallScreen/View/CallScreen.swift": "partial"
+        },
+        "scan_root": "ElementX"
+      },
+      "id": "element-x-ios-call-deeplink-wkwebview",
+      "outcome": {
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "element-hq/element-x-ios",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 107,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 336,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 8918563,
+          "sha256": "13b90f75b9c8e2fe00859d9cdff701c48941f74511f0f395b59bdbd278e7eb56",
+          "url": "https://codeload.github.com/element-hq/element-x-ios/zip/dc26e9eb5c56024335340bb0c6e0e416b4d98ce5"
+        },
+        "audit_incomplete": null,
+        "commit": "dc26e9eb5c56024335340bb0c6e0e416b4d98ce5",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "Sources/Application/Navigation/AppRoutes.swift": "checked",
+          "Sources/Screens/CallScreen/View/CallScreen.swift": "partial"
+        },
+        "scan_root": "ElementX"
+      }
+    },
+    {
+      "expected_rules": [
+        "AST-WEBVIEW-SSL-BYPASS",
+        "WEBVIEW-SSL-BYPASS"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 831,
+            "rule_id": "WEBVIEW-HOST-MATCH",
+            "status": "candidate"
+          },
+          {
+            "line": 616,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 718,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 725,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 870,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 877,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 8480277,
+          "sha256": "8139a7635f94489e420e3ed6f56e7e87aa127ef73b1cedb7fd0c337c39d6d25d",
+          "url": "https://codeload.github.com/ushahidi/SMSSync/zip/7ca81abea0064e842fbbf99b43676a9eb23f7e24"
+        },
+        "audit_incomplete": null,
+        "commit": "7ca81abea0064e842fbbf99b43676a9eb23f7e24",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/java/org/addhen/smssync/data/twitter/TwitterOAuthView.java": "checked"
+        },
+        "scan_root": "smssync"
+      },
+      "id": "smssync-twitter-oauth-ssl-proceed",
+      "outcome": {
+        "fixed": "tn",
+        "vulnerable": "tp",
+        "vulnerable_line_level": true
+      },
+      "repository": "ushahidi/SMSSync",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 807,
+            "rule_id": "WEBVIEW-SSL-BYPASS",
+            "status": "candidate"
+          },
+          {
+            "line": 840,
+            "rule_id": "WEBVIEW-HOST-MATCH",
+            "status": "candidate"
+          },
+          {
+            "line": 618,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 720,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 727,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 879,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 886,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 807,
+            "rule_id": "AST-WEBVIEW-SSL-BYPASS",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 8480328,
+          "sha256": "2afe2a110cea1395013b7764aaac5678512b38864a5e87bfc7943edf79df9ad0",
+          "url": "https://codeload.github.com/ushahidi/SMSSync/zip/d8746806d15ca37e0fa894115efe483f49ec1730"
+        },
+        "audit_incomplete": null,
+        "commit": "d8746806d15ca37e0fa894115efe483f49ec1730",
+        "hits": [
+          {
+            "line": 807,
+            "rule_id": "WEBVIEW-SSL-BYPASS",
+            "status": "candidate"
+          },
+          {
+            "line": 807,
+            "rule_id": "AST-WEBVIEW-SSL-BYPASS",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [
+          {
+            "line": 807,
+            "rule_id": "WEBVIEW-SSL-BYPASS",
+            "status": "candidate"
+          },
+          {
+            "line": 807,
+            "rule_id": "AST-WEBVIEW-SSL-BYPASS",
+            "status": "candidate"
+          }
+        ],
+        "labeled_file_states": {
+          "src/main/java/org/addhen/smssync/data/twitter/TwitterOAuthView.java": "checked"
+        },
+        "scan_root": "smssync"
+      }
+    },
+    {
+      "expected_rules": [
+        "AST-WEBVIEW-JS-BRIDGE",
+        "WEBVIEW-JS-BRIDGE"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 142,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 41052714,
+          "sha256": "f13c046a40697c2a42be7578efd8bacdded7554f91ece6259d07faf29285bbc6",
+          "url": "https://codeload.github.com/openclaw/openclaw/zip/8b02ef133275be96d8aac2283100016c8a7f32e5"
+        },
+        "audit_incomplete": null,
+        "commit": "8b02ef133275be96d8aac2283100016c8a7f32e5",
+        "hits": [
+          {
+            "line": 142,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "android/app/src/main/java/ai/openclaw/app/node/CanvasActionTrust.kt": "checked",
+          "android/app/src/main/java/ai/openclaw/app/ui/CanvasScreen.kt": "checked"
+        },
+        "scan_root": "apps"
+      },
+      "id": "openclaw-android-canvas-js-bridge",
+      "outcome": {
+        "fixed": "fp",
+        "vulnerable": "tp",
+        "vulnerable_line_level": true
+      },
+      "repository": "openclaw/openclaw",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 126,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 126,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 41050713,
+          "sha256": "1bd9067e8cc244401976d01984019303e5374d13a94f88896803d0ccef13499a",
+          "url": "https://codeload.github.com/openclaw/openclaw/zip/94f397bc5fe3625b4dd44e3b4c0b550d5482bb38"
+        },
+        "audit_incomplete": null,
+        "commit": "94f397bc5fe3625b4dd44e3b4c0b550d5482bb38",
+        "hits": [
+          {
+            "line": 126,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 126,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [
+          {
+            "line": 126,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "labeled_file_states": {
+          "android/app/src/main/java/ai/openclaw/app/ui/CanvasScreen.kt": "checked"
+        },
+        "scan_root": "apps"
+      }
+    },
+    {
+      "expected_rules": [
+        "WEBVIEW-FILE-ACCESS"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 1115,
+            "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+            "status": "candidate"
+          },
+          {
+            "line": 1123,
+            "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+            "status": "candidate"
+          },
+          {
+            "line": 1833,
+            "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+            "status": "candidate"
+          },
+          {
+            "line": 1838,
+            "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+            "status": "candidate"
+          },
+          {
+            "line": 525,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 936368,
+          "sha256": "74281c59d9321b98927d779d1f92c3e738b71e4b022fa82161790cedffd39da5",
+          "url": "https://codeload.github.com/donmor/Tiddloid/zip/80a0501eb5fd5e083ccce38c3d2fcd731b93a832"
+        },
+        "audit_incomplete": null,
+        "commit": "80a0501eb5fd5e083ccce38c3d2fcd731b93a832",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/java/top/donmor/tiddloid/TWEditorWV.java": "checked"
+        },
+        "scan_root": "app"
+      },
+      "id": "tiddloid-editor-webview-file-url-access",
+      "outcome": {
+        "fixed": "tn",
+        "vulnerable": "tp",
+        "vulnerable_line_level": true
+      },
+      "repository": "donmor/Tiddloid",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 318,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          },
+          {
+            "line": 319,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          },
+          {
+            "line": 1117,
+            "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+            "status": "candidate"
+          },
+          {
+            "line": 1125,
+            "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+            "status": "candidate"
+          },
+          {
+            "line": 1835,
+            "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+            "status": "candidate"
+          },
+          {
+            "line": 1840,
+            "rule_id": "AST-WEBVIEW-UNTRUSTED-URL",
+            "status": "candidate"
+          },
+          {
+            "line": 527,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 935704,
+          "sha256": "86e1d03cee0d9dde2185567d12609379780ec2d87952488f711a098ba8dac71e",
+          "url": "https://codeload.github.com/donmor/Tiddloid/zip/e45f167c1e41c1c95bdeaff864d8f684736d8fea"
+        },
+        "audit_incomplete": null,
+        "commit": "e45f167c1e41c1c95bdeaff864d8f684736d8fea",
+        "hits": [
+          {
+            "line": 318,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          },
+          {
+            "line": 319,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [
+          {
+            "line": 318,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          },
+          {
+            "line": 319,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          }
+        ],
+        "labeled_file_states": {
+          "src/main/java/top/donmor/tiddloid/TWEditorWV.java": "checked"
+        },
+        "scan_root": "app"
+      }
+    },
+    {
+      "expected_rules": [
+        "AST-SQL-CONCAT"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 17175970,
+          "sha256": "78c8f81a90e918b35d961a7f527a4abf559002f4133573402c47d6af498b909e",
+          "url": "https://codeload.github.com/nextcloud/android/zip/627caba60e69e223b0fc89c4cb18eaa76a95db95"
+        },
+        "audit_incomplete": null,
+        "commit": "627caba60e69e223b0fc89c4cb18eaa76a95db95",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "main/java/com/owncloud/android/providers/FileContentProvider.java": "checked"
+        },
+        "scan_root": "src"
+      },
+      "id": "nextcloud-android-filecontentprovider-sqli",
+      "outcome": {
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "nextcloud/android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 17169513,
+          "sha256": "398e0b2dc03987fd420dc2710de0a203c7d198ecfa7f6f346912e7dc07df0380",
+          "url": "https://codeload.github.com/nextcloud/android/zip/07b4ac3d49ad804ffb9a8dc01f274e053833f3a6"
+        },
+        "audit_incomplete": null,
+        "commit": "07b4ac3d49ad804ffb9a8dc01f274e053833f3a6",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "main/java/com/owncloud/android/providers/FileContentProvider.java": "checked"
+        },
+        "scan_root": "src"
+      }
+    },
+    {
+      "expected_rules": [
+        "STORAGE-SENSITIVE-LOG"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 15500778,
+          "sha256": "46328ab42b39528b312e8b43912a479b20dbdd223eb871207a6cc11c47dbeed2",
+          "url": "https://codeload.github.com/element-hq/element-android/zip/cf247eafb7f66b9439748873834c4fc1aec70e87"
+        },
+        "audit_incomplete": null,
+        "commit": "cf247eafb7f66b9439748873834c4fc1aec70e87",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/java/org/matrix/android/sdk/internal/crypto/verification/VerificationMessageProcessor.kt": "checked"
+        },
+        "scan_root": "matrix-sdk-android"
+      },
+      "id": "element-android-verification-event-log-leak",
+      "outcome": {
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "element-hq/element-android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 15500473,
+          "sha256": "f06a44291618ded1cd41f39b42913dc9d6b1f6468234ce7dda852800b451a92e",
+          "url": "https://codeload.github.com/element-hq/element-android/zip/21e88efaffa0019883c1b6ef2e9d52e11192b714"
+        },
+        "audit_incomplete": null,
+        "commit": "21e88efaffa0019883c1b6ef2e9d52e11192b714",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/java/org/matrix/android/sdk/internal/crypto/verification/VerificationMessageProcessor.kt": "checked"
+        },
+        "scan_root": "matrix-sdk-android"
+      }
+    },
+    {
+      "expected_rules": [
+        "STORAGE-TOKEN-PREFS"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 119374515,
+          "sha256": "e00e850f440700c6d0b5bf987d0bed9c84d31b60691faeef5c6208a144d20e1b",
+          "url": "https://codeload.github.com/openclaw/openclaw/zip/8862cc46b3a250c918567f8be2984e9c7c96a033"
+        },
+        "audit_incomplete": null,
+        "commit": "8862cc46b3a250c918567f8be2984e9c7c96a033",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "shared/OpenClawKit/Sources/OpenClawKit/ShareGatewayRelaySettings.swift": "checked"
+        },
+        "scan_root": "apps"
+      },
+      "id": "openclaw-ios-share-relay-credentials-userdefaults",
+      "outcome": {
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "openclaw/openclaw",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 119371672,
+          "sha256": "0805c7b76099e52ecd6701c382fde0052d6ae96606a6facf9a093cd3d877e15a",
+          "url": "https://codeload.github.com/openclaw/openclaw/zip/d699ed0198600648f888d870f6a4961e1f3d86a9"
+        },
+        "audit_incomplete": null,
+        "commit": "d699ed0198600648f888d870f6a4961e1f3d86a9",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "shared/OpenClawKit/Sources/OpenClawKit/ShareGatewayRelaySettings.swift": "checked"
+        },
+        "scan_root": "apps"
+      }
+    },
+    {
+      "expected_rules": [
+        "ANDROID-CLEARTEXT"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 5459904,
+          "sha256": "24e1ee2cedc5810ba40e54c988c5cd80e505fe59b9ec5d325e5eb20b812cd769",
+          "url": "https://codeload.github.com/TeamAmaze/AmazeFileManager/zip/21d7a7c66fcf495d7fa0e441f7211c00d81ab379"
+        },
+        "audit_incomplete": null,
+        "commit": "21d7a7c66fcf495d7fa0e441f7211c00d81ab379",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/AndroidManifest.xml": "not-analyzed-as-source",
+          "src/main/res/xml/network_security_config.xml": "not-analyzed-as-source"
+        },
+        "scan_root": "app"
+      },
+      "id": "amaze-filemanager-usescleartexttraffic",
+      "outcome": {
+        "fixed": "tn",
+        "vulnerable": "tp",
+        "vulnerable_line_level": false
+      },
+      "repository": "TeamAmaze/AmazeFileManager",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": null,
+            "rule_id": "ANDROID-CLEARTEXT",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 5459451,
+          "sha256": "725b4caa645fb0a8785888b18d2429d56a5f3046f9c43cfc0570227c32752964",
+          "url": "https://codeload.github.com/TeamAmaze/AmazeFileManager/zip/7136ff3e796507310e7173308e60dab566691da4"
+        },
+        "audit_incomplete": null,
+        "commit": "7136ff3e796507310e7173308e60dab566691da4",
+        "hits": [
+          {
+            "line": null,
+            "rule_id": "ANDROID-CLEARTEXT",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/AndroidManifest.xml": "not-analyzed-as-source"
+        },
+        "scan_root": "app"
+      }
+    },
+    {
+      "expected_rules": [
+        "IOS-ATS"
+      ],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 41230771,
+          "sha256": "b3fd042b6b31aa496c1a576c600f2d581ec9b69be0fee8ce8851b5a29db521ae",
+          "url": "https://codeload.github.com/wikimedia/wikipedia-ios/zip/8cb1e6f43e5a1d032e1e136239af71cc33f7bf58"
+        },
+        "audit_incomplete": null,
+        "commit": "8cb1e6f43e5a1d032e1e136239af71cc33f7bf58",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "Wikipedia-Info.plist (and the 4 other build-variant plists)": "not-analyzed-as-source"
+        },
+        "scan_root": "Wikipedia"
+      },
+      "id": "wikipedia-ios-ats-arbitrary-loads",
+      "outcome": {
+        "fixed": "tn",
+        "vulnerable": "tp",
+        "vulnerable_line_level": false
+      },
+      "repository": "wikimedia/wikipedia-ios",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": null,
+            "rule_id": "IOS-ATS",
+            "status": "candidate"
+          },
+          {
+            "line": null,
+            "rule_id": "IOS-ATS",
+            "status": "candidate"
+          },
+          {
+            "line": null,
+            "rule_id": "IOS-ATS",
+            "status": "candidate"
+          },
+          {
+            "line": null,
+            "rule_id": "IOS-ATS",
+            "status": "candidate"
+          },
+          {
+            "line": null,
+            "rule_id": "IOS-ATS",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 41230971,
+          "sha256": "1c3dc27dd0b3a8842419e0c175e0fc64e056d5bdd0e4829cec40760c81254687",
+          "url": "https://codeload.github.com/wikimedia/wikipedia-ios/zip/b0c61684af9ed8d9d9c3e5f4c9d0c5b198071f84"
+        },
+        "audit_incomplete": null,
+        "commit": "b0c61684af9ed8d9d9c3e5f4c9d0c5b198071f84",
+        "hits": [
+          {
+            "line": null,
+            "rule_id": "IOS-ATS",
+            "status": "candidate"
+          },
+          {
+            "line": null,
+            "rule_id": "IOS-ATS",
+            "status": "candidate"
+          },
+          {
+            "line": null,
+            "rule_id": "IOS-ATS",
+            "status": "candidate"
+          },
+          {
+            "line": null,
+            "rule_id": "IOS-ATS",
+            "status": "candidate"
+          },
+          {
+            "line": null,
+            "rule_id": "IOS-ATS",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "Wikipedia Alpha-Info.plist": "not-analyzed-as-source",
+          "Wikipedia Beta-Info.plist": "not-analyzed-as-source",
+          "Wikipedia OSM-Info.plist": "not-analyzed-as-source",
+          "Wikipedia User Testing-Info.plist": "not-analyzed-as-source",
+          "Wikipedia-Info.plist": "not-analyzed-as-source"
+        },
+        "scan_root": "Wikipedia"
+      }
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 39275133,
+          "sha256": "87a76a5c83c9fba23b1b6fa6c7d7b0c2bc44a051ccd66d1d01341a44bd949307",
+          "url": "https://codeload.github.com/M66B/FairEmail/zip/538523dded741f7a8a76052de9a69806d357c0f4"
+        },
+        "audit_incomplete": null,
+        "commit": "538523dded741f7a8a76052de9a69806d357c0f4",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/java/eu/faircode/email/ActivityBase.java": "checked"
+        },
+        "scan_root": "app"
+      },
+      "id": "fairemail-shared-attachment-path-traversal",
+      "outcome": {
+        "fixed": "out-of-scope",
+        "vulnerable": "out-of-scope"
+      },
+      "repository": "M66B/FairEmail",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 39275118,
+          "sha256": "fed5518877aef9e81a52acc53e4f873d8812e7ffe2dc3f3ce6753abdf0ddd222",
+          "url": "https://codeload.github.com/M66B/FairEmail/zip/336367a356108120fda1b8278f3b95a34055c68b"
+        },
+        "audit_incomplete": null,
+        "commit": "336367a356108120fda1b8278f3b95a34055c68b",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/java/eu/faircode/email/ActivityBase.java": "checked"
+        },
+        "scan_root": "app"
+      }
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 3976013,
+          "sha256": "59f11665f38747a932f0a2a4ec40a1ceeccc3d442901d74aa4e1bd93517190ce",
+          "url": "https://codeload.github.com/tasks/tasks/zip/23bf69d3f44b07e4bc62ea107f72103239f5d942"
+        },
+        "audit_incomplete": null,
+        "commit": "23bf69d3f44b07e4bc62ea107f72103239f5d942",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/java/com/todoroo/astrid/activity/ShareLinkActivity.kt": "checked"
+        },
+        "scan_root": "app"
+      },
+      "id": "tasks-org-sharelink-file-uri-copy",
+      "outcome": {
+        "fixed": "out-of-scope",
+        "vulnerable": "out-of-scope"
+      },
+      "repository": "tasks/tasks",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 3975851,
+          "sha256": "8a20eb3a3cc5f62d815bc4f968ea1ac9a148979a11acd984f0fe18f9d648e3bf",
+          "url": "https://codeload.github.com/tasks/tasks/zip/07bf02f9e5dc5d6b19d9ad4cca6f29d11d9037e4"
+        },
+        "audit_incomplete": null,
+        "commit": "07bf02f9e5dc5d6b19d9ad4cca6f29d11d9037e4",
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "labeled_file_states": {
+          "src/main/java/com/todoroo/astrid/activity/ShareLinkActivity.kt": "checked"
+        },
+        "scan_root": "app"
+      }
+    }
+  ],
+  "schema": "apsa-fpfn-results-v1",
+  "totals": {
+    "errors": 0,
+    "fn": 6,
+    "fp": 1,
+    "line_level_tp": 3,
+    "scored_pairs": 11,
+    "tn": 10,
+    "tp": 5
+  },
+  "truth_sha256": "229b9070166881b136c765eaa65893dd99b09421464c72d7337b7bce97bf535a"
+}
