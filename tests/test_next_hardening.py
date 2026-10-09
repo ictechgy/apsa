@@ -435,6 +435,8 @@ def test_macos_policy_maps_only_trusted_executable_roots(monkeypatch, tmp_path):
     )
     assert str(runtime) in rule
     assert str(target) not in rule and str(scratch) not in rule
+    assert '(literal "/")' in (scratch / "parser.sb").read_text()
+    assert '(subpath "/")' not in (scratch / "parser.sb").read_text()
 
 
 def test_os_sandbox_unavailable_is_reported_and_required_fails(monkeypatch, tmp_path):

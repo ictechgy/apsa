@@ -83,11 +83,14 @@ def sandbox_command(
             "(allow process-exec (literal " + quoted(Path(sys.executable).resolve()) + "))",
             '(allow process-exec (literal "/usr/bin/openssl"))',
             "(allow file-read-metadata)",
-            "(allow file-read* " + " ".join("(subpath " + quoted(path) + ")" for path in paths) + ")",
+            "(allow file-read* file-test-existence "
+            + " ".join("(subpath " + quoted(path) + ")" for path in paths)
+            + ' (literal "/"))',
             "(allow file-map-executable "
             + " ".join("(subpath " + quoted(path) + ")" for path in executable_maps)
             + ' (literal "/usr/bin/openssl"))',
             '(allow file-read* (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
+            '(allow file-read-data file-write-data file-test-existence (subpath "/dev/fd"))',
             "(allow file-write* (subpath " + quoted(scratch) + ') (literal "/dev/null"))',
         ]
         rules += [
