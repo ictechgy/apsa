@@ -123,7 +123,9 @@ ANDROID_AUTH_REQUIRED = re.compile(r"\bsetUserAuthenticationRequired\s*\(\s*true
 ANDROID_AUTH_WINDOW = re.compile(
     r"\bsetUserAuthenticationParameters\s*\(\s*[1-9]|\bsetUserAuthenticationValidityDurationSeconds\s*\(\s*[1-9]"
 )
-DEBUG_SOURCE_SET = re.compile(r"(?:^|/)src/[^/]*[Dd]ebug[^/]*/")
+NON_RELEASE_SOURCE_SET = re.compile(
+    r"(?:^|/)src/(?:[^/]*[Dd]ebug[^/]*|androidTest\w*|test\w*|[^/]*[Tt]est[A-Z]\w*)/"
+)
 ANDROID_FALLBACK_ARGUMENTS = {
     "setAllowedAuthenticators": "DEVICE_CREDENTIAL",
     "setUserAuthenticationParameters": "AUTH_DEVICE_CREDENTIAL",
@@ -1055,22 +1057,40 @@ class _NetworkConfig(ContentHandler):
                 self.cleartext.append(config)
 
 
+def _module_root(manifest: str) -> str:
+    """The module directory a manifest belongs to: the part before src/, or its own directory."""
+    if "/src/" in "/" + manifest:
+        return ("/" + manifest).split("/src/", 1)[0].lstrip("/") + (
+            "/" if not manifest.startswith("src/") else ""
+        )
+    return manifest.rsplit("/", 1)[0] + "/" if "/" in manifest else ""
+
+
 def _network_security_config(
     inventory: dict, sources: list[tuple[str, str]]
 ) -> tuple[list[dict], list[dict]]:
     if "android" not in inventory.get("platforms", []):
         return [], [{"rule_id": "ANDROID-NSC-USER-CA", "state": "not-applicable", "method": "configuration"}]
+    # Each selected manifest's reference resolves in its own module's res/xml, never another module's.
     referenced = {
-        str(config.get("network_security_config") or "").rsplit("/", 1)[-1]
+        (
+            _module_root(str(config.get("path") or "")),
+            str(config["network_security_config"]).rsplit("/", 1)[-1],
+        )
         for config in inventory.get("android_config", [])
-        if config.get("network_security_config")
+        if config.get("network_security_config") and config.get("bundle_role") != "embedded"
     }
     findings: list[dict] = []
     read, unreadable = 0, []
     for path, text in sources:
         stem = path.rsplit("/", 1)[-1].removesuffix(".xml")
-        # A debug source set's configuration applies to debug builds only.
-        if not path.endswith(".xml") or stem not in referenced or DEBUG_SOURCE_SET.search(path):
+        if (
+            not path.endswith(".xml")
+            or "/res/xml/" not in "/" + path
+            # Debug and test source sets do not ship in the release build.
+            or NON_RELEASE_SOURCE_SET.search(path)
+            or not any(stem == name and path.startswith(root) for root, name in referenced)
+        ):
             continue
         handler = _NetworkConfig()
         try:

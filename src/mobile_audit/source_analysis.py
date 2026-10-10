@@ -1870,14 +1870,21 @@ class Analyzer:
                 declared.add(parsed[0])
             self.visit(child, local, local_guards, conditions.copy())
         self.aliases = saved
+        # x?.let {} may not run: like a branch, keep the values from before and from the lambda.
         for key in frame.values:
             if key not in declared:
-                frame.values[key] = local.values[key]
-        frame.bridges = local.bridges
-        frame.javascript = local.javascript
+                values = [frame.values[key], local.values[key]]
+                frame.values[key] = _union(
+                    values,
+                    values[0].category if values[0].category == values[1].category else "unknown",
+                    type_name=frame.values[key].type_name,
+                )
+        frame.bridges.update(local.bridges)
+        frame.javascript.update(local.javascript)
         frame.constants = {
-            **{key: value for key, value in local.constants.items() if key not in declared},
-            **{key: value for key, value in frame.constants.items() if key in declared},
+            key: value
+            for key, value in frame.constants.items()
+            if key in declared or local.constants.get(key) == value
         }
 
     def release_constants(self, call: Call, frame: Frame) -> None:

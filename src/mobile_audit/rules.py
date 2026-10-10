@@ -39,8 +39,12 @@ def static_checks(
         if rule["mode"] != "source":
             continue
         applicable = not rule.get("platform") or rule["platform"] in inventory["platforms"]
+        # Compiled packages carry binary XML; a text pattern cannot run on it.
         source_files = [
-            (path, text) for path, text in sources if PathSuffix(path) in rule.get("suffixes", [])
+            (path, text)
+            for path, text in sources
+            if PathSuffix(path) in rule.get("suffixes", [])
+            and (PathSuffix(path) != ".xml" or text.lstrip().startswith("<"))
         ]
         truncated = False
         if not applicable:

@@ -1090,3 +1090,53 @@ def test_long_lines_and_repeated_declarations_stay_fast():
     assert len(_apple_auth("Gate.swift", swift)) == 51  # capped; coverage becomes partial
     analyze_sources([("E.kt", repeated)])
     assert time.monotonic() - started < 10
+
+
+# Architecture review P0s.
+
+
+def test_network_config_resolves_in_the_selected_module_only(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    root = tmp_path / "modules"
+    trusting = (
+        '<network-security-config><base-config cleartextTrafficPermitted="true"><trust-anchors>'
+        '<certificates src="user" /></trust-anchors></base-config></network-security-config>\n'
+    )
+    for module in ("app-prod", "app-demo"):
+        main = root / module / "src/main"
+        (main / "res/xml").mkdir(parents=True)
+        (main / "AndroidManifest.xml").write_text(
+            f'<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.{module[4:]}">'
+            '<application android:networkSecurityConfig="@xml/network_security_config" /></manifest>'
+        )
+        (main / "res/xml/network_security_config.xml").write_text(
+            trusting if module == "app-demo" else "<network-security-config />\n"
+        )
+    tests = root / "app-prod/src/androidTest/res/xml"
+    tests.mkdir(parents=True)
+    (tests / "network_security_config.xml").write_text(trusting)
+    report = scan(store, root, configuration="app-prod/src/main/AndroidManifest.xml")
+    assert not by_rule(report, "ANDROID-NSC-USER-CA")
+    assert not [f for f in by_rule(report, "ANDROID-CLEARTEXT") if f["evidence"][0]["path"].endswith(".xml")]
+
+
+def test_optional_scope_lambdas_keep_earlier_taint():
+    kotlin = (
+        "import android.app.Activity\n"
+        "import android.webkit.WebView\n"
+        "class W : Activity() {\n"
+        "    fun f(view: WebView) {\n"
+        '        var url = intent.getStringExtra("u")\n'
+        '        intent.extras?.let { url = "https://example.com" }\n'
+        "        view.loadUrl(url)\n"
+        "    }\n"
+        "}\n"
+    )
+    assert ast("W.kt", kotlin).get("AST-WEBVIEW-UNTRUSTED-URL") == [7]
+
+
+def test_text_rules_do_not_claim_binary_packages(store, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    report = scan(store, Path(__file__).parent / "fixtures/Test-debug.apk")
+    states = {c["rule_id"]: c["state"] for c in report["coverage"]}
+    assert states.get("WEBVIEW-SAFE-BROWSING-OFF") in {None, "not-run", "not-applicable"}
