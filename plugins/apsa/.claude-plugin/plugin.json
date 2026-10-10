@@ -1,6 +1,6 @@
 {
   "name": "apsa",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Audit your own Android/iOS source, APK, AAB or IPA with APSA through MCP. Scans run locally; only the dependency_check and intelligence tools contact OSV or advisory feeds, when called.",
   "author": {
     "name": "ictechgy",

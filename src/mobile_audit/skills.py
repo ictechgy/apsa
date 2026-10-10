@@ -16,6 +16,7 @@ KNOWN_RELEASE_HASHES = {
         "248652d8cec8653d3ef265cac24cf9c59df9a9668753a781d8852fa616c6ddd5",
         "ebcfff30de22c7e84bc99bcc31b5208fd2d35f870aa45ea1cf3218c1500e6678",
         "afc9ae9c7ed89937bcf9a1d8d46d47b4557c1ecf20ca9c4ac14f9e6d0dc45819",
+        "9bc6d3605d6cb303ab7ed462af4b0fcd1d3085fa74cdaffbd20bb7afec14b127",
     },
     "quaygate": {
         "b6016f299e2207f85db9a2850e5a837c4fb78bbc0cdee18e37bf19102b6c8c60",
@@ -26,6 +27,7 @@ KNOWN_RELEASE_HASHES = {
         "1cac4b413c8853c30cc158f388fc7bfeb2d10c42796eec0fac7bca6a2ca2e62a",
         "b96c322d0b31ddc1a55372e64c7afdf49bc4b5d2f3a25380527f53da89a7b9a3",
         "67c224315933d0e023c3fa345035cf7a737d462ec1b83d218f37ac56192583ed",
+        "58af5c5c0c3f606fa00672ee5e15c052fc5f34075d7bfefca0c834e399acc966",
     },
     "mobile-audit": {
         "5bcb6a468221e51f3c6e786a44b135ff7761652a5fa663a4514372f3ade73280",
@@ -36,6 +38,7 @@ KNOWN_RELEASE_HASHES = {
         "42252e36cd0b3d9f4b3d4ca3ecbb1d71c474a2661689b9f3a58f47ea51848d63",
         "1425ed115ec263b0d47442c93aa43eef1676ba36b86d8303137cd1e8f214f103",
         "b839f8026c4d2c050c0710e40ac08f94991845da44a84f0ec6185a98929e7498",
+        "69c38bfac093cec3c30a27905eeef83c5686d0c225d44ad12ebaf8288dfe1ec9",
     },
 }
 

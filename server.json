@@ -8,13 +8,13 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/ictechgy/apsa",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "apsa",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {

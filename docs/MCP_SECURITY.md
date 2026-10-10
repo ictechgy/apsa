@@ -6,7 +6,7 @@ APSA's MCP server reads app source and builds that may be untrusted, on behalf o
 a model that may be steered by that content. This page states what the server
 does to limit that, mapped to the
 [OWASP MCP Top 10 (2025, beta)](https://owasp.org/www-project-mcp-top-10/), and
-what remains the client's or user's responsibility. It describes APSA 1.4.0.
+what remains the client's or user's responsibility. It describes APSA 1.5.0.
 
 ## Fixed, inspectable tool surface
 
@@ -18,7 +18,7 @@ what remains the client's or user's responsibility. It describes APSA 1.4.0.
   is each tool's name, description, annotation hints and parameter shapes
   (types, defaults, enums, items, required names), sorted by name. Schema titles
   and other details the MCP SDK generates are left out, so the value follows
-  APSA's definitions rather than SDK formatting. For 1.4.0 it is
+  APSA's definitions rather than SDK formatting. For 1.5.0, unchanged from 1.4.0, it is
   `fdb8e4a2fdcf13a35df71a9a7290336b50a2e7f7fad66eff782959b6b0ba9037` by default
   and `818ab0bab3202f364478d866d094cd035e7d7b5c60b252c256bb2ade37d79a79` with
   `--allow-runtime`. A test pins both values and recomputes them from the
@@ -41,7 +41,7 @@ what remains the client's or user's responsibility. It describes APSA 1.4.0.
 | MCP01 Token mismanagement and secret exposure | No API key, token or model credential is needed or stored. Runtime scenarios use test canaries. Model context omits source excerpts, storage dumps and screenshot bytes. | Secrets inside scanned apps can appear in finding metadata such as file paths and rule IDs. |
 | MCP02 Privilege escalation via scope creep | `--root` is required and every target, report and job is checked against it; `--allow-any-root` must be explicit. Device execution tools exist only with `--allow-runtime` and preview unless `execute=true`. | Keep roots narrow; enable runtime tools only for authorized test devices. |
 | MCP03 Tool poisoning | Tool descriptions are static code, pinned by a published manifest hash; no dynamic tool registration. | Verify the package source (below) and compare the `tools/list` hash with the published values after upgrades. |
-| MCP04 Supply chain and dependency tampering | PyPI Trusted Publishing with attestations, repeated builds and release checksums; the MCP Registry entry is published from the tag workflow by OIDC. The GitHub Action pins every action by commit SHA and installs APSA's dependencies from the release's hash-locked `requirements-release.txt`. | `uvx apsa@1.4.0`, the plugin and the registry entry pin APSA itself but resolve its dependencies at install time without hashes. For locked dependencies install with `--constraints requirements-release.txt` (or `--require-hashes`) from the release, or use the Action pinned by commit SHA. |
+| MCP04 Supply chain and dependency tampering | PyPI Trusted Publishing with attestations, repeated builds and release checksums; the MCP Registry entry is published from the tag workflow by OIDC. The GitHub Action pins every action by commit SHA and installs APSA's dependencies from the release's hash-locked `requirements-release.txt`. | `uvx apsa@1.5.0`, the plugin and the registry entry pin APSA itself but resolve its dependencies at install time without hashes. For locked dependencies install with `--constraints requirements-release.txt` (or `--require-hashes`) from the release, or use the Action pinned by commit SHA. |
 | MCP05 Command injection and execution | Tools take structured arguments; subprocesses are argument lists, never a shell. Parsers run under resource limits and, where available, a Seatbelt/bubblewrap sandbox. Advisory and app text is never executed. | Clients that build shell commands from registry metadata must not use a shell. |
 | MCP06 Prompt injection via contextual payloads | App files and advisory text are labelled untrusted data in the server instructions and every report context. Context omits source excerpts and is bounded (20 records, 64 KiB per page by default). | The model can still be influenced by file paths, titles and advisory summaries; keep a human in the loop for actions. |
 | MCP07 Insufficient authentication and authorization | Local stdio only; authorization is the root check above. | The client process's OS user is the trust boundary. |
@@ -63,7 +63,7 @@ what remains the client's or user's responsibility. It describes APSA 1.4.0.
 APSA MCP 서버는 신뢰할 수 없는 앱 소스·빌드를 읽으며, 그 내용에 영향을 받을 수 있는
 모델을 대신해 동작합니다. 서버는 stdio 전용이고 네트워크 포트를 열지 않습니다. 실행 중 도구
 목록이 바뀌지 않으며(`listChanged: false`), `capabilities`의 `tool_manifest_sha256`은 APSA가
-정의한 도구 이름·설명·annotation·파라미터 형태를 정규화한 해시입니다(1.4.0 기본값과
+정의한 도구 이름·설명·annotation·파라미터 형태를 정규화한 해시입니다(1.4.0과 같은 1.5.0 기본값과
 `--allow-runtime` 값은 위 영어 본문 참조). 서버가 스스로 보고한 값만으로는 증명이 되지 않으므로,
 `tools/list` 결과로 `manifest_sha256`을 직접 계산해 공개 값과 비교하세요. 읽기 전용 도구는 read-only·idempotent, 네트워크 도구는 open-world, 기기
 실행 도구는 `--allow-runtime`일 때만 등록되고 destructive로 표시됩니다.

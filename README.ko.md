@@ -127,7 +127,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.4.0
+uv tool install --python 3.12 apsa==1.5.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -232,7 +232,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.4.0; 전체 커밋 SHA로 고정
+  - uses: ictechgy/apsa@<commit-sha> # v1.5.0; 전체 커밋 SHA로 고정
     with:
       path: android            # 소스 폴더 또는 workspace 안의 APK/AAB/IPA
       fail-on-incomplete: "true"

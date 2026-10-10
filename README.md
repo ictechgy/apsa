@@ -149,7 +149,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.4.0
+uv tool install --python 3.12 apsa==1.5.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -254,7 +254,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.4.0; pin the full commit SHA
+  - uses: ictechgy/apsa@<commit-sha> # v1.5.0; pin the full commit SHA
     with:
       path: android            # source folder, or a built APK/AAB/IPA in the workspace
       fail-on-incomplete: "true"
