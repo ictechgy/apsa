@@ -1072,3 +1072,21 @@ def test_budget_truncation_marks_coverage_partial():
     states = {c["rule_id"]: c["state"] for c in result["coverage"]}
     assert states["AST-IMPLICIT-INTENT"] == "partial"
     assert states["AST-PATH-TRAVERSAL"] == "checked"
+
+
+def test_long_lines_and_repeated_declarations_stay_fast():
+    import time
+
+    from mobile_audit.platform_checks import _apple_auth
+
+    swift = "import LocalAuthentication\nfunc f(c: LAContext) { " + "c.evaluatePolicy(p); " * 20_000 + "}\n"
+    repeated = (
+        "import javax.crypto.Cipher\nclass E {\n    fun f() {\n"
+        + '        val t = "AES/GCM/NoPadding"\n' * 6000
+        + "        Cipher.getInstance(t)\n" * 6000
+        + "    }\n}\n"
+    )
+    started = time.monotonic()
+    assert len(_apple_auth("Gate.swift", swift)) == 51  # capped; coverage becomes partial
+    analyze_sources([("E.kt", repeated)])
+    assert time.monotonic() - started < 10

@@ -11,7 +11,7 @@ from __future__ import annotations
 import importlib
 import re
 import warnings as python_warnings
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Any
@@ -462,7 +462,9 @@ class Analyzer:
         # Actions an app defines share its package namespace; other prefixes belong to other apps.
         self.package_prefix = ".".join(parts[: min(3, len(parts))])
         self.broadcaster_names: set[str] | None = None
-        self.literal_table: tuple[dict[str, list[tuple[int, int, str]]], dict[str, list[int]]] | None = None
+        self.private_keys: bool | None = None
+        self.checked_intents: dict[str, bool] = {}
+        self.literal_table: tuple[dict[str, tuple[list[int], list[str]]], dict[str, list[int]]] | None = None
         # Rules whose checks stopped at a budget in this file; their coverage becomes partial.
         self.truncated_rules: set[str] = set()
 
@@ -1016,11 +1018,13 @@ class Analyzer:
             if name in self.parameter_types:
                 return None
             declarations, assignments = self.local_literals()
-            before = [entry for entry in declarations.get(name, []) if entry[1] <= node.start_byte]
-            if before:
-                _, declared_end, value = before[-1]
-                if not any(declared_end <= offset < node.start_byte for offset in assignments.get(name, [])):
-                    return value
+            ends, values = declarations.get(name, ([], []))
+            index = bisect_right(ends, node.start_byte) - 1
+            if index >= 0:
+                offsets = assignments.get(name, [])
+                later = bisect_left(offsets, ends[index])
+                if later >= len(offsets) or offsets[later] >= node.start_byte:
+                    return values[index]
         navigation = self.navigation(node) if node is not None else None
         if navigation and self.text(navigation[0]).split(".")[0] in {
             "Companion",
@@ -1032,17 +1036,19 @@ class Analyzer:
             return entry[1] if entry else None
         return None
 
-    def local_literals(self) -> tuple[dict[str, list[tuple[int, int, str]]], dict[str, list[int]]]:
+    def local_literals(self) -> tuple[dict[str, tuple[list[int], list[str]]], dict[str, list[int]]]:
         """Literal string declarations and later assignments in this function, built once per function."""
         if self.literal_table is None:
             base = self.function.start_byte if self.function is not None else 0
             body = self.raw[base : self.function.end_byte] if self.function is not None else b""
-            declarations: dict[str, list[tuple[int, int, str]]] = {}
+            # Per name, declaration ends and values in source order (sorted for bisect).
+            declarations: dict[str, tuple[list[int], list[str]]] = {}
             assignments: dict[str, list[int]] = {}
             for match in LOCAL_LITERAL.finditer(body):
                 name = (match[1] or match[2]).decode("utf-8", errors="replace")
-                value = match[3].decode("utf-8", errors="replace")
-                declarations.setdefault(name, []).append((base + match.start(), base + match.end(), value))
+                ends, values = declarations.setdefault(name, ([], []))
+                ends.append(base + match.end())
+                values.append(match[3].decode("utf-8", errors="replace"))
             for match in LOCAL_ASSIGNMENT.finditer(body):
                 assignments.setdefault(match[1].decode("utf-8", errors="replace"), []).append(
                     base + match.start()
@@ -1359,6 +1365,12 @@ class Analyzer:
     def function_text(self) -> str:
         return self.function_source
 
+    def private_key_function(self) -> bool:
+        """Whether this function's key attributes name a private key class (computed once per function)."""
+        if self.private_keys is None:
+            self.private_keys = "kSecAttrKeyClassPrivate" in self.function_source
+        return self.private_keys
+
     def path_guard(self) -> bool:
         """A containment or ".." check anywhere in this function (computed once per function)."""
         if self.path_guarded is None:
@@ -1400,11 +1412,7 @@ class Analyzer:
                 argument = self.labeled_argument(call, "data")
             elif name == "SymmetricKey" and call.receiver is None:
                 argument = self.labeled_argument(call, "data")
-            elif (
-                name == "SecKeyCreateWithData"
-                and call.args
-                and "kSecAttrKeyClassPrivate" in self.function_text()
-            ):
+            elif name == "SecKeyCreateWithData" and call.args and self.private_key_function():
                 argument = call.args[0]
         elif self.language in {"java", "kotlin"} and isinstance(position, int):
             argument = call.args[position] if len(call.args) > position else None
@@ -1443,11 +1451,15 @@ class Analyzer:
         nested = tuple(trace for trace in value.traces if trace.description == NESTED_INTENT)
         if value.category == "nested-intent" and nested:
             target = self.unwrap(first)
-            name = re.escape(self.text(target)) if target is not None and target.type in IDENTIFIERS else None
-            checked = name and re.search(
-                rf"\b{name}\b[^\n]{{0,80}}\b(?:component|resolveActivity|getComponent|packageName|getPackage|className)\b",
-                function,
-            )
+            name = self.text(target) if target is not None and target.type in IDENTIFIERS else None
+            if name is not None and name not in self.checked_intents:
+                self.checked_intents[name] = bool(
+                    re.search(
+                        rf"\b{re.escape(name)}\b[^\n]{{0,80}}\b(?:component|resolveActivity|getComponent|packageName|getPackage|className)\b",
+                        function,
+                    )
+                )
+            checked = name is not None and self.checked_intents[name]
             if not checked:
                 self.emit(
                     "AST-INTENT-REDIRECTION",
@@ -2012,6 +2024,8 @@ class Analyzer:
             self.path_guarded = self.action_hint = None
             self.intent_checks = 0
             self.literal_table = None
+            self.private_keys = None
+            self.checked_intents = {}
             self.aliases = {}
             self.field_types = self.class_fields(function)
             enclosing = function.parent

@@ -7,6 +7,7 @@ for source trees and AAB manifests, where that engine does not.
 from __future__ import annotations
 
 import re
+from itertools import islice
 from xml.sax.handler import ContentHandler
 
 from defusedxml import sax as defused_sax
@@ -747,7 +748,7 @@ def _android_auth(path: str, text: str) -> list[dict]:
                     "authenticate call without a CryptoObject argument",
                 )
             )
-    for match in ANDROID_FALLBACK.finditer(masked):
+    for match in islice(ANDROID_FALLBACK.finditer(masked), MAX_PATTERN_FINDINGS + 1):
         findings.append(
             _auth_finding(
                 "SOURCE-BIOMETRIC-FALLBACK",
@@ -759,7 +760,7 @@ def _android_auth(path: str, text: str) -> list[dict]:
             )
         )
     for method, token in ANDROID_FALLBACK_ARGUMENTS.items():
-        for match in re.finditer(rf"\b{method}\s*\(", masked):
+        for match in islice(re.finditer(rf"\b{method}\s*\(", masked), MAX_PATTERN_FINDINGS + 1):
             args = _arguments(masked, match.end() - 1)
             if args and any(re.search(rf"\b{token}\b", masked[a:b]) for a, b in args):
                 findings.append(
@@ -772,7 +773,7 @@ def _android_auth(path: str, text: str) -> list[dict]:
                         f"{token} among the allowed authenticators",
                     )
                 )
-    for match in ANDROID_ENROLLMENT.finditer(masked):
+    for match in islice(ANDROID_ENROLLMENT.finditer(masked), MAX_PATTERN_FINDINGS + 1):
         findings.append(
             _auth_finding(
                 "SOURCE-BIOMETRIC-ENROLLMENT",
@@ -791,9 +792,13 @@ def _apple_auth(path: str, text: str) -> list[dict]:
     findings = []
     if not APPLE_AUTH_BINDING.search(masked):
         # Calls only: a protocol requirement, a mock or an Objective-C method definition is not use.
-        for match in re.finditer(r"\bevaluatePolicy\s*[(:]", masked):
+        for match in islice(re.finditer(r"\bevaluatePolicy\s*[(:]", masked), MAX_PATTERN_FINDINGS + 1):
             line_start = masked.rfind("\n", 0, match.start()) + 1
-            if re.search(r"\bfunc\s+$|^\s*[-+]\s*\([^)]*\)\s*$", masked[line_start : match.start()]):
+            # A declaration starts its line within a short prefix; longer prefixes are calls.
+            prefix = masked[max(line_start, match.start() - 200) : match.start()]
+            if match.start() - line_start <= 200 and re.search(
+                r"\bfunc\s+$|^\s*[-+]\s*\([^)]*\)\s*$", prefix
+            ):
                 continue
             findings.append(
                 _auth_finding(
@@ -807,7 +812,7 @@ def _apple_auth(path: str, text: str) -> list[dict]:
             )
     fallback = [APPLE_FALLBACK_POLICY] + [APPLE_FALLBACK_FLAGS] * ("SecAccessControl" in masked)
     for pattern in fallback:
-        for match in pattern.finditer(masked):
+        for match in islice(pattern.finditer(masked), MAX_PATTERN_FINDINGS + 1):
             findings.append(
                 _auth_finding(
                     "SOURCE-BIOMETRIC-FALLBACK",
@@ -819,7 +824,7 @@ def _apple_auth(path: str, text: str) -> list[dict]:
                 )
             )
     if "SecAccessControl" in masked:
-        for match in APPLE_ENROLLMENT.finditer(masked):
+        for match in islice(APPLE_ENROLLMENT.finditer(masked), MAX_PATTERN_FINDINGS + 1):
             findings.append(
                 _auth_finding(
                     "SOURCE-BIOMETRIC-ENROLLMENT",
@@ -894,7 +899,7 @@ def _ios_webview_file_access(
         if "allow" not in text:
             continue
         cleaned = strip_comments(text)
-        for match in FILE_ACCESS_KEY.finditer(cleaned):
+        for match in islice(FILE_ACCESS_KEY.finditer(cleaned), MAX_PATTERN_FINDINGS + 1):
             findings.append(
                 finding(
                     "IOS-WEBVIEW-FILE-ACCESS",
@@ -917,7 +922,8 @@ def _ios_webview_file_access(
                 )
             )
         masked = _masked_code(cleaned)
-        for match in READ_ACCESS.finditer(cleaned):
+        assigned: dict[str, list[str]] = {}
+        for match in islice(READ_ACCESS.finditer(cleaned), MAX_PATTERN_FINDINGS + 1):
             end = match.end()
             depth = 0
             while end < len(masked) and end - match.end() < 300:
@@ -933,7 +939,9 @@ def _ios_webview_file_access(
                 end += 1
             argument = cleaned[match.end() : end].strip()
             identifier = re.fullmatch(r"(?:(?:self|Self|\w+)\.)?(\w+)!?", argument)
-            resolved = [argument] + (_assigned_values(cleaned, identifier[1]) if identifier else [])
+            if identifier and identifier[1] not in assigned:
+                assigned[identifier[1]] = _assigned_values(cleaned, identifier[1])
+            resolved = [argument] + (assigned[identifier[1]] if identifier else [])
             broad = next(filter(None, (BROAD_DIRECTORY.search(value) for value in resolved)), None)
             # A file or subdirectory appended to the directory narrows the access.
             appended = broad.string[broad.end() :] if broad else ""
