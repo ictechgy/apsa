@@ -11,7 +11,7 @@ inputs:
     default: "."
   version:
     description: APSA version installed from PyPI. Keep it equal to this action's release.
-    default: "1.5.0"
+    default: "1.5.1"
   package:
     description: Advanced. A pip requirement or local path installed instead of apsa==version (for testing).
     default: ""
@@ -76,7 +76,7 @@ runs:
         elif [[ "$APSA_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
           spec="apsa==${APSA_VERSION}"
         else
-          echo "::error::version must be an exact release such as 1.5.0" >&2
+          echo "::error::version must be an exact release such as 1.5.1" >&2
           exit 2
         fi
         own=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$GITHUB_ACTION_PATH/pyproject.toml" | head -n 1)

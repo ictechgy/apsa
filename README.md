@@ -192,6 +192,24 @@ and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/
   and `network_security_parsed`. Unmodified 1.4 skills upgrade with
   `apsa skill install`; the MCP tool manifest hash is unchanged.
 
+**Upgrading from 1.5.0.** 1.5.1 audits large source trees partially instead
+of refusing them and fixes a slowdown on Android translations.
+
+- A source tree over the text staging budgets (64 MiB, 12,000 files) no longer
+  fails with an input-budget error (exit 1). App code and configuration are
+  staged first, then tests and other text, then localized Android
+  `res/values-*` files; the rest is omitted, `inventory.input_snapshot.omitted`
+  counts it by kind, and the audit is incomplete (exit 3, and with the default
+  `fail_on_partial` the gate fails). Directories beyond 100,000 entries or 64
+  levels are skipped the same way.
+- In 1.5.0, `strings.xml` files with many escaped apostrophes (`\'`), common in
+  French and Italian translations, made `WEBVIEW-SAFE-BROWSING-OFF` slow enough
+  to hit the parser timeout (about 150 s for a 694 KiB file). XML files are
+  now cleaned of `<!-- -->` comments only, so `//` in XML text no longer hides
+  a match.
+- Unmodified 1.5.0 skills upgrade with `apsa skill install`; the MCP tool
+  manifest hash is unchanged.
+
 ## What it checks
 
 | Area | Available checks |
@@ -215,7 +233,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.5.0
+uv tool install --python 3.12 apsa==1.5.1
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -320,7 +338,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.5.0; pin the full commit SHA
+  - uses: ictechgy/apsa@<commit-sha> # v1.5.1; pin the full commit SHA
     with:
       path: android            # source folder, or a built APK/AAB/IPA in the workspace
       fail-on-incomplete: "true"

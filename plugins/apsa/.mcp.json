@@ -2,7 +2,7 @@
   "mcpServers": {
     "apsa": {
       "command": "uvx",
-      "args": ["--python", "3.12", "apsa@1.5.0", "mcp", "--root", "${CLAUDE_PROJECT_DIR}"]
+      "args": ["--python", "3.12", "apsa@1.5.1", "mcp", "--root", "${CLAUDE_PROJECT_DIR}"]
     }
   }
 }

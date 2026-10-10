@@ -151,6 +151,19 @@ MASWE 약점으로 라벨을 붙인 공개 취약/수정 쌍 24개의 blind hold
   `deep_links[].browsable`·`network_security_parsed`가 추가됩니다. 수정하지 않은 1.4 스킬은
   `apsa skill install`로 업그레이드되며 MCP 도구 매니페스트 해시는 그대로입니다.
 
+**1.5.0에서 업그레이드할 때.** 1.5.1은 큰 소스 트리를 거부하지 않고 부분 감사하며, Android 번역
+파일에서 생기던 지연을 고칩니다.
+
+- 텍스트 스테이징 한도(64 MiB, 파일 12,000개)를 넘는 소스 트리가 더 이상 입력 한도 오류(종료 코드 1)로
+  끝나지 않습니다. 앱 코드·설정, 테스트·기타 텍스트, Android 번역 `res/values-*` 파일 순으로 스테이징하고
+  나머지는 생략하며, `inventory.input_snapshot.omitted`에 종류별로 셉니다. 감사는 불완전(종료 코드 3)이고
+  기본 `fail_on_partial`에서는 게이트가 실패합니다. 항목 100,000개나 깊이 64단계를 넘는 디렉터리도 같은
+  방식으로 건너뜁니다.
+- 1.5.0에서는 프랑스어·이탈리아어 번역에 흔한 `\'`가 많은 `strings.xml` 때문에
+  `WEBVIEW-SAFE-BROWSING-OFF`가 파서 시간 제한에 걸릴 만큼 느려질 수 있었습니다(694 KiB 파일에 약 150초).
+  이제 XML 파일에서는 `<!-- -->` 주석만 지우므로 XML 텍스트의 `//`가 일치를 가리지 않습니다.
+- 수정하지 않은 1.5.0 스킬은 `apsa skill install`로 업그레이드되며 MCP 도구 매니페스트 해시는 그대로입니다.
+
 ## 검사 범위
 
 | 영역 | 제공하는 검사 |
@@ -174,7 +187,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.5.0
+uv tool install --python 3.12 apsa==1.5.1
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -279,7 +292,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.5.0; 전체 커밋 SHA로 고정
+  - uses: ictechgy/apsa@<commit-sha> # v1.5.1; 전체 커밋 SHA로 고정
     with:
       path: android            # 소스 폴더 또는 workspace 안의 APK/AAB/IPA
       fail-on-incomplete: "true"
