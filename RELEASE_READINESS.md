@@ -16,8 +16,11 @@ Post-publication checks ran on a newly generated synthetic project:
 - **Action install path:** uv 0.12.1 installed the release's hash-locked `requirements-release.txt` and then `apsa==1.4.0` from PyPI, as the Action does. The SARIF scan exited 0, and the SARIF passed `scripts/check_sarif.py` with repository-relative URIs and a MASWE summary.
 - **Cold start:** `uvx --python 3.12 apsa@1.4.0` with an empty cache reported 1.4.0. Over MCP stdio it served 23 tools. The `tool_manifest_sha256` from `capabilities` equalled both the hash recomputed from `tools/list` and the published default in [MCP_SECURITY.md](docs/MCP_SECURITY.md), and `audit_scan` completed.
 - **Plugin:** Claude Code 2.1.295, with an isolated configuration directory, ran `claude plugin marketplace add ictechgy/apsa` and `claude plugin install apsa@apsa`. It installed plugin 1.4.0 with its skill and its MCP server, whose command is the `uvx` command above.
-
-Not yet done: a GitHub-hosted run of `uses: ictechgy/apsa@<sha>` with the default `version` that uploads SARIF to a test repository's code scanning. The release's Action self-tests install the checked-out package and do not upload.
+- **GitHub-hosted Action:** the public test repository [ictechgy/apsa-action-smoke](https://github.com/ictechgy/apsa-action-smoke) holds only a small synthetic Android project. Its workflow runs `uses: ictechgy/apsa@5bed4e5b02e4b60fd49573dbe51628c0e4d1455c` with every input at its default. [Run 38020319297](https://github.com/ictechgy/apsa-action-smoke/actions/runs/38020319297) on `ubuntu-24.04` passed:
+  - uv 0.12.1 installed the hash-locked dependencies and `apsa==1.4.0` from PyPI, with no version-mismatch warning.
+  - The audit exited 0 and set the `exit-code`, `report-id` and `sarif-file` outputs.
+  - The pinned `upload-sarif` v4.38.2 step uploaded the SARIF, which CI does not exercise. Code scanning recorded analysis 1927474176 for tool `APSA 1.4.0` in category `apsa`, with 7 results, 7 rules and no processing errors or warnings.
+  - All 7 alerts point at the repository files `app/src/main/AndroidManifest.xml` and `app/src/main/java/com/example/smoke/Main.kt`. The four candidate results carry the `candidate` tag at warning level with no security severity. The three confirmed results are rated: cleartext traffic medium, backup and `targetSdk` low.
 
 ## APSA 1.4.0 adoption, agent verification and benchmarks — candidate, 2026-10-10
 
