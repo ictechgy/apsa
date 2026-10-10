@@ -1001,3 +1001,74 @@ def test_adversarial_inputs_stay_fast():
     analyze_sources([("A.kt", kotlin), ("B.kt", intents)])
     _android_auth("C.kt", "// BiometricPrompt\nval x = " + "a" * 40_000 + " + 1\n")
     assert time.monotonic() - started < 10
+
+
+def test_per_call_lookups_stay_fast_across_files():
+    import time
+
+    calendars = "\n".join(f"        Calendar.getInstance(tz{i})" for i in range(8000))
+    ciphers = "\n".join(
+        f'        val t{i} = "AES/GCM/NoPadding"\n        Cipher.getInstance(t{i})' for i in range(4000)
+    )
+    receivers = "\n".join(f"        r{i}.startActivity(i)" for i in range(8000))
+    files = [
+        ("A.kt", "class A {\n    fun f() {\n" + calendars + "\n    }\n}\n"),
+        ("B.kt", "import javax.crypto.Cipher\nclass B {\n    fun f() {\n" + ciphers + "\n    }\n}\n"),
+        ("C.kt", "class C {\n    fun f(i: Intent) {\n" + receivers + "\n    }\n}\n"),
+    ]
+    started = time.monotonic()
+    analyze_sources(files)
+    assert time.monotonic() - started < 10
+
+
+def test_review_round_two_variants():
+    kotlin = (
+        "package com.example.breadth\n"
+        "import android.app.Activity\n"
+        "import java.io.FileInputStream\n"
+        "import javax.crypto.Cipher\n"
+        "class R : Activity() {\n"
+        "    fun open() {\n"
+        '        val pfd = contentResolver.openFileDescriptor(intent.data!!, "r")\n'
+        "        val fd = pfd!!.fileDescriptor\n"
+        "        val input = FileInputStream(fd)\n"
+        "    }\n"
+        "    fun grow(mode: String) {\n"
+        '        var t = "AES"\n'
+        '        t += "/GCM/NoPadding"\n'
+        "        val c = Cipher.getInstance(t)\n"
+        "        val d = Cipher.getInstance(mode)\n"
+        "    }\n"
+        "}\n"
+    )
+    found = ast("R.kt", kotlin)
+    assert not {"AST-PATH-TRAVERSAL", "AST-CRYPTO-ECB", "AST-CRYPTO-WEAK-CIPHER"} & set(found)
+
+
+def test_home_documents_and_objc_messages_to_call_results():
+    from mobile_audit.platform_checks import _apple_auth, _ios_webview_file_access
+
+    swift = (
+        "func show(view: WKWebView, page: URL) {\n"
+        '    let docs = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents")\n'
+        "    view.loadFileURL(page, allowingReadAccessTo: docs)\n"
+        "}\n"
+    )
+    findings, _ = _ios_webview_file_access({"platforms": ["ios"]}, [("V.swift", swift)])
+    assert [f["evidence"][0]["line"] for f in findings] == [3]
+    objc = (
+        "void f(void) { [makeContext() evaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics "
+        'localizedReason:@"x" reply:nil]; }\n'
+    )
+    assert [f["evidence"][0]["line"] for f in _apple_auth("A.m", objc)] == [1]
+
+
+def test_budget_truncation_marks_coverage_partial():
+    launches = "\n".join(f'        startActivity(Intent("com.example.breadth.A{i}"))' for i in range(250))
+    kotlin = (
+        "package com.example.breadth\nclass D : Activity() {\n    fun f() {\n" + launches + "\n    }\n}\n"
+    )
+    result = analyze_sources([("D.kt", kotlin)])
+    states = {c["rule_id"]: c["state"] for c in result["coverage"]}
+    assert states["AST-IMPLICIT-INTENT"] == "partial"
+    assert states["AST-PATH-TRAVERSAL"] == "checked"

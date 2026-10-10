@@ -288,6 +288,15 @@ ARCHIVE_ENTRY = re.compile(
 FILE_DESCRIPTOR = re.compile(r"(?:\bfileDescriptor|\bgetFileDescriptor\s*\(\s*\)|\.fd)\s*!*$")
 ACTION_HINT = re.compile(r'\bIntent\s*\(\s*(?:"|[A-Z_][\w.]*\s*[,)])|\baction\s*=|\bsetAction\s*\(')
 MAX_INTENT_CHECKS = 200
+LOCAL_LITERAL = re.compile(
+    rb'(?:\b(?:val|var|let)\s+(\w+)\b(?:\s*:\s*String\??)?|\bString\s+(\w+))\s*=\s*"([^"\\\n]*)"\s*;?[ \t]*$',
+    re.M,
+)
+LOCAL_ASSIGNMENT = re.compile(rb"(?<![\w.])(\w+)\s*(?:\+=|=(?!=))")
+LOCAL_BROADCASTERS = re.compile(
+    r"\b(\w+)\b\s*(?::\s*(?:[\w.]*\.)?LocalBroadcastManager\b|=\s*(?:[\w.]*\.)?LocalBroadcastManager\b)"
+    r"|\bLocalBroadcastManager\s+(\w+)\b"
+)
 CONSTANT_SCOPES = {"class_body", "source_file", "program", "enum_body", "enum_class_body", "protocol_body"}
 NON_SCALAR_LITERALS = {
     "array_literal",
@@ -452,7 +461,10 @@ class Analyzer:
         parts = package[1].split(".") if package else []
         # Actions an app defines share its package namespace; other prefixes belong to other apps.
         self.package_prefix = ".".join(parts[: min(3, len(parts))])
-        self.local_broadcasters: dict[str, bool] = {}
+        self.broadcaster_names: set[str] | None = None
+        self.literal_table: tuple[dict[str, list[tuple[int, int, str]]], dict[str, list[int]]] | None = None
+        # Rules whose checks stopped at a budget in this file; their coverage becomes partial.
+        self.truncated_rules: set[str] = set()
 
     def text(self, node: Any) -> str:
         return self.raw[node.start_byte : node.end_byte].decode("utf-8", errors="replace") if node else ""
@@ -840,6 +852,8 @@ class Analyzer:
                 return self.source(node, "Archive entry name", "text")
             if (member in {"name", "fileName"} and value.category == "path") or member == "lastPathComponent":
                 return self.basename(node, value)
+            if member == "fileDescriptor":
+                return Value(type_name="FileDescriptor")
             if member == "extras" and value.category == "intent":
                 return Value(value.traces, "bundle")
             if value.category == "intent" and member in {"data", "dataString"}:
@@ -896,6 +910,8 @@ class Analyzer:
                 return self.basename(node, receiver)
             if call.name == "getName" and self.key(call.receiver) == "FilenameUtils" and args:
                 return self.basename(node, args[0])
+            if call.name == "getFileDescriptor":
+                return Value(type_name="FileDescriptor")
             if call.name == "getExtras" and receiver.category == "intent":
                 return Value(receiver.traces, "bundle")
             if call.name in NESTED_INTENT_GETTERS:
@@ -995,18 +1011,16 @@ class Analyzer:
             if name not in frame.values and name not in frame.types and name in self.constants:
                 return self.constants[name][1]
         if node is not None and node.type in IDENTIFIERS and self.function is not None:
-            # A local declared with a literal and never reassigned before this use.
-            name = re.escape(self.text(node))
-            body = self.raw[self.function.start_byte : node.start_byte].decode("utf-8", errors="replace")
-            declared = list(
-                re.finditer(
-                    rf'(?:\b(?:val|var|let)\s+{name}\b(?:\s*:\s*String\??)?|\bString\s+{name})\s*=\s*"([^"\\\n]*)"\s*;?\s*$',
-                    body,
-                    re.M,
-                )
-            )
-            if declared and not re.search(rf"(?<![\w.]){name}\s*=(?!=)", body[declared[-1].end() :]):
-                return declared[-1][1]
+            # A local declared with a literal and not reassigned (=, +=) before this use.
+            name = self.text(node)
+            if name in self.parameter_types:
+                return None
+            declarations, assignments = self.local_literals()
+            before = [entry for entry in declarations.get(name, []) if entry[1] <= node.start_byte]
+            if before:
+                _, declared_end, value = before[-1]
+                if not any(declared_end <= offset < node.start_byte for offset in assignments.get(name, [])):
+                    return value
         navigation = self.navigation(node) if node is not None else None
         if navigation and self.text(navigation[0]).split(".")[0] in {
             "Companion",
@@ -1017,6 +1031,24 @@ class Analyzer:
             entry = self.constants.get(navigation[1])
             return entry[1] if entry else None
         return None
+
+    def local_literals(self) -> tuple[dict[str, list[tuple[int, int, str]]], dict[str, list[int]]]:
+        """Literal string declarations and later assignments in this function, built once per function."""
+        if self.literal_table is None:
+            base = self.function.start_byte if self.function is not None else 0
+            body = self.raw[base : self.function.end_byte] if self.function is not None else b""
+            declarations: dict[str, list[tuple[int, int, str]]] = {}
+            assignments: dict[str, list[int]] = {}
+            for match in LOCAL_LITERAL.finditer(body):
+                name = (match[1] or match[2]).decode("utf-8", errors="replace")
+                value = match[3].decode("utf-8", errors="replace")
+                declarations.setdefault(name, []).append((base + match.start(), base + match.end(), value))
+            for match in LOCAL_ASSIGNMENT.finditer(body):
+                assignments.setdefault(match[1].decode("utf-8", errors="replace"), []).append(
+                    base + match.start()
+                )
+            self.literal_table = (declarations, assignments)
+        return self.literal_table
 
     def declaration(self, node: Any) -> tuple[str, Any, str] | None:
         if node.type == "variable_declarator":
@@ -1338,16 +1370,14 @@ class Analyzer:
 
     def local_broadcaster(self, receiver: str) -> bool:
         """Whether a receiver is a LocalBroadcastManager declared or assigned anywhere in this file."""
-        if receiver not in self.local_broadcasters:
-            name = re.escape(receiver.rsplit(".", 1)[-1])
-            self.local_broadcasters[receiver] = "LocalBroadcast" in receiver or bool(
-                re.search(
-                    rf"\b{name}\b\s*(?::\s*(?:[\w.]*\.)?LocalBroadcastManager\b|=\s*(?:[\w.]*\.)?LocalBroadcastManager\b)"
-                    rf"|\bLocalBroadcastManager\s+{name}\b",
-                    self.raw.decode("utf-8", errors="replace"),
-                )
+        if self.broadcaster_names is None:
+            text = self.raw.decode("utf-8", errors="replace")
+            self.broadcaster_names = (
+                {match[1] or match[2] for match in LOCAL_BROADCASTERS.finditer(text)}
+                if "LocalBroadcastManager" in text
+                else set()
             )
-        return self.local_broadcasters[receiver]
+        return "LocalBroadcast" in receiver or receiver.rsplit(".", 1)[-1] in self.broadcaster_names
 
     def check_key_material(self, call: Call, frame: Frame) -> None:
         name = call.name.rsplit(".", 1)[-1]
@@ -1435,7 +1465,10 @@ class Analyzer:
             return
         if self.action_hint is None:
             self.action_hint = bool(ACTION_HINT.search(function))
-        if not self.action_hint or self.intent_checks >= MAX_INTENT_CHECKS:
+        if not self.action_hint:
+            return
+        if self.intent_checks >= MAX_INTENT_CHECKS:
+            self.truncated_rules.add("AST-IMPLICIT-INTENT")
             return
         self.intent_checks += 1
         target = self.unwrap(first) or first
@@ -1978,6 +2011,7 @@ class Analyzer:
             self.function_source = self.text(function)
             self.path_guarded = self.action_hint = None
             self.intent_checks = 0
+            self.literal_table = None
             self.aliases = {}
             self.field_types = self.class_fields(function)
             enclosing = function.parent
@@ -2095,6 +2129,7 @@ def analyze_sources(
     unsupported: set[str] = set()
     pattern_exclusions: dict[str, dict[str, list[dict[str, int]]]] = {}
     file_metrics = []
+    truncated_rules: set[str] = set()
     function_totals = {"observed": 0, "analyzed": 0, "skipped": 0, "without_body": 0}
     normalized_files = 0
     remaining_records = 0
@@ -2204,6 +2239,7 @@ def analyze_sources(
             for name, value in analyzer.function_counts.items():
                 function_totals[name] += value
             findings.extend(analyzer.findings)
+            truncated_rules |= getattr(analyzer, "truncated_rules", set())
             if not tree.root_node.has_error and not adaptations and language != "objc":
                 pattern_exclusions[path] = {
                     rule: [{"start": start, "end": end} for start, end in sorted(offsets)]
@@ -2235,6 +2271,8 @@ def analyze_sources(
             "rule_id": rule,
             "state": "not-applicable"
             if rule.endswith(ANDROID_ONLY) and seen_languages == {"swift"} and not unsupported
+            else "partial"
+            if rule in truncated_rules and state == "checked"
             else state,
             "method": "source-ast-local-flow",
             "mapping_scope": "partial",

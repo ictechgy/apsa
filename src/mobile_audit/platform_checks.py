@@ -713,7 +713,10 @@ def _android_auth(path: str, text: str) -> list[dict]:
     # A key that requires recent authentication (time-bound) binds the result to the Keystore.
     bound = bool(ANDROID_AUTH_REQUIRED.search(masked) and ANDROID_AUTH_WINDOW.search(masked))
     for count, match in enumerate(re.finditer(r"\.\s*authenticate\s*\(", masked)):
-        if count >= MAX_PATTERN_FINDINGS or bound:
+        if bound:
+            break
+        if count >= MAX_PATTERN_FINDINGS:
+            findings.append({"truncated": True})
             break
         head = re.search(r"(\w{1,200}|\))\s*\??\s*$", masked[max(0, match.start() - 220) : match.start()])
         args = _arguments(masked, match.end() - 1)
@@ -788,7 +791,10 @@ def _apple_auth(path: str, text: str) -> list[dict]:
     findings = []
     if not APPLE_AUTH_BINDING.search(masked):
         # Calls only: a protocol requirement, a mock or an Objective-C method definition is not use.
-        for match in re.finditer(r"(?<!func )(?<!\) )(?<!\))\bevaluatePolicy\s*[(:]", masked):
+        for match in re.finditer(r"\bevaluatePolicy\s*[(:]", masked):
+            line_start = masked.rfind("\n", 0, match.start()) + 1
+            if re.search(r"\bfunc\s+$|^\s*[-+]\s*\([^)]*\)\s*$", masked[line_start : match.start()]):
+                continue
             findings.append(
                 _auth_finding(
                     "SOURCE-BIOMETRIC-EVENT-BOUND",
@@ -834,7 +840,9 @@ def _local_auth(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]
         if path.endswith((".kt", ".java")):
             scanned = True
             if re.search(r"BiometricPrompt|FingerprintManager|setInvalidatedByBiometricEnrollment", text):
-                findings += _android_auth(path, text)
+                found = _android_auth(path, text)
+                truncated = truncated or any(item.get("truncated") for item in found)
+                findings += [item for item in found if not item.get("truncated")]
         elif path.endswith(APPLE_SOURCES):
             scanned = True
             if re.search(r"evaluatePolicy|SecAccessControl", text):
@@ -928,9 +936,19 @@ def _ios_webview_file_access(
             resolved = [argument] + (_assigned_values(cleaned, identifier[1]) if identifier else [])
             broad = next(filter(None, (BROAD_DIRECTORY.search(value) for value in resolved)), None)
             # A file or subdirectory appended to the directory narrows the access.
-            if broad and re.search(
-                r"\bappendingPathComponent\b|\bappending\s*\(|\bURLByAppendingPathComponent\b",
-                broad.string[broad.end() :],
+            appended = broad.string[broad.end() :] if broad else ""
+            standard = re.search(
+                r'(?:appendingPathComponent|appending\s*\(\s*(?:path|component)\s*:)\s*\(?\s*@?"(?:Documents|Library'
+                r'|tmp|Library/Caches|Library/Application Support)/?"',
+                appended,
+            )
+            home = broad is not None and broad[0] in {"NSHomeDirectory", "homeDirectoryForCurrentUser"}
+            if (
+                broad
+                and re.search(
+                    r"\bappendingPathComponent\b|\bappending\s*\(|\bURLByAppendingPathComponent\b", appended
+                )
+                and not (home and standard)
             ):
                 broad = None
             if broad:
