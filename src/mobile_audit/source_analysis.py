@@ -1411,7 +1411,9 @@ class Analyzer:
             function,
         )
         names.update(match[1] for match in aliases)
-        for line in function.splitlines():
+        # String contents are blanked, so a log message cannot pass for a comparison.
+        code = re.sub(r'"(?:\\.|[^"\\\n])*"', '""', function)
+        for line in code.splitlines():
             if (
                 any(re.search(rf"\b{re.escape(item)}\b", line) for item in names if item in line)
                 and TARGET_TOKEN.search(line)

@@ -298,7 +298,7 @@
     "title": "Cleartext traffic configuration",
     "masvs": "MASVS-NETWORK",
     "mapping_scope": "partial",
-    "scope": "usesCleartextTraffic=\"true\" in the manifest (a candidate when a network security configuration exists; dropped when that configuration was parsed and minSdk is 24 or higher, where Android ignores the attribute), and cleartextTrafficPermitted=\"true\" in the referenced configuration's base-config or domain-config (medium and low; loopback-only domains excluded). Coverage: ANDROID-CONFIG and ANDROID-NSC-CONFIG."
+    "scope": "usesCleartextTraffic=\"true\" in the manifest (a candidate when a network security configuration exists; dropped when that configuration was parsed, minSdk is 24 or higher, and its base-config states cleartextTrafficPermitted or targetSdk is 28 or higher), and cleartextTrafficPermitted=\"true\" in the referenced configuration's base-config or domain-config (medium and low; loopback-only domains excluded). Coverage: ANDROID-CONFIG and ANDROID-NSC-CONFIG."
   },
   {
     "id": "IOS-ATS",
@@ -665,7 +665,7 @@
       "https://developer.android.com/privacy-and-security/security-config"
     ],
     "mapping_scope": "partial",
-    "scope": "The network security configuration referenced by the selected manifest, read from the same module's res/xml outside debug and test source sets (or, when the module has no res/xml match, the file beside the manifest): user certificates in base-config or domain-config trust anchors; debug-overrides are excluded. Several source-set variants of one reference make the findings candidates. Unparsable text XML is partial; compiled AAB resources are not-run."
+    "scope": "The network security configuration referenced by the selected manifest, read from the same module's res/xml or src/<source set>/res/xml outside debug and test source sets (or, when the module has no such match, the file beside the manifest): user certificates in base-config or domain-config trust anchors; debug-overrides are excluded. Several source-set variants of one reference make the findings candidates. Unparsable text XML is partial; compiled AAB resources and unresolved compiled references are not-run."
   },
   {
     "id": "ANDROID-DEEPLINK-AUTOVERIFY",

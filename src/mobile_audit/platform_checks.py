@@ -1039,6 +1039,7 @@ class _NetworkConfig(ContentHandler):
         self.user: list[tuple[int, str]] = []
         self.cleartext: list[dict] = []
         self.domain: list[str] | None = None
+        self.base_explicit = False
 
     def setDocumentLocator(self, locator) -> None:  # noqa: N802 - SAX API
         self.locator = locator
@@ -1046,6 +1047,8 @@ class _NetworkConfig(ContentHandler):
     def startElement(self, name, attrs) -> None:  # noqa: N802 - SAX API
         line = (self.locator.getLineNumber() or 0) if self.locator else 0
         debug = "debug-overrides" in self.stack
+        if not debug and name == "base-config" and attrs.get("cleartextTrafficPermitted") is not None:
+            self.base_explicit = True
         if not debug and name in {"base-config", "domain-config"}:
             self.configs.append(
                 {
@@ -1086,7 +1089,9 @@ class _NetworkConfig(ContentHandler):
 
 
 def _module_root(manifest: str) -> str:
-    """The module directory a manifest belongs to: the part before src/, or its own directory."""
+    """The module directory a manifest belongs to: before src/ (Gradle), before manifest/ (AAB), or its folder."""
+    if re.fullmatch(r"(?:[^/]+/)?manifest/AndroidManifest\.xml", manifest):
+        return manifest.split("manifest/AndroidManifest.xml", 1)[0]
     if "/src/" in "/" + manifest:
         return ("/" + manifest).split("/src/", 1)[0].lstrip("/") + (
             "/" if not manifest.startswith("src/") else ""
@@ -1104,10 +1109,15 @@ def _network_security_config(
         ]
     # Each selected manifest's reference resolves in its own module's res/xml, never another module's.
     referenced: dict[tuple[str, str], list[str]] = {}
+    unresolved = 0
     for config in inventory.get("android_config", []):
         if config.get("network_security_config") and config.get("bundle_role") != "embedded":
             manifest = str(config.get("path") or "")
-            name = str(config["network_security_config"]).rsplit("/", 1)[-1]
+            value = str(config["network_security_config"])
+            if not value.startswith("@xml/"):
+                unresolved += 1  # e.g. a compiled AAB resource ID that was not decoded
+                continue
+            name = value.rsplit("/", 1)[-1]
             referenced.setdefault((_module_root(manifest), name), []).append(manifest)
     findings: list[dict] = []
     read, unreadable, compiled = 0, [], []
@@ -1117,8 +1127,12 @@ def _network_security_config(
         # Debug and test source sets do not ship in the release build.
         if not path.endswith(".xml") or "/res/xml/" not in "/" + path or NON_RELEASE_SOURCE_SET.search(path):
             continue
-        stem = path.rsplit("/", 1)[-1].removesuffix(".xml")
-        keys = [(module, name) for module, name in referenced if stem == name and path.startswith(module)]
+        # <module>res/xml or <module>src/<source set>/res/xml, never a nested module's.
+        keys = [
+            (module, name)
+            for module, name in referenced
+            if re.fullmatch(rf"{re.escape(module)}(?:src/[^/]+/)?res/xml/{re.escape(name)}\.xml", path)
+        ]
         if keys:
             matched.append((path, text, keys))
     # A flat layout (manifest and configuration side by side, no res/xml) is read only when
@@ -1150,7 +1164,10 @@ def _network_security_config(
             unreadable.append(path)
             continue
         read += 1
-        parsed_for.update(owners)
+        # Without an explicit base-config value, targets below 28 still permit cleartext by default.
+        target = android_levels(inventory).get("target")
+        if handler.base_explicit or (isinstance(target, int) and target >= 28):
+            parsed_for.update(owners)
         for line, scope in handler.user:
             findings.append(
                 finding(
@@ -1198,7 +1215,10 @@ def _network_security_config(
             )
     # Read by the worker: a parsed configuration overrides the manifest's usesCleartextTraffic on API 24+.
     inventory["network_security_parsed"] = sorted(parsed_for)
-    if not referenced:
+    if unresolved and not referenced:
+        state = "not-run"
+        note = "The networkSecurityConfig reference is a compiled resource ID that was not resolved."
+    elif not referenced:
         state, note = "checked", "No networkSecurityConfig is referenced; platform defaults apply."
     elif unreadable:
         state = "partial"

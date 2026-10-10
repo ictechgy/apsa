@@ -185,6 +185,7 @@ def evaluate(pair: dict, work: Path) -> dict:
             "archive": archive,
             "scan_root": root_name if target.is_dir() else ".",
             "audit_incomplete": report_incomplete(report),
+            "rule_version": report.get("rule_version"),
             "missing_labeled_paths": missing,
             "labeled_file_states": {path: files.get(path, "not-analyzed-as-source") for path in relative},
             "hits": hits[:20],

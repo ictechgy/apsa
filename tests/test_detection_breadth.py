@@ -1334,3 +1334,75 @@ def test_flat_layout_config_beside_the_manifest(store, tmp_path, monkeypatch):
     )
     (root / "network_security_config.xml").write_text(NETWORK_CONFIG)
     assert lines(scan(store, root), "ANDROID-NSC-USER-CA") == [7]
+
+
+def test_network_config_locations_and_unresolved_references():
+    from mobile_audit.platform_checks import _module_root, _network_security_config
+
+    assert _module_root("base/manifest/AndroidManifest.xml") == "base/"
+    assert _module_root("app/src/main/AndroidManifest.xml") == "app/"
+    trusting = NETWORK_CONFIG
+
+    def run(manifest: str, value: str, files: dict[str, str]) -> tuple[list[str], str]:
+        inventory = {
+            "platforms": ["android"],
+            "android_config": [{"path": manifest, "network_security_config": value}],
+            "android_sdk": {"min": "26", "target": "35"},
+        }
+        findings, coverage = _network_security_config(inventory, list(files.items()))
+        return sorted(f["evidence"][0]["path"] for f in findings), coverage[0]["state"]
+
+    # A nested sample module's configuration does not belong to the root app.
+    assert run(
+        "src/main/AndroidManifest.xml",
+        "@xml/network_security_config",
+        {"sample/src/main/res/xml/network_security_config.xml": trusting},
+    ) == ([], "partial")
+    # AAB layout: <module>/res/xml beside <module>/manifest.
+    assert (
+        run(
+            "base/manifest/AndroidManifest.xml",
+            "@xml/network_security_config",
+            {"base/res/xml/network_security_config.xml": trusting},
+        )[1]
+        == "checked"
+    )
+    # A compiled resource ID the manifest decoder could not resolve.
+    assert run("base/manifest/AndroidManifest.xml", "unresolved-resource", {}) == ([], "not-run")
+
+
+def test_targets_below_28_keep_the_manifest_cleartext_candidate(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    root = tmp_path / "legacy-target"
+    (root / "res/xml").mkdir(parents=True)
+    (root / "res/xml/network_security_config.xml").write_text(
+        "<network-security-config><domain-config><domain>a.example.com</domain>"
+        "</domain-config></network-security-config>\n"
+    )
+
+    def manifest_cleartext(target: int) -> int:
+        (root / "AndroidManifest.xml").write_text(
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.l">'
+            f'<uses-sdk android:minSdkVersion="24" android:targetSdkVersion="{target}" />'
+            '<application android:usesCleartextTraffic="true" '
+            'android:networkSecurityConfig="@xml/network_security_config" /></manifest>'
+        )
+        report = scan(store, root)
+        return len([f for f in by_rule(report, "ANDROID-CLEARTEXT") if "configuration" in f["evidence"][0]])
+
+    assert manifest_cleartext(27) == 1
+    assert manifest_cleartext(28) == 0
+
+
+def test_log_messages_do_not_pass_for_redirection_checks():
+    kotlin = (
+        "import android.app.Activity\nimport android.content.Intent\nimport android.util.Log\n"
+        "class L : Activity() {\n"
+        "    fun f() {\n"
+        '        val next = intent.getParcelableExtra<Intent>("next")\n'
+        '        Log.d("T", "forwarding $next component in use")\n'
+        "        startActivity(next)\n"
+        "    }\n"
+        "}\n"
+    )
+    assert ast("L.kt", kotlin).get("AST-INTENT-REDIRECTION") == [8]
