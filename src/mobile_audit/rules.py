@@ -27,7 +27,9 @@ def strip_comments(text: str) -> str:
     # Every alternative ends at its terminator or at the end of the line (character
     # literals) or file, so a start without a terminator is consumed once instead of
     # rescanned from each later quote (Android \' prose, stray /* in hostile input).
+    # Triple-quoted strings (Kotlin, Swift, Dart, Groovy) may span lines and hold quotes.
     pattern = (
+        r"'''[\s\S]*?(?:'''|\Z)|" + '"""' + r'[\s\S]*?(?:"""|\Z)|'
         r""""(?:\\[\s\S]|[^"\\])*(?:"|\\?\Z)|'(?:\\.|[^'\\\n])*(?:'|\\?$)|//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)"""
     )
     return re.sub(

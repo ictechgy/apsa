@@ -51,6 +51,9 @@ def test_staging_tiers():
         "src/App.ts",
         "package-lock.json",
         "app/google-services.json",
+        "app/src/main/res/xml-v25/shortcuts.xml",
+        "sbom.json",
+        "app/bom.cdx.json",
     ):
         assert kind(path) == "code_and_config", path
     for path in ("app/src/main/res/layout/main.xml", "app/src/main/res/values/strings.xml", "config.yaml"):
@@ -62,6 +65,10 @@ def test_staging_tiers():
         "shared/src/commonTest/kotlin/ATest.kt",
         "AppTests/AppTests.swift",
         "app/src/test/res/values-fr/strings.xml",
+        "My-AppTests/AppTests.swift",
+        "test/java/ATest.kt",
+        "src/__tests__/app.ts",
+        "src/app.test.ts",
     ):
         assert kind(path) == "tests", path
 
@@ -82,7 +89,7 @@ def test_over_budget_trees_keep_code_and_omit_translations_first(tmp_path, monke
     assert result["app_scope_complete"] is True
     assert result["warnings"] == [
         "Input staging omitted 3 file(s) of localized or qualified Android values "
-        f"({localized / 1024 / 1024:.1f} MiB); coverage partial"
+        f"({input_snapshot.size_label(localized)}); coverage partial"
     ]
 
 
@@ -118,7 +125,10 @@ def test_partial_audit_instead_of_refusal(store, tmp_path, monkeypatch):
 
 
 def test_escaped_apostrophes_in_prose_do_not_backtrack():
-    prose = "<resources>" + "<string name='s'>l\\'application d\\'un\\'</string>\n" * 20_000 + "</resources>"
+    # The 1.5.0 pattern took seconds on this shape (double-quoted attributes, no closing apostrophe).
+    prose = (
+        "<resources>" + "<string name=\"s\">l\\'application d\\'un\\'</string>\n" * 20_000 + "</resources>"
+    )
     started = time.monotonic()
     assert strip_comments(prose) == prose
     assert time.monotonic() - started < 2
@@ -145,6 +155,9 @@ def test_comment_stripping_keeps_literals_and_blanks_comments():
     assert strip_comments('val c = \'"\' // x\nval s = "a//b" /* c */\n') == (
         'val c = \'"\'     \nval s = "a//b"        \n'
     )
+    # Triple-quoted strings keep their // and /* text; the code after them is still cleaned.
+    assert strip_comments("s = '''\na /* b\n'''\nx // y\n") == "s = '''\na /* b\n'''\nx     \n"
+    assert strip_comments('q = """a "b" // c\n"""\n') == 'q = """a "b" // c\n"""\n'
     # An unterminated block comment runs to the end of the file, as compilers read it.
     assert strip_comments("/* open\nval x = 1\n").strip() == ""
 
@@ -207,7 +220,7 @@ def test_oversized_files_share_one_warning(tmp_path, monkeypatch):
     assert (tmp_path / "staged/Main.kt").exists()
     assert result["omitted"] == {"other_text": {"files": 200, "bytes": 200 * 64}}
     assert result["warnings"][0].startswith(
-        "200 file(s) over the 0 MiB file limit not staged (first: data0.json)"
+        "200 file(s) over the 1 KiB file limit not staged (first: data0.json)"
     )
     assert len(result["warnings"]) == 2
 
@@ -218,11 +231,98 @@ def test_reopened_file_must_be_the_listed_file(tmp_path, monkeypatch):
     (target / "Main.kt").write_text("class Main")
     other = tmp_path / "Other.kt"
     other.write_text("class Other")
+    (tmp_path / "Main.kt").write_text("class Elsewhere")
+    elsewhere = input_snapshot.os.open(tmp_path, input_snapshot.os.O_RDONLY)
     monkeypatch.setattr(
-        input_snapshot, "open_relative", lambda root, relative: input_snapshot.os.open(other, 0)
+        input_snapshot, "open_parent", lambda root, directory: input_snapshot.os.dup(elsewhere)
     )
     with pytest.raises(ValueError, match="Input changed during staging"):
         stage_input(target, tmp_path / "staged")
+    input_snapshot.os.close(elsewhere)
+
+
+def test_copy_errors_omit_the_file_not_the_audit(tmp_path, monkeypatch):
+    import errno
+
+    target = tmp_path / "input"
+    target.mkdir()
+    for name in ("A.kt", "B.kt", "C.kt"):
+        (target / name).write_text(f"class {name[0]}")
+    original = input_snapshot.os.read
+    calls = {"n": 0}
+
+    def failing(fd, size):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError(errno.EIO, "Input/output error")
+        return original(fd, size)
+
+    monkeypatch.setattr(input_snapshot.os, "read", failing)
+    result = stage_input(target, tmp_path / "staged")
+    assert result["files"] == 2 and not (tmp_path / "staged/A.kt").exists()
+    assert result["omitted"] == {"code_and_config": {"files": 1, "bytes": len("class A")}}
+    assert result["app_scope_complete"] is False
+    assert result["warnings"][0] == (
+        "Source staging could not read or stage 1 entry (first: A.kt: OSError); coverage partial"
+    )
+
+
+def test_unreadable_files_share_one_warning(tmp_path):
+    import os
+
+    target = tmp_path / "input"
+    target.mkdir()
+    for index in range(130):
+        locked = target / f"Locked{index:03}.kt"
+        locked.write_text("class Locked")
+        locked.chmod(0)
+    (target / "Main.kt").write_text("class Main")
+    try:
+        if os.access(target / "Locked000.kt", os.R_OK):
+            pytest.skip("running with privileges that ignore file modes")
+        result = stage_input(target, tmp_path / "staged")
+    finally:
+        for locked in target.glob("Locked*.kt"):
+            locked.chmod(0o600)
+    assert (tmp_path / "staged/Main.kt").exists()
+    assert result["warnings"][0].startswith(
+        "Source staging could not read or stage 130 entries (first: Locked000.kt"
+    )
+
+
+def test_configuration_and_app_code_go_before_vendored_code(tmp_path, monkeypatch):
+    target = tmp_path / "input"
+    for path in (
+        ".build/checkouts/swift-nio/Sources/Channel.swift",
+        "Vendor/Lib/Lib.m",
+        "MyApp/AppDelegate.swift",
+        "MyApp/Controllers/Home.swift",
+        "MyApp/Info.plist",
+        "MyApp/Bridging.h",
+    ):
+        (target / path).parent.mkdir(parents=True, exist_ok=True)
+        (target / path).write_text("x")
+    monkeypatch.setattr(input_snapshot, "MAX_FILES", 3)
+    staged = tmp_path / "staged"
+    stage_input(target, staged)
+    assert sorted(p.relative_to(staged).as_posix() for p in staged.rglob("*") if p.is_file()) == [
+        "MyApp/AppDelegate.swift",
+        "MyApp/Controllers/Home.swift",
+        "MyApp/Info.plist",
+    ]
+
+
+def test_ast_budget_analyzes_shipped_code_before_tests(monkeypatch):
+    from mobile_audit import source_analysis
+
+    test_code = "class ATest { fun t() { val x = 1 } }\n" * 50
+    main_code = "class Main { fun m() { val y = 2 } }\n"
+    monkeypatch.setattr(source_analysis, "MAX_AST_TOTAL", len(main_code) + 1)
+    result = source_analysis.analyze_sources(
+        [("app/src/androidTest/java/ATest.kt", test_code), ("app/src/main/java/Main.kt", main_code)]
+    )
+    assert any("skipped app/src/androidTest/java/ATest.kt" in warning for warning in result["warnings"])
+    assert not any("skipped app/src/main/java/Main.kt" in warning for warning in result["warnings"])
 
 
 def test_omitted_platform_cannot_pass_required_rules(store, tmp_path, monkeypatch):
@@ -246,7 +346,8 @@ def test_omitted_platform_cannot_pass_required_rules(store, tmp_path, monkeypatc
     (ios / "View.swift").write_text("import UIKit\nlet web = UIWebView()\n")
     full = scan(store, target)
     assert "IOS-UIWEBVIEW" in {f["rule_id"] for f in full["findings"]}
-    monkeypatch.setattr(input_snapshot, "MAX_FILES", 2)
+    # Only the Android manifest fits: the iOS app is never seen.
+    monkeypatch.setattr(input_snapshot, "MAX_FILES", 1)
     report = scan(store, target)
     assert report["inventory"]["input_snapshot"]["app_scope_complete"] is False
     assert "IOS-UIWEBVIEW" not in {f["rule_id"] for f in report["findings"]}

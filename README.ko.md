@@ -276,7 +276,7 @@ apsa jobs status JOB_ID --json
 
 심각도 기준 CI 판정은 기본적으로 `candidate`를 제외합니다. 포함하려면 `--include-candidates`나 정책의 `allowed_statuses`를 사용하세요. 필수 규칙은 `checked` 또는 `not-applicable` coverage만 인정하며, 부분 실행이나 필수 검사 누락은 통과시키지 않습니다. 예외에는 발견 ID, 이유, 만료일이 필요합니다. 백그라운드 작업의 `completed`는 작업이 끝났다는 뜻입니다. 감사가 완전한지 판단하려면 `audit_incomplete`와 보고서를 확인하세요.
 
-읽을 수 없는 소스 폴더와 파일은 경고와 불완전한 coverage로 남습니다. 지원하는 파일을 하나도 읽을 수 없는 소스 트리는 명시적인 실행 오류가 됩니다. 텍스트 스테이징 한도(합계 64 MiB, 파일 12,000개)를 넘는 소스 트리는 거부하지 않고 부분 감사합니다. 앱 코드·설정, 기타 출하 텍스트(기본 리소스·JSON·YAML), Android 번역·한정자 `res/values-*` 파일, 테스트 순으로 스테이징하며, 빠진 파일 수와 바이트는 종류별(`code_and_config`, `other_text`, `localized_values`, `tests`)로 `inventory.input_snapshot.omitted`에 남습니다. 8 MiB 파일 한도를 넘는 파일도 여기에 셉니다. 읽을 수 없는 파일과, 트리 전체 기준 항목 100,000개(이름순으로 읽음)·깊이 64단계를 넘는 디렉터리는 경고로 보고합니다. 앱 코드·설정이나 기타 출하 텍스트가 빠지면 `app_scope_complete`가 false가 되고 not-applicable coverage도 partial이 됩니다. 완전한 감사가 필요하면 앱 모듈처럼 더 좁은 폴더를 검사하세요. 저장소 캡처 실패는 `not-run`으로 남으며 canary가 삭제됐다는 근거가 될 수 없습니다.
+읽을 수 없는 소스 폴더와 파일은 경고와 불완전한 coverage로 남습니다. 지원하는 파일을 하나도 읽을 수 없는 소스 트리는 명시적인 실행 오류가 됩니다. 텍스트 스테이징 한도(합계 64 MiB, 파일 12,000개)를 넘는 소스 트리는 거부하지 않고 부분 감사합니다. 앱 코드·설정(설정, 앱 코드, 헤더·`.build/`·`vendor/` 같은 vendored 코드 순), 기타 출하 텍스트(기본 리소스·JSON·YAML), Android 번역·한정자 `res/values-*` 파일, 테스트 순으로 스테이징하며, 빠진 파일 수와 바이트는 종류별(`code_and_config`, `other_text`, `localized_values`, `tests`)로 `inventory.input_snapshot.omitted`에 남습니다. 8 MiB 파일 한도를 넘거나 읽기·복사에 실패한 파일도 여기에 셉니다. 읽을 수 없는 디렉터리와, 트리 전체 기준 항목 100,000개(이름순으로 읽음)·깊이 64단계를 넘는 디렉터리는 경고로 보고합니다. 앱 코드·설정이나 기타 출하 텍스트가 빠지면 `app_scope_complete`가 false가 되고 not-applicable coverage도 partial이 됩니다. 완전한 감사가 필요하면 앱 모듈처럼 더 좁은 폴더를 검사하세요. 저장소 캡처 실패는 `not-run`으로 남으며 canary가 삭제됐다는 근거가 될 수 없습니다.
 
 | 종료 코드 | 통합 CLI에서의 의미 |
 | --- | --- |

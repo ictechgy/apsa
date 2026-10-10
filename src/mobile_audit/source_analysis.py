@@ -17,6 +17,7 @@ from pathlib import PurePath
 from typing import Any
 
 from .core import code_excerpt, finding
+from .input_snapshot import TEST_SOURCES
 from .maswe import weaknesses_for
 from .specs import SINK_KINDS
 
@@ -2188,6 +2189,17 @@ class Analyzer:
                 self.function_counts["without_body"] += 1
 
 
+def _test_source_last(source: Any) -> bool:
+    path = (
+        source.get("path")
+        if isinstance(source, dict)
+        else source[0]
+        if isinstance(source, (tuple, list))
+        else ""
+    )
+    return isinstance(path, str) and bool(TEST_SOURCES.search(path))
+
+
 def analyze_sources(
     sources: list[Any],
     specs: dict | None = None,
@@ -2213,6 +2225,8 @@ def analyze_sources(
     function_totals = {"observed": 0, "analyzed": 0, "skipped": 0, "without_body": 0}
     normalized_files = 0
     remaining_records = 0
+    # Within the AST byte budget, shipped code goes before tests, as in input staging.
+    sources = sorted(sources, key=_test_source_last)
     for source_index, source in enumerate(sources):
         if isinstance(source, dict):
             path, text = source.get("path"), source.get("text")

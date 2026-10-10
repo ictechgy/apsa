@@ -42,8 +42,8 @@ tests; the rest is omitted and counted by kind in
 `inventory.input_snapshot.omitted`. Entries beyond the tree-wide entry budget
 (read in name order) or the depth budget are not read. Either way the audit is
 partial; when app code, configuration or shipped text is left out,
-not-applicable coverage becomes partial too. Only the time and warning budgets
-refuse the audit. A directory snapshot is not
+not-applicable coverage becomes partial too. Only the time budget, a changed
+input root or a file replaced during staging refuse the audit. A directory snapshot is not
 an atomic build snapshot across every file; scan a stable build for that assurance.
 CPU/RSS/time/output limits remain separate controls.
 
@@ -280,7 +280,7 @@ app-bundle 인터프리터만 실행할 수 있습니다. `doctor`는 가용성,
 values, 테스트 순으로 복사하고 나머지는 생략해 `inventory.input_snapshot.omitted`에
 종류별로 셉니다. 트리 전체 항목 한도(이름순)·깊이 한도를 넘는 부분은 읽지 않습니다. 어느
 경우든 감사는 partial이며, 앱 코드·설정이나 출하 텍스트가 빠지면 not-applicable coverage도
-partial이 됩니다. 시간·경고 한도만 감사를 거부합니다. 여러 파일의 복사는 원자적 빌드 스냅샷이 아니므로
+partial이 됩니다. 시간 한도 초과, 입력 루트 변경, 복사 중 파일 교체만 감사를 거부합니다. 여러 파일의 복사는 원자적 빌드 스냅샷이 아니므로
 그 보장이 필요하면 안정된 빌드를 검사하세요. CPU·RSS·시간·출력 제한은 별도로
 유지합니다.
 
