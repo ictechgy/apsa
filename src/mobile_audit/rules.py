@@ -53,7 +53,11 @@ def static_checks(
                 cleaned = strip_comments(text)
                 if rule.get("requires") and not re.search(rule["requires"], cleaned):
                     continue
-                for index, match in enumerate(islice(re.finditer(rule["pattern"], cleaned, re.I), 31)):
+                # Some APIs are a property of the file (for example a deprecated class); report its first use.
+                matches = islice(
+                    re.finditer(rule["pattern"], cleaned, re.I), 1 if rule.get("once_per_file") else 31
+                )
+                for index, match in enumerate(matches):
                     if index == 30:
                         state = "partial"
                         truncated = True

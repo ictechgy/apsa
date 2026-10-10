@@ -1,7 +1,7 @@
 [
   {
     "id": "AST-CRYPTO-ECB",
-    "title": "An explicit AES/ECB transformation is selected",
+    "title": "AES in ECB mode is selected",
     "mode": "ast",
     "languages": [
       "java",
@@ -15,7 +15,7 @@
       "https://developer.android.com/privacy-and-security/cryptography"
     ],
     "mapping_scope": "partial",
-    "scope": "Recognized framework static call and literal AES/ECB transformation only; variables, providers and runtime use remain unverified."
+    "scope": "Recognized framework Cipher.getInstance with a literal or file-constant transformation: AES/ECB, or bare AES whose provider default is ECB. Variables, providers and runtime use remain unverified."
   },
   {
     "id": "AST-CRYPTO-WEAK-HASH",
@@ -34,7 +34,7 @@
       "https://developer.android.com/privacy-and-security/cryptography"
     ],
     "mapping_scope": "partial",
-    "scope": "Recognized MessageDigest literal selection or CommonCrypto MD5/SHA1 call; no security-purpose or exploitability proof."
+    "scope": "Recognized MessageDigest literal selection or CommonCrypto MD5/SHA1 call; no security-purpose or exploitability proof. Swift files importing CryptoKit also report Insecure.MD5 and Insecure.SHA1."
   },
   {
     "id": "AST-SQL-CONCAT",
@@ -52,7 +52,7 @@
       "https://developer.android.com/privacy-and-security/risks/sql-injection"
     ],
     "mapping_scope": "partial",
-    "scope": "Function-scoped known platform-input flow to SQLiteDatabase rawQuery/execSQL first argument; no method dispatch, arbitrary-parameter taint, helper sanitization or exploit proof."
+    "scope": "Function-scoped known platform-input flow to SQLiteDatabase rawQuery/execSQL first argument; no method dispatch, arbitrary-parameter taint, helper sanitization or exploit proof. 1.5 adds SQLiteQueryBuilder.query and the groupBy, having, orderBy and limit arguments of query, types locals built with an imported class's constructor, and reads nested provider classes (Outer$Inner)."
   },
   {
     "id": "AST-WEBVIEW-UNTRUSTED-URL",
@@ -485,6 +485,199 @@
       "https://developer.android.com/privacy-and-security/risks/weak-prng"
     ],
     "mapping_scope": "partial",
-    "scope": "Case-sensitive single-statement check: java.util.Random, kotlin.random.Random, ThreadLocalRandom or Math.random assigned to a variable whose camelCase or snake_case words include token, nonce, salt, otp, secret, password, passcode, iv or session id."
+    "scope": "Case-sensitive single-statement check: java.util.Random, kotlin.random.Random, ThreadLocalRandom or Math.random assigned to a variable whose camelCase or snake_case words include token, nonce, salt, otp, secret, password, passcode, iv or session id. Swift and Objective-C files report rand, random, drand48, lrand48, mrand48 and GameplayKit random sources the same way; arc4random and the Swift default generator are secure."
+  },
+  {
+    "id": "AST-CRYPTO-WEAK-CIPHER",
+    "title": "A broken cipher algorithm is selected",
+    "mode": "ast",
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "languages": [
+      "java",
+      "kotlin"
+    ],
+    "severity": "high",
+    "masvs": "MASVS-CRYPTO",
+    "remediation": "Use AES-GCM or ChaCha20-Poly1305 with keys from the Android Keystore.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/broken-cryptographic-algorithm"
+    ],
+    "scope": "Framework Cipher.getInstance with a literal or file-constant DES, DESede/3DES, RC4/ARCFOUR, RC2 or Blowfish transformation."
+  },
+  {
+    "id": "AST-CRYPTO-HARDCODED-KEY",
+    "title": "Cryptographic key material comes from a constant in the app",
+    "mode": "ast",
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "languages": [
+      "java",
+      "kotlin",
+      "swift"
+    ],
+    "severity": "high",
+    "masvs": "MASVS-CRYPTO",
+    "remediation": "Generate keys in the Android Keystore or the iOS Keychain or Secure Enclave, or fetch per-user keys from a server.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/hardcoded-cryptographic-secrets"
+    ],
+    "scope": "SecretKeySpec, DESKeySpec, DESedeKeySpec, PBEKeySpec, CryptoKit SymmetricKey(data:) and P256/P384/P521/Curve25519 private keys, and SecKeyCreateWithData for private keys, when the material is a literal, a literal array, a BuildConfig field, an immutable constant of the same file, or a byte conversion or decoder of those. A value passed to any other call first is treated as filled at runtime."
+  },
+  {
+    "id": "AST-CRYPTO-STATIC-IV",
+    "title": "A constant IV or nonce is used for encryption",
+    "mode": "ast",
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "languages": [
+      "java",
+      "kotlin",
+      "swift"
+    ],
+    "severity": "medium",
+    "masvs": "MASVS-CRYPTO",
+    "remediation": "Generate a new random IV or nonce for every encryption and store it with the ciphertext.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/cryptography"
+    ],
+    "scope": "IvParameterSpec, GCMParameterSpec and CryptoKit AES.GCM/ChaChaPoly nonces built from constant or zero-filled material that no call has filled in the same function."
+  },
+  {
+    "id": "AST-INTENT-REDIRECTION",
+    "title": "An Intent taken from another Intent's extras is launched",
+    "mode": "ast",
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "languages": [
+      "java",
+      "kotlin"
+    ],
+    "severity": "high",
+    "masvs": "MASVS-PLATFORM",
+    "remediation": "Do not launch Intents received from other apps; allowlist the nested Intent's component and package and drop URI grant flags if forwarding is required.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/intent-redirection"
+    ],
+    "scope": "getParcelableExtra/getParcelable (including IntentCompat and Kotlin generic forms) on the component's Intent or its extras, passed to startActivity, startService, bindService or sendBroadcast in the same function without a component or package check."
+  },
+  {
+    "id": "AST-IMPLICIT-INTENT",
+    "title": "An implicit Intent with an app-defined action is sent",
+    "mode": "ast",
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "languages": [
+      "java",
+      "kotlin"
+    ],
+    "severity": "medium",
+    "masvs": "MASVS-PLATFORM",
+    "remediation": "Make internal Intents explicit and protect broadcasts with a signature permission.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/implicit-intent-hijacking"
+    ],
+    "scope": "An Intent built in the same function with a literal or file-constant action outside the android.* namespaces and no class, component or package, passed to startActivity, startService, bindService or sendBroadcast without a receiver permission. LocalBroadcastManager is excluded."
+  },
+  {
+    "id": "AST-PATH-TRAVERSAL",
+    "title": "An externally controlled name reaches a file path",
+    "mode": "ast",
+    "status": "candidate",
+    "mapping_scope": "partial",
+    "languages": [
+      "java",
+      "kotlin",
+      "swift"
+    ],
+    "severity": "high",
+    "masvs": "MASVS-CODE",
+    "remediation": "Reduce untrusted names to a basename or generate file names, and check the canonical path stays inside the intended directory.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/risks/path-traversal",
+      "https://developer.android.com/privacy-and-security/risks/zip-path-traversal"
+    ],
+    "scope": "Intent data and extras, exported-provider arguments, content provider display names, archive entry names and URL query items reaching File, FileOutputStream/FileInputStream, FileWriter/FileReader, RandomAccessFile, openFileOutput/openFileInput, URL.appendingPathComponent, appending(path:) or URL(fileURLWithPath:) in the same function. File(x).name, lastPathComponent and substringAfterLast(\"/\") reduce input to a file name; a canonical-path prefix check or a '..' check anywhere in the function suppresses the result."
+  },
+  {
+    "id": "SOURCE-BIOMETRIC-EVENT-BOUND",
+    "mode": "source-pattern",
+    "title": "Biometric result is not bound to a key or keychain item",
+    "severity": "medium",
+    "status": "candidate",
+    "masvs": "MASVS-AUTH",
+    "references": [
+      "https://developer.android.com/identity/sign-in/biometric-auth",
+      "https://developer.apple.com/documentation/localauthentication/accessing-keychain-items-with-face-id-or-touch-id"
+    ],
+    "mapping_scope": "partial",
+    "scope": "BiometricPrompt.authenticate without a CryptoObject (by argument count on a receiver declared as BiometricPrompt), FingerprintManager.authenticate(null, ...), and LAContext.evaluatePolicy in a file with no Keychain access control or authentication context."
+  },
+  {
+    "id": "SOURCE-BIOMETRIC-FALLBACK",
+    "mode": "source-pattern",
+    "title": "Biometric authentication falls back to the device credential",
+    "severity": "low",
+    "status": "candidate",
+    "masvs": "MASVS-AUTH",
+    "references": [
+      "https://developer.android.com/identity/sign-in/biometric-auth",
+      "https://developer.apple.com/documentation/localauthentication/accessing-keychain-items-with-face-id-or-touch-id"
+    ],
+    "mapping_scope": "partial",
+    "scope": "setDeviceCredentialAllowed(true), DEVICE_CREDENTIAL in setAllowedAuthenticators or setUserAuthenticationParameters, evaluatePolicy(.deviceOwnerAuthentication), and userPresence or devicePasscode access-control flags. Whether the operation is sensitive is not decided."
+  },
+  {
+    "id": "SOURCE-BIOMETRIC-ENROLLMENT",
+    "mode": "source-pattern",
+    "title": "Biometric-protected key survives new biometric enrollment",
+    "severity": "low",
+    "status": "candidate",
+    "masvs": "MASVS-AUTH",
+    "references": [
+      "https://developer.android.com/identity/sign-in/biometric-auth",
+      "https://developer.apple.com/documentation/localauthentication/accessing-keychain-items-with-face-id-or-touch-id"
+    ],
+    "mapping_scope": "partial",
+    "scope": "setInvalidatedByBiometricEnrollment(false), and biometryAny or touchIDAny access-control flags."
+  },
+  {
+    "id": "IOS-WEBVIEW-FILE-ACCESS",
+    "mode": "source-pattern",
+    "title": "WKWebView file URLs may read other local files",
+    "severity": "high",
+    "status": "candidate",
+    "masvs": "MASVS-PLATFORM",
+    "references": [
+      "https://mas.owasp.org/MASWE/MASVS-PLATFORM/MASWE-0034/"
+    ],
+    "mapping_scope": "partial",
+    "scope": "allowFileAccessFromFileURLs or allowUniversalAccessFromFileURLs enabled by key-value coding, and loadFileURL read access to Documents, Library, Caches, temporary or home directories, resolved through assignments in the same file."
+  },
+  {
+    "id": "ANDROID-NSC-USER-CA",
+    "mode": "configuration",
+    "title": "Network security configuration trusts user-installed CAs",
+    "severity": "medium",
+    "status": "configuration-confirmed",
+    "masvs": "MASVS-NETWORK",
+    "references": [
+      "https://developer.android.com/privacy-and-security/security-config"
+    ],
+    "mapping_scope": "partial",
+    "scope": "The network security configuration referenced by the manifest: user certificates in base-config or domain-config trust anchors; debug-overrides are excluded. Cleartext permitted there is reported as ANDROID-CLEARTEXT."
+  },
+  {
+    "id": "ANDROID-DEEPLINK-AUTOVERIFY",
+    "mode": "configuration",
+    "title": "Web link intent filter is not verified as an App Link",
+    "severity": "low",
+    "status": "candidate",
+    "masvs": "MASVS-PLATFORM",
+    "references": [
+      "https://developer.android.com/training/app-links/verify-android-applinks"
+    ],
+    "mapping_scope": "partial",
+    "scope": "VIEW and BROWSABLE intent filters with an http or https host and no android:autoVerify=\"true\". assetlinks.json and the device's verification state are not checked."
   }
 ]

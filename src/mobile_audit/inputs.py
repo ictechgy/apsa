@@ -330,6 +330,9 @@ def android_manifest(raw: bytes, origin: str, inventory: dict) -> None:
                 inventory["warnings"].append(f"Deep-link combinations limited to 200 for {origin}")
             if filter_.find("uri-relative-filter-group") is not None:
                 inventory["warnings"].append(f"URI relative filter groups require manual review: {origin}")
+            browsable = "android.intent.category.BROWSABLE" in {
+                c.get(ANDROID_NS + "name") for c in filter_.findall("category")
+            }
             for scheme, (host, port), (kind, path) in islice(product(schemes, authorities, paths), 200):
                 inventory["deep_links"].append(
                     {
@@ -340,6 +343,7 @@ def android_manifest(raw: bytes, origin: str, inventory: dict) -> None:
                         "path_kind": kind,
                         "component": component_name,
                         "auto_verify": filter_.get(ANDROID_NS + "autoVerify", "false"),
+                        "browsable": browsable,
                         "origin": origin,
                         "platform": "android",
                     }

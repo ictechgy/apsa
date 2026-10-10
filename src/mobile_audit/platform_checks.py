@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+from defusedxml import ElementTree as ET
+
 from .core import finding, load_plist
 from .rules import strip_comments
 
@@ -83,7 +85,52 @@ WEAK_RANDOM = re.compile(
     r"(?<!\w)Random\s*\(|\bMath\.random\s*\(|(?<!\w)Random\.(?:Default|next[A-Z]\w{0,20})\b"
     r"|\bThreadLocalRandom\.current\s*\("
 )
+# C library generators and GameplayKit sources; arc4random and Swift's default generator are secure.
+WEAK_RANDOM_APPLE = re.compile(
+    r"(?<![\w.])(?:rand|random|drand48|lrand48|mrand48)\s*\(\s*\)"
+    r"|\bGK(?:MersenneTwister|LinearCongruential|ARC4)RandomSource\b|\bGKRandomSource\b"
+)
 MAX_RANDOM_FINDINGS = 50
+MAX_PATTERN_FINDINGS = 50
+
+ANDROID_AUTH_REFERENCE = "https://developer.android.com/identity/sign-in/biometric-auth"
+APPLE_AUTH_REFERENCE = "https://developer.apple.com/documentation/localauthentication/accessing-keychain-items-with-face-id-or-touch-id"
+WEBVIEW_FILE_REFERENCE = "https://mas.owasp.org/MASWE/MASVS-PLATFORM/MASWE-0034/"
+NSC_REFERENCE = "https://developer.android.com/privacy-and-security/security-config"
+APP_LINKS_REFERENCE = "https://developer.android.com/training/app-links/verify-android-applinks"
+# A key or keychain item bound to the authentication; an evaluatePolicy result alone is a boolean.
+APPLE_AUTH_BINDING = re.compile(
+    r"\bkSecAttrAccessControl\b|\bSecAccessControlCreateWithFlags\b|\bkSecUseAuthenticationContext\b"
+    r"|\bevaluateAccessControl\b"
+)
+APPLE_FALLBACK_POLICY = re.compile(
+    r"\bevaluatePolicy\s*\(\s*(?:LAPolicy)?\.deviceOwnerAuthentication\b"
+    r"|\bevaluatePolicy\s*:\s*LAPolicyDeviceOwnerAuthentication\b"
+)
+# Access-control flags; only read in files that create a SecAccessControl.
+APPLE_FALLBACK_FLAGS = re.compile(
+    r"(?<!\w)\.(?:userPresence|devicePasscode)\b|\bkSecAccessControl(?:UserPresence|DevicePasscode)\b"
+)
+APPLE_ENROLLMENT = re.compile(
+    r"(?<!\w)\.(?:biometryAny|touchIDAny)\b|\bkSecAccessControl(?:BiometryAny|TouchIDAny)\b"
+)
+ANDROID_FALLBACK = re.compile(r"\bsetDeviceCredentialAllowed\s*\(\s*true\b")
+ANDROID_FALLBACK_ARGUMENTS = {
+    "setAllowedAuthenticators": "DEVICE_CREDENTIAL",
+    "setUserAuthenticationParameters": "AUTH_DEVICE_CREDENTIAL",
+}
+ANDROID_ENROLLMENT = re.compile(r"\bsetInvalidatedByBiometricEnrollment\s*\(\s*false\b")
+FILE_ACCESS_KEY = re.compile(
+    r"\bsetValue\s*(?:\(\s*true\s*,\s*forKey\s*:\s*|:\s*@\(?\s*(?:YES|true|1)\s*\)?\s+forKey\s*:\s*@)"
+    r'"(allowFileAccessFromFileURLs|allowUniversalAccessFromFileURLs)"'
+)
+READ_ACCESS = re.compile(r"\ballowingReadAccessTo(?:URL)?\s*:\s*")
+BROAD_DIRECTORY = re.compile(
+    r"\b(?:documentDirectory|libraryDirectory|applicationSupportDirectory|cachesDirectory|NSDocumentDirectory"
+    r"|NSLibraryDirectory|NSApplicationSupportDirectory|NSCachesDirectory|NSHomeDirectory"
+    r"|homeDirectoryForCurrentUser|NSTemporaryDirectory|temporaryDirectory)\b"
+    r'|\bfileURLWithPath\s*:\s*@?"/"'
+)
 
 
 def _line(text: str, offset: int) -> int:
@@ -123,7 +170,8 @@ def exposed_providers(inventory: dict) -> set[str]:
     target = str((inventory.get("android_sdk") or {}).get("target") or "")
     level = int(target) if target.isdigit() else None
     return {
-        str(c.get("name", "")).rsplit(".", 1)[-1]
+        # A nested class is declared as Outer$Inner; its source declaration is named Inner.
+        str(c.get("name", "")).rsplit(".", 1)[-1].rsplit("$", 1)[-1]
         for c in inventory.get("components", [])
         if c.get("type") == "provider" and c.get("name") and _exposed(c, level)
     }
@@ -508,17 +556,21 @@ def _words(identifier: str) -> list[str]:
 
 
 def _insecure_random(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
-    if "android" not in inventory.get("platforms", []):
+    platforms = inventory.get("platforms", [])
+    suffixes = (".kt", ".java") * ("android" in platforms) + APPLE_SOURCES * ("ios" in platforms)
+    if not suffixes:
         return [], [
             {"rule_id": "SOURCE-INSECURE-RANDOM", "state": "not-applicable", "method": "source-pattern"}
         ]
     findings: list[dict] = []
     scanned, truncated = 0, False
     for path, text in sources:
-        if not path.endswith((".kt", ".java")):
+        if not path.endswith(suffixes):
             continue
         scanned += 1
-        if "andom" not in text:
+        apple = path.endswith(APPLE_SOURCES)
+        weak_random = WEAK_RANDOM_APPLE if apple else WEAK_RANDOM
+        if not re.search(r"rand|Random", text):
             continue
         cleaned = strip_comments(text)
         for match in ASSIGNMENT.finditer(cleaned):
@@ -532,7 +584,7 @@ def _insecure_random(inventory: dict, sources: list[tuple[str, str]]) -> tuple[l
                 continue
             end = cleaned.find("\n", match.end())
             statement = cleaned[match.end() : match.end() + 160 if end < 0 else min(end, match.end() + 160)]
-            generator = WEAK_RANDOM.search(statement.split(";", 1)[0])
+            generator = weak_random.search(statement.split(";", 1)[0])
             if not generator:
                 continue
             if len(findings) >= MAX_RANDOM_FINDINGS:
@@ -550,11 +602,14 @@ def _insecure_random(inventory: dict, sources: list[tuple[str, str]]) -> tuple[l
                             "line": _line(cleaned, match.start()),
                             "offset": match.start(),
                             "variable": match[1],
-                            "generator": generator[0].rstrip("( "),
-                            "basis": "assignment of java.util/kotlin Random or Math.random to a security-named variable",
+                            "generator": generator[0].rstrip("() "),
+                            "basis": "assignment of a C library or GameplayKit generator to a security-named variable"
+                            if apple
+                            else "assignment of java.util/kotlin Random or Math.random to a security-named variable",
                         }
                     ],
-                    "Use java.security.SecureRandom (or a platform key generator) for tokens, nonces, salts and passwords.",
+                    "Use SecRandomCopyBytes or CryptoKit on Apple platforms, and java.security.SecureRandom (or a "
+                    "platform key generator) on Android, for tokens, nonces, salts and passwords.",
                     "MASVS-CRYPTO",
                     [RANDOM_REFERENCE],
                 )
@@ -565,6 +620,478 @@ def _insecure_random(inventory: dict, sources: list[tuple[str, str]]) -> tuple[l
             "state": "partial" if truncated else "checked" if scanned else "not-run",
             "method": "source-pattern",
             "note": "Single-statement assignments only; values passed through helpers or fields are not followed.",
+        }
+    ]
+
+
+def _masked_code(text: str) -> str:
+    """Blank comments and string contents (quotes kept) so brackets inside them do not nest."""
+    return re.sub(
+        r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\\n])*"',
+        lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0].startswith("/") else '"' + " " * (len(m[0]) - 2) + '"',
+        text,
+    )
+
+
+def _arguments(masked: str, start: int, limit: int = 4000) -> list[tuple[int, int]] | None:
+    """Top-level argument spans of the call whose ``(`` is at ``start``; None when unbalanced."""
+    depth, begin, spans = 0, start + 1, []
+    for index in range(start, min(len(masked), start + limit)):
+        char = masked[index]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                if masked[begin:index].strip():
+                    spans.append((begin, index))
+                return spans
+        elif char == "," and depth == 1:
+            spans.append((begin, index))
+            begin = index + 1
+    return None
+
+
+def _declared_as(masked: str, name: str, type_pattern: str) -> bool:
+    """Whether ``name`` is declared or assigned with a type or constructor matching ``type_pattern``."""
+    name = re.escape(name)
+    return bool(
+        re.search(
+            rf"\b{name}\s*(?::\s*(?:[\w.]*\.)?(?:{type_pattern})\b|=\s*(?:[\w.]*\.)?(?:{type_pattern})\s*[.(])"
+            rf"|\b(?:{type_pattern})\s+{name}\b",
+            masked,
+        )
+    )
+
+
+def _auth_finding(rule: str, path: str, text: str, offset: int, api: str, basis: str) -> dict:
+    titles = {
+        "SOURCE-BIOMETRIC-EVENT-BOUND": (
+            "Biometric result is not bound to a key or keychain item",
+            "medium",
+            "Unlock a Keystore key (BiometricPrompt.CryptoObject) or a Keychain item with an access control "
+            "instead of trusting a success callback, so the result cannot be bypassed by hooking it.",
+        ),
+        "SOURCE-BIOMETRIC-FALLBACK": (
+            "Biometric authentication falls back to the device credential",
+            "low",
+            "For sensitive operations, require biometrics only (BIOMETRIC_STRONG, .biometryCurrentSet, "
+            ".deviceOwnerAuthenticationWithBiometrics) or document why a PIN or passcode is acceptable.",
+        ),
+        "SOURCE-BIOMETRIC-ENROLLMENT": (
+            "Biometric-protected key survives new biometric enrollment",
+            "low",
+            "Invalidate keys on new enrollment (setInvalidatedByBiometricEnrollment(true), .biometryCurrentSet) "
+            "so a newly added fingerprint or face cannot unlock existing secrets.",
+        ),
+    }
+    title, severity, remediation = titles[rule]
+    apple = path.endswith(APPLE_SOURCES)
+    return finding(
+        rule,
+        title,
+        severity,
+        "candidate",
+        [{"path": path, "line": _line(text, offset), "offset": offset, "api": api, "basis": basis}],
+        remediation,
+        "MASVS-AUTH",
+        [APPLE_AUTH_REFERENCE if apple else ANDROID_AUTH_REFERENCE],
+    )
+
+
+def _android_auth(path: str, text: str) -> list[dict]:
+    masked = _masked_code(text)
+    findings = []
+    for match in re.finditer(r"(\w+|\))\s*\??\.\s*authenticate\s*\(", masked):
+        args = _arguments(masked, match.end() - 1)
+        if args is None:
+            continue
+        receiver = match[1]
+        if receiver == ")":
+            # A call chain such as BiometricPrompt.Builder(...).build().authenticate(...).
+            window = masked[max(0, match.start() - 600) : match.start()]
+            prompt = re.search(r"\bBiometricPrompt\s*(?:\.\s*Builder\s*)?\(", window) is not None
+            fingerprint = re.search(r"\bFingerprintManager(?:Compat)?\b", window) is not None
+        else:
+            prompt = _declared_as(masked, receiver, "BiometricPrompt")
+            fingerprint = _declared_as(masked, receiver, r"FingerprintManager(?:Compat)?")
+        first = text[args[0][0] : args[0][1]].strip() if args else ""
+        # androidx: authenticate(info) or (info, crypto); framework: (cancel, executor, callback) or (crypto, ...).
+        if (prompt and len(args) in {1, 3}) or (fingerprint and first == "null"):
+            findings.append(
+                _auth_finding(
+                    "SOURCE-BIOMETRIC-EVENT-BOUND",
+                    path,
+                    text,
+                    match.start(1),
+                    "FingerprintManager.authenticate" if fingerprint else "BiometricPrompt.authenticate",
+                    "authenticate call without a CryptoObject argument",
+                )
+            )
+    for match in ANDROID_FALLBACK.finditer(masked):
+        findings.append(
+            _auth_finding(
+                "SOURCE-BIOMETRIC-FALLBACK",
+                path,
+                text,
+                match.start(),
+                "setDeviceCredentialAllowed",
+                "device credential allowed as an alternative",
+            )
+        )
+    for method, token in ANDROID_FALLBACK_ARGUMENTS.items():
+        for match in re.finditer(rf"\b{method}\s*\(", masked):
+            args = _arguments(masked, match.end() - 1)
+            if args and any(re.search(rf"\b{token}\b", masked[a:b]) for a, b in args):
+                findings.append(
+                    _auth_finding(
+                        "SOURCE-BIOMETRIC-FALLBACK",
+                        path,
+                        text,
+                        match.start(),
+                        method,
+                        f"{token} among the allowed authenticators",
+                    )
+                )
+    for match in ANDROID_ENROLLMENT.finditer(masked):
+        findings.append(
+            _auth_finding(
+                "SOURCE-BIOMETRIC-ENROLLMENT",
+                path,
+                text,
+                match.start(),
+                "KeyGenParameterSpec.Builder.setInvalidatedByBiometricEnrollment",
+                "key explicitly kept valid after new biometric enrollment",
+            )
+        )
+    return findings
+
+
+def _apple_auth(path: str, text: str) -> list[dict]:
+    masked = _masked_code(text)
+    findings = []
+    if not APPLE_AUTH_BINDING.search(masked):
+        for match in re.finditer(r"\bevaluatePolicy\s*[(:]", masked):
+            findings.append(
+                _auth_finding(
+                    "SOURCE-BIOMETRIC-EVENT-BOUND",
+                    path,
+                    text,
+                    match.start(),
+                    "LAContext.evaluatePolicy",
+                    "evaluatePolicy reply used in a file without a Keychain access control",
+                )
+            )
+    fallback = [APPLE_FALLBACK_POLICY] + [APPLE_FALLBACK_FLAGS] * ("SecAccessControl" in masked)
+    for pattern in fallback:
+        for match in pattern.finditer(masked):
+            findings.append(
+                _auth_finding(
+                    "SOURCE-BIOMETRIC-FALLBACK",
+                    path,
+                    text,
+                    match.start(),
+                    match[0].strip(" (:"),
+                    "policy or access control that accepts the device passcode",
+                )
+            )
+    if "SecAccessControl" in masked:
+        for match in APPLE_ENROLLMENT.finditer(masked):
+            findings.append(
+                _auth_finding(
+                    "SOURCE-BIOMETRIC-ENROLLMENT",
+                    path,
+                    text,
+                    match.start(),
+                    match[0],
+                    "access control that stays valid after new biometric enrollment",
+                )
+            )
+    return findings
+
+
+def _local_auth(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
+    findings: list[dict] = []
+    scanned = truncated = False
+    for path, text in sources:
+        if path.endswith((".kt", ".java")):
+            scanned = True
+            if re.search(r"BiometricPrompt|FingerprintManager|setInvalidatedByBiometricEnrollment", text):
+                findings += _android_auth(path, text)
+        elif path.endswith(APPLE_SOURCES):
+            scanned = True
+            if re.search(r"evaluatePolicy|SecAccessControl", text):
+                findings += _apple_auth(path, text)
+    if len(findings) > MAX_PATTERN_FINDINGS:
+        findings, truncated = findings[:MAX_PATTERN_FINDINGS], True
+    notes = {
+        "SOURCE-BIOMETRIC-EVENT-BOUND": "BiometricPrompt and FingerprintManager authenticate calls by argument "
+        "count; LAContext.evaluatePolicy in files without a Keychain access control. Bindings in other files "
+        "are not followed.",
+        "SOURCE-BIOMETRIC-FALLBACK": "Literal authenticator, policy and access-control arguments; values held "
+        "in variables are not resolved.",
+        "SOURCE-BIOMETRIC-ENROLLMENT": "Explicit setInvalidatedByBiometricEnrollment(false) and biometryAny or "
+        "touchIDAny access-control flags.",
+    }
+    return findings, [
+        {
+            "rule_id": rule,
+            "state": "partial" if truncated else "checked" if scanned else "not-run",
+            "method": "source-pattern",
+            "note": note,
+        }
+        for rule, note in notes.items()
+    ]
+
+
+def _assigned_values(text: str, name: str) -> list[str]:
+    name = re.escape(name)
+    return [
+        m[1]
+        for m in re.finditer(
+            rf"(?:\b(?:let|var)\s+{name}\b\s*(?::[^=\n]+)?|(?<![\w.]){name}\s*)=(?!=)\s*([^\n;]+)", text
+        )
+    ]
+
+
+def _ios_webview_file_access(
+    inventory: dict, sources: list[tuple[str, str]]
+) -> tuple[list[dict], list[dict]]:
+    if "ios" not in inventory.get("platforms", []):
+        return [], [
+            {"rule_id": "IOS-WEBVIEW-FILE-ACCESS", "state": "not-applicable", "method": "source-pattern"}
+        ]
+    findings, scanned = [], 0
+    for path, text in sources:
+        if not path.endswith(APPLE_SOURCES):
+            continue
+        scanned += 1
+        if "allow" not in text:
+            continue
+        cleaned = strip_comments(text)
+        for match in FILE_ACCESS_KEY.finditer(cleaned):
+            findings.append(
+                finding(
+                    "IOS-WEBVIEW-FILE-ACCESS",
+                    "WKWebView file URLs may read other local files",
+                    "high",
+                    "candidate",
+                    [
+                        {
+                            "path": path,
+                            "line": _line(cleaned, match.start()),
+                            "offset": match.start(),
+                            "setting": match[1],
+                            "basis": "private WebKit preference enabled through key-value coding",
+                        }
+                    ],
+                    "Do not enable allowFileAccessFromFileURLs or allowUniversalAccessFromFileURLs. Serve local "
+                    "content through a WKURLSchemeHandler or a narrowly scoped loadFileURL read-access directory.",
+                    "MASVS-PLATFORM",
+                    [WEBVIEW_FILE_REFERENCE],
+                )
+            )
+        masked = _masked_code(cleaned)
+        for match in READ_ACCESS.finditer(cleaned):
+            end = match.end()
+            depth = 0
+            while end < len(masked) and end - match.end() < 300:
+                char = masked[end]
+                if char in "([{":
+                    depth += 1
+                elif char in ")]}":
+                    if depth == 0:
+                        break
+                    depth -= 1
+                elif char in ",\n" and depth == 0:
+                    break
+                end += 1
+            argument = cleaned[match.end() : end].strip()
+            identifier = re.fullmatch(r"(?:(?:self|Self|\w+)\.)?(\w+)!?", argument)
+            resolved = [argument] + (_assigned_values(cleaned, identifier[1]) if identifier else [])
+            broad = next(filter(None, (BROAD_DIRECTORY.search(value) for value in resolved)), None)
+            if broad:
+                findings.append(
+                    finding(
+                        "IOS-WEBVIEW-FILE-ACCESS",
+                        "WKWebView granted read access to a whole app directory",
+                        "medium",
+                        "candidate",
+                        [
+                            {
+                                "path": path,
+                                "line": _line(cleaned, match.start()),
+                                "offset": match.start(),
+                                "read_access": argument[:120],
+                                "directory": broad[0],
+                                "basis": "loadFileURL read-access argument"
+                                + (
+                                    " resolved through a local assignment" if argument != broad.string else ""
+                                ),
+                            }
+                        ],
+                        "Grant read access only to the directory that holds the bundled web content, never "
+                        "Documents, Library or the home directory, and do not load untrusted HTML from file URLs.",
+                        "MASVS-PLATFORM",
+                        [WEBVIEW_FILE_REFERENCE],
+                    )
+                )
+    return findings[:MAX_PATTERN_FINDINGS], [
+        {
+            "rule_id": "IOS-WEBVIEW-FILE-ACCESS",
+            "state": ("partial" if len(findings) > MAX_PATTERN_FINDINGS else "checked")
+            if scanned
+            else "not-run",
+            "method": "source-pattern",
+            "note": "Key-value-coded WebKit file preferences and loadFileURL read-access directories resolved "
+            "within one file.",
+        }
+    ]
+
+
+def _outside(spans: list[tuple[int, int]], offset: int) -> bool:
+    return not any(start <= offset < end for start, end in spans)
+
+
+def _network_security_config(
+    inventory: dict, sources: list[tuple[str, str]]
+) -> tuple[list[dict], list[dict]]:
+    if "android" not in inventory.get("platforms", []):
+        return [], [{"rule_id": "ANDROID-NSC-USER-CA", "state": "not-applicable", "method": "configuration"}]
+    referenced = {
+        str(config.get("network_security_config") or "").rsplit("/", 1)[-1]
+        for config in inventory.get("android_config", [])
+        if config.get("network_security_config")
+    }
+    findings: list[dict] = []
+    read, unreadable = 0, []
+    for path, text in sources:
+        stem = path.rsplit("/", 1)[-1].removesuffix(".xml")
+        if not path.endswith(".xml") or stem not in referenced or "<network-security-config" not in text:
+            continue
+        try:
+            root = ET.fromstring(text.encode("utf-8"))
+        except Exception:  # noqa: BLE001 - any parse failure leaves this file unverified
+            unreadable.append(path)
+            continue
+        read += 1
+        cleaned = re.sub(r"<!--[\s\S]*?-->", lambda m: re.sub(r"[^\n]", " ", m[0]), text)
+        debug = [
+            (m.start(), m.end())
+            for m in re.finditer(r"<debug-overrides\b[\s\S]*?</debug-overrides\s*>", cleaned)
+        ]
+        configs = [element for element in root.iter() if element.tag in {"base-config", "domain-config"}]
+        user_scopes = [
+            config.tag
+            for config in configs
+            for anchors in config.findall("trust-anchors")
+            for certificates in anchors.findall("certificates")
+            if certificates.get("src") == "user"
+        ]
+        user_offsets = [
+            m.start()
+            for m in re.finditer(r'<certificates\b[^>]*\bsrc\s*=\s*"user"', cleaned)
+            if _outside(debug, m.start())
+        ]
+        for scope, offset in zip(user_scopes, user_offsets, strict=False):
+            findings.append(
+                finding(
+                    "ANDROID-NSC-USER-CA",
+                    "Network security configuration trusts user-installed CAs",
+                    "medium",
+                    "configuration-confirmed",
+                    [{"path": path, "line": _line(cleaned, offset), "offset": offset, "scope": scope}],
+                    'Remove <certificates src="user"/> from release configurations; keep it only under '
+                    "<debug-overrides>, and pin certificates for sensitive hosts.",
+                    "MASVS-NETWORK",
+                    [NSC_REFERENCE],
+                )
+            )
+        cleartext = [config for config in configs if config.get("cleartextTrafficPermitted") == "true"]
+        cleartext_offsets = [
+            m.start()
+            for m in re.finditer(r'\bcleartextTrafficPermitted\s*=\s*"true"', cleaned)
+            if _outside(debug, m.start())
+        ]
+        for config, offset in zip(cleartext, cleartext_offsets, strict=False):
+            domains = [str(d.text or "").strip()[:200] for d in config.findall("domain")][:20]
+            findings.append(
+                finding(
+                    "ANDROID-CLEARTEXT",
+                    "Network security configuration permits cleartext traffic",
+                    "medium" if config.tag == "base-config" else "low",
+                    "configuration-confirmed",
+                    [
+                        {
+                            "path": path,
+                            "line": _line(cleaned, offset),
+                            "offset": offset,
+                            "scope": config.tag,
+                            **({"domains": domains} if domains else {}),
+                        }
+                    ],
+                    "Remove cleartextTrafficPermitted or limit it to hosts that cannot use TLS.",
+                    "MASVS-NETWORK",
+                    [NSC_REFERENCE],
+                )
+            )
+    note = "Referenced network security configuration; <debug-overrides> is excluded."
+    if unreadable:
+        note += f" {len(unreadable)} configuration(s) could not be parsed."
+    return findings, [
+        {
+            "rule_id": "ANDROID-NSC-USER-CA",
+            "state": "partial" if unreadable else "checked" if inventory.get("android_config") else "not-run",
+            "method": "configuration",
+            "note": note
+            if referenced
+            else "No networkSecurityConfig is referenced; platform defaults apply.",
+        }
+    ]
+
+
+def _app_links(inventory: dict) -> tuple[list[dict], list[dict]]:
+    if "android" not in inventory.get("platforms", []):
+        return [], [
+            {"rule_id": "ANDROID-DEEPLINK-AUTOVERIFY", "state": "not-applicable", "method": "configuration"}
+        ]
+    hosts: dict[tuple[str, str], set[str]] = {}
+    for link in inventory.get("deep_links", []):
+        if (
+            link.get("platform") == "android"
+            and link.get("scheme") in {"http", "https"}
+            and link.get("host")
+            and link.get("browsable")
+            and link.get("auto_verify") != "true"
+        ):
+            hosts.setdefault((link.get("origin", ""), link.get("component", "")), set()).add(link["host"])
+    findings = [
+        finding(
+            "ANDROID-DEEPLINK-AUTOVERIFY",
+            "Web link intent filter is not verified as an App Link",
+            "low",
+            "candidate",
+            [
+                {
+                    "path": origin,
+                    "component": component,
+                    "hosts": sorted(names)[:20],
+                    "basis": 'VIEW and BROWSABLE http(s) filter without android:autoVerify="true"',
+                }
+            ],
+            'Add android:autoVerify="true" and publish assetlinks.json for these hosts, so other apps cannot '
+            "claim the same links; validate every parameter the link carries.",
+            "MASVS-PLATFORM",
+            [APP_LINKS_REFERENCE],
+        )
+        for (origin, component), names in sorted(hosts.items())
+    ]
+    return findings, [
+        {
+            "rule_id": "ANDROID-DEEPLINK-AUTOVERIFY",
+            "state": "checked" if inventory.get("android_config") else "not-run",
+            "method": "configuration",
+            "note": "Declared intent filters; assetlinks.json and the verification result are not checked.",
         }
     ]
 
@@ -582,6 +1109,10 @@ def platform_checks(inventory: dict, sources: list[tuple[str, str]]) -> tuple[li
         _server_trust(sources),
         _secrets(sources),
         _insecure_random(inventory, sources),
+        _local_auth(sources),
+        _ios_webview_file_access(inventory, sources),
+        _network_security_config(inventory, sources),
+        _app_links(inventory),
     ):
         findings += part[0]
         coverage += part[1]

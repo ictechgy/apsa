@@ -111,7 +111,7 @@ RULES = {
         BRIDGE_REFERENCE,
     ),
     "AST-CRYPTO-ECB": (
-        "An explicit AES/ECB transformation is selected",
+        "AES in ECB mode is selected",
         "high",
         "Use an authenticated encryption construction such as AES-GCM with correctly managed keys and nonces.",
         CRYPTO_REFERENCE,
@@ -135,6 +135,161 @@ RULES = {
         "Keep the SQL statement constant and pass untrusted values as bound parameters. Review unknown helpers separately.",
         SQL_REFERENCE,
     ),
+    "AST-CRYPTO-WEAK-CIPHER": (
+        "A broken cipher algorithm is selected",
+        "high",
+        "Use AES-GCM or ChaCha20-Poly1305 with keys from the Android Keystore. Do not use DES, 3DES, "
+        "RC4, RC2 or Blowfish.",
+        "https://developer.android.com/privacy-and-security/risks/broken-cryptographic-algorithm",
+    ),
+    "AST-CRYPTO-HARDCODED-KEY": (
+        "Cryptographic key material comes from a constant in the app",
+        "high",
+        "Generate keys at runtime in the Android Keystore or the iOS Keychain or Secure Enclave, or fetch "
+        "per-user keys from a server. Key material shipped in the app can be extracted.",
+        "https://developer.android.com/privacy-and-security/risks/hardcoded-cryptographic-secrets",
+    ),
+    "AST-CRYPTO-STATIC-IV": (
+        "A constant IV or nonce is used for encryption",
+        "medium",
+        "Generate a new random IV or nonce for every encryption (or let the cipher choose one) and store "
+        "it with the ciphertext.",
+        CRYPTO_REFERENCE,
+    ),
+    "AST-INTENT-REDIRECTION": (
+        "An Intent taken from another Intent's extras is launched",
+        "high",
+        "Do not launch Intents received from other apps. If forwarding is required, check the nested "
+        "Intent's component and package against an allowlist and drop URI permission grant flags first.",
+        "https://developer.android.com/privacy-and-security/risks/intent-redirection",
+    ),
+    "AST-IMPLICIT-INTENT": (
+        "An implicit Intent with an app-defined action is sent",
+        "medium",
+        "Make internal Intents explicit (setPackage, setClass or a component), protect broadcasts with a "
+        "signature permission, and keep sensitive extras out of implicit Intents.",
+        "https://developer.android.com/privacy-and-security/risks/implicit-intent-hijacking",
+    ),
+    "AST-PATH-TRAVERSAL": (
+        "An externally controlled name reaches a file path",
+        "high",
+        "Reduce untrusted names to a basename (File(name).name, lastPathComponent) or generate file names, "
+        "and check that the canonical path stays inside the intended directory before use.",
+        "https://developer.android.com/privacy-and-security/risks/path-traversal",
+    ),
+}
+# Android-only structural rules; a Swift-only project does not apply them.
+ANDROID_ONLY = (
+    "SSL-BYPASS",
+    "JS-BRIDGE",
+    "CRYPTO-ECB",
+    "SQL-CONCAT",
+    "PENDINGINTENT-MUTABLE",
+    "CRYPTO-WEAK-CIPHER",
+    "INTENT-REDIRECTION",
+    "IMPLICIT-INTENT",
+)
+BROKEN_CIPHERS = {"DES", "DESEDE", "TRIPLEDES", "3DES", "RC4", "ARCFOUR", "RC2", "BLOWFISH"}
+# Constructors whose argument is key material or an IV/nonce: name -> (rule, argument index or label).
+KEY_SINKS = {
+    "SecretKeySpec": ("AST-CRYPTO-HARDCODED-KEY", 0),
+    "DESKeySpec": ("AST-CRYPTO-HARDCODED-KEY", 0),
+    "DESedeKeySpec": ("AST-CRYPTO-HARDCODED-KEY", 0),
+    "PBEKeySpec": ("AST-CRYPTO-HARDCODED-KEY", 0),
+    "IvParameterSpec": ("AST-CRYPTO-STATIC-IV", 0),
+    "GCMParameterSpec": ("AST-CRYPTO-STATIC-IV", 1),
+    "SymmetricKey": ("AST-CRYPTO-HARDCODED-KEY", "data"),
+    "PrivateKey": ("AST-CRYPTO-HARDCODED-KEY", None),
+    "SecKeyCreateWithData": ("AST-CRYPTO-HARDCODED-KEY", 0),
+    "Nonce": ("AST-CRYPTO-STATIC-IV", "data"),
+}
+# Conversions that keep a constant constant; decoders and byte builders of literal text.
+CONSTANT_CONVERSIONS = {
+    "toByteArray",
+    "getBytes",
+    "encodeToByteArray",
+    "toCharArray",
+    "data",
+    "utf8",
+    "decode",
+    "decodeHex",
+    "fromHex",
+    "hexToBytes",
+    "hexStringToByteArray",
+    "byteArrayOf",
+    "ubyteArrayOf",
+    "intArrayOf",
+    "charArrayOf",
+    "arrayOf",
+    "Data",
+    "Array",
+    "copyOf",
+    "toUByteArray",
+}
+# Methods that read a value without changing it; any other call taking a constant may fill it.
+PURE_METHODS = CONSTANT_CONVERSIONS | {
+    "size",
+    "count",
+    "length",
+    "isEmpty",
+    "contentEquals",
+    "equals",
+    "toString",
+    "hashCode",
+    "base64EncodedString",
+    "withUnsafeBytes",
+    "map",
+    "encodeToString",
+    "encode",
+    "joinToString",
+    "contentToString",
+    "print",
+    "println",
+    "NSLog",
+}
+INTENT_LAUNCHERS = {
+    "startActivity",
+    "startActivityForResult",
+    "startActivityIfNeeded",
+    "startService",
+    "startForegroundService",
+    "bindService",
+    "sendBroadcast",
+    "sendOrderedBroadcast",
+    "sendStickyBroadcast",
+}
+NESTED_INTENT = "Intent extra (an Intent supplied by the sender)"
+BASENAME = " (reduced to a file name)"
+SCOPE_FUNCTIONS = {"use", "let", "also", "apply", "run", "with"}
+ENTRY_ITERATORS = {
+    "nextEntry",
+    "getNextEntry",
+    "nextZipEntry",
+    "getNextZipEntry",
+    "nextJarEntry",
+    "getNextJarEntry",
+}
+NESTED_INTENT_GETTERS = {"getParcelableExtra", "getParcelable"}
+PATH_GUARD = re.compile(
+    r"\b(?:canonicalPath|getCanonicalPath|canonicalFile|getCanonicalFile|toRealPath|normalize|standardizedFileURL"
+    r"|resolvingSymlinksInPath|standardized)\b[\s\S]*\b(?:startsWith|hasPrefix)\b"
+    r"|\b(?:startsWith|hasPrefix)\b[\s\S]*\b(?:canonicalPath|getCanonicalPath|toRealPath|standardizedFileURL)\b"
+    r'|"\.\."'
+)
+NON_SCALAR_LITERALS = {
+    "array_literal",
+    "dictionary_literal",
+    "collection_literal",
+    "lambda_literal",
+    "object_literal",
+}
+FILE_SINKS = {
+    "File": "java.io.File",
+    "FileOutputStream": "java.io.FileOutputStream",
+    "FileInputStream": "java.io.FileInputStream",
+    "FileWriter": "java.io.FileWriter",
+    "FileReader": "java.io.FileReader",
+    "RandomAccessFile": "java.io.RandomAccessFile",
 }
 LIMITS_NOTE = (
     "Function-scoped local def-use analysis; no method dispatch, interprocedural flow, "
@@ -201,23 +356,43 @@ class Frame:
     types: dict[str, str] = field(default_factory=dict)
     bridges: dict[tuple[str, str | None], Call] = field(default_factory=dict)
     javascript: dict[str, str] = field(default_factory=dict)
+    # Local names bound to constant key, IV or byte material in this function: name -> description.
+    constants: dict[str, str] = field(default_factory=dict)
 
     def copy(self) -> Frame:
-        return Frame(self.values.copy(), self.types.copy(), self.bridges.copy(), self.javascript.copy())
+        return Frame(
+            self.values.copy(),
+            self.types.copy(),
+            self.bridges.copy(),
+            self.javascript.copy(),
+            self.constants.copy(),
+        )
 
 
 # SQL syntax argument per framework method (receiver type, method) -> argument index.
 SQL_SINKS = {
-    ("android.database.sqlite.SQLiteDatabase", "rawQuery"): 0,
-    ("android.database.sqlite.SQLiteDatabase", "execSQL"): 0,
-    ("android.database.sqlite.SQLiteDatabase", "rawQueryWithFactory"): 1,
-    ("android.database.sqlite.SQLiteDatabase", "compileStatement"): 0,
-    ("android.database.sqlite.SQLiteDatabase", "delete"): 1,
-    ("android.database.sqlite.SQLiteDatabase", "update"): 2,
-    ("android.database.sqlite.SQLiteDatabase", "query"): 2,
-    ("android.database.sqlite.SQLiteQueryBuilder", "appendWhere"): 0,
+    ("android.database.sqlite.SQLiteDatabase", "rawQuery"): (0,),
+    ("android.database.sqlite.SQLiteDatabase", "execSQL"): (0,),
+    ("android.database.sqlite.SQLiteDatabase", "rawQueryWithFactory"): (1,),
+    ("android.database.sqlite.SQLiteDatabase", "compileStatement"): (0,),
+    ("android.database.sqlite.SQLiteDatabase", "delete"): (1,),
+    ("android.database.sqlite.SQLiteDatabase", "update"): (2,),
+    # query(table, columns, selection, args, groupBy, having, orderBy[, limit])
+    ("android.database.sqlite.SQLiteDatabase", "query"): (2, 4, 5, 6, 7),
+    ("android.database.sqlite.SQLiteQueryBuilder", "appendWhere"): (0,),
+    # query(db, projection, selection, args, groupBy, having, sortOrder[, limit])
+    ("android.database.sqlite.SQLiteQueryBuilder", "query"): (2, 4, 5, 6, 7),
 }
-PROVIDER_METHODS = {"query", "update", "delete", "insert", "call"}
+PROVIDER_METHODS = {
+    "query",
+    "update",
+    "delete",
+    "insert",
+    "call",
+    "openFile",
+    "openAssetFile",
+    "openTypedAssetFile",
+}
 
 
 class Analyzer:
@@ -251,6 +426,9 @@ class Analyzer:
         self.defined_functions: set[str] = set()
         self.pattern_exclusions: dict[str, set[tuple[int, int]]] = {}
         self.function_counts = {"observed": 0, "analyzed": 0, "skipped": 0, "without_body": 0}
+        # Immutable file-level constants (const/static final/let): name -> (description, string value).
+        self.constants: dict[str, tuple[str, str | None]] = {}
+        self.function: Any = None
 
     def text(self, node: Any) -> str:
         return self.raw[node.start_byte : node.end_byte].decode("utf-8", errors="replace") if node else ""
@@ -366,6 +544,177 @@ class Analyzer:
             return None
         return text[1:-1] if text.startswith(('"', "'")) and text[-1:] == text[:1] else None
 
+    def unwrap(self, node: Any) -> Any:
+        """The expression inside parentheses, casts, force-unwraps, try and value-argument wrappers."""
+        while node is not None:
+            if node.type == "value_argument":
+                node = _field(node, "value") or (node.named_children[-1] if node.named_children else None)
+            elif node.type in {
+                "parenthesized_expression",
+                "try_expression",
+                "as_expression",
+                "cast_expression",
+            }:
+                node = (
+                    _field(node, "expr")
+                    or _field(node, "value")
+                    or next(
+                        (
+                            part
+                            for part in node.named_children
+                            if part.type
+                            not in {"try_operator", "as_operator", "user_type", "type_identifier"}
+                        ),
+                        None,
+                    )
+                )
+            elif node.type == "postfix_expression" and self.text(node).rstrip().endswith("!"):
+                node = _field(node, "target") or (node.named_children[0] if node.named_children else None)
+            else:
+                return node
+        return None
+
+    def constant(self, node: Any, frame: Frame, depth: int = 0) -> str | None:
+        """Describe an expression whose value is fixed in the app (literal key or IV material), else None.
+
+        Literals, literal arrays, zero-filled arrays, immutable constants of this file, BuildConfig fields
+        and byte conversions or decoders applied only to such values count. Anything read at runtime does not.
+        """
+        node = self.unwrap(node)
+        if node is None or depth > 8:
+            return None
+        kind = node.type
+        if kind in STRINGS:
+            if any("interpolat" in part.type for part in _walk(node)):
+                return None
+            return "string literal"
+        if kind.endswith("_literal") and kind not in NON_SCALAR_LITERALS:
+            return "literal"
+        if kind in {"array_initializer", "array_literal", "collection_literal"}:
+            elements = node.named_children
+            if elements and all(self.constant(element, frame, depth + 1) for element in elements):
+                return "literal array"
+            return None
+        if kind == "array_creation_expression":
+            initializer = _field(node, "value")
+            if initializer is not None:
+                return "literal array" if self.constant(initializer, frame, depth + 1) else None
+            sizes = [
+                part.named_children[0]
+                for part in node.named_children
+                if part.type == "dimensions_expr" and part.named_children
+            ]
+            return (
+                "zero-filled array"
+                if sizes and all(self.constant(size, frame, depth + 1) for size in sizes)
+                else None
+            )
+        if kind in {"prefix_expression", "unary_expression"}:
+            operands = node.named_children
+            signed = self.text(node).lstrip().startswith(("-", "+"))
+            return (
+                "literal" if signed and operands and self.constant(operands[-1], frame, depth + 1) else None
+            )
+        if kind in {"additive_expression", "binary_expression"}:
+            parts = node.named_children
+            return (
+                "string literal"
+                if parts and all(self.constant(part, frame, depth + 1) for part in parts)
+                else None
+            )
+        if kind in IDENTIFIERS:
+            name = self.text(node)
+            if name in frame.constants:
+                return frame.constants[name]
+            if name not in frame.values and name not in frame.types and name in self.constants:
+                return self.constants[name][0]
+            return None
+        call = self.call(node)
+        navigation = self.navigation(node)
+        if navigation and call is None:
+            base, member = navigation
+            owner = self.text(base)
+            if owner.split(".")[-1] == "BuildConfig":
+                return "BuildConfig field (embedded in the app package)"
+            if (
+                owner.split(".")[0] in {"Companion", "this", "self", "Self", *self.class_names}
+                and member in self.constants
+            ):
+                return self.constants[member][0]
+            if member == "utf8":  # Swift "text".utf8
+                return self.constant(base, frame, depth + 1)
+            return None
+        if call is None:
+            return None
+        name = call.name.rsplit(".", 1)[-1]
+        if re.fullmatch(r"\[\w+\]", name):  # Swift [UInt8](...)
+            name = "Array"
+        if any(part.type == "annotated_lambda" for part in node.named_children):
+            return None  # ByteArray(n) { init } fills values at runtime
+        if name in {"ByteArray", "UByteArray", "CharArray"}:
+            return (
+                "zero-filled array"
+                if len(call.args) == 1 and self.constant(call.args[0], frame, depth + 1)
+                else None
+            )
+        if name not in CONSTANT_CONVERSIONS:
+            return None
+        values = [self.constant(argument, frame, depth + 1) for argument in call.args]
+        settings = all(
+            value or self.flag_argument(argument) for value, argument in zip(values, call.args, strict=True)
+        )
+        if not settings:
+            return None
+        if call.receiver is not None:
+            base = self.constant(call.receiver, frame, depth + 1)
+            if base:
+                return base  # "text".toByteArray(UTF_8), KEY.getBytes()
+            if not self.type_reference(call.receiver):
+                return None
+        if name in {"byteArrayOf", "ubyteArrayOf", "intArrayOf", "charArrayOf", "arrayOf"}:
+            return "literal array" if values and all(values) else None
+        # Base64.decode("..."), Data(base64Encoded: "..."), Data(literalBytes)
+        return next((value for value in values if value), None)
+
+    def type_reference(self, node: Any) -> bool:
+        """A class or companion used as a call receiver, such as Base64 or Base64.getDecoder()."""
+        return bool(re.fullmatch(r"(?:[a-z_]\w*\.)*[A-Z]\w*(?:\.\w+\(\))?", self.key(node)))
+
+    def flag_argument(self, node: Any) -> bool:
+        """Charset, flag and class arguments that do not make a conversion's result variable."""
+        node = self.unwrap(node)
+        text = self.text(node).strip() if node is not None else ""
+        return bool(
+            re.fullmatch(
+                r"(?:[A-Z]\w*\.)*[A-Z][A-Z0-9_]*|\.\w+|(?:Charsets|StandardCharsets|Base64|String\.Encoding)\.\w+"
+                r"|[A-Z]\w*(?:\.\w+)*::class(?:\.java)?",
+                text,
+            )
+        )
+
+    def call_arguments(self, call: Call) -> Any:
+        """The call's own value_arguments node (Kotlin and Swift)."""
+        arguments = next((part for part in call.node.named_children if part.type == "value_arguments"), None)
+        if arguments is None:
+            suffix = next((part for part in call.node.named_children if part.type == "call_suffix"), None)
+            arguments = (
+                next((part for part in suffix.named_children if part.type == "value_arguments"), None)
+                if suffix
+                else None
+            )
+        return arguments
+
+    def labeled_argument(self, call: Call, label: str) -> Any:
+        """The value of a Swift argument with this label."""
+        arguments = self.call_arguments(call)
+        for argument in arguments.named_children if arguments is not None else []:
+            name = next(
+                (part for part in argument.named_children if part.type == "value_argument_label"), None
+            )
+            if name is not None and self.text(name).strip() == label:
+                return _field(argument, "value") or argument.named_children[-1]
+        return None
+
     def navigation(self, node: Any) -> tuple[Any, str] | None:
         if node.type == "field_access":
             return _field(node, "object"), self.text(_field(node, "field"))
@@ -461,6 +810,14 @@ class Analyzer:
             if self.text(base) in {"this", "self"}:
                 return frame.values.get(member, Value(type_name=self.field_types.get(member, "")))
             value = self.value(base, frame)
+            if member in ENTRY_ITERATORS:
+                return Value(type_name="ZipEntry")
+            if member == "name" and re.search(r"Entry\b", value.type_name):
+                return self.source(node, "Archive entry name", "text")
+            if (member in {"name", "fileName"} and value.category == "path") or member == "lastPathComponent":
+                return self.basename(node, value)
+            if member == "extras" and value.category == "intent":
+                return Value(value.traces, "bundle")
             if value.category == "intent" and member in {"data", "dataString"}:
                 return self.source(node, "Intent data", "url" if member == "data" else "text", value)
             if value.category in {"request", "navigation", "url-context"} and member == "url":
@@ -500,6 +857,41 @@ class Analyzer:
                 return Value(type_name=call.name)
             if call.name in {"toString", "absoluteString"}:
                 return _union([receiver], "text")
+            if call.name in {"getColumnIndex", "getColumnIndexOrThrow"} and call.args:
+                if re.search(r"DISPLAY_NAME|_display_name", self.text(call.args[0])):
+                    return Value(category="display-name-column")
+            if call.name == "getString" and args and args[0].category == "display-name-column":
+                return self.source(node, "Content provider display name", "text")
+            if call.name in ENTRY_ITERATORS:
+                return Value(type_name="ZipEntry")
+            if call.name == "getName" and re.search(r"Entry\b", receiver.type_name):
+                return self.source(node, "Archive entry name", "text")
+            if (call.name in {"getName", "getFileName"} and receiver.category == "path") or (
+                call.name == "substringAfterLast" and call.args and self.literal(call.args[0]) == "/"
+            ):
+                return self.basename(node, receiver)
+            if call.name == "getName" and self.key(call.receiver) == "FilenameUtils" and args:
+                return self.basename(node, args[0])
+            if call.name == "getExtras" and receiver.category == "intent":
+                return Value(receiver.traces, "bundle")
+            if call.name in NESTED_INTENT_GETTERS:
+                holder = receiver
+                if self.key(call.receiver) in {"IntentCompat", "BundleCompat"} and args:
+                    holder = args[0]
+                if holder.category in {"intent", "bundle"}:
+                    return self.source(node, NESTED_INTENT, "nested-intent", holder)
+            simple = call.name.rsplit(".", 1)[-1]
+            if simple == "File" and call.receiver is None and self.language in {"java", "kotlin"}:
+                # changed() would reset the category; a File keeps "path" so wrappers are not re-reported.
+                return Value(self.changed(node, _union([receiver, *args])).traces, "path", "File")
+            if (
+                call.receiver is None
+                and simple[:1].isupper()
+                and simple not in self.class_names
+                and any(item.endswith("." + simple) for item in self.imports)
+            ):
+                # A constructor of an imported class: keep input provenance and record the type.
+                return self.changed(node, Value(_union([receiver, *args]).traces, "unknown", simple))
             declared = self.spec_entry("source", call, frame)
             if declared:
                 return self.source(
@@ -507,6 +899,13 @@ class Analyzer:
                 )
             # Unknown calls retain input provenance, with no assumed sanitization or return type.
             return self.changed(node, _union([receiver, *args]))
+        if node.type == "binary_expression" and self.language == "kotlin":
+            generic = self.generic_call(node)
+            if generic is not None:
+                target, name = generic
+                holder = self.value(target, frame)
+                if name in NESTED_INTENT_GETTERS and holder.category in {"intent", "bundle"}:
+                    return self.source(node, NESTED_INTENT, "nested-intent", holder)
         if node.type in {
             "parenthesized_expression",
             "postfix_expression",
@@ -523,6 +922,53 @@ class Analyzer:
             ]
             return children[-1] if children else Value()
         return self.changed(node, _union([self.value(child, frame) for child in node.named_children]))
+
+    def basename(self, node: Any, value: Value) -> Value:
+        """Mark input reduced to a final path component; it stays tainted for every other sink."""
+        return Value(
+            tuple(
+                Trace(
+                    hash((node.start_byte, trace.origin)),
+                    trace.source,
+                    trace.description + BASENAME,
+                    trace.steps,
+                )
+                for trace in value.traces
+            ),
+            value.category,
+            value.type_name,
+        )
+
+    def generic_call(self, node: Any) -> tuple[Any, str] | None:
+        """Kotlin's grammar reads receiver.method<T>(args) as comparisons; recover receiver and method."""
+        if not re.fullmatch(r"[\w.?!]+\.\s*\w+\s*<[\w.?<> ]+>\s*\([\s\S]*\)", self.text(node).strip()):
+            return None
+        left = node
+        while left is not None and left.type == "binary_expression":
+            left = _field(left, "left")
+        navigation = self.navigation(left) if left is not None else None
+        return navigation if navigation else None
+
+    def string_value(self, node: Any, frame: Frame) -> str | None:
+        """A string literal, or an immutable string constant of this file not shadowed locally."""
+        literal = self.literal(node)
+        if literal is not None:
+            return literal
+        node = self.unwrap(node)
+        if node is not None and node.type in IDENTIFIERS:
+            name = self.text(node)
+            if name not in frame.values and name not in frame.types and name in self.constants:
+                return self.constants[name][1]
+        navigation = self.navigation(node) if node is not None else None
+        if navigation and self.text(navigation[0]).split(".")[0] in {
+            "Companion",
+            "this",
+            "self",
+            *self.class_names,
+        }:
+            entry = self.constants.get(navigation[1])
+            return entry[1] if entry else None
+        return None
 
     def declaration(self, node: Any) -> tuple[str, Any, str] | None:
         if node.type == "variable_declarator":
@@ -626,7 +1072,7 @@ class Analyzer:
                 "MASVS-CRYPTO"
                 if "CRYPTO" in rule
                 else "MASVS-CODE"
-                if "SQL" in rule
+                if "SQL" in rule or "PATH" in rule
                 else "MASVS-NETWORK"
                 if "SSL" in rule
                 else "MASVS-PLATFORM",
@@ -726,6 +1172,9 @@ class Analyzer:
     ) -> None:
         receiver_key = self.key(call.receiver)
         self.check_security_call(call, frame)
+        self.check_key_material(call, frame)
+        self.check_intent_launch(call, frame)
+        self.check_file_path(call, frame)
         if call.name == "proceed" and self.scope == "onReceivedSslError":
             if "SslErrorHandler" in self.value(call.receiver, frame).type_name:
                 self.emit(
@@ -827,6 +1276,161 @@ class Analyzer:
                         bridge_scope="same receiver and function; interface removal checked for literal names",
                     )
 
+    def function_text(self) -> str:
+        return self.text(self.function) if self.function is not None else ""
+
+    def check_key_material(self, call: Call, frame: Frame) -> None:
+        name = call.name.rsplit(".", 1)[-1]
+        sink = KEY_SINKS.get(name)
+        if sink is None or name in self.class_names:
+            return
+        rule, position = sink
+        argument = None
+        if self.language == "swift":
+            receiver = self.text(call.receiver)
+            if name == "PrivateKey" and re.search(r"\b(?:P256|P384|P521|Curve25519)\b", receiver):
+                for label in (
+                    "rawRepresentation",
+                    "derRepresentation",
+                    "pemRepresentation",
+                    "x963Representation",
+                ):
+                    argument = argument or self.labeled_argument(call, label)
+            elif name == "Nonce" and re.search(r"\b(?:AES\.GCM|ChaChaPoly)\b", receiver):
+                argument = self.labeled_argument(call, "data")
+            elif name == "SymmetricKey" and call.receiver is None:
+                argument = self.labeled_argument(call, "data")
+            elif (
+                name == "SecKeyCreateWithData"
+                and call.args
+                and "kSecAttrKeyClassPrivate" in self.function_text()
+            ):
+                argument = call.args[0]
+        elif self.language in {"java", "kotlin"} and isinstance(position, int):
+            argument = call.args[position] if len(call.args) > position else None
+        described = self.constant(argument, frame) if argument is not None else None
+        if described:
+            self.emit(
+                rule,
+                call.node,
+                api=name,
+                material=described,
+                constant_scope="literal, local value or immutable constant in this file",
+            )
+
+    def custom_action(self, expression: str) -> str | None:
+        """An app-defined action named in the text that builds an Intent, resolving file constants."""
+        for match in re.finditer(
+            r'\bIntent\s*\(\s*(?:"([^"]+)"|([A-Za-z_][\w.]*))\s*[,)]|\baction\s*=\s*(?:"([^"]+)"|([A-Za-z_][\w.]*))'
+            r'|\bsetAction\s*\(\s*(?:"([^"]+)"|([A-Za-z_][\w.]*))\s*\)',
+            expression,
+        ):
+            literal = match[1] or match[3] or match[5]
+            constant = match[2] or match[4] or match[6]
+            if constant:
+                entry = self.constants.get(constant.rsplit(".", 1)[-1])
+                literal = entry[1] if entry else None
+            if (
+                literal
+                and "." in literal
+                and not literal.startswith(("android.", "com.android.", "com.google.android."))
+            ):
+                return literal
+        return None
+
+    def check_intent_launch(self, call: Call, frame: Frame) -> None:
+        if self.language not in {"java", "kotlin"} or call.name not in INTENT_LAUNCHERS or not call.args:
+            return
+        function = self.function_text()
+        first = call.args[0]
+        value = self.value(first, frame)
+        nested = tuple(trace for trace in value.traces if trace.description == NESTED_INTENT)
+        if value.category == "nested-intent" and nested:
+            target = self.unwrap(first)
+            name = re.escape(self.text(target)) if target is not None and target.type in IDENTIFIERS else None
+            checked = name and re.search(
+                rf"\b{name}\b[^\n]{{0,80}}\b(?:component|resolveActivity|getComponent|packageName|getPackage|className)\b",
+                function,
+            )
+            if not checked:
+                self.emit(
+                    "AST-INTENT-REDIRECTION",
+                    call.node,
+                    traces=nested,
+                    sink=call.name,
+                    validation="no component or package check on the nested Intent in this function",
+                )
+            return
+        if call.name in {"sendBroadcast", "sendOrderedBroadcast"} and len(call.args) > 1:
+            if self.text(call.args[1]).strip() not in {"null"}:
+                return  # receiver permission given
+        receiver = self.key(call.receiver)
+        if "LocalBroadcast" in receiver or (
+            receiver and re.search(rf"\b{re.escape(receiver)}\s*=\s*LocalBroadcastManager\b", function)
+        ):
+            return
+        expression, basis = self.intent_expression(self.unwrap(first) or first, call.node)
+        action = self.custom_action(expression)
+        explicit = re.search(
+            r"::class|\.class\b|setClass|setComponent|setPackage|ComponentName|\b(?:component|`?package`?)\s*=",
+            expression,
+        )
+        if action and not explicit:
+            self.emit(
+                "AST-IMPLICIT-INTENT",
+                call.node,
+                sink=call.name,
+                action=action,
+                intent_argument=basis,
+            )
+
+    def check_file_path(self, call: Call, frame: Frame) -> None:
+        simple = call.name.rsplit(".", 1)[-1]
+        args = list(call.args)
+        argument = None
+        if self.language in {"java", "kotlin"}:
+            if simple in FILE_SINKS and call.receiver is None and simple not in self.class_names and args:
+                argument = args[1] if simple == "File" and len(args) >= 2 else args[0]
+            elif call.name in {"openFileOutput", "openFileInput", "getFileStreamPath", "deleteFile"} and args:
+                argument = args[0]
+        elif self.language == "swift":
+            if call.name == "appendingPathComponent" and args:
+                argument = args[0]
+            elif call.name == "appending":
+                argument = self.labeled_argument(call, "path")
+            elif call.name == "URL":
+                argument = self.labeled_argument(call, "fileURLWithPath")
+        if argument is None or self.name_only(call.node):
+            return
+        value = self.value(argument, frame)
+        if value.category == "path":
+            return  # the File it wraps was checked where it was built
+        traces = tuple(trace for trace in value.traces if not trace.description.endswith(BASENAME))
+        if not traces:
+            return
+        if PATH_GUARD.search(self.function_text()):
+            return
+        self.emit(
+            "AST-PATH-TRAVERSAL",
+            call.node,
+            traces=traces,
+            sink=call.name,
+            validation="no canonical-path containment or '..' check in this function",
+            unknown_helpers_are_sanitizers=False,
+        )
+
+    def name_only(self, node: Any) -> bool:
+        """File(x).name or new File(x).getName(): the File is built only to take its final component."""
+        parent = node.parent
+        if parent is None:
+            return False
+        if parent.type == "navigation_expression" and parent.named_children[0] == node:
+            member = self.navigation(parent)
+            return bool(member and member[1] in {"name", "fileName"})
+        if parent.type == "method_invocation" and _field(parent, "object") == node:
+            return self.text(_field(parent, "name")) in {"getName", "getFileName"}
+        return False
+
     def framework_receiver(self, call: Call, frame: Frame, qualified: str) -> bool:
         receiver = self.key(call.receiver)
         simple = qualified.rsplit(".", 1)[-1]
@@ -838,14 +1442,22 @@ class Analyzer:
 
     def check_security_call(self, call: Call, frame: Frame) -> None:
         if call.name == "getInstance" and call.args:
-            algorithm = self.literal(call.args[0])
-            if algorithm:
-                if self.framework_receiver(call, frame, "javax.crypto.Cipher") and re.fullmatch(
-                    r"AES/ECB/[^/]+", algorithm, re.I
-                ):
+            algorithm = self.string_value(call.args[0], frame)
+            scope = "literal argument" if self.literal(call.args[0]) is not None else "constant in this file"
+            if algorithm and self.framework_receiver(call, frame, "javax.crypto.Cipher"):
+                parts = algorithm.split("/")
+                base = parts[0].upper()
+                if base in BROKEN_CIPHERS:
+                    self.emit("AST-CRYPTO-WEAK-CIPHER", call.node, algorithm=algorithm, constant_scope=scope)
+                elif re.fullmatch(r"AES(?:_\d+)?", base) and (len(parts) == 1 or parts[1].upper() == "ECB"):
                     self.emit(
-                        "AST-CRYPTO-ECB", call.node, algorithm=algorithm, constant_scope="literal argument"
+                        "AST-CRYPTO-ECB",
+                        call.node,
+                        algorithm=algorithm,
+                        constant_scope=scope,
+                        mode="ECB" if len(parts) > 1 else "provider default (ECB)",
                     )
+            if algorithm:
                 if self.framework_receiver(
                     call, frame, "java.security.MessageDigest"
                 ) and algorithm.upper() in {"MD5", "SHA-1", "SHA1"}:
@@ -854,7 +1466,8 @@ class Analyzer:
                     )
         if self.language in {"java", "kotlin"} and call.args:
             receiver_type = self.value(call.receiver, frame).type_name
-            for (qualified, method), index in SQL_SINKS.items():
+            for (qualified, method), positions in SQL_SINKS.items():
+                index = positions
                 simple = qualified.rsplit(".", 1)[-1]
                 sdk_type = receiver_type == qualified or (
                     receiver_type == simple and qualified in self.imports and simple not in self.class_names
@@ -862,11 +1475,14 @@ class Analyzer:
                 if call.name != method or not sdk_type:
                     continue
                 if method == "query" and call.args and self.text(call.args[0]) in {"true", "false"}:
-                    index = 3  # query(distinct, table, columns, selection, ...)
-                if len(call.args) <= index:
-                    continue
-                query = self.value(call.args[index], frame)
-                if query.traces:
+                    index = tuple(position + 1 for position in index)  # query(distinct, table, ...)
+                tainted = [
+                    position
+                    for position in index
+                    if position < len(call.args) and self.value(call.args[position], frame).traces
+                ]
+                if tainted:
+                    query = _union([self.value(call.args[position], frame) for position in tainted])
                     self.emit(
                         "AST-SQL-CONCAT",
                         call.node,
@@ -874,7 +1490,7 @@ class Analyzer:
                         # sink is part of the finding identity; 1.3 used the bare method name.
                         sink=call.name,
                         sink_api=f"{simple}.{method}",
-                        statement_scope=f"argument {index} is SQL syntax; bound value arguments are not",
+                        statement_scope=f"argument {', '.join(map(str, tainted))} is SQL syntax; bound value arguments are not",
                         unknown_helpers_are_sanitizers=False,
                     )
         if (
@@ -939,6 +1555,11 @@ class Analyzer:
             name, expression, type_name = declaration
             if expression:
                 self.visit(expression, frame, guards, conditions)
+            described = self.constant(expression, frame) if expression is not None else None
+            if described:
+                frame.constants[name] = described
+            else:
+                frame.constants.pop(name, None)
             value = self.value(expression, frame).bind(node)
             frame.values[name] = Value(value.traces, value.category, type_name or value.type_name)
             if type_name:
@@ -952,6 +1573,17 @@ class Analyzer:
             if left and right and left != right:
                 self.visit(right, frame, guards, conditions)
                 key = self.key(left)
+                if left.type in IDENTIFIERS:
+                    described = self.constant(right, frame)
+                    if described:
+                        frame.constants[key] = described
+                    else:
+                        frame.constants.pop(key, None)
+                else:
+                    # An element or member write changes the array it belongs to.
+                    base = next((part for part in _walk(left) if part.type in IDENTIFIERS), None)
+                    if base is not None:
+                        frame.constants.pop(self.text(base), None)
                 value = self.value(right, frame).bind(node)
                 if key in frame.types or key in frame.values:
                     frame.values[key] = Value(
@@ -989,6 +1621,9 @@ class Analyzer:
                 )
             frame.bridges.update(branch.bridges)
             frame.bridges.update(alternative.bridges)
+            frame.constants = {
+                key: value for key, value in branch.constants.items() if key in alternative.constants
+            }
             return
         if node.type == "guard_statement" and self.language == "swift":
             # The continuation is guarded only when the else body exits the function.
@@ -1021,7 +1656,22 @@ class Analyzer:
                     frame.values[key] = local.values[key]
             frame.bridges = local.bridges
             frame.javascript = local.javascript
+            frame.constants = {
+                **{key: value for key, value in local.constants.items() if key not in declared},
+                **{key: value for key, value in frame.constants.items() if key in declared},
+            }
             return
+        if node.type == "enhanced_for_statement":
+            name, type_node = _field(node, "name"), _field(node, "type")
+            if name is not None and type_node is not None:
+                frame.types[self.text(name)] = self.text(type_node)
+        elif node.type == "for_statement" and self.language == "kotlin":
+            variable = next(
+                (part for part in node.named_children if part.type == "variable_declaration"), None
+            )
+            # ZipFile/JarFile.entries() yields entries; Kotlin enum and Map "entries" are properties.
+            if variable is not None and re.search(r"\bentries\s*\(\s*\)", self.text(node).split("{", 1)[0]):
+                frame.types[self.text(variable).split(":")[0].strip()] = "ZipEntry"
         call = self.call(node)
         if call:
             if call.receiver:
@@ -1029,9 +1679,33 @@ class Analyzer:
             for arg in call.args:
                 self.visit(arg, frame, guards, conditions)
             self.check_call(call, frame, guards, conditions)
+            self.release_constants(call, frame)
+            if self.language == "kotlin" and call.name in SCOPE_FUNCTIONS:
+                # Scope functions run their lambda once, in place; follow it in this frame.
+                for part in node.named_children:
+                    if part.type == "annotated_lambda":
+                        for lambda_node in part.named_children:
+                            self.visit(lambda_node, frame, guards, conditions)
             return
         for child in node.named_children:
             self.visit(child, frame, guards, conditions)
+
+    def release_constants(self, call: Call, frame: Frame) -> None:
+        """A constant passed to or called on by a method that may fill it is no longer known to be constant."""
+        name = call.name.rsplit(".", 1)[-1]
+        if name in PURE_METHODS or name in KEY_SINKS:
+            return
+        targets = [*call.args, call.receiver]
+        for target in targets:
+            target = self.unwrap(target)
+            if (
+                target is not None
+                and target.type == "prefix_expression"
+                and self.text(target).startswith("&")
+            ):
+                target = target.named_children[-1] if target.named_children else None
+            if target is not None and target.type in IDENTIFIERS:
+                frame.constants.pop(self.text(target), None)
 
     def parameters(self, function: Any) -> list[tuple[str, str, Any]]:
         parameters = _field(function, "parameters") or next(
@@ -1067,6 +1741,30 @@ class Analyzer:
             if name:
                 result.append((self.text(name), self.text(type_node), node))
         return result
+
+    def collect_constants(self, root: Any) -> None:
+        """Immutable declarations outside functions: Kotlin val/const val, Java final fields, Swift let."""
+        declarations = []
+        for node in _walk(root, descend_functions=False):
+            if node.type == "field_declaration" and re.search(
+                r"\bfinal\b", self.text(_field(node, "modifiers") or node.named_children[0])
+            ):
+                declarations += [part for part in node.named_children if part.type == "variable_declarator"]
+            elif node.type == "property_declaration":
+                keyword = r"\blet\b" if self.language == "swift" else r"\bval\b"
+                head = self.text(node).split("=", 1)[0]
+                if re.search(keyword, head):
+                    declarations.append(node)
+        # Two passes let one constant refer to another declared later in the file.
+        for _ in range(2):
+            for node in declarations:
+                parsed = self.declaration(node)
+                if not parsed or not parsed[0] or parsed[1] is None:
+                    continue
+                name, expression, _ = parsed
+                described = self.constant(expression, Frame())
+                if described:
+                    self.constants[name] = (described, self.literal(self.unwrap(expression)))
 
     def class_fields(self, function: Any) -> dict[str, str]:
         parent = function.parent
@@ -1106,6 +1804,14 @@ class Analyzer:
                     self.safe_local_types.add(name)
             if node.type in FUNCTIONS:
                 self.defined_functions.add(self.text(_field(node, "name")))
+            if node.type == "object_declaration":
+                name = next(
+                    (part for part in node.named_children if part.type in IDENTIFIERS | {"type_identifier"}),
+                    None,
+                )
+                if name is not None:
+                    self.class_names.add(self.text(name))
+        self.collect_constants(root)
         for function in _walk(root):
             if function.type not in FUNCTIONS:
                 continue
@@ -1120,6 +1826,7 @@ class Analyzer:
                 continue
             name = _field(function, "name")
             self.scope = self.text(name)
+            self.function = function
             self.field_types = self.class_fields(function)
             enclosing = function.parent
             while enclosing and enclosing.type != "class_declaration":
@@ -1197,6 +1904,17 @@ class Analyzer:
                                 "AST-CRYPTO-WEAK-HASH",
                                 node,
                                 algorithm=call.name,
+                                security_purpose="unverified",
+                            )
+                if self.language == "swift" and "CryptoKit" in self.imports:
+                    for node in _walk(body, descend_functions=False):
+                        if node.type == "navigation_expression" and re.fullmatch(
+                            r"Insecure\.(?:MD5|SHA1)", self.key(node)
+                        ):
+                            self.emit(
+                                "AST-CRYPTO-WEAK-HASH",
+                                node,
+                                algorithm=self.key(node),
                                 security_purpose="unverified",
                             )
                 self.visit(body, frame, {}, [])
@@ -1364,9 +2082,7 @@ def analyze_sources(
         {
             "rule_id": rule,
             "state": "not-applicable"
-            if rule.endswith(("SSL-BYPASS", "JS-BRIDGE", "CRYPTO-ECB", "SQL-CONCAT", "PENDINGINTENT-MUTABLE"))
-            and seen_languages == {"swift"}
-            and not unsupported
+            if rule.endswith(ANDROID_ONLY) and seen_languages == {"swift"} and not unsupported
             else state,
             "method": "source-ast-local-flow",
             "mapping_scope": "partial",

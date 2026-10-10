@@ -267,5 +267,195 @@
     "maswe": [
       "MASWE-0050"
     ]
+  },
+  {
+    "id": "IOS-CRYPTO-WEAK-CIPHER",
+    "title": "CommonCrypto selects a broken cipher or ECB mode",
+    "mode": "source",
+    "platform": "ios",
+    "suffixes": [
+      ".swift",
+      ".m",
+      ".mm"
+    ],
+    "pattern": "\\bkCCAlgorithm(?:DES|3DES|RC4|RC2|Blowfish|CAST)\\b|\\bkCCOptionECBMode\\b|\\bkCCModeECB\\b",
+    "severity": "high",
+    "masvs": "MASVS-CRYPTO",
+    "remediation": "Use AES-GCM (CryptoKit AES.GCM or ChaChaPoly) with a random nonce and a key kept in the Keychain or Secure Enclave. Do not use DES, 3DES, RC4, RC2, Blowfish, CAST or ECB mode.",
+    "references": [
+      "https://developer.apple.com/documentation/cryptokit/aes/gcm",
+      "https://mas.owasp.org/MASWE/MASVS-CRYPTO/MASWE-0007/"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0210",
+      "MASTG-TEST-0317"
+    ],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "maswe": [
+      "MASWE-0007"
+    ]
+  },
+  {
+    "id": "SOURCE-WEAK-KEY-SIZE",
+    "title": "Asymmetric key generated with fewer than 2048 bits",
+    "mode": "source",
+    "suffixes": [
+      ".kt",
+      ".java",
+      ".swift",
+      ".m",
+      ".mm"
+    ],
+    "requires": "KeyPairGenerator|RSAKeyGenParameterSpec|KEY_ALGORITHM_RSA|kSecAttrKeyTypeRSA",
+    "pattern": "(?:\\.initialize|\\bRSAKeyGenParameterSpec|\\.setKeySize)\\s*\\(\\s*(?:512|768|1024|1536)\\s*[,)]|\\bkSecAttrKeySizeInBits(?:\\s+as\\s+String)?\\s*:\\s*(?:NSNumber\\s*\\(\\s*value\\s*:\\s*)?@?\\(?\\s*(?:512|768|1024|1536)\\b",
+    "severity": "medium",
+    "masvs": "MASVS-CRYPTO",
+    "remediation": "Generate RSA, DSA and DH keys with at least 2048 bits (3072 for long-term keys), or use elliptic-curve keys such as P-256.",
+    "references": [
+      "https://developer.android.com/privacy-and-security/cryptography",
+      "https://mas.owasp.org/MASWE/MASVS-CRYPTO/MASWE-0013/"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0208",
+      "MASTG-TEST-0209"
+    ],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "maswe": [
+      "MASWE-0013"
+    ]
+  },
+  {
+    "id": "SOURCE-WEAK-TLS-VERSION",
+    "title": "Code allows a TLS version below 1.2",
+    "mode": "source",
+    "suffixes": [
+      ".kt",
+      ".java",
+      ".swift",
+      ".m",
+      ".mm"
+    ],
+    "pattern": "\\bSSLContext\\.getInstance\\s*\\(\\s*\"(?:SSLv3|TLSv1|TLSv1\\.1)\"\\s*[,)]|\\bTlsVersion\\.(?:TLS_1_0|TLS_1_1|SSL_3_0)\\b|\\bsetEnabledProtocols\\s*\\([^)]*\"(?:SSLv3|TLSv1|TLSv1\\.1)\"|\\btlsMinimumSupportedProtocolVersion\\s*=\\s*(?:tls_protocol_version_t\\s*)?\\.TLSv1[01]\\b|\\btlsMinimumSupportedProtocol\\s*=\\s*\\.(?:sslProtocol\\w*|tlsProtocol1|tlsProtocol11)\\b|\\bTLSMinimumSupportedProtocol(?:Version)?\\s*=\\s*(?:kTLSProtocol1|kTLSProtocol11|kSSLProtocol\\w*|tls_protocol_version_TLSv1[01])\\b|\\bsec_protocol_options_set_min_tls_protocol_version\\s*\\([^)]*(?:\\.TLSv1[01]|tls_protocol_version_TLSv1[01])\\b",
+    "severity": "medium",
+    "masvs": "MASVS-NETWORK",
+    "remediation": "Keep the platform default (TLS 1.2 or later). Upgrade servers that only offer TLS 1.0 or 1.1 instead of lowering the client minimum.",
+    "references": [
+      "https://developer.apple.com/documentation/foundation/urlsessionconfiguration/tlsminimumsupportedprotocolversion",
+      "https://developer.android.com/privacy-and-security/security-ssl",
+      "https://mas.owasp.org/MASWE/MASVS-NETWORK/MASWE-0026/"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0343",
+      "MASTG-TEST-0344"
+    ],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "maswe": [
+      "MASWE-0026"
+    ]
+  },
+  {
+    "id": "IOS-ATS-BYPASS-API",
+    "title": "Network API outside App Transport Security opens a connection without TLS",
+    "mode": "source",
+    "platform": "ios",
+    "suffixes": [
+      ".swift",
+      ".m",
+      ".mm"
+    ],
+    "pattern": "\\bNWConnection\\s*\\([^)]*\\busing\\s*:\\s*\\.(?:tcp|udp)\\b|\\bNWParameters\\s*\\(\\s*tls\\s*:\\s*nil\\b|\\bNWParameters\\.(?:tcp|udp)\\b|\\bnw_parameters_create_secure_(?:tcp|udp)\\s*\\(\\s*NW_PARAMETERS_DISABLE_PROTOCOL\\b|(?<![\\w.])socket\\s*\\(\\s*(?:AF_INET6?|PF_INET6?|Int32\\s*\\(\\s*AF_INET6?\\s*\\)|[\\w.]*ai_family)\\b|\\bCFStreamCreatePairWithSocketToHost\\b|\\bgetStreamsToHost(?:WithName)?\\b",
+    "severity": "low",
+    "masvs": "MASVS-NETWORK",
+    "remediation": "Use URLSession, or Network.framework with NWParameters.tls / NWParameters(tls:), so traffic is encrypted. ATS does not apply to Network.framework, BSD sockets or CFStream.",
+    "references": [
+      "https://developer.apple.com/documentation/security/preventing-insecure-network-connections",
+      "https://mas.owasp.org/MASWE/MASVS-NETWORK/MASWE-0026/"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0323"
+    ],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "maswe": [
+      "MASWE-0026"
+    ]
+  },
+  {
+    "id": "IOS-INSECURE-UNARCHIVE",
+    "title": "Keyed unarchiving without secure coding",
+    "mode": "source",
+    "platform": "ios",
+    "suffixes": [
+      ".swift",
+      ".m",
+      ".mm"
+    ],
+    "pattern": "\\bunarchiveObject\\s*\\(\\s*with(?:File)?\\s*:|\\bunarchiveObjectWith(?:Data|File)\\s*:|\\bunarchiveTopLevelObjectWithData\\b|\\brequiresSecureCoding\\s*=\\s*(?:false|NO)\\b|\\bsetRequiresSecureCoding\\s*:\\s*NO\\b",
+    "severity": "medium",
+    "masvs": "MASVS-CODE",
+    "remediation": "Decode with NSKeyedUnarchiver.unarchivedObject(ofClass:from:) or unarchivedObject(ofClasses:from:), keep requiresSecureCoding enabled, and decode members with decodeObject(of:forKey:).",
+    "references": [
+      "https://developer.apple.com/documentation/foundation/nssecurecoding",
+      "https://mas.owasp.org/MASWE/MASVS-CODE/MASWE-0050/"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0386"
+    ],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "maswe": [
+      "MASWE-0050"
+    ]
+  },
+  {
+    "id": "WEBVIEW-SAFE-BROWSING-OFF",
+    "title": "WebView Safe Browsing disabled",
+    "mode": "source",
+    "platform": "android",
+    "suffixes": [
+      ".kt",
+      ".java",
+      ".xml"
+    ],
+    "pattern": "\\bsafeBrowsingEnabled\\s*=\\s*false\\b|\\bsetSafeBrowsingEnabled\\s*\\(\\s*false\\s*\\)|android\\.webkit\\.WebView\\.EnableSafeBrowsing\"[^>]*?android:value\\s*=\\s*\"false\"|android:value\\s*=\\s*\"false\"[^>]*?android:name\\s*=\\s*\"android\\.webkit\\.WebView\\.EnableSafeBrowsing\"",
+    "severity": "medium",
+    "masvs": "MASVS-PLATFORM",
+    "remediation": "Keep Safe Browsing enabled for WebViews that can reach web content; handle onSafeBrowsingHit instead of disabling it.",
+    "references": [
+      "https://developer.android.com/develop/ui/views/layout/webapps/managing-webview#safe-browsing",
+      "https://mas.owasp.org/MASWE/MASVS-PLATFORM/MASWE-0035/"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0399"
+    ],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "maswe": [
+      "MASWE-0035"
+    ]
+  },
+  {
+    "id": "IOS-UIWEBVIEW",
+    "title": "Deprecated UIWebView is used",
+    "mode": "source",
+    "platform": "ios",
+    "suffixes": [
+      ".swift",
+      ".m",
+      ".mm"
+    ],
+    "pattern": "\\bUIWebView\\b",
+    "severity": "medium",
+    "masvs": "MASVS-PLATFORM",
+    "remediation": "Replace UIWebView with WKWebView. UIWebView cannot disable JavaScript or restrict file access, and the App Store rejects new apps that use it.",
+    "references": [
+      "https://developer.apple.com/documentation/uikit/uiwebview",
+      "https://mas.owasp.org/MASWE/MASVS-PLATFORM/MASWE-0035/"
+    ],
+    "mastg_tests": [
+      "MASTG-TEST-0331"
+    ],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "maswe": [
+      "MASWE-0035"
+    ],
+    "once_per_file": true
   }
 ]

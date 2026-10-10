@@ -1,4 +1,8 @@
-"""Score source findings on independently labeled vulnerable/fixed public commits."""
+"""Score source findings on independently labeled vulnerable/fixed public commits.
+
+Truth schema v1 names the expected rule IDs; v2 names MASWE weaknesses, so a side is flagged by any
+finding mapped to one of them and the truth does not depend on APSA's rule names.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ from pathlib import Path, PurePosixPath
 
 from benchmarks.dependency_oracle import extract
 from mobile_audit.core import report_incomplete
+from mobile_audit.maswe import RULE_WEAKNESSES, finding_weaknesses
 
 HERE = Path(__file__).resolve().parent
 TRUTH = HERE / "fpfn_truth.json"
@@ -53,10 +58,12 @@ def scan(target: Path, output: Path) -> dict:
     return report.get("report", report)
 
 
-def located(report: dict, rules: set[str], path: str) -> list[dict]:
+def located(report: dict, rules: set[str], path: str, weaknesses: frozenset[str] = frozenset()) -> list[dict]:
     hits = []
     for finding in report["findings"]:
         if rules and finding["rule_id"] not in rules:
+            continue
+        if weaknesses and not weaknesses & set(finding_weaknesses(finding)):
             continue
         for evidence in finding.get("evidence", []):
             observed = str(evidence.get("path") or "")
@@ -70,8 +77,17 @@ def located(report: dict, rules: set[str], path: str) -> list[dict]:
 def evaluate(pair: dict, work: Path) -> dict:
     locations = pair["vulnerable_locations"]
     root_name = PurePosixPath(locations[0]["path"]).parts[0]
-    result = {"id": pair["id"], "repository": pair["repository"], "expected_rules": pair["expected_rules"]}
-    rules = set(pair["expected_rules"])
+    rules = set(pair.get("expected_rules", []))
+    weaknesses = frozenset(pair.get("weaknesses", []))
+    covered = {weakness for mapped in RULE_WEAKNESSES.values() for weakness in mapped}
+    result = {
+        "id": pair["id"],
+        "repository": pair["repository"],
+        "expected_rules": sorted(rules),
+        "weaknesses": sorted(weaknesses),
+        # A weakness pair is in scope when some APSA check relates to one of its weaknesses.
+        "in_scope": bool(rules) or bool(weaknesses & covered),
+    }
     for side, commit, places in (
         ("vulnerable", pair["vulnerable_commit"], locations),
         ("fixed", pair["fixed_commit"], pair["fixed_locations"]),
@@ -92,7 +108,7 @@ def evaluate(pair: dict, work: Path) -> dict:
         hits = []
         in_range = []
         for path, place in zip(relative, places, strict=True):
-            for hit in located(report, rules, path):
+            for hit in located(report, rules, path, weaknesses):
                 hits.append(hit)
                 start, end = place.get("start_line"), place.get("end_line")
                 line = hit["line"]
@@ -119,7 +135,7 @@ def evaluate(pair: dict, work: Path) -> dict:
                 hit for path in relative for hit in located(report, set(), path)
             ][:20],
         }
-    if rules:
+    if rules or weaknesses:
         vulnerable_hit = bool(result["vulnerable"]["hits"])
         fixed_hit = bool(result["fixed"]["hits"])
         # A labeled path absent from the source cannot be measured.
@@ -141,26 +157,9 @@ def evaluate(pair: dict, work: Path) -> dict:
     return result
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True)
-    args = parser.parse_args()
-    truth_raw = TRUTH.read_bytes()
-    truth = json.loads(truth_raw)
-    amendments = json.loads(AMENDMENTS.read_text()) if AMENDMENTS.is_file() else {"pairs": {}}
-    if AMENDMENTS.is_file() and amendments.get("truth_sha256") != sha(truth_raw):
-        raise ValueError("Amendments do not apply to this frozen truth")
-    for pair in truth["pairs"]:
-        pair.update(amendments["pairs"].get(pair["id"], {}))
-    results = []
-    for pair in truth["pairs"]:
-        try:
-            results.append(evaluate(pair, args.work))
-        except (ValueError, OSError, subprocess.TimeoutExpired) as error:
-            results.append({"id": pair["id"], "error": f"{type(error).__name__}: {error}"[:500]})
-    scored = [r for r in results if r.get("expected_rules") and "outcome" in r]
-    totals = {
+def totals_for(results: list[dict]) -> dict:
+    scored = [r for r in results if (r.get("expected_rules") or r.get("weaknesses")) and "outcome" in r]
+    return {
         "tp": sum(r["outcome"]["vulnerable"] == "tp" for r in scored),
         "fn": sum(r["outcome"]["vulnerable"] == "fn" for r in scored),
         "fp": sum(r["outcome"]["fixed"] == "fp" for r in scored),
@@ -172,10 +171,46 @@ def main() -> None:
         ),
         "scored_pairs": len(scored),
     }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--truth", type=Path, default=TRUTH)
+    parser.add_argument(
+        "--amendments", type=Path, help="Amendments for this truth; the default truth uses its own file"
+    )
+    args = parser.parse_args()
+    truth_raw = args.truth.read_bytes()
+    truth = json.loads(truth_raw)
+    amendments_path = args.amendments or (AMENDMENTS if args.truth.resolve() == TRUTH else None)
+    amendments = (
+        json.loads(amendments_path.read_text())
+        if amendments_path and amendments_path.is_file()
+        else {"pairs": {}}
+    )
+    if amendments_path and amendments_path.is_file() and amendments.get("truth_sha256") != sha(truth_raw):
+        raise ValueError("Amendments do not apply to this frozen truth")
+    for pair in truth["pairs"]:
+        pair.update(amendments["pairs"].get(pair["id"], {}))
+    results = []
+    for pair in truth["pairs"]:
+        try:
+            results.append(evaluate(pair, args.work))
+        except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+            results.append({"id": pair["id"], "error": f"{type(error).__name__}: {error}"[:500]})
+    totals = totals_for(results)
     summary = {
         "schema": "apsa-fpfn-results-v2",
+        "truth": str(args.truth.resolve().relative_to(HERE.parent))
+        if args.truth.resolve().is_relative_to(HERE.parent)
+        else args.truth.name,
         "truth_sha256": sha(truth_raw),
-        "amendments_sha256": sha(AMENDMENTS.read_bytes()) if AMENDMENTS.is_file() else None,
+        "amendments_sha256": sha(amendments_path.read_bytes())
+        if amendments_path and amendments_path.is_file()
+        else None,
+        "in_scope_totals": totals_for([r for r in results if r.get("in_scope")]),
         "apsa_commit": os.environ.get("GITHUB_SHA", ""),
         "totals": totals,
         "pairs": results,
