@@ -11,7 +11,7 @@
     3. localized or qualified Android values;
     4. tests.
   - `inventory.input_snapshot.omitted` counts what was left out.
-  - `app_scope_complete` is false when code, configuration or shipped text was left out. Not-applicable coverage then becomes partial, so required rules cannot pass.
+  - `app_scope_complete` is false when code, configuration or shipped text was left out. Not-applicable coverage then becomes partial, so required rules cannot pass (except `DEPENDENCY-CVE` when `--sbom` supplies the dependencies).
   - The following now leave files out with one warning per cause instead of refusing:
     - the entry budget (100,000, cut by name on every filesystem) and the depth budget (64);
     - oversized and unreadable files;
@@ -70,12 +70,12 @@ Reviews were Claude subagent reviews, not an external lane:
   - **APPROVE** on `3508a28`.
   - **REQUEST CHANGES** on `cfa55b9`, for one regression: a Kotlin raw string ending in a quote swapped strings and code for the rest of the file. The proposed one-line fix was applied unchanged in `a76fd9f`.
   - **APPROVE** on `a76fd9f`: its repro gives the same `STORAGE-SENSITIVE-LOG` result as 1.5.0, and the staging probes are partial audits rather than refusals.
-- **Architecture review: WATCH, code CLEAR on `a76fd9f`.**
-  - **First round** (`be92012`), three P1s, fixed in `fe3fbe1` through `d9bff91`:
+- **Architecture review: WATCH, then CLEAR on `9ea0ac8`.**
+  - **First round** (`be92012`), three P1s. The first two were fixed in `fe3fbe1` through `d9bff91`; the third is this record (`9ea0ac8`):
     - required rules could pass on an omitted platform when `fail_on_partial` is off;
     - shipped files were ranked with tests, under prose keys;
     - this release record was missing.
-  - **Later rounds** confirmed `fe3fbe1` through `a76fd9f`. The release verdict moves from WATCH to CLEAR once this record exists.
+  - **Later rounds** confirmed `fe3fbe1` through `a76fd9f` as clear on code, and the final verdict is CLEAR on `9ea0ac8`, which leaves the release paths identical to `a76fd9f`.
 
 Release steps, once approved:
 
