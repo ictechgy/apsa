@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import itertools
+import heapq
 import math
 import os
 import re
@@ -136,6 +136,12 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
         if time.monotonic() - started > 90:
             raise ValueError("Input staging time budget exceeded; audit refused")
 
+    def timed(entries):
+        for index, entry in enumerate(entries):
+            if not index % 4096:
+                deadline()
+            yield entry
+
     def copy_file(fd: int, destination: Path, limit: int):
         deadline()
         before = os.fstat(fd)
@@ -186,10 +192,10 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                     too_deep.append(relative)
                     return
                 with os.scandir(fd) as listing:
-                    # Name order makes the entry budget cut the same files on every filesystem, except
-                    # within the directory where it runs out (that slice is read in listing order).
-                    entries = sorted(
-                        itertools.islice(listing, MAX_ENTRIES - counts["entries"] + 1), key=lambda e: e.name
+                    # Name order makes the entry budget cut the same files on every filesystem: keep
+                    # the first names that still fit, holding no more entries than the budget allows.
+                    entries = heapq.nsmallest(
+                        MAX_ENTRIES - counts["entries"] + 1, timed(listing), key=lambda e: e.name
                     )
                 for entry in entries:
                     deadline()

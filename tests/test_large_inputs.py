@@ -218,6 +218,22 @@ def test_entry_budget_reads_what_it_can(tmp_path, monkeypatch):
     # Entries are read in name order on every filesystem, so the same files are cut.
     assert (tmp_path / "staged/Main.kt").exists() and not (tmp_path / "staged/zz.kt").exists()
 
+    class Reversed:
+        def __init__(self, fd):
+            self.entries = sorted(original(fd), key=lambda e: e.name, reverse=True)
+
+        def __enter__(self):
+            return iter(self.entries)
+
+        def __exit__(self, *_):
+            return False
+
+    original = input_snapshot.os.scandir
+    monkeypatch.setattr(input_snapshot.os, "scandir", Reversed)
+    reverse = stage_input(target, tmp_path / "reverse")
+    assert (tmp_path / "reverse/Main.kt").exists() and not (tmp_path / "reverse/zz.kt").exists()
+    assert reverse["files"] == result["files"]
+
 
 def test_oversized_files_share_one_warning(tmp_path, monkeypatch):
     target = tmp_path / "input"
