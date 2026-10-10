@@ -1230,3 +1230,107 @@ def test_guards_need_comparisons_and_services_are_not_implicit_targets():
     assert found["AST-INTENT-REDIRECTION"] == [12]
     assert found["AST-PATH-TRAVERSAL"] == [22]
     assert "AST-IMPLICIT-INTENT" not in found
+
+
+# Final-candidate review.
+
+FINAL_KT = """package com.example.breadth
+
+import android.app.Activity
+import android.content.ComponentName
+import android.content.Intent
+import android.webkit.WebView
+import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipInputStream
+
+class Final : Activity() {
+    fun unzip(zis: ZipInputStream, dest: File) {
+        val entry = zis.nextEntry ?: return
+        if (".." in entry.name) return
+        FileOutputStream(File(dest, entry.name))
+    }
+
+    fun unzipSlash(zis: ZipInputStream, dest: File) {
+        val entry = zis.nextEntry ?: return
+        if (entry.name.contains("../")) return
+        FileOutputStream(File(dest, entry.name))
+    }
+
+    fun forward() {
+        val next = intent.getParcelableExtra<Intent>("next") ?: return
+        val target: ComponentName? = next.component
+        if (target == null || target.packageName != packageName) return
+        startActivity(next)
+    }
+
+    fun always(view: WebView) {
+        var url = intent.getStringExtra("u")
+        run { url = "https://example.com/home" }
+        view.loadUrl(url)
+    }
+}
+"""
+
+
+def test_final_review_guards_and_unconditional_scopes():
+    found = ast("Final.kt", FINAL_KT)
+    assert "AST-PATH-TRAVERSAL" not in found
+    assert "AST-INTENT-REDIRECTION" not in found
+    assert "AST-WEBVIEW-UNTRUSTED-URL" not in found
+
+
+def test_bom_prefixed_xml_is_text(store, android):
+    (android / "res/xml/network_security_config.xml").write_text("﻿" + NETWORK_CONFIG)
+    manifest = android / "AndroidManifest.xml"
+    manifest.write_text(
+        "﻿"
+        + ANDROID_MANIFEST.replace(
+            "</application>",
+            '<meta-data android:name="android.webkit.WebView.EnableSafeBrowsing" android:value="false" /></application>',
+        )
+    )
+    report = scan(store, android)
+    assert by_rule(report, "ANDROID-NSC-USER-CA")
+    assert by_rule(report, "WEBVIEW-SAFE-BROWSING-OFF")
+
+
+def test_several_flavor_configs_are_candidates(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    root = tmp_path / "flavors"
+    for source_set in ("main", "staging"):
+        (root / f"app/src/{source_set}/res/xml").mkdir(parents=True)
+        (root / f"app/src/{source_set}/res/xml/network_security_config.xml").write_text(
+            "<network-security-config><base-config><trust-anchors>"
+            f'<certificates src="{"user" if source_set == "staging" else "system"}" />'
+            "</trust-anchors></base-config></network-security-config>\n"
+        )
+    (root / "app/src/main/AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.f">'
+        '<application android:networkSecurityConfig="@xml/network_security_config" /></manifest>'
+    )
+    findings = by_rule(scan(store, root), "ANDROID-NSC-USER-CA")
+    assert [(f["status"], f["evidence"][0]["source_set_variants"]) for f in findings] == [("candidate", 2)]
+
+
+def test_scope_merges_touch_only_changed_values():
+    import time
+
+    locals_ = "\n".join(f"        val v{i} = {i}" for i in range(6000))
+    lets = "\n".join(f"        v{i}.let {{ log(it) }}" for i in range(1500))
+    kotlin = "class S {\n    fun f() {\n" + locals_ + "\n" + lets + "\n    }\n}\n"
+    started = time.monotonic()
+    analyze_sources([("S.kt", kotlin)])
+    assert time.monotonic() - started < 10
+
+
+def test_flat_layout_config_beside_the_manifest(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    root = tmp_path / "flat"
+    root.mkdir()
+    (root / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.flat">'
+        '<application android:networkSecurityConfig="@xml/network_security_config" /></manifest>'
+    )
+    (root / "network_security_config.xml").write_text(NETWORK_CONFIG)
+    assert lines(scan(store, root), "ANDROID-NSC-USER-CA") == [7]

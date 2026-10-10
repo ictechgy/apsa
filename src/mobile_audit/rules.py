@@ -44,7 +44,7 @@ def static_checks(
             (path, text)
             for path, text in sources
             if PathSuffix(path) in rule.get("suffixes", [])
-            and (PathSuffix(path) != ".xml" or text.lstrip().startswith("<"))
+            and (PathSuffix(path) != ".xml" or text.lstrip("\ufeff \t\r\n").startswith("<"))
         ]
         truncated = False
         if not applicable:

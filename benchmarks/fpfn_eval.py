@@ -11,7 +11,7 @@ fixed file counts.
 
 Declared before the first blind v2 run, as the secondary measure: ``discriminating_tp`` counts vulnerable
 sides with an in-range hit from a rule that has no hit in the fixed side's labeled files, so the fix made
-that rule go quiet. ``totals`` covers all pairs, where pairs outside APSA's source checks count as FN;
+that rule go quiet; a fixed side whose labeled files are missing cannot show that and does not count. ``totals`` covers all pairs, where pairs outside APSA's source checks count as FN;
 ``in_scope_totals`` covers pairs with a weakness some source check relates to.
 """
 
@@ -213,6 +213,7 @@ def evaluate(pair: dict, work: Path) -> dict:
             "vulnerable_line_level": bool(result["vulnerable"]["hits_in_labeled_lines"]),
             # An in-range rule that no longer fires anywhere in the fixed labeled files.
             "discriminating_tp": not result["vulnerable"]["missing_labeled_paths"]
+            and not result["fixed"]["missing_labeled_paths"]
             and bool(set(result["vulnerable"]["in_range_rules"]) - set(result["fixed"]["hit_rules"])),
         }
     else:

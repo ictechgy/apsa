@@ -234,7 +234,8 @@ def parse_dependencies(path: str, raw: bytes) -> list[dict]:
 
 
 def android_manifest(raw: bytes, origin: str, inventory: dict) -> None:
-    if raw.lstrip().startswith(b"<"):
+    # Text XML may start with a UTF-8 byte order mark; binary AXML never does.
+    if raw.removeprefix(b"\xef\xbb\xbf").lstrip().startswith(b"<"):
         root = ET.fromstring(raw)
     else:
         from loguru import logger

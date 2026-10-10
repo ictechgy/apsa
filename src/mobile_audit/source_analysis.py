@@ -297,6 +297,10 @@ ARCHIVE_ENTRY = re.compile(
 FILE_DESCRIPTOR = re.compile(r"(?:\bfileDescriptor|\bgetFileDescriptor\s*\(\s*\)|\.fd)\s*!*$")
 ACTION_HINT = re.compile(r'\bIntent\s*\(\s*(?:"|[A-Z_][\w.]*\s*[,)])|\baction\s*=|\bsetAction\s*\(')
 MAX_INTENT_CHECKS = 200
+TARGET_TOKEN = re.compile(
+    r"\b(?:component|getComponent|packageName|getPackageName|getPackage|className|getClassName)\b"
+)
+COMPARISON = re.compile(r"==|!=|\.equals\s*\(|\bin\b|\.contains\s*\(|\.startsWith\s*\(")
 LOCAL_LITERAL = re.compile(
     rb'(?:\b(?:val|var|let)\s+(\w+)\b(?:\s*:\s*String\??)?|\bString\s+(\w+))\s*=\s*"([^"\\\n]*)"\s*;?[ \t]*$',
     re.M,
@@ -1390,10 +1394,31 @@ class Analyzer:
             prefix = "startsWith" in text or "hasPrefix" in text
             # A containment test for "..", not a replace("..", ...) that a crafted name can bypass.
             dotdot = re.search(
-                r'(?:contains|startsWith|endsWith|indexOf|equals)\s*\(\s*"\.\."|==\s*"\.\."', text
+                r'(?:contains|startsWith|endsWith|indexOf|equals)\s*\(\s*"\.\.[/\\]*"'
+                r'|==\s*"\.\.[/\\]*"|"\.\.[/\\]*"\s+in\b',
+                text,
             )
             self.path_guarded = (canonical and prefix) or dotdot is not None
         return self.path_guarded
+
+    @staticmethod
+    def compares_target(name: str, function: str) -> bool:
+        """A line comparing the Intent's (or its component local's) component, package or class name."""
+        names = {name}
+        aliases = re.finditer(
+            rf"(\w+)\s*(?::\s*[\w.?]+\s*)?=\s*{re.escape(name)}\s*\??\.\s*(?:getComponent\s*\(\s*\)|component\b"
+            r"|getPackage\s*\(\s*\)|`?package`?\b)",
+            function,
+        )
+        names.update(match[1] for match in aliases)
+        for line in function.splitlines():
+            if (
+                any(re.search(rf"\b{re.escape(item)}\b", line) for item in names if item in line)
+                and TARGET_TOKEN.search(line)
+                and COMPARISON.search(line)
+            ):
+                return True
+        return False
 
     def local_broadcaster(self, receiver: str) -> bool:
         """Whether a receiver is a LocalBroadcastManager declared or assigned anywhere in this file."""
@@ -1469,13 +1494,7 @@ class Analyzer:
             name = self.text(target) if target is not None and target.type in IDENTIFIERS else None
             if name is not None and name not in self.checked_intents:
                 # A comparison of the nested Intent's component or package, not a mere mention (such as a log).
-                self.checked_intents[name] = bool(
-                    re.search(
-                        rf"\b{re.escape(name)}\b[^\n]{{0,80}}\b(?:component|getComponent|packageName|getPackage|className)\b"
-                        r"[^\n]{0,60}(?:==|!=|\.equals\s*\(|\bin\b|\.contains\s*\(|\.startsWith\s*\()",
-                        function,
-                    )
-                )
+                self.checked_intents[name] = self.compares_target(name, function)
             checked = name is not None and self.checked_intents[name]
             if not checked:
                 self.emit(
@@ -1821,9 +1840,14 @@ class Analyzer:
             self.check_call(call, frame, guards, conditions)
             self.release_constants(call, frame)
             scope = self.scope_function(call)
+            callee = self.text(node.named_children[0]) if node.named_children else ""
             for lambda_node in self.trailing_lambdas(node):
                 if scope is not None:
-                    self.visit_scope_lambda(lambda_node, frame, guards, conditions, *scope)
+                    # x?.let {} may not run, and return@ may leave the lambda early.
+                    optional = bool(re.search(r"\?\.\s*\w+\s*$", callee)) or "return@" in self.text(
+                        lambda_node
+                    )
+                    self.visit_scope_lambda(lambda_node, frame, guards, conditions, *scope, optional)
                 else:
                     # An unfollowed closure may fill any array it names.
                     for part in _walk(lambda_node):
@@ -1864,6 +1888,7 @@ class Analyzer:
         conditions: list[Any],
         scope: str,
         receiver: Any,
+        optional: bool = False,
     ) -> None:
         """Follow a scope function's lambda once, as a block whose parameter is the receiver."""
         local = frame.copy()
@@ -1889,22 +1914,35 @@ class Analyzer:
                 declared.add(parsed[0])
             self.visit(child, local, local_guards, conditions.copy())
         self.aliases = saved
-        # x?.let {} may not run: like a branch, keep the values from before and from the lambda.
         for key in frame.values:
-            if key not in declared:
-                values = [frame.values[key], local.values[key]]
+            changed = local.values[key]
+            if key in declared or changed is frame.values[key]:
+                continue
+            if optional:
+                # Like a branch without else: keep the value from before and the lambda's.
+                values = [frame.values[key], changed]
                 frame.values[key] = _union(
                     values,
                     values[0].category if values[0].category == values[1].category else "unknown",
                     type_name=frame.values[key].type_name,
                 )
-        frame.bridges.update(local.bridges)
-        frame.javascript.update(local.javascript)
-        frame.constants = {
-            key: value
-            for key, value in frame.constants.items()
-            if key in declared or local.constants.get(key) == value
-        }
+            else:
+                frame.values[key] = changed
+        if optional:
+            frame.bridges.update(local.bridges)
+            frame.javascript.update(local.javascript)
+            frame.constants = {
+                key: value
+                for key, value in frame.constants.items()
+                if key in declared or local.constants.get(key) == value
+            }
+        else:
+            frame.bridges = local.bridges
+            frame.javascript = local.javascript
+            frame.constants = {
+                **{key: value for key, value in local.constants.items() if key not in declared},
+                **{key: value for key, value in frame.constants.items() if key in declared},
+            }
 
     def release_constants(self, call: Call, frame: Frame) -> None:
         """A constant passed to or called on by a method that may fill it is no longer known to be constant."""

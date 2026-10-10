@@ -665,7 +665,7 @@
       "https://developer.android.com/privacy-and-security/security-config"
     ],
     "mapping_scope": "partial",
-    "scope": "The network security configuration referenced by the selected manifest, read from the same module's res/xml outside debug and test source sets: user certificates in base-config or domain-config trust anchors; debug-overrides are excluded. Unparsable text XML is partial; compiled AAB resources are not-run."
+    "scope": "The network security configuration referenced by the selected manifest, read from the same module's res/xml outside debug and test source sets (or, when the module has no res/xml match, the file beside the manifest): user certificates in base-config or domain-config trust anchors; debug-overrides are excluded. Several source-set variants of one reference make the findings candidates. Unparsable text XML is partial; compiled AAB resources are not-run."
   },
   {
     "id": "ANDROID-DEEPLINK-AUTOVERIFY",

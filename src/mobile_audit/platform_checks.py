@@ -124,7 +124,9 @@ ANDROID_AUTH_WINDOW = re.compile(
     r"\bsetUserAuthenticationParameters\s*\(\s*[1-9]|\bsetUserAuthenticationValidityDurationSeconds\s*\(\s*[1-9]"
 )
 # Debug and test source sets (debug, androidTest, test, testFixtures, sharedTest, ...) never ship in release.
-NON_RELEASE_SOURCE_SET = re.compile(r"(?:^|/)src/(?:[^/]*[Dd]ebug[^/]*|[^/]*[Tt]est[^/]*)/")
+NON_RELEASE_SOURCE_SET = re.compile(
+    r"(?:^|/)src/(?:[^/]*[Dd]ebug[^/]*|test(?:[A-Z0-9]\w*)?|androidTest\w*|[a-z]\w*Test(?:[A-Z]\w*)?)/"
+)
 ANDROID_FALLBACK_ARGUMENTS = {
     "setAllowedAuthenticators": "DEVICE_CREDENTIAL",
     "setUserAuthenticationParameters": "AUTH_DEVICE_CREDENTIAL",
@@ -1110,20 +1112,35 @@ def _network_security_config(
     findings: list[dict] = []
     read, unreadable, compiled = 0, [], []
     parsed_for: set[str] = set()
+    matched: list[tuple[str, str, list[tuple[str, str]]]] = []
     for path, text in sources:
         # Debug and test source sets do not ship in the release build.
         if not path.endswith(".xml") or "/res/xml/" not in "/" + path or NON_RELEASE_SOURCE_SET.search(path):
             continue
         stem = path.rsplit("/", 1)[-1].removesuffix(".xml")
-        owners = [
-            manifest
-            for (module, name), manifests in referenced.items()
-            if stem == name and path.startswith(module)
-            for manifest in manifests
-        ]
-        if not owners:
+        keys = [(module, name) for module, name in referenced if stem == name and path.startswith(module)]
+        if keys:
+            matched.append((path, text, keys))
+    # A flat layout (manifest and configuration side by side, no res/xml) is read only when
+    # the module has no res/xml match for that reference.
+    found = {key for _, _, keys in matched for key in keys}
+    for (module, name), manifests in referenced.items():
+        if (module, name) in found:
             continue
-        if not text.lstrip().startswith("<"):
+        beside = {manifest.rsplit("/", 1)[0] + "/" if "/" in manifest else "" for manifest in manifests}
+        for path, text in sources:
+            if path.endswith(f"{name}.xml") and any(path == f"{folder}{name}.xml" for folder in beside):
+                matched.append((path, text, [(module, name)]))
+    per_reference: dict[tuple[str, str], int] = {}
+    for _, _, keys in matched:
+        for key in keys:
+            per_reference[key] = per_reference.get(key, 0) + 1
+    for path, text, keys in matched:
+        owners = [manifest for key in keys for manifest in referenced[key]]
+        # Several source sets (flavors) define the reference; which one ships is not resolved.
+        variants = max(per_reference[key] for key in keys)
+        status = "configuration-confirmed" if variants == 1 else "candidate"
+        if not text.lstrip("\ufeff \t\r\n").startswith("<"):
             compiled.append(path)  # AAB resources are compiled protobuf, not XML text
             continue
         handler = _NetworkConfig()
@@ -1140,8 +1157,15 @@ def _network_security_config(
                     "ANDROID-NSC-USER-CA",
                     "Network security configuration trusts user-installed CAs",
                     "medium",
-                    "configuration-confirmed",
-                    [{"path": path, "line": line, "scope": scope}],
+                    status,
+                    [
+                        {
+                            "path": path,
+                            "line": line,
+                            "scope": scope,
+                            **({"source_set_variants": variants} if variants > 1 else {}),
+                        }
+                    ],
                     'Remove <certificates src="user"/> from release configurations; keep it only under '
                     "<debug-overrides>, and pin certificates for sensitive hosts.",
                     "MASVS-NETWORK",
@@ -1158,7 +1182,7 @@ def _network_security_config(
                     "ANDROID-CLEARTEXT",
                     "Network security configuration permits cleartext traffic",
                     "medium" if config["tag"] == "base-config" else "low",
-                    "configuration-confirmed",
+                    status,
                     [
                         {
                             "path": path,

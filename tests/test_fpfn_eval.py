@@ -139,3 +139,8 @@ def test_v2_truth_scores_by_weakness_line_and_discrimination(tmp_path, monkeypat
     assert summary["truth_sha256"] == fpfn_eval.sha(truth.read_bytes())
     assert summary["evaluator_sha256"] == fpfn_eval.sha(Path(fpfn_eval.__file__).read_bytes())
     assert "MASWE-0050" in summary["source_weaknesses"] and "MASWE-0059" not in summary["source_weaknesses"]
+    # Discriminating TP needs the fixed side's labeled file: a deleted file proves nothing.
+    moved = {**TRUTH["pairs"][0], "id": "moved", "fixed_locations": [{"path": "app/Gone.kt"}]}
+    truth.write_text(json.dumps({**TRUTH, "pairs": [moved]}))
+    fpfn_eval.main()
+    assert json.loads(out.read_text())["pairs"][0]["outcome"]["discriminating_tp"] is False
