@@ -22,28 +22,38 @@ def rules() -> list[dict]:
     return [{**rule, "maswe": list(weaknesses_for(rule["id"]))} for rule in loaded]
 
 
-# Every literal ends at its terminator or at the end of the line (character literals) or
+# Every token ends at its terminator or at the end of the line (character literals) or
 # file, so a start without a terminator is consumed once instead of rescanned from each
 # later quote (Android \' prose). Triple-quoted strings (Kotlin, Swift, Dart, Groovy) may
-# span lines and hold quotes.
-LITERALS = (
-    r"'''[\s\S]*?(?:'''|\Z)|" + '"""' + r'[\s\S]*?(?:"""|\Z)|'
-    r""""(?:\\[\s\S]|[^"\\])*(?:"|\\?\Z)|'(?:\\.|[^'\\\n])*(?:'|\\?$)|//[^\n]*"""
-)
-WITH_BLOCK_COMMENTS = re.compile(LITERALS + r"|/\*[\s\S]*?(?:\*/|\Z)", re.MULTILINE)
-WITHOUT_BLOCK_COMMENTS = re.compile(LITERALS, re.MULTILINE)
+# span lines and hold quotes. The named groups record whether a terminator was found.
+TRIPLE = r"'''[\s\S]*?(?:'''|\Z)|" + '"""' + r'[\s\S]*?(?:"""|\Z)'
+DOUBLE = r'"(?:\\[\s\S]|[^"\\])*(?:(?P<quote>")|\\?\Z)'
+SINGLE_AND_LINE = r"'(?:\\.|[^'\\\n])*(?:'|\\?$)|//[^\n]*"
+BLOCK = r"/\*[\s\S]*?(?:(?P<close>\*/)|\Z)"
+CLEANERS = {
+    (double, block): re.compile(
+        "|".join([TRIPLE, *[DOUBLE] * double, SINGLE_AND_LINE, *[BLOCK] * block]), re.MULTILINE
+    )
+    for double in (True, False)
+    for block in (True, False)
+}
 
 
 def strip_comments(text: str) -> str:
     # Preserve offsets/line numbers; don't remove URL slashes inside string literals.
-    parts, position, pattern = [], 0, WITH_BLOCK_COMMENTS
-    while match := pattern.search(text, position):
-        value = match[0]
-        if value.startswith("/*") and (len(value) < 4 or not value.endswith("*/")):
-            # No */ follows (a stray /* such as a JS regex literal): keep it as text, and stop
-            # looking for block comments, since every later /* is unterminated too.
-            parts.append(text[position : match.start() + 2])
-            position, pattern = match.start() + 2, WITHOUT_BLOCK_COMMENTS
+    parts, position, double, block = [], 0, True, True
+    while match := CLEANERS[double, block].search(text, position):
+        value, groups = match[0], match.groupdict()
+        unterminated_block = value.startswith("/*") and not groups.get("close")
+        unterminated_double = value[0] == '"' and not value.startswith('"""') and not groups.get("quote")
+        if unterminated_block or unterminated_double:
+            # No terminator follows (a stray /* or " such as in a JS regex literal): keep it as
+            # text, as 1.5.0 did, and stop matching that token, since every later one is
+            # unterminated too.
+            width = 2 if unterminated_block else 1
+            parts.append(text[position : match.start() + width])
+            position = match.start() + width
+            double, block = double and not unterminated_double, block and not unterminated_block
             continue
         parts.append(text[position : match.start()])
         parts.append(re.sub(r"[^\n]", " ", value) if value.startswith(("//", "/*")) else value)

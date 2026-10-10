@@ -140,6 +140,7 @@ def test_escaped_apostrophes_in_prose_do_not_backtrack():
         ("x " + "\\'" * 20_000 + "\n", strip_comments),
         ("'" + "\\'" * 20_000 + "\\\n", strip_comments),
         ('a\\"' * 20_000 + "\\", strip_comments),
+        ('"a\n' * 20_000, strip_comments),
         ("/* a\n" * 20_000, strip_comments),
         ("<!-- a\n" * 20_000, strip_xml_comments),
     ],
@@ -162,6 +163,11 @@ def test_comment_stripping_keeps_literals_and_blanks_comments():
     js = "const re = /\\/*/;\nconsole.log('token', password) // log\n"
     assert strip_comments(js) == "const re = /\\/*/;\nconsole.log('token', password)       \n"
     assert strip_comments("/* a */ x /* b") == "        x /* b"
+    # The same holds for a " with no closing quote: later comments are still cleaned.
+    assert (
+        strip_comments('s.replace(/"/g, x) // a\ny = 1 /* b */\n')
+        == 's.replace(/"/g, x)     \ny = 1        \n'
+    )
 
 
 def test_xml_rules_ignore_xml_comments(store, tmp_path, monkeypatch):
