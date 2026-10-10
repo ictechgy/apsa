@@ -4,6 +4,8 @@ APSA (앱사)는 [OWASP MASVS](https://mas.owasp.org/MASVS/)의 관련 영역에
 
 1.4부터 모든 규칙에 [OWASP MASWE v1.0](https://mas.owasp.org/MASWE/) 약점 ID를 연결하고, 보고서마다 78개 약점 전체의 커버리지 표(관련 검사, `checked`·`partial`·`not-run`·`not-applicable`·`not-assessed` 상태, 발견 ID)를 Markdown·SARIF·MCP `maswe` 섹션·`reports export --format maswe`로 제공합니다. 관련 검사는 약점의 일부만 다루므로 `scope`는 항상 `partial`이며, `not-assessed`는 APSA에 관련 검사가 없다는 뜻입니다. MASWE 데이터는 OWASP MASWE v1.0.0(CC BY-SA 4.0)을 식별자·제목 색인으로 줄인 것입니다.
 
+1.5는 MASTG 데모 미탐에 해당하는 약점 검사를 추가합니다. CRYPTO(깨진 cipher·암묵적 ECB·상수로 만든 키와 IV·짧은 RSA 키·CryptoKit `Insecure` 다이제스트), AUTH(키에 묶이지 않은 생체 인증 결과·기기 비밀번호 대체·새 생체 등록 뒤에도 유지되는 키), NETWORK(TLS 1.2 미만·ATS 밖 iOS API·네트워크 보안 설정의 사용자 CA와 cleartext), PLATFORM(`autoVerify` 없는 App Links·인텐트 리다이렉션·앱 내부용 암시적 Intent·꺼진 Safe Browsing·UIWebView·WKWebView 파일 접근), CODE(경로 조작·secure coding 없는 keyed unarchiving)입니다. 모두 후보 또는 설정 증거이며, 범위와 한계는 [분석 확장의 1.5.0 절](NEXT_ANALYSIS.md#apsa-150-additions)에 있습니다.
+
 | MASVS 영역 | 실행하는 검사 | 결과의 의미·남은 범위 |
 | --- | --- | --- |
 | PLATFORM | Java/Kotlin/Swift 함수 내 외부 URL→WebView 흐름, 파싱된 host/scheme guard, 문자열 allowlist, bridge·file-origin API, Manifest와 URL scheme, target delivery marker | AST·DEX는 후보. 함수 간 흐름·redirect·반사·동적 로딩·모든 deep-link 인증 경로를 증명하지 않음 |

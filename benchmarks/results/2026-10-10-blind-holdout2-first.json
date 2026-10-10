@@ -1,0 +1,1834 @@
+{
+  "amendments_sha256": null,
+  "apsa_commit": "47ce760b183202944e014398fd48cc87ef133ea0",
+  "evaluator_sha256": "af908a0891ad5c283625cc578e0a45a3d6e4167d397c75aa35ef367ccd3b782b",
+  "in_scope_totals": {
+    "discriminating_tp": 5,
+    "errors": 0,
+    "fn": 12,
+    "fp": 4,
+    "line_level_tp": 7,
+    "scored_pairs": 21,
+    "tn": 17,
+    "tp": 9,
+    "unscored_sides": 0
+  },
+  "pairs": [
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 18241958,
+          "sha256": "be314b4dad52564b0521be65000674295b7959a168bc8d2a60192da64768d170",
+          "url": "https://codeload.github.com/element-hq/element-android/zip/53734255ec270b0814946350787393dfcaa2a5a9"
+        },
+        "audit_incomplete": true,
+        "commit": "53734255ec270b0814946350787393dfcaa2a5a9",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/im/vector/app/features/MainActivity.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "vector"
+      },
+      "id": "element-android-mainactivity-intent-redirection",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "element-hq/element-android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 18241446,
+          "sha256": "e75d983b56c2f8593a61c9a7b6e30a7e28ecddec8dbbf8a50add52b0737dcff1",
+          "url": "https://codeload.github.com/element-hq/element-android/zip/355d091c941774503707384732afc34a774392d1"
+        },
+        "audit_incomplete": true,
+        "commit": "355d091c941774503707384732afc34a774392d1",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/im/vector/app/features/MainActivity.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "vector"
+      },
+      "weaknesses": [
+        "MASWE-0032"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 17104636,
+          "sha256": "ffee064cdfe5fcd4bb5ed7d8c9ab6decb6567a4edfe548abf7ec19ef49af91a5",
+          "url": "https://codeload.github.com/nextcloud/android/zip/4a29c2e4c430a257955e16d5388b9e6cc4ebc66b"
+        },
+        "audit_incomplete": true,
+        "commit": "4a29c2e4c430a257955e16d5388b9e6cc4ebc66b",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "main/java/com/owncloud/android/files/services/FileDownloader.java": "checked",
+          "main/java/com/owncloud/android/syncadapter/FileSyncAdapter.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "src"
+      },
+      "id": "nextcloud-android-implicit-mutable-pendingintent",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": true,
+        "fixed": "tn",
+        "vulnerable": "tp",
+        "vulnerable_line_level": true
+      },
+      "repository": "nextcloud/android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 438,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          },
+          {
+            "line": 456,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          },
+          {
+            "line": 438,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          },
+          {
+            "line": 456,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          },
+          {
+            "line": 661,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 17104505,
+          "sha256": "be44fa447b3ee699930e43afbc770969b616450245f0a41cd38c2db9fc926808",
+          "url": "https://codeload.github.com/nextcloud/android/zip/38c60b7618f9b6ddca152352ebed6c61791bd2af"
+        },
+        "audit_incomplete": true,
+        "commit": "38c60b7618f9b6ddca152352ebed6c61791bd2af",
+        "hit_rules": [
+          "AST-PENDINGINTENT-MUTABLE"
+        ],
+        "hits": [
+          {
+            "line": 438,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          },
+          {
+            "line": 456,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          },
+          {
+            "line": 438,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          },
+          {
+            "line": 456,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          },
+          {
+            "line": 661,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [
+          {
+            "line": 438,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          },
+          {
+            "line": 456,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          },
+          {
+            "line": 661,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          }
+        ],
+        "in_range_rules": [
+          "AST-PENDINGINTENT-MUTABLE"
+        ],
+        "labeled_file_states": {
+          "main/java/com/owncloud/android/files/services/FileDownloader.java": "checked",
+          "main/java/com/owncloud/android/syncadapter/FileSyncAdapter.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "src"
+      },
+      "weaknesses": [
+        "MASWE-0032"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 171,
+            "rule_id": "AST-CRYPTO-WEAK-HASH",
+            "status": "candidate"
+          },
+          {
+            "line": 171,
+            "rule_id": "AST-CRYPTO-WEAK-HASH",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 4469208,
+          "sha256": "f63e0b43519e7e0a288c1d10f337843ebdaf132188144e3b4685ee106c55faf2",
+          "url": "https://codeload.github.com/nextcloud/talk-android/zip/303e28c154656a60c241d2d01c060c879c2ad1c4"
+        },
+        "audit_incomplete": true,
+        "commit": "303e28c154656a60c241d2d01c060c879c2ad1c4",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/com/nextcloud/talk/utils/FileUtils.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "app"
+      },
+      "id": "nextcloud-talk-android-share-filename-path-traversal",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "nextcloud/talk-android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 163,
+            "rule_id": "AST-CRYPTO-WEAK-HASH",
+            "status": "candidate"
+          },
+          {
+            "line": 163,
+            "rule_id": "AST-CRYPTO-WEAK-HASH",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 4469120,
+          "sha256": "f469d2426916613cc3226f2298787fb12d9e79381b29aadf5389589b07ba7724",
+          "url": "https://codeload.github.com/nextcloud/talk-android/zip/74e2108ef34383b771e59abbe8a60d85feac74ee"
+        },
+        "audit_incomplete": true,
+        "commit": "74e2108ef34383b771e59abbe8a60d85feac74ee",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/com/nextcloud/talk/utils/FileUtils.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "app"
+      },
+      "weaknesses": [
+        "MASWE-0050"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 1298,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1299,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1318,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1764,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1782,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1816,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1825,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1891,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 2583,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 4777217,
+          "sha256": "0cd5b5be6ba06025cf5a4f2ce5ed57864d67dba1a2d103063bc4192fbd4f522f",
+          "url": "https://codeload.github.com/nextcloud/talk-android/zip/c4d9105613cdbc39a1509e44f04c19df17ded9ed"
+        },
+        "audit_incomplete": true,
+        "commit": "c4d9105613cdbc39a1509e44f04c19df17ded9ed",
+        "hit_rules": [
+          "AST-PENDINGINTENT-MUTABLE"
+        ],
+        "hits": [
+          {
+            "line": 2583,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/com/nextcloud/talk/activities/CallActivity.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "app"
+      },
+      "id": "nextcloud-talk-android-unprotected-pip-receiver",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "fp",
+        "vulnerable": "tp",
+        "vulnerable_line_level": false
+      },
+      "repository": "nextcloud/talk-android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 1297,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1298,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1317,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1763,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1781,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1815,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1824,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 1890,
+            "rule_id": "STORAGE-SENSITIVE-LOG",
+            "status": "candidate"
+          },
+          {
+            "line": 2579,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 4777036,
+          "sha256": "6fa6578171d9628bd43607c57cca887e9eb93c5736edade13e8902c0cb7fb32e",
+          "url": "https://codeload.github.com/nextcloud/talk-android/zip/32133b693c7647b856311459cf9839387fdb8049"
+        },
+        "audit_incomplete": true,
+        "commit": "32133b693c7647b856311459cf9839387fdb8049",
+        "hit_rules": [
+          "AST-PENDINGINTENT-MUTABLE"
+        ],
+        "hits": [
+          {
+            "line": 2579,
+            "rule_id": "AST-PENDINGINTENT-MUTABLE",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/com/nextcloud/talk/activities/CallActivity.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "app"
+      },
+      "weaknesses": [
+        "MASWE-0018",
+        "MASWE-0032"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 836520,
+          "sha256": "21b36fe3d83dd26fe75a40106eb7b04fa6bb42509f28d4fa55c564d9e8579009",
+          "url": "https://codeload.github.com/Cap-go/capacitor-native-biometric/zip/1254602e942f8216e6258f646f0866d8e69c48a5"
+        },
+        "audit_incomplete": false,
+        "commit": "1254602e942f8216e6258f646f0866d8e69c48a5",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/ee/forgr/biometric/AuthActivity.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "android"
+      },
+      "id": "capgo-native-biometric-event-only-auth",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": true,
+        "fixed": "tn",
+        "vulnerable": "tp",
+        "vulnerable_line_level": true
+      },
+      "repository": "Cap-go/capacitor-native-biometric",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 102,
+            "rule_id": "SOURCE-BIOMETRIC-EVENT-BOUND",
+            "status": "candidate"
+          },
+          {
+            "line": 102,
+            "rule_id": "SOURCE-BIOMETRIC-EVENT-BOUND",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 835524,
+          "sha256": "e2944c00931cd0f74fa540c52407b838daf79b4be8e37d677e43b75ebbf55b5c",
+          "url": "https://codeload.github.com/Cap-go/capacitor-native-biometric/zip/b55f0795b16bd88a827b0a3aefc8c3f80ac7e1b3"
+        },
+        "audit_incomplete": false,
+        "commit": "b55f0795b16bd88a827b0a3aefc8c3f80ac7e1b3",
+        "hit_rules": [
+          "SOURCE-BIOMETRIC-EVENT-BOUND"
+        ],
+        "hits": [
+          {
+            "line": 102,
+            "rule_id": "SOURCE-BIOMETRIC-EVENT-BOUND",
+            "status": "candidate"
+          },
+          {
+            "line": 102,
+            "rule_id": "SOURCE-BIOMETRIC-EVENT-BOUND",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [
+          {
+            "line": 102,
+            "rule_id": "SOURCE-BIOMETRIC-EVENT-BOUND",
+            "status": "candidate"
+          }
+        ],
+        "in_range_rules": [
+          "SOURCE-BIOMETRIC-EVENT-BOUND"
+        ],
+        "labeled_file_states": {
+          "src/main/java/ee/forgr/biometric/AuthActivity.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "android"
+      },
+      "weaknesses": [
+        "MASWE-0020"
+      ]
+    },
+    {
+      "error": "ValueError: APSA execution failed with code 1: ",
+      "id": "osmand-open-gpx-deeplink-path-traversal"
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 1173826,
+          "sha256": "801f12d6a49e6165a1206d0d1a4260e60b0f84449915795f354513c3ddf5857c",
+          "url": "https://codeload.github.com/openMF/mifos-mobile/zip/e505f62b92b19292bfdabd6e996ab76abfeaa90d"
+        },
+        "audit_incomplete": true,
+        "commit": "e505f62b92b19292bfdabd6e996ab76abfeaa90d",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/org/mifos/mobile/api/SelfServiceOkHttpClient.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "app"
+      },
+      "id": "mifos-mobile-trust-all-hostname-verifier",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": true,
+        "fixed": "tn",
+        "vulnerable": "tp",
+        "vulnerable_line_level": true
+      },
+      "repository": "openMF/mifos-mobile",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 35,
+            "rule_id": "SOURCE-TRUST-ALL-CERTS",
+            "status": "candidate"
+          },
+          {
+            "line": 64,
+            "rule_id": "SOURCE-HOSTNAME-VERIFIER-ALL",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 1174322,
+          "sha256": "ffe4e9d01573c7fd5e17e8a8a203770beee31873d3358f3aa09c122448d45048",
+          "url": "https://codeload.github.com/openMF/mifos-mobile/zip/7ed4f22f2541d38f32c9e26ba075ca1b41424369"
+        },
+        "audit_incomplete": true,
+        "commit": "7ed4f22f2541d38f32c9e26ba075ca1b41424369",
+        "hit_rules": [
+          "SOURCE-HOSTNAME-VERIFIER-ALL",
+          "SOURCE-TRUST-ALL-CERTS"
+        ],
+        "hits": [
+          {
+            "line": 35,
+            "rule_id": "SOURCE-TRUST-ALL-CERTS",
+            "status": "candidate"
+          },
+          {
+            "line": 64,
+            "rule_id": "SOURCE-HOSTNAME-VERIFIER-ALL",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [
+          {
+            "line": 35,
+            "rule_id": "SOURCE-TRUST-ALL-CERTS",
+            "status": "candidate"
+          },
+          {
+            "line": 64,
+            "rule_id": "SOURCE-HOSTNAME-VERIFIER-ALL",
+            "status": "candidate"
+          }
+        ],
+        "in_range_rules": [
+          "SOURCE-HOSTNAME-VERIFIER-ALL",
+          "SOURCE-TRUST-ALL-CERTS"
+        ],
+        "labeled_file_states": {
+          "src/main/java/org/mifos/mobile/api/SelfServiceOkHttpClient.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "app"
+      },
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 598,
+            "rule_id": "SOURCE-BIOMETRIC-EVENT-BOUND",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 2727377,
+          "sha256": "30ee3da6e9308755bb0b73d9c03bffa94918671cf15800d8a86f874033be8de9",
+          "url": "https://codeload.github.com/forcedotcom/SalesforceMobileSDK-Android/zip/b83f4f6a8d40f72a12e316d5f9262bd75f310b8b"
+        },
+        "audit_incomplete": true,
+        "commit": "b83f4f6a8d40f72a12e316d5f9262bd75f310b8b",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "SalesforceSDK/src/com/salesforce/androidsdk/ui/LoginActivity.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "libs"
+      },
+      "id": "salesforce-android-login-webview-file-url-access",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": true,
+        "fixed": "tn",
+        "vulnerable": "tp",
+        "vulnerable_line_level": true
+      },
+      "repository": "forcedotcom/SalesforceMobileSDK-Android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 200,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          },
+          {
+            "line": 599,
+            "rule_id": "SOURCE-BIOMETRIC-EVENT-BOUND",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 2727396,
+          "sha256": "bc10a021f1fd7b2103ab50ceb05655c7c10d82b086cd6268ec45715bbeecbc13",
+          "url": "https://codeload.github.com/forcedotcom/SalesforceMobileSDK-Android/zip/b765d7db8f356b0bfb38d86be722bdc37cc72aa3"
+        },
+        "audit_incomplete": true,
+        "commit": "b765d7db8f356b0bfb38d86be722bdc37cc72aa3",
+        "hit_rules": [
+          "WEBVIEW-FILE-ACCESS"
+        ],
+        "hits": [
+          {
+            "line": 200,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [
+          {
+            "line": 200,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          }
+        ],
+        "in_range_rules": [
+          "WEBVIEW-FILE-ACCESS"
+        ],
+        "labeled_file_states": {
+          "SalesforceSDK/src/com/salesforce/androidsdk/ui/LoginActivity.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "libs"
+      },
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 101,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 16442346,
+          "sha256": "0a24bb3b9b7b11d983ac1451f7746169f869e767b4fb77e9dd742a5544faf6a1",
+          "url": "https://codeload.github.com/forcedotcom/SalesforceMobileSDK-Android/zip/9ee25271fcb79c9df2837cae010201f487a774b2"
+        },
+        "audit_incomplete": true,
+        "commit": "9ee25271fcb79c9df2837cae010201f487a774b2",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "SalesforceSDK/src/com/salesforce/androidsdk/ui/LoginActivity.java": "checked",
+          "SalesforceSDK/src/com/salesforce/androidsdk/ui/PasscodeActivity.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "libs"
+      },
+      "id": "salesforce-android-login-passcode-no-flag-secure",
+      "in_scope": false,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "forcedotcom/SalesforceMobileSDK-Android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 96,
+            "rule_id": "WEBVIEW-FILE-ACCESS",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 16442221,
+          "sha256": "3981c808f33a61868028bf43b59536812cb1e432571bc127d37811eda470ee74",
+          "url": "https://codeload.github.com/forcedotcom/SalesforceMobileSDK-Android/zip/a937abf629190dc07249cad9a3646bfed82a5966"
+        },
+        "audit_incomplete": true,
+        "commit": "a937abf629190dc07249cad9a3646bfed82a5966",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "SalesforceSDK/src/com/salesforce/androidsdk/ui/LoginActivity.java": "checked",
+          "SalesforceSDK/src/com/salesforce/androidsdk/ui/PasscodeActivity.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "libs"
+      },
+      "weaknesses": [
+        "MASWE-0038"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 217973,
+          "sha256": "a8ce8ee9c76d7538d82d22cad0e17102fa434b12592e41009a4f82a61bee5523",
+          "url": "https://codeload.github.com/freeotp/freeotp-android/zip/184acef370dff959f22b13cef9930e16dc17f2ea"
+        },
+        "audit_incomplete": false,
+        "commit": "184acef370dff959f22b13cef9930e16dc17f2ea",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/org/fedorahosted/freeotp/add/ScanActivity.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "app"
+      },
+      "id": "freeotp-android-scan-activity-no-flag-secure",
+      "in_scope": false,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "freeotp/freeotp-android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 217928,
+          "sha256": "41c199cf85b68c00f3d9e3c07cd73cd0bc86a5995025d2b91bdacee5c909012b",
+          "url": "https://codeload.github.com/freeotp/freeotp-android/zip/801a26e7484670b513e0b0f06fcad6f73cfd7323"
+        },
+        "audit_incomplete": false,
+        "commit": "801a26e7484670b513e0b0f06fcad6f73cfd7323",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/org/fedorahosted/freeotp/add/ScanActivity.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "app"
+      },
+      "weaknesses": [
+        "MASWE-0038"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 85,
+            "rule_id": "SOURCE-JAVA-DESERIALIZATION",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 12498870,
+          "sha256": "37fa0de33036f8c6869741e61ed073567a51628674a042927caa38cd84bbc354",
+          "url": "https://codeload.github.com/TeamNewPipe/NewPipe/zip/d75a6eaa4164d3fc0ac67bc35048b021b85e9b6f"
+        },
+        "audit_incomplete": true,
+        "commit": "d75a6eaa4164d3fc0ac67bc35048b021b85e9b6f",
+        "hit_rules": [
+          "SOURCE-JAVA-DESERIALIZATION"
+        ],
+        "hits": [
+          {
+            "line": 85,
+            "rule_id": "SOURCE-JAVA-DESERIALIZATION",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/org/schabi/newpipe/settings/export/ImportExportManager.kt": "checked",
+          "src/main/java/org/schabi/newpipe/settings/export/PreferencesObjectInputStream.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "app"
+      },
+      "id": "newpipe-backup-import-objectinputstream",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "fp",
+        "vulnerable": "tp",
+        "vulnerable_line_level": true
+      },
+      "repository": "TeamNewPipe/NewPipe",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 84,
+            "rule_id": "SOURCE-JAVA-DESERIALIZATION",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 12497540,
+          "sha256": "34ff311d5c8ed8cfbf9551cfae40b269c468b2602f4ea82b185cb83e75d4e1a4",
+          "url": "https://codeload.github.com/TeamNewPipe/NewPipe/zip/235fb926382cfed5a6353106c732e85a9140d6da"
+        },
+        "audit_incomplete": true,
+        "commit": "235fb926382cfed5a6353106c732e85a9140d6da",
+        "hit_rules": [
+          "SOURCE-JAVA-DESERIALIZATION"
+        ],
+        "hits": [
+          {
+            "line": 84,
+            "rule_id": "SOURCE-JAVA-DESERIALIZATION",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [
+          {
+            "line": 84,
+            "rule_id": "SOURCE-JAVA-DESERIALIZATION",
+            "status": "candidate"
+          }
+        ],
+        "in_range_rules": [
+          "SOURCE-JAVA-DESERIALIZATION"
+        ],
+        "labeled_file_states": {
+          "src/main/java/org/schabi/newpipe/settings/export/ImportExportManager.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "app"
+      },
+      "weaknesses": [
+        "MASWE-0050"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 94,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 516671,
+          "sha256": "95d29861ca56affb82614f497d4881dccc6339ea0ed597704dc2a3a8544bfe90",
+          "url": "https://codeload.github.com/airbnb/AirMapView/zip/b1e8fd330fecb2659559e0ea9535b59a507057c2"
+        },
+        "audit_incomplete": true,
+        "commit": "b1e8fd330fecb2659559e0ea9535b59a507057c2",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/com/airbnb/android/airmapview/WebViewMapFragment.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "library"
+      },
+      "id": "airmapview-webview-default-file-access",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "airbnb/AirMapView",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 94,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 516650,
+          "sha256": "d2b1a22ecd2a090ca90aa78ffb7bdb612c21fa7d1416a286f298764817292cdf",
+          "url": "https://codeload.github.com/airbnb/AirMapView/zip/2111ca027dd1c4525e1f47ade41409d4856b7acc"
+        },
+        "audit_incomplete": true,
+        "commit": "2111ca027dd1c4525e1f47ade41409d4856b7acc",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/com/airbnb/android/airmapview/WebViewMapFragment.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "library"
+      },
+      "weaknesses": [
+        "MASWE-0034"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 1704061,
+          "sha256": "b43ed3c2b9075d9a3c03954b40e29e8f52b5a6e4608b62e8a1c32704aad8138b",
+          "url": "https://codeload.github.com/stytchauth/stytch-android/zip/091ae50288d4032c37d495f6474e93efb65cb68b"
+        },
+        "audit_incomplete": false,
+        "commit": "091ae50288d4032c37d495f6474e93efb65cb68b",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/com/stytch/sdk/common/EncryptionManager.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "sdk"
+      },
+      "id": "stytch-android-pkce-time-seeded-random",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "stytchauth/stytch-android",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 1704074,
+          "sha256": "818c7e5cb87d04b46373fa8b63f869af60b15679bb38334464570a54df455629",
+          "url": "https://codeload.github.com/stytchauth/stytch-android/zip/b10e1d062def322662608af89859b8263a4b4ebd"
+        },
+        "audit_incomplete": false,
+        "commit": "b10e1d062def322662608af89859b8263a4b4ebd",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "src/main/java/com/stytch/sdk/common/EncryptionManager.kt": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "sdk"
+      },
+      "weaknesses": [
+        "MASWE-0012"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 2565866,
+          "sha256": "88bfc500d2a6cd3bb662e8dadf4682b12ed8aff99747ccbfb6c702216cc07627",
+          "url": "https://codeload.github.com/bpellin/keepassdroid/zip/0608fdec4fef4d58edb7aabbe53532616fb2f071"
+        },
+        "audit_incomplete": false,
+        "commit": "0608fdec4fef4d58edb7aabbe53532616fb2f071",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "com/keepassdroid/password/PasswordGenerator.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "src"
+      },
+      "id": "keepassdroid-password-generator-java-util-random",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "bpellin/keepassdroid",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 2565838,
+          "sha256": "6fc34782473d657d4f670749b2257dc6d1a786b188a39282240554e2fd0784b6",
+          "url": "https://codeload.github.com/bpellin/keepassdroid/zip/1527b0aac18003352081dcfc800f88c588097378"
+        },
+        "audit_incomplete": false,
+        "commit": "1527b0aac18003352081dcfc800f88c588097378",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "com/keepassdroid/password/PasswordGenerator.java": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "src"
+      },
+      "weaknesses": [
+        "MASWE-0012"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 52028874,
+          "sha256": "9bc4d751b8bdccf20400ad9531b76e141538a94a8735e10939d0e548f58f6fdf",
+          "url": "https://codeload.github.com/home-assistant/iOS/zip/8eaaaac51677fb9c5d77ffeca4fbaeb9c55e32c0"
+        },
+        "audit_incomplete": true,
+        "commit": "8eaaaac51677fb9c5d77ffeca4fbaeb9c55e32c0",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "App/WebView/IncomingURLHandler.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "Sources"
+      },
+      "id": "home-assistant-ios-url-actions-without-confirmation",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "home-assistant/iOS",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 52028358,
+          "sha256": "a6ebfdd6e932c178a18894bccca0f0fd7fcfc455777a60d2c311a333706429a4",
+          "url": "https://codeload.github.com/home-assistant/iOS/zip/7c55eb649c5ddd1e69505a024fb2c49bc13bc200"
+        },
+        "audit_incomplete": true,
+        "commit": "7c55eb649c5ddd1e69505a024fb2c49bc13bc200",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "App/WebView/IncomingURLHandler.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "Sources"
+      },
+      "weaknesses": [
+        "MASWE-0029"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 6,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 8,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 9,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 55691580,
+          "sha256": "d7e87488e7e82671bee300ae5ee26cd78e21c04bc1a5ee035a51e202c797aab0",
+          "url": "https://codeload.github.com/home-assistant/iOS/zip/c8f35e4cff8369ff1cd85fdbeeda99cbd0168327"
+        },
+        "audit_incomplete": true,
+        "commit": "c8f35e4cff8369ff1cd85fdbeeda99cbd0168327",
+        "hit_rules": [
+          "WEBVIEW-JS-BRIDGE"
+        ],
+        "hits": [
+          {
+            "line": 6,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 8,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 9,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "App/Frontend/ExternalMessageBus/SafeScriptMessageHandler.swift": "checked",
+          "App/Frontend/WebView/WebViewController+WebViewSetup.swift": "checked",
+          "App/Frontend/WebView/WebViewController.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "Sources"
+      },
+      "id": "home-assistant-ios-script-bridge-all-frames",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "fp",
+        "vulnerable": "tp",
+        "vulnerable_line_level": false
+      },
+      "repository": "home-assistant/iOS",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 5,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 6,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 7,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 55690471,
+          "sha256": "87b5ca512809e5d1438b66927cc7b8ca16950821f3321c95a9577a378f3b4f0c",
+          "url": "https://codeload.github.com/home-assistant/iOS/zip/a20ae2f5936d1ff445d302eb8241b9cb083de92b"
+        },
+        "audit_incomplete": true,
+        "commit": "a20ae2f5936d1ff445d302eb8241b9cb083de92b",
+        "hit_rules": [
+          "WEBVIEW-JS-BRIDGE"
+        ],
+        "hits": [
+          {
+            "line": 5,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 6,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          },
+          {
+            "line": 7,
+            "rule_id": "WEBVIEW-JS-BRIDGE",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "App/Frontend/ExternalMessageBus/SafeScriptMessageHandler.swift": "checked",
+          "App/Frontend/WebView/WebViewController+WebViewSetup.swift": "checked",
+          "App/Frontend/WebView/WebViewController.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "Sources"
+      },
+      "weaknesses": [
+        "MASWE-0033"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 1218508,
+          "sha256": "755dd57f0ae3d4d8b806cf38360d1f29b17d8c755a5601d0d8f10a94dc3a18c6",
+          "url": "https://codeload.github.com/cryptomator/ios/zip/f40530b89ab5eab2b1460831daec75d95aed9200"
+        },
+        "audit_incomplete": true,
+        "commit": "f40530b89ab5eab2b1460831daec75d95aed9200",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "Sources/CryptomatorCommonCore/CryptomatorKeychain.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "CryptomatorCommon"
+      },
+      "id": "cryptomator-ios-keychain-biometry-any",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": true,
+        "fixed": "tn",
+        "vulnerable": "tp",
+        "vulnerable_line_level": true
+      },
+      "repository": "cryptomator/ios",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 101,
+            "rule_id": "SOURCE-BIOMETRIC-ENROLLMENT",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 1218504,
+          "sha256": "dbf607cc18e198a7a231842c83d4f0d1249a924e2a2803c9304ff6b255313d05",
+          "url": "https://codeload.github.com/cryptomator/ios/zip/41f463d43a9d451417344251d9f3a7184b100bba"
+        },
+        "audit_incomplete": true,
+        "commit": "41f463d43a9d451417344251d9f3a7184b100bba",
+        "hit_rules": [
+          "SOURCE-BIOMETRIC-ENROLLMENT"
+        ],
+        "hits": [
+          {
+            "line": 101,
+            "rule_id": "SOURCE-BIOMETRIC-ENROLLMENT",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [
+          {
+            "line": 101,
+            "rule_id": "SOURCE-BIOMETRIC-ENROLLMENT",
+            "status": "candidate"
+          }
+        ],
+        "in_range_rules": [
+          "SOURCE-BIOMETRIC-ENROLLMENT"
+        ],
+        "labeled_file_states": {
+          "Sources/CryptomatorCommonCore/CryptomatorKeychain.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "CryptomatorCommon"
+      },
+      "weaknesses": [
+        "MASWE-0022"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 994145,
+          "sha256": "d2b3d0aad767de0f220b84e8e30f6489ed68b0515070003f35a2d4f84f3dfede",
+          "url": "https://codeload.github.com/cryptomator/ios/zip/37293a5408f48fe8e7df01b52cd436ed46af36d5"
+        },
+        "audit_incomplete": true,
+        "commit": "37293a5408f48fe8e7df01b52cd436ed46af36d5",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "FileProviderExtension.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "FileProviderExtension"
+      },
+      "id": "cryptomator-ios-cache-in-icloud-backup",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "cryptomator/ios",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 994033,
+          "sha256": "96cc7d7725405a15636666c04d49ef046bf5a497a1a0f129ea5ecae342fe3254",
+          "url": "https://codeload.github.com/cryptomator/ios/zip/e6c7ac9cb4de05c33dfaedb74f818ca89628ec03"
+        },
+        "audit_incomplete": true,
+        "commit": "e6c7ac9cb4de05c33dfaedb74f818ca89628ec03",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "FileProviderExtension.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "FileProviderExtension"
+      },
+      "weaknesses": [
+        "MASWE-0006"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 2621931,
+          "sha256": "4c5c09c69134e91413e76869d243c71d13f2475271830f8c347949a0d8faef56",
+          "url": "https://codeload.github.com/forcedotcom/SalesforceMobileSDK-iOS/zip/5d68112b199d5b2273cd7210a77e1af20b50e069"
+        },
+        "audit_incomplete": true,
+        "commit": "5d68112b199d5b2273cd7210a77e1af20b50e069",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "SalesforceSDKCore/SalesforceSDKCore/Classes/PushNotification/SFSDKPushNotificationDecryption.m": "partial"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "libs"
+      },
+      "id": "salesforce-ios-push-secret-rsa-pkcs1-fallback",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "forcedotcom/SalesforceMobileSDK-iOS",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 2622049,
+          "sha256": "31b647bbe80c17c1f526de212b514c71cdbc2a889898988fc6c5eb5524e6dc72",
+          "url": "https://codeload.github.com/forcedotcom/SalesforceMobileSDK-iOS/zip/bac10297a628413a72a9ac0cc38bd6f0a15c695d"
+        },
+        "audit_incomplete": true,
+        "commit": "bac10297a628413a72a9ac0cc38bd6f0a15c695d",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "SalesforceSDKCore/SalesforceSDKCore/Classes/PushNotification/SFSDKPushNotificationDecryption.m": "partial"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "libs"
+      },
+      "weaknesses": [
+        "MASWE-0007"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 27377754,
+          "sha256": "10cbaa0c690d4a992a4f945e8b4968b8b07a8d473f8d85dfd7ee189d8f541f51",
+          "url": "https://codeload.github.com/weichsel/ZIPFoundation/zip/4b24bdfa92cbcfdac482373a4a8a059d611150c8"
+        },
+        "audit_incomplete": false,
+        "commit": "4b24bdfa92cbcfdac482373a4a8a059d611150c8",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "ZIPFoundation/Archive+Reading.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "Sources"
+      },
+      "id": "zipfoundation-uncontained-symlink-extraction",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "weichsel/ZIPFoundation",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 27377138,
+          "sha256": "d81fc482c30b8f3e2f73e43d72d98e73229d4c8788ae0d7380bc6bf75fe6b1f6",
+          "url": "https://codeload.github.com/weichsel/ZIPFoundation/zip/de38ebca6cb226ed7a682c4aa6980ca54949c08c"
+        },
+        "audit_incomplete": false,
+        "commit": "de38ebca6cb226ed7a682c4aa6980ca54949c08c",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "ZIPFoundation/Archive+Reading.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "Sources"
+      },
+      "weaknesses": [
+        "MASWE-0050"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 306257,
+          "sha256": "a7474ae36b4f135aa582f82d627443c1f4f17746e1cda61288c569dfc714f4ba",
+          "url": "https://codeload.github.com/AFNetworking/AFNetworking/zip/3e631b203dd95bb82dfbcc2c47a2d84b59d1eeb4"
+        },
+        "audit_incomplete": true,
+        "commit": "3e631b203dd95bb82dfbcc2c47a2d84b59d1eeb4",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "AFSecurityPolicy.m": "partial"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "AFNetworking"
+      },
+      "id": "afnetworking-default-policy-no-domain-validation",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "AFNetworking/AFNetworking",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 306335,
+          "sha256": "841ac054e3f04d236a0017529ea726d96f578347f4554f6e27f6f7910482cabe",
+          "url": "https://codeload.github.com/AFNetworking/AFNetworking/zip/b0dd3d98346e98c9b1700ddd083559d7d4f15a68"
+        },
+        "audit_incomplete": true,
+        "commit": "b0dd3d98346e98c9b1700ddd083559d7d4f15a68",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "AFSecurityPolicy.m": "partial"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "AFNetworking"
+      },
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 24926578,
+          "sha256": "a296aa3196bd41ca9c3996b8c2e5a428c65d22dc78c6cc9ec0a2031b880857db",
+          "url": "https://codeload.github.com/videolan/vlc-ios/zip/d84d7c0a94eb7fba202d2c5fc3739276d2d3986f"
+        },
+        "audit_incomplete": true,
+        "commit": "d84d7c0a94eb7fba202d2c5fc3739276d2d3986f",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "VLCAppDelegate.m": "partial"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "Sources"
+      },
+      "id": "vlc-ios-openurl-before-passcode",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "videolan/vlc-ios",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 24926544,
+          "sha256": "b90415536212b230080aeb3da34049801ec1fabfbd1f6f3c946363856926ae82",
+          "url": "https://codeload.github.com/videolan/vlc-ios/zip/dd54f1ddfed075416b9cd35b695d888d30508ba7"
+        },
+        "audit_incomplete": true,
+        "commit": "dd54f1ddfed075416b9cd35b695d888d30508ba7",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "VLCAppDelegate.m": "partial"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "Sources"
+      },
+      "weaknesses": [
+        "MASWE-0020"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 285,
+            "rule_id": "SWIFT-SERVER-TRUST-ACCEPTED",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 1928954,
+          "sha256": "3054a8a6a5aea4a5ab1486c326505257faae1a823804dd574ada3bf329dcd817",
+          "url": "https://codeload.github.com/team-telnyx/telnyx-webrtc-ios/zip/d90b95880229bcb00eb293298369cf5abd48db86"
+        },
+        "audit_incomplete": false,
+        "commit": "d90b95880229bcb00eb293298369cf5abd48db86",
+        "hit_rules": [
+          "SWIFT-SERVER-TRUST-ACCEPTED"
+        ],
+        "hits": [
+          {
+            "line": 285,
+            "rule_id": "SWIFT-SERVER-TRUST-ACCEPTED",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "Telnyx/Services/Socket.swift": "checked",
+          "Telnyx/WebRTC/Stats/TelnyxCallReportCollector.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "TelnyxRTC"
+      },
+      "id": "telnyx-ios-sdk-self-signed-certs-accepted",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "fp",
+        "vulnerable": "tp",
+        "vulnerable_line_level": true
+      },
+      "repository": "team-telnyx/telnyx-webrtc-ios",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [
+          {
+            "line": 274,
+            "rule_id": "SWIFT-SERVER-TRUST-ACCEPTED",
+            "status": "candidate"
+          }
+        ],
+        "archive": {
+          "bytes": 1922558,
+          "sha256": "40bf130a5a8e081740987e0825dc8789b283e2054574631ce64040ae269a462a",
+          "url": "https://codeload.github.com/team-telnyx/telnyx-webrtc-ios/zip/7e19b535f58a0969a6edaf5105ac575b20fe8cec"
+        },
+        "audit_incomplete": false,
+        "commit": "7e19b535f58a0969a6edaf5105ac575b20fe8cec",
+        "hit_rules": [
+          "SWIFT-SERVER-TRUST-ACCEPTED"
+        ],
+        "hits": [
+          {
+            "line": 274,
+            "rule_id": "SWIFT-SERVER-TRUST-ACCEPTED",
+            "status": "candidate"
+          }
+        ],
+        "hits_in_labeled_lines": [
+          {
+            "line": 274,
+            "rule_id": "SWIFT-SERVER-TRUST-ACCEPTED",
+            "status": "candidate"
+          }
+        ],
+        "in_range_rules": [
+          "SWIFT-SERVER-TRUST-ACCEPTED"
+        ],
+        "labeled_file_states": {
+          "Telnyx/Services/Socket.swift": "checked",
+          "Telnyx/WebRTC/Stats/TelnyxCallReportCollector.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "TelnyxRTC"
+      },
+      "weaknesses": [
+        "MASWE-0027"
+      ]
+    },
+    {
+      "expected_rules": [],
+      "fixed": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 48554248,
+          "sha256": "ac8e74834fc1a14e5794c10c0fa6601e1a451f3bd8f74742794afdfa2ef75ef5",
+          "url": "https://codeload.github.com/brave/brave-ios/zip/dd57a1673ecea75f6884bf41e8147d94ca995185"
+        },
+        "audit_incomplete": true,
+        "commit": "dd57a1673ecea75f6884bf41e8147d94ca995185",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "Brave/Frontend/Browser/BrowserViewController/OpenSearch/BrowserViewController+OpenSearch.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "Sources"
+      },
+      "id": "brave-ios-opensearch-insecure-template-urls",
+      "in_scope": true,
+      "outcome": {
+        "discriminating_tp": false,
+        "fixed": "tn",
+        "vulnerable": "fn",
+        "vulnerable_line_level": false
+      },
+      "repository": "brave/brave-ios",
+      "vulnerable": {
+        "any_rule_findings_in_labeled_files": [],
+        "archive": {
+          "bytes": 48553593,
+          "sha256": "0b21d9369e35851af74fa7b7e5ddf40d9c41a819491b187f66c12aba503f7aab",
+          "url": "https://codeload.github.com/brave/brave-ios/zip/f82769ae3b31842623941e24f8b3033a89e40cb4"
+        },
+        "audit_incomplete": true,
+        "commit": "f82769ae3b31842623941e24f8b3033a89e40cb4",
+        "hit_rules": [],
+        "hits": [],
+        "hits_in_labeled_lines": [],
+        "in_range_rules": [],
+        "labeled_file_states": {
+          "Brave/Frontend/Browser/BrowserViewController/OpenSearch/BrowserViewController+OpenSearch.swift": "checked"
+        },
+        "missing_labeled_paths": [],
+        "rule_version": "2026.10.10.apsa.150",
+        "scan_root": "Sources"
+      },
+      "weaknesses": [
+        "MASWE-0026"
+      ]
+    }
+  ],
+  "schema": "apsa-fpfn-results-v3",
+  "source_catalog_sha256": "9c3f8eb91da22d7c8bff5a9a567729afb56af0c3fd0f30469843805d77d984a3",
+  "source_weaknesses": [
+    "MASWE-0001",
+    "MASWE-0002",
+    "MASWE-0003",
+    "MASWE-0004",
+    "MASWE-0005",
+    "MASWE-0006",
+    "MASWE-0007",
+    "MASWE-0008",
+    "MASWE-0012",
+    "MASWE-0013",
+    "MASWE-0018",
+    "MASWE-0020",
+    "MASWE-0021",
+    "MASWE-0022",
+    "MASWE-0026",
+    "MASWE-0027",
+    "MASWE-0029",
+    "MASWE-0032",
+    "MASWE-0033",
+    "MASWE-0034",
+    "MASWE-0035",
+    "MASWE-0042",
+    "MASWE-0050",
+    "MASWE-0063",
+    "MASWE-0073"
+  ],
+  "totals": {
+    "discriminating_tp": 5,
+    "errors": 1,
+    "fn": 14,
+    "fp": 4,
+    "line_level_tp": 7,
+    "scored_pairs": 23,
+    "tn": 19,
+    "tp": 9,
+    "unscored_sides": 0
+  },
+  "truth": "benchmarks/fpfn_truth_holdout2.json",
+  "truth_sha256": "c42c9cd345265e8621f5f8d46dce2bc8c0b993ba05f782c97756bc8c8eaae5df",
+  "worktree_dirty": false
+}

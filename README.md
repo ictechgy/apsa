@@ -126,11 +126,66 @@ Registry and as a Claude Code plugin, with a documented
   value changes; update any pinned hash. Unmodified 1.3 skills upgrade with
   `apsa skill install`.
 
+APSA 1.5 widens what a source scan looks for. New checks cover the OWASP
+MASWE weaknesses behind most MASTG demo misses: broken ciphers and implicit
+ECB, key material and IVs built from constants, RSA keys under 2048 bits and
+CryptoKit `Insecure` digests; biometric results not bound to a key,
+device-credential fallback and keys that survive new enrollment; TLS below
+1.2, iOS connections outside App Transport Security, and user CAs or cleartext
+in the network security configuration; unverified App Links, intent
+redirection and implicit internal Intents; path traversal and keyed
+unarchiving without secure coding; and Safe Browsing turned off, UIWebView and
+WKWebView file access. On a blind holdout of 24 public vulnerable/fixed pairs
+labeled by MASWE weakness, APSA 1.5.0 found 7 of the 21 in-scope pairs at the
+labeled lines; see the
+[blind pair results](https://github.com/ictechgy/apsa/blob/main/benchmarks/BLIND_PAIRS_RESULTS.md)
+and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/NEXT_ANALYSIS.md).
+
+**Upgrading from 1.4.**
+
+- New rules add findings and coverage entries: `AST-CRYPTO-WEAK-CIPHER`,
+  `IOS-CRYPTO-WEAK-CIPHER`, `AST-CRYPTO-HARDCODED-KEY`, `AST-CRYPTO-STATIC-IV`,
+  `SOURCE-WEAK-KEY-SIZE`, `SOURCE-BIOMETRIC-EVENT-BOUND`,
+  `SOURCE-BIOMETRIC-FALLBACK`, `SOURCE-BIOMETRIC-ENROLLMENT`,
+  `SOURCE-WEAK-TLS-VERSION`, `IOS-ATS-BYPASS-API`, `ANDROID-NSC-USER-CA`,
+  `ANDROID-DEEPLINK-AUTOVERIFY`, `AST-INTENT-REDIRECTION`,
+  `AST-IMPLICIT-INTENT`, `IOS-WEBVIEW-FILE-ACCESS`,
+  `WEBVIEW-SAFE-BROWSING-OFF`, `IOS-UIWEBVIEW`, `AST-PATH-TRAVERSAL` and
+  `IOS-INSECURE-UNARCHIVE`. The default policy does not gate candidates, but a
+  policy with `required_rules` or severity gates, and portable baselines, see
+  them as new.
+- Existing rules find more: `AST-CRYPTO-ECB` also reports a bare `"AES"`
+  transformation (its title is now "AES in ECB mode is selected"; fingerprints
+  are unchanged), `AST-CRYPTO-WEAK-HASH` reports CryptoKit `Insecure.MD5` and
+  `Insecure.SHA1`, `AST-SQL-CONCAT` reads `SQLiteQueryBuilder.query`, the
+  groupBy/having/orderBy/limit arguments and nested exported providers, and
+  `SOURCE-INSECURE-RANDOM` runs on Swift and Objective-C (its coverage on
+  iOS-only trees changes from not-applicable to checked).
+- The AST engine now follows Kotlin `let`, `also`, `use`, `apply`, `run` and
+  `with` lambdas, so every structural rule can report code inside them. A
+  `?.let` lambda, or one with `return@`, merges like a branch that may not run.
+- `ANDROID-CLEARTEXT` also comes from the referenced network security
+  configuration (configuration-confirmed, so code scanning rates it). The
+  manifest's `usesCleartextTraffic` candidate is dropped when that
+  configuration was parsed, minSdk is 24 or higher, and the configuration states
+  `cleartextTrafficPermitted` or targetSdk is 28 or higher.
+- New coverage states can make an audit incomplete: `ANDROID-NSC-USER-CA` and
+  `ANDROID-NSC-CONFIG` are partial when a referenced configuration cannot be
+  parsed, is missing from the scanned sources or is a build placeholder, and
+  checks that stop at their match budget report partial. With the default
+  `fail_on_partial`, such a scan fails the gate and cannot be exported as a
+  baseline. Compiled AAB configurations are not-run.
+- Text rules no longer count binary XML from packages as checked, so
+  `WEBVIEW-SAFE-BROWSING-OFF` is not-run on APKs. The rules resource may carry
+  `case_sensitive` and `once_per_file`; inventory gains `deep_links[].browsable`
+  and `network_security_parsed`. Unmodified 1.4 skills upgrade with
+  `apsa skill install`; the MCP tool manifest hash is unchanged.
+
 ## What it checks
 
 | Area | Available checks |
 | --- | --- |
-| Source code | Java/Kotlin/Swift AST analysis; bounded Objective-C `.m` candidates; WebView and deep-link patterns; Manifest, Info.plist, storage, and dependency inspection, including Gradle catalog usage and application lockfiles; exported components, backup and targetSdk; Apple required-reason APIs against privacy manifests; known credential formats (masked); weak random for security values; mutable implicit PendingIntents; trust-all TrustManagers and hostname verifiers, unevaluated iOS server trust and weakened ATS exception domains; external storage writes; Java deserialization |
+| Source code | Java/Kotlin/Swift AST analysis; bounded Objective-C `.m` candidates; WebView and deep-link patterns; Manifest, Info.plist, storage, and dependency inspection, including Gradle catalog usage and application lockfiles; exported components, backup and targetSdk; Apple required-reason APIs against privacy manifests; known credential formats (masked); weak random for security values; mutable implicit PendingIntents; trust-all TrustManagers and hostname verifiers, unevaluated iOS server trust and weakened ATS exception domains; external storage writes; Java deserialization; (1.5) broken ciphers, constant keys and IVs, short RSA keys, biometric binding and fallback, TLS versions, iOS APIs outside ATS, network security configuration, App Links, intent redirection and implicit Intents, path traversal, keyed unarchiving, Safe Browsing, UIWebView and WKWebView file access |
 | Android builds | DEX calls and constant flow; AAB base and feature-module manifests and module DEX (always partial); resources and network configuration; exported components/providers; signing-block and v1 certificate evidence; ELF hardening |
 | iOS builds | Mach-O headers, including embedded framework/extension metadata; CodeDirectory page and entitlement hash integrity (not signature authentication); limited entitlement/configuration checks (embedded XML entitlements, ATS exceptions, provisioning indicators); PIE, canary, and string evidence |
 | Public intelligence | Apple/Android advisories with bounded Android bulletin backfill, CVE, CISA KEV, OWASP guidance, and OSV dependency correlation |
@@ -459,7 +514,9 @@ APSA's Gradle catalog usage and lockfile coordinates with Gradle's own
 resolution on three frozen holdouts of public apps, keeping first blind results
 separate from reruns after the truth was seen. The
 [independent source pairs](benchmarks/FPFN_RESULTS.md) score vulnerable and
-fixed commits of public projects against truth frozen before scanning. Both are
-narrow samples, not general accuracy estimates.
+fixed commits of public projects against truth frozen before scanning. The
+[blind MASWE-labeled pairs](benchmarks/BLIND_PAIRS_RESULTS.md) measure 1.5 on a
+new holdout labeled by weakness, and the [OWASP MASTG demos](benchmarks/MASTG_RESULTS.md)
+are a development benchmark. All are narrow samples, not general accuracy estimates.
 
 The source is publicly available on [GitHub](https://github.com/ictechgy/apsa). [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE) preserves the original Quaygate MIT notice. This publication does not declare an additional license for the combined product.

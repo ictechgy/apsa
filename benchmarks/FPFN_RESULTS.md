@@ -81,6 +81,16 @@ keeps the same calls and validates the caller's selection with an SQLite
 tokenizer, which APSA does not model as a sanitizer. Like the OpenClaw bridge,
 this is a guard-based fix that a call-site rule cannot see.
 
+## 1.5 development rerun
+
+[Run 38028124357](https://github.com/ictechgy/apsa/actions/runs/38028124357) on the 1.5.0 runtime `1fac679`:
+**6 TP, 5 FN, 2 FP and 9 TN**, line-level TP 4 (discriminating TP 2), the same as 1.4. One intermediate
+development run ([38022781038](https://github.com/ictechgy/apsa/actions/runs/38022781038), `9562717`) had a
+third FP: the new network security configuration check reported the Amaze fix, which permits cleartext only
+to 127.0.0.1 for its local media server. Domain configurations that list only loopback hosts are now
+excluded. This is a development change on labels already seen. 1.5's blind measurement is the
+[MASWE-labeled pair holdout](BLIND_PAIRS_RESULTS.md).
+
 ## Why each miss happened
 
 - **Cross-file flows.** Both Element X pairs move the deep-link URL through a

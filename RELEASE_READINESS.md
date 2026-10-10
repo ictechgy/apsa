@@ -1,5 +1,79 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## APSA 1.5.0 detection breadth — candidate, 2026-10-10
+
+1.5.0 adds source checks, developed on `dev/detection` after 1.4.0, for the OWASP MASWE weaknesses behind most OWASP MASTG demo misses:
+
+- **Crypto:** broken ciphers and implicit ECB, constant key material and IVs, RSA keys under 2048 bits, CryptoKit `Insecure` digests.
+- **Local authentication:** event-bound biometrics, device-credential fallback, keys that survive new enrollment.
+- **Transport:** TLS below 1.2, iOS APIs outside ATS, user CAs and cleartext in the referenced network security configuration.
+- **Platform:** unverified App Links, intent redirection, implicit internal Intents.
+- **Untrusted data:** path traversal, keyed unarchiving without secure coding.
+- **WebView:** Safe Browsing off, UIWebView, WKWebView file access.
+
+The AST engine also follows Kotlin scope-function lambdas. Upgrade effects are listed in the README ("Upgrading from 1.4"); scope and limits are in [NEXT_ANALYSIS.md](docs/NEXT_ANALYSIS.md#apsa-150-additions).
+
+The evaluated runtime is public `1fac6797df1fcccb55c415f48f2fbe47463cc6e8` (`src` tree `268ae9699b9ac0bdf9068bc091d36f986487ae1c`, package/rule version `1.5.0` / `2026.10.10.apsa.150`). Its [CI 38027951214](https://github.com/ictechgy/apsa/actions/runs/38027951214) passed all eleven jobs with 1104 distinct tests. `47ce760` adds only the blind-run workflow ([CI 38028093523](https://github.com/ictechgy/apsa/actions/runs/38028093523) passed). Later commits may change only documentation and recorded results. The tag must leave `src`, `apsa`, `quaygate`, `pyproject.toml`, `uv.lock`, `requirements-release.txt`, `action.yml`, `server.json`, `plugins` and `.claude-plugin` identical to `1fac679`.
+
+**Blind measurement.** An independent agent labeled 24 public vulnerable/fixed pairs by MASWE weakness while the rules were written. The truth was committed in `be1911b` before its first scan; [run 38028093532](https://github.com/ictechgy/apsa/actions/runs/38028093532) is the blind result.
+
+- **Primary result:** 7 of 21 in-scope pairs found at the labeled lines (Wilson 95% 17–55%).
+- **Discriminating TP:** 5 of 21.
+- **Fixed-side FP:** 4 of 21. This is file-level, so an upper bound.
+- **Errors:** 1 scan refused by the 64 MB input staging budget (OsmAnd).
+
+[BLIND_PAIRS_RESULTS.md](benchmarks/BLIND_PAIRS_RESULTS.md) discloses:
+
+- the protocol, including its deviation from the 1.4 roadmap wording;
+- the attestation basis: the same lead coordinated the curator and wrote the rules;
+- the post-freeze commits `35d2d88` through `1fac679`, all made without access to the truth;
+- per-pair results and why pairs were missed.
+
+Every other evaluation harness was re-run on this runtime (`benchmarks/results/2026-10-10-release-150-harnesses.json`). These are development reruns on truth already seen.
+
+| Harness | Run | Result |
+| --- | --- | --- |
+| Gradle oracle comparison, three holdouts | [38028119805](https://github.com/ictechgy/apsa/actions/runs/38028119805) | Identical to `dependency-final-head.json` |
+| Frozen six-app replay | [38028122415](https://github.com/ictechgy/apsa/actions/runs/38028122415) | 8 TP / 0 FP / 0 FN / 19 TN / 5 correct abstentions; selected app CVE 1 TP / 3 TN |
+| Independent vulnerable/fixed source pairs | [38028124357](https://github.com/ictechgy/apsa/actions/runs/38028124357) | TP 6 / FN 5 / FP 2 / TN 9, line-level TP 4, same as 1.4. An intermediate development run had a third FP from the new network security configuration check on a loopback-only exception; loopback-only domain configs are now excluded |
+| Next holdout replay | [38028126198](https://github.com/ictechgy/apsa/actions/runs/38028126198) | 4 / 4 declared facts, 16 / 16 Apple CVE boundary decisions, stable |
+| Generated AAPT2 AAB | [38028128153](https://github.com/ictechgy/apsa/actions/runs/38028128153) | Identical to `next-generated-aab-verified.json` |
+| Public real-world sources, fresh OSV capture | [38028129938](https://github.com/ictechgy/apsa/actions/runs/38028129938) | 6 / 6 scans, 6 / 6 configuration labels; 8 TP / 0 FP / 0 FN / 19 TN / 5 correct abstentions; selected app CVE 1 TP / 3 TN |
+| Synthetic APSA/MobSF comparison | [38028131804](https://github.com/ictechgy/apsa/actions/runs/38028131804) | APSA 1.5.0 source 18 / 18 risks, 0 / 22 control alerts; APK 3 / 3, 0 / 3. MobSF 12 / 18 with 4 control alerts |
+| OWASP MASTG v2.0 demos (development rerun) | [38028133933](https://github.com/ictechgy/apsa/actions/runs/38028133933) | In scope TP 52 / FN 26 / TN 4 / FP 1 (recall 67%, precision 98%); 1.4: 26 / 42 / 4 / 1 |
+
+On the six public apps of the real-world harness, the new rules' findings were reviewed by hand. Two were false positives: an `evaluatePolicy` protocol requirement and a test mock. Both were fixed by counting only calls. The rest matched each rule's definition.
+
+Reviews were all Claude subagent reviews, not an external lane:
+
+- **Code review, six rounds.** It approved `1fac679`. Earlier rounds found the following, all fixed:
+  - worst-case CPU paths that killed the audit;
+  - false positives from runtime-filled arrays, file descriptors and non-archive `*Entry` types;
+  - LocalBroadcastManager fields and third-party actions;
+  - `uiWebView` matched case-insensitively;
+  - debug and other-module network configurations;
+  - BOM-prefixed XML;
+  - scope-lambda regressions in older rules;
+  - weak guards.
+- **Architecture review: WATCH, then CLEAR.** It gave WATCH with three P0 items: wrong-module network configurations, `?.let` merges, and `checked` on binary XML. It moved to CLEAR on `6b823df`, `866df97`, `5ff5a6d` and `1fac679` once those items and its P1 and follow-up items were addressed. It keeps the release at WATCH for the follow-ups below.
+
+Release steps, once approved:
+
+1. Tag `v1.5.0` on the release commit.
+2. The tag-context workflow publishes to PyPI by Trusted Publishing and to the MCP Registry by GitHub OIDC.
+3. Fast-forward `main` only after PyPI serves 1.5.0.
+4. Record the post-publication checks: the Action smoke test repository, a cold `uvx apsa@1.5.0` start, the marketplace plugin install and the registry listing.
+
+Deferred non-blocking items:
+
+- **Input budget:** inputs above the 64 MB text staging budget are refused rather than audited partially. OsmAnd's 53 MB of translation XML is an example. Staging code first and omitting the rest as partial is a 1.5.x candidate.
+- **Analyzer cost:** very large functions with thousands of PendingIntent calls or `if` blocks are slow but bounded. Fixing them needs copy-on-write frames and a per-function Intent-builder table.
+- **Rule metadata:** titles and remediation live in both code and catalog.
+- **Guards:** path and redirection guards are textual, not tied to the tainted variable.
+- **AAB:** network security configurations in AABs are not decoded.
+- **Same-file assumptions:** iOS read-access resolution and constants stay within one file.
+- **Missed families from the blind run:** flow across functions, missing-control weaknesses (MASWE-0038 and others), the RSA PKCS#1 v1.5 fallback, `SecPolicyCreateBasicX509`, and generator objects in the insecure-random heuristic.
+
 ## Published 1.4.0 — 2026-10-10
 
 [1.4.0](https://github.com/ictechgy/apsa/releases/tag/v1.4.0) is bound to source commit `5bed4e5b02e4b60fd49573dbe51628c0e4d1455c` through a lightweight tag that was not moved. These paths are identical to the evaluated runtime `803220d`: `src`, `apsa`, `quaygate`, `pyproject.toml`, `uv.lock`, `requirements-release.txt`, `action.yml`, `server.json`, `plugins` and `.claude-plugin`. Public `main` was fast-forwarded to the same commit, and that push skipped the main-context publish path as intended ([37955636178](https://github.com/ictechgy/apsa/actions/runs/37955636178)).

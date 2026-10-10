@@ -104,11 +104,52 @@ APSA 1.4는 개발자와 코딩 에이전트가 바로 쓸 수 있도록 배포 
   해시이므로 값이 바뀝니다. 고정해 둔 해시를 갱신하세요. 수정하지 않은 1.3 스킬은
   `apsa skill install`로 업그레이드됩니다.
 
+APSA 1.5는 소스 스캔이 찾는 범위를 넓혔습니다. 새 검사는 MASTG 데모 미탐의 대부분에 해당하는 OWASP
+MASWE 약점을 다룹니다. 깨진 cipher와 암묵적 ECB, 상수로 만든 키 재료와 IV, 2048비트 미만 RSA 키,
+CryptoKit `Insecure` 다이제스트, 키에 묶이지 않은 생체 인증 결과, 기기 비밀번호 대체 허용, 새 생체
+등록 후에도 유지되는 키, TLS 1.2 미만, App Transport Security 밖의 iOS 연결, 네트워크 보안 설정의
+사용자 CA·cleartext, 검증되지 않은 App Links, 인텐트 리다이렉션, 앱 내부용 암시적 Intent, 경로 조작,
+secure coding 없는 keyed unarchiving, 꺼진 Safe Browsing, UIWebView, WKWebView 파일 접근입니다.
+MASWE 약점으로 라벨을 붙인 공개 취약/수정 쌍 24개의 blind holdout에서 APSA 1.5.0은 평가 대상 21쌍 중
+7쌍을 라벨 줄에서 찾았습니다.
+[blind 쌍 결과](https://github.com/ictechgy/apsa/blob/main/benchmarks/BLIND_PAIRS_RESULTS.ko.md)와
+[분석 범위와 한계](https://github.com/ictechgy/apsa/blob/main/docs/NEXT_ANALYSIS.md)를 참고하세요.
+
+**1.4에서 업그레이드할 때.**
+
+- 새 규칙이 발견과 커버리지 항목을 추가합니다: `AST-CRYPTO-WEAK-CIPHER`, `IOS-CRYPTO-WEAK-CIPHER`,
+  `AST-CRYPTO-HARDCODED-KEY`, `AST-CRYPTO-STATIC-IV`, `SOURCE-WEAK-KEY-SIZE`,
+  `SOURCE-BIOMETRIC-EVENT-BOUND`, `SOURCE-BIOMETRIC-FALLBACK`, `SOURCE-BIOMETRIC-ENROLLMENT`,
+  `SOURCE-WEAK-TLS-VERSION`, `IOS-ATS-BYPASS-API`, `ANDROID-NSC-USER-CA`, `ANDROID-DEEPLINK-AUTOVERIFY`,
+  `AST-INTENT-REDIRECTION`, `AST-IMPLICIT-INTENT`, `IOS-WEBVIEW-FILE-ACCESS`, `WEBVIEW-SAFE-BROWSING-OFF`,
+  `IOS-UIWEBVIEW`, `AST-PATH-TRAVERSAL`, `IOS-INSECURE-UNARCHIVE`. 기본 정책은 후보를 게이트에 쓰지
+  않지만, `required_rules`나 심각도 게이트가 있는 정책과 휴대형 기준선에는 새 항목으로 나타납니다.
+- 기존 규칙도 더 찾습니다. `AST-CRYPTO-ECB`는 `"AES"`만 쓴 transformation도 보고하며(제목이 "AES in ECB
+  mode is selected"로 바뀌고 fingerprint는 그대로), `AST-CRYPTO-WEAK-HASH`는 CryptoKit `Insecure.MD5`·
+  `Insecure.SHA1`을, `AST-SQL-CONCAT`은 `SQLiteQueryBuilder.query`, groupBy/having/orderBy/limit 인자,
+  중첩 클래스로 선언한 외부 노출 provider를 봅니다. `SOURCE-INSECURE-RANDOM`은 Swift·Objective-C에서도
+  실행되어 iOS 전용 트리의 커버리지가 not-applicable에서 checked로 바뀝니다.
+- AST 엔진이 Kotlin `let`·`also`·`use`·`apply`·`run`·`with` 람다를 따라가므로, 모든 구조 규칙이 그 안의
+  코드를 보고할 수 있습니다. `?.let` 람다나 `return@`이 있는 람다는 실행되지 않을 수도 있는 분기처럼
+  병합합니다.
+- `ANDROID-CLEARTEXT`는 참조된 네트워크 보안 설정에서도 나옵니다(configuration-confirmed이므로 code
+  scanning이 심각도를 매깁니다). 그 설정을 해석했고 minSdk가 24 이상이며, 설정이
+  `cleartextTrafficPermitted`를 명시했거나 targetSdk가 28 이상이면 매니페스트 `usesCleartextTraffic`
+  후보는 빠집니다.
+- 새 커버리지 상태로 감사가 불완전해질 수 있습니다. 참조된 설정을 해석할 수 없거나 스캔한 소스에 없거나
+  빌드 placeholder이면 `ANDROID-NSC-USER-CA`·`ANDROID-NSC-CONFIG`가 partial이고, 일치 한도에 걸린 검사도
+  partial입니다. 기본 `fail_on_partial`에서는 이런 스캔이 게이트에서 실패하고 기준선으로 내보낼 수
+  없습니다. 컴파일된 AAB 설정은 not-run입니다.
+- 텍스트 규칙은 패키지의 바이너리 XML을 checked로 세지 않으므로 APK에서 `WEBVIEW-SAFE-BROWSING-OFF`는
+  not-run입니다. 규칙 리소스에 `case_sensitive`·`once_per_file`이 생길 수 있고, inventory에
+  `deep_links[].browsable`·`network_security_parsed`가 추가됩니다. 수정하지 않은 1.4 스킬은
+  `apsa skill install`로 업그레이드되며 MCP 도구 매니페스트 해시는 그대로입니다.
+
 ## 검사 범위
 
 | 영역 | 제공하는 검사 |
 | --- | --- |
-| 소스 코드 | Java·Kotlin·Swift AST 분석, 제한된 Objective-C `.m` 후보, WebView·딥링크 패턴, Manifest·Info.plist·저장소·의존성 검사(Gradle catalog 사용 근거·application lockfile 포함), exported 컴포넌트·백업·targetSdk, Apple required-reason API와 privacy manifest 대조, 알려진 형식의 자격증명(마스킹), 보안 값용 약한 난수, 변경 가능한 암시적 PendingIntent, 모든 인증서·호스트를 허용하는 TrustManager·HostnameVerifier, 평가 없이 수락한 iOS 서버 신뢰와 약화된 ATS 예외 도메인, 외부 저장소 쓰기, Java 역직렬화 |
+| 소스 코드 | Java·Kotlin·Swift AST 분석, 제한된 Objective-C `.m` 후보, WebView·딥링크 패턴, Manifest·Info.plist·저장소·의존성 검사(Gradle catalog 사용 근거·application lockfile 포함), exported 컴포넌트·백업·targetSdk, Apple required-reason API와 privacy manifest 대조, 알려진 형식의 자격증명(마스킹), 보안 값용 약한 난수, 변경 가능한 암시적 PendingIntent, 모든 인증서·호스트를 허용하는 TrustManager·HostnameVerifier, 평가 없이 수락한 iOS 서버 신뢰와 약화된 ATS 예외 도메인, 외부 저장소 쓰기, Java 역직렬화, (1.5) 깨진 cipher·상수 키와 IV·짧은 RSA 키, 생체 인증 결합과 대체 수단, TLS 버전, ATS 밖 iOS API, 네트워크 보안 설정, App Links, 인텐트 리다이렉션과 암시적 Intent, 경로 조작, keyed unarchiving, Safe Browsing, UIWebView와 WKWebView 파일 접근 |
 | Android 빌드 | DEX 호출·상수 흐름, AAB base·feature 모듈 매니페스트와 모듈 DEX(항상 부분 감사), 리소스·네트워크 설정, exported 컴포넌트·provider, 서명 블록·v1 인증서 근거, ELF 하드닝 |
 | iOS 빌드 | 내장 framework·확장 메타데이터를 포함한 Mach-O 헤더, CodeDirectory 페이지·entitlement 해시 무결성(서명 인증 아님), 제한적인 entitlement·설정 검사(내장 XML entitlement, ATS 예외, provisioning 지표), PIE·카나리·문자열 근거 |
 | 공개 취약점 정보 | Apple·Android 공지(지정 기간의 Android 공지 소급 수집 포함), CVE, CISA KEV, OWASP 가이드, OSV 의존성 대조 |
@@ -408,7 +449,9 @@ Objective-C, 파서 격리와 독립 라벨의 새 공개 소스 2개를 다룹�
 [의존성 근거 평가](benchmarks/DEPENDENCY_RESULTS.ko.md)는 APSA의 Gradle catalog 사용 근거와
 lockfile 좌표를 공개 앱 holdout 3개에서 Gradle 자체 해석과 비교하며, 최초 블라인드 결과와
 정답을 본 뒤의 재실행을 구분합니다. [독립 취약·수정 소스 쌍](benchmarks/FPFN_RESULTS.ko.md)은
-공개 프로젝트의 취약·수정 커밋을 스캔 전에 고정한 정답으로 채점합니다. 둘 다 좁은 표본이며
+공개 프로젝트의 취약·수정 커밋을 스캔 전에 고정한 정답으로 채점합니다.
+[blind MASWE 라벨 쌍](benchmarks/BLIND_PAIRS_RESULTS.ko.md)은 약점으로 라벨을 붙인 새 holdout에서 1.5를
+측정하고, [OWASP MASTG 데모](benchmarks/MASTG_RESULTS.ko.md)는 개발용 벤치마크입니다. 모두 좁은 표본이며
 일반적인 정확도 추정이 아닙니다.
 
 소스는 [GitHub](https://github.com/ictechgy/apsa)에 공개되어 있습니다. [LICENSE](https://github.com/ictechgy/apsa/blob/main/LICENSE)는 원래 Quaygate의 MIT 고지를 보존합니다. 이번 공개는 통합 제품에 추가 라이선스를 선언하지 않습니다.

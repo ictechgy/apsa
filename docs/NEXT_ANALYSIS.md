@@ -1,4 +1,4 @@
-# Analysis extension (APSA 1.2 and 1.3)
+# Analysis extension (APSA 1.2, 1.3 and 1.5)
 
 English is the source of truth for this document. These changes were developed
 on the `hardening/real-app-cve-v1` branch and ship in APSA 1.2.0. They are not
@@ -170,6 +170,71 @@ sources, next holdout and generated AAB) was re-run on the frozen release
 runtime; see `RELEASE_READINESS.md` for runs and results.
 
 
+## APSA 1.5.0 additions
+
+1.5.0 was developed on `dev/detection` after 1.4.0. It adds source checks for the
+OWASP MASWE weaknesses behind most OWASP MASTG demo misses. Every new finding is
+a candidate except configuration evidence, and each rule's catalog `scope`
+states what it reads.
+
+- **Cryptography.** Framework `Cipher.getInstance` with DES, 3DES, RC4, RC2 or
+  Blowfish, or a bare `"AES"` whose provider default is ECB; CommonCrypto
+  broken algorithms and ECB options; CryptoKit `Insecure.MD5` and
+  `Insecure.SHA1`; RSA key sizes below 2048 bits. Key and IV material counts as
+  constant when it is a literal, a literal array, a `BuildConfig` field, an
+  immutable literal-initialized constant of the same file, or a conversion or
+  decoder of those. A local passed to another call, written element by element,
+  or named inside a closure that is not followed is treated as filled at
+  runtime, and zero-filled fields are never constants.
+- **Local authentication.** `BiometricPrompt` and `FingerprintManager` calls
+  without a CryptoObject (by argument count), `LAContext.evaluatePolicy` in a
+  file without a Keychain access control, device-credential fallback, and keys
+  or access controls that survive new biometric enrollment. A file with a
+  time-bound Keystore key that requires authentication counts as bound. Whether
+  the protected operation is sensitive is not decided.
+- **Transport.** TLS versions below 1.2 requested in code, Network.framework
+  plain TCP/UDP, BSD sockets and CFStream (outside ATS), and the network security
+  configuration referenced by the selected manifest: user CAs and cleartext,
+  outside debug-overrides and debug or test source sets. The configuration is
+  read from `<module>res/xml` or `<module>src/<set>/res/xml`, or beside the
+  manifest when the module has none. Several source-set variants make the
+  findings candidates. Unparsable text XML, a missing referenced file or a
+  build placeholder is partial; compiled AAB resources and unresolved compiled
+  references are not-run. A parsed configuration overrides the manifest's
+  `usesCleartextTraffic` on Android 7+ when it states cleartext or targets 28+.
+- **Platform.** App Links without `autoVerify`, Intents taken from another
+  Intent's extras and launched (unless a line compares the nested Intent's
+  component or package), and implicit Intents with an action in the source
+  file's package namespace sent to activities or broadcasts without a permission.
+  Implicit service Intents are not reported; they throw on API 21+.
+- **Untrusted data.** Path traversal from Intent data and extras, exported
+  provider arguments, provider display names, archive entry names and URL query
+  items into `File`, file streams, `RandomAccessFile`, `appendingPathComponent`,
+  `appending(path:)` and `URL(fileURLWithPath:)`. File descriptors and
+  `Context.openFileOutput` are not paths. `File(x).name`, `lastPathComponent` and
+  `substringAfterLast("/")` reduce input to a file name. A canonical-path prefix
+  comparison or a containment test for `".."` anywhere in the function
+  suppresses the result; neither is tied to the tainted variable, and
+  `replace("..", ...)` is not a check. Keyed unarchiving without secure coding
+  is a separate pattern rule.
+- **WebView.** Safe Browsing turned off in code or in the manifest meta-data
+  (source trees only), UIWebView, and WKWebView file-URL access through private
+  preferences or `loadFileURL` read access to a whole app directory.
+- **Analyzer model.** Kotlin `let`, `also`, `use`, `apply`, `run` and `with`
+  lambdas are followed as blocks; a `?.` call or a lambda with `return@` merges
+  like a branch that may not run. Other lambdas and Swift closures are still not
+  analyzed. Locals created with an imported class's constructor carry that type.
+  Guards are recognized by text in the same function, not by dominance.
+  Per-function and per-file budgets bound the cost; a check that reaches its
+  match budget reports partial coverage.
+- **Evaluation.** [OWASP MASTG demos](../benchmarks/MASTG_RESULTS.md) (a
+  development rerun: 52 of 78 in-scope failing demos, one false positive) and the
+  [blind MASWE-labeled pairs](../benchmarks/BLIND_PAIRS_RESULTS.md) (first run:
+  7 of 21 in-scope pairs at the labeled lines). Known gaps: flow across
+  functions, controls that were never added, inputs above the 64 MB text
+  staging budget (refused), and very large functions with many branches or
+  PendingIntent calls, which are slow but bounded.
+
 # 분석 확장 (APSA 1.2)
 
 영어가 원본이며 이 절은 번역입니다. 변경은 `hardening/real-app-cve-v1`
@@ -269,3 +334,45 @@ OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 
   일치), 불일치는 발견 항목이 아닌 경고입니다. `intel sync`는 최근 공지만 갱신하고, 1.2.0이
   캐시한 공지는 컴포넌트 이름에서 vendor 범위를 도출합니다.
   실기기는 사용하지 않았습니다([DEVICE_EVIDENCE.md](DEVICE_EVIDENCE.md)).
+
+## APSA 1.5.0 추가 사항
+
+영어 원본의 "APSA 1.5.0 additions" 절을 요약한 번역입니다. 1.4.0 이후 `dev/detection`에서 개발했습니다.
+
+- **암호.** DES·3DES·RC4·RC2·Blowfish를 고르거나 provider 기본값이 ECB인 `"AES"`만 쓴 `Cipher.getInstance`,
+  CommonCrypto의 깨진 알고리즘과 ECB 옵션, CryptoKit `Insecure.MD5`·`Insecure.SHA1`, 2048비트 미만 RSA
+  키를 봅니다. 키와 IV 재료는 리터럴, 리터럴 배열, `BuildConfig` 필드, 같은 파일의 불변 리터럴 상수, 또는 그
+  변환·디코딩일 때 상수로 봅니다. 다른 호출에 넘기거나 원소를 쓰거나 따라가지 않는 클로저에서 이름이 나온
+  지역 값은 런타임에 채운 것으로 보며, 0으로 채운 필드는 상수가 아닙니다.
+- **로컬 인증.** CryptoObject 없는 `BiometricPrompt`·`FingerprintManager` 호출(인자 개수 기준), Keychain
+  access control이 없는 파일의 `LAContext.evaluatePolicy`, 기기 비밀번호 대체 허용, 새 생체 등록 뒤에도
+  유지되는 키·access control을 봅니다. 인증을 요구하는 시간 제한 Keystore 키가 있는 파일은 결합된 것으로
+  봅니다. 보호하는 작업이 민감한지는 판단하지 않습니다.
+- **통신.** 코드에서 요청한 TLS 1.2 미만, ATS 밖의 Network.framework 평문 TCP/UDP·BSD 소켓·CFStream, 선택한
+  매니페스트가 참조하는 네트워크 보안 설정의 사용자 CA와 cleartext(debug-overrides, debug·test 소스셋 제외)를
+  봅니다. 설정은 `<module>res/xml` 또는 `<module>src/<set>/res/xml`에서, 없으면 매니페스트 옆에서 읽습니다.
+  소스셋 변형이 여러 개면 후보로 낮춥니다. 해석할 수 없는 텍스트 XML, 없는 참조 파일, 빌드 placeholder는
+  partial이고, 컴파일된 AAB 리소스와 해석되지 않은 컴파일 참조는 not-run입니다. 해석한 설정이 cleartext를
+  명시하거나 target 28 이상이면 Android 7+에서 매니페스트 `usesCleartextTraffic`를 대신합니다.
+- **플랫폼.** `autoVerify` 없는 App Links, 다른 Intent의 extra에서 꺼내 실행하는 Intent(중첩 Intent의
+  component·package를 비교하는 줄이 없을 때), 소스 파일 패키지 네임스페이스의 action을 쓰는 암시적 Intent를
+  권한 없이 액티비티·브로드캐스트로 보내는 경우를 봅니다. 암시적 서비스 Intent는 API 21+에서 예외가 나므로
+  보고하지 않습니다.
+- **신뢰할 수 없는 데이터.** Intent data·extra, 외부 노출 provider 인자, provider 표시 이름, 압축 항목 이름,
+  URL query item이 `File`, 파일 스트림, `RandomAccessFile`, `appendingPathComponent`, `appending(path:)`,
+  `URL(fileURLWithPath:)`에 닿는 경로 조작을 봅니다. 파일 디스크립터와 `Context.openFileOutput`은 경로가
+  아닙니다. `File(x).name`, `lastPathComponent`, `substringAfterLast("/")`는 입력을 파일 이름으로 줄입니다.
+  함수 안 어디든 canonical 경로 접두사 비교나 `".."` 포함 검사가 있으면 결과를 내지 않으며, 둘 다 오염된
+  변수와 연결하지 않습니다. `replace("..", ...)`는 검사로 보지 않습니다. secure coding 없는 keyed
+  unarchiving은 별도 패턴 규칙입니다.
+- **WebView.** 코드나 매니페스트 meta-data(소스 트리만)에서 끈 Safe Browsing, UIWebView, private
+  preference나 앱 디렉터리 전체에 대한 `loadFileURL` 읽기 권한으로 허용한 WKWebView 파일 URL 접근을 봅니다.
+- **분석 모델.** Kotlin `let`·`also`·`use`·`apply`·`run`·`with` 람다를 블록으로 따라가며, `?.` 호출이나
+  `return@`이 있는 람다는 실행되지 않을 수도 있는 분기처럼 병합합니다. 다른 람다와 Swift 클로저는 여전히
+  분석하지 않습니다. import한 클래스의 생성자로 만든 지역 값은 그 타입을 가집니다. 가드는 같은 함수의
+  텍스트로 인식하며 지배 관계는 보지 않습니다. 함수·파일 단위 예산이 비용을 제한하고, 일치 예산에 걸린
+  검사는 partial입니다.
+- **평가.** [OWASP MASTG 데모](../benchmarks/MASTG_RESULTS.ko.md)(개발 재실행: 평가 대상 실패 데모 78개 중
+  52개, FP 1개)와 [blind MASWE 라벨 쌍](../benchmarks/BLIND_PAIRS_RESULTS.ko.md)(첫 실행: 평가 대상 21쌍 중
+  7쌍을 라벨 줄에서 탐지). 알려진 한계는 함수 간 흐름, 추가된 적 없는 통제, 64MB 텍스트 스테이징 한도를
+  넘는 입력(거부), 분기나 PendingIntent 호출이 매우 많은 큰 함수(느리지만 제한됨)입니다.

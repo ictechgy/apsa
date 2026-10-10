@@ -70,6 +70,15 @@ TN 9**, 줄 단위 TP 4, 오류·미채점 0입니다. 이미 본 라벨에서�
 호출을 유지한 채 호출자의 selection을 SQLite tokenizer로 검증하는데, APSA는 이를 sanitizer로 모델링하지
 않습니다. OpenClaw 브리지처럼 호출 위치 규칙으로는 볼 수 없는 방어 코드 기반 수정입니다.
 
+## 1.5 개발 재실행
+
+1.5.0 런타임 `1fac679`의 [실행 38028124357](https://github.com/ictechgy/apsa/actions/runs/38028124357) 결과는
+**TP 6, FN 5, FP 2, TN 9**, 줄 단위 TP 4(판별 TP 2)로 1.4와 같습니다. 개발 중간 실행
+([38022781038](https://github.com/ictechgy/apsa/actions/runs/38022781038), `9562717`)에서는 FP가 하나 더
+있었습니다. 새 네트워크 보안 설정 검사가 로컬 미디어 서버용으로 127.0.0.1에만 cleartext를 허용한 Amaze의
+수정을 보고했기 때문입니다. 이제 루프백 호스트만 나열한 domain-config는 제외합니다. 이미 본 라벨에서의
+개발 변경이며, 1.5의 blind 측정은 [MASWE 라벨 쌍 holdout](BLIND_PAIRS_RESULTS.ko.md)입니다.
+
 ## 놓친 이유
 
 - **파일 간 흐름.** 두 Element X 쌍은 deep link URL이 parser와 navigation 계층을 거친

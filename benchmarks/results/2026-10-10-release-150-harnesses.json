@@ -1,0 +1,232 @@
+{
+  "ci_runs": {
+    "measured_head": 38028093523,
+    "runtime": 38027951214
+  },
+  "fpfn_score": {
+    "discriminating_tp": 2,
+    "errors": 0,
+    "fn": 5,
+    "fp": 2,
+    "line_level_tp": 4,
+    "scored_pairs": 11,
+    "tn": 9,
+    "tp": 6,
+    "unscored_sides": 0
+  },
+  "harnesses": {
+    "competitive_synthetic": {
+      "apsa_1_5_0": {
+        "apk": {
+          "cases": 6,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 3,
+          "tp": 3,
+          "unstable": 0
+        },
+        "source-zip": {
+          "cases": 40,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 22,
+          "tp": 18,
+          "unstable": 0
+        }
+      },
+      "mobsf": {
+        "apk": {
+          "cases": 6,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 3,
+          "tp": 3,
+          "unstable": 0
+        },
+        "source-zip": {
+          "cases": 40,
+          "failed": 0,
+          "fn": 6,
+          "fp": 4,
+          "tn": 18,
+          "tp": 12,
+          "unstable": 0
+        }
+      },
+      "released_apsa_1_1_0": {
+        "apk": {
+          "cases": 6,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 3,
+          "tp": 3,
+          "unstable": 0
+        },
+        "source-zip": {
+          "cases": 40,
+          "failed": 0,
+          "fn": 4,
+          "fp": 4,
+          "tn": 18,
+          "tp": 14,
+          "unstable": 0
+        }
+      },
+      "run": 38028131804,
+      "source_revision": "47ce760b183202944e014398fd48cc87ef133ea0",
+      "summary_sha256": "89ed4fcd3d397d2605c5420cd69cb147db640f12b205eba8acf2532fd03ea5b7"
+    },
+    "dependency_oracle_comparison": {
+      "identical": true,
+      "identical_to": "results/2026-10-09-dependency-final-head.json",
+      "result_sha256": "35eb0755d4d0b94c7e50d2c55d6d5888945a3dda27375b07ca525706de6d5fdc",
+      "run": 38028119805
+    },
+    "frozen_replay": {
+      "dependency_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 5,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 19,
+        "tp": 8,
+        "unknown": 5,
+        "unstable": 0
+      },
+      "run": 38028122415,
+      "selected_real_app_cve_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 0,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 3,
+        "tp": 1,
+        "unknown": 0,
+        "unstable": 0
+      },
+      "source_revision": "47ce760b183202944e014398fd48cc87ef133ea0",
+      "summary_sha256": "b7c4ba8a7366b1df27490ee496ef765b2d32a36e5fa65b01b0f50157cda52e15"
+    },
+    "generated_aab": {
+      "identical": true,
+      "identical_to": "results/2026-10-09-next-generated-aab-verified.json",
+      "run": 38028128153,
+      "summary_sha256": "cc1102f6258aa584b2b01c368cd2573bdc91a1fb318eed7c0260cbbf8fb1389c"
+    },
+    "independent_source_pairs": {
+      "run": 38028124357,
+      "score": {
+        "discriminating_tp": 2,
+        "errors": 0,
+        "fn": 5,
+        "fp": 2,
+        "line_level_tp": 4,
+        "scored_pairs": 11,
+        "tn": 9,
+        "tp": 6,
+        "unscored_sides": 0
+      }
+    },
+    "mastg_demos_development": {
+      "results_sha256": "7cd987f73c38bae9fd85adc31784affb2f1632099f7ca872703b1958a32728bc",
+      "run": 38028133933,
+      "strict_pairs": {
+        "correct": 0,
+        "tests": 2
+      },
+      "summary": {
+        "fn": 26,
+        "fp": 1,
+        "no-sample": 38,
+        "not-assessed": 22,
+        "tn": 4,
+        "tp": 52,
+        "unlabeled": 14
+      }
+    },
+    "next_holdout_replay": {
+      "cve_boundary_decisions_correct": [
+        16,
+        16
+      ],
+      "declared_facts_extracted": [
+        4,
+        4
+      ],
+      "remaining_parse_error_files": {
+        "tusky": 0,
+        "vlc-ios": 0
+      },
+      "run": 38028126198,
+      "source_revision": "47ce760b183202944e014398fd48cc87ef133ea0",
+      "stable": true,
+      "summary_sha256": "cf9dc6b17cf3b501872f44695df51980ddf49b30bb870b145be628c786a08847",
+      "unresolved_dependencies": {
+        "tusky": 15,
+        "vlc-ios": 0
+      }
+    },
+    "public_real_world_fresh_osv_capture": {
+      "apsa_scans_completed": [
+        6,
+        6
+      ],
+      "config_labels_correct": [
+        6,
+        6
+      ],
+      "dependency_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 5,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 19,
+        "tp": 8,
+        "unknown": 5,
+        "unstable": 0
+      },
+      "run": 38028129938,
+      "selected_real_app_cve_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 0,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 3,
+        "tp": 1,
+        "unknown": 0,
+        "unstable": 0
+      },
+      "source_revision": "47ce760b183202944e014398fd48cc87ef133ea0",
+      "summary_sha256": "2cf40c9bb448b6a8e8703136b53eea34412c838cc6c0d822fd47ae98cb036192"
+    }
+  },
+  "kind": "development-reruns-after-labels-seen",
+  "measured_head": "47ce760b183202944e014398fd48cc87ef133ea0",
+  "note": "Regression reruns of every evaluation harness on the frozen release runtime. They reuse truth that was already seen and are not new blind measurements; first blind results stay in their own files.",
+  "release": "1.5.0",
+  "rule_version": "2026.10.10.apsa.150",
+  "runtime_commit": "1fac6797df1fcccb55c415f48f2fbe47463cc6e8",
+  "schema": "apsa-release-evaluation-v1",
+  "src_tree": "268ae9699b9ac0bdf9068bc091d36f986487ae1c",
+  "superseded_candidate_run": null
+}

@@ -97,3 +97,41 @@ The remaining 42 misses are mostly modes APSA still has no rule for: iOS
 cleartext use outside ATS (MASWE-0026) and WebView file access (0034), untrusted
 data beyond the modeled sinks (0050), and intent, deep-link, WebView-loading and
 UI-exposure modes (0029, 0032, 0035, 0036).
+
+## 1.5 development rerun
+
+1.5 adds checks for the weaknesses behind most of the misses above. They were
+written after these demos had been read, so this is a development rerun on
+demos already seen; the blind measurement of 1.5 is the
+[MASWE-labeled pair holdout](BLIND_PAIRS_RESULTS.md).
+[Run 38028133933](https://github.com/ictechgy/apsa/actions/runs/38028133933) measured the 1.5.0 runtime
+`1fac679` (through `47ce760`, `results/2026-10-10-mastg-demos-dev150.json`) with the same pinned
+archive and method:
+
+| Demos | 1.4 rerun | 1.5 rerun |
+| --- | ---: | ---: |
+| In scope: TP / FN | 26 / 42 | 52 / 26 |
+| In scope: TN / FP | 4 / 1 | 4 / 1 |
+| Not assessed / no sample / unlabeled | 32 / 38 / 14 | 22 / 38 / 14 |
+| Strict pairs correct | 0 of 2 | 0 of 2 |
+
+In-scope recall is 67% (52 of 78) and precision 98% (52 of 53). Ten demos moved
+into scope because 1.5 relates a check to their weakness. The 26 new true
+positives come from: biometric and local authentication (5), hard-coded key
+material (3), short RSA keys (2), CommonCrypto broken ciphers and ECB (2), TLS
+below 1.2 (2), iOS connections outside ATS (2), and one each for the Android
+broken cipher, CryptoKit `Insecure` digests, the network security config's user
+CAs, UIWebView, provider SQL through `SQLiteQueryBuilder`, an implicit internal
+Intent, path traversal from a provider's display name, keyed unarchiving
+without secure coding, App Links without `autoVerify` and Safe Browsing turned
+off. MASTG-DEMO-0060 is still the only false positive.
+
+Of the 26 remaining misses, five are JavaScript-bridge and DOM demos that MASTG
+files under MASWE-0034 while APSA maps its bridge rules to MASWE-0033; the
+others are behaviors APSA has no static rule for (deep-link handlers without
+input validation, WebView navigation handlers, UI and keyboard exposure, backup
+exclusion, FileProvider grants, permission and purpose strings, PII in traffic,
+an `SSLSocket` without host name verification, an asymmetric key used for
+several purposes, `rand` reached through `@_silgen_name`, and attacker-side demo
+apps).
+

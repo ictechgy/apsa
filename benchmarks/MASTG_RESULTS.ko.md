@@ -58,3 +58,32 @@ PendingIntent 검사를 플래그 비트 값 기준으로 바꾼 뒤 같은 수�
 남은 FN 42개는 대부분 아직 규칙이 없는 유형입니다. ATS 밖 iOS 평문 통신(MASWE-0026), WebView 파일
 접근(0034), 모델링한 sink 밖의 신뢰할 수 없는 데이터(0050), 인텐트·딥링크·WebView 로딩·UI 노출(0029,
 0032, 0035, 0036)입니다.
+
+## 1.5 개발 재실행
+
+1.5는 위에서 놓친 데모의 대부분에 해당하는 약점 검사를 추가합니다. 이 검사는 데모를 읽은 뒤 작성했으므로
+이미 본 데모에서의 개발 재실행이며, 1.5의 blind 측정은 [MASWE 라벨 쌍 holdout](BLIND_PAIRS_RESULTS.ko.md)입니다.
+[실행 38028133933](https://github.com/ictechgy/apsa/actions/runs/38028133933)은 1.5.0 런타임 `1fac679`(`47ce760`을
+통해, `results/2026-10-10-mastg-demos-dev150.json`)를 같은 고정 아카이브와 방법으로 측정했습니다.
+
+| 데모 | 1.4 재실행 | 1.5 재실행 |
+| --- | ---: | ---: |
+| 평가 대상: TP / FN | 26 / 42 | 52 / 26 |
+| 평가 대상: TN / FP | 4 / 1 | 4 / 1 |
+| 평가 제외 / 샘플 없음 / 라벨 없음 | 32 / 38 / 14 | 22 / 38 / 14 |
+| 엄격한 쌍 정답 | 2개 중 0 | 2개 중 0 |
+
+평가 대상 recall은 67%(78개 중 52개), precision은 98%(53개 중 52개)입니다. 1.5가 약점에 검사를 연결해
+10개 데모가 평가 대상에 새로 들어왔습니다. 새 TP 26개의 출처는 생체·로컬 인증(5), 하드코딩된 키 재료(3),
+짧은 RSA 키(2), CommonCrypto의 깨진 cipher와 ECB(2), TLS 1.2 미만(2), ATS 밖 iOS 연결(2), 그리고 Android
+깨진 cipher, CryptoKit `Insecure` 다이제스트, 네트워크 보안 설정의 사용자 CA, UIWebView, `SQLiteQueryBuilder`를
+통한 provider SQL, 앱 내부용 암시적 Intent, provider 표시 이름에서 온 경로 조작, secure coding 없는 keyed
+unarchiving, `autoVerify` 없는 App Links, 꺼진 Safe Browsing 각 1개입니다. FP는 여전히 MASTG-DEMO-0060
+하나뿐입니다.
+
+남은 FN 26개 중 5개는 MASTG가 MASWE-0034로 분류하지만 APSA는 브리지 규칙을 MASWE-0033에 연결하는
+JavaScript 브리지·DOM 데모입니다. 나머지는 APSA에 정적 규칙이 없는 동작입니다(입력 검증 없는 딥링크 처리,
+WebView 내비게이션 처리, UI·키보드 노출, 백업 제외, FileProvider 권한 부여, 권한·목적 문자열, 트래픽 속
+개인정보, 호스트 이름 검증 없는 `SSLSocket`, 여러 용도로 쓰는 비대칭 키, `@_silgen_name`으로 부른 `rand`,
+공격자 쪽 데모 앱).
+
