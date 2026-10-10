@@ -145,6 +145,7 @@ def test_escaped_apostrophes_in_prose_do_not_backtrack():
         ('"a\n' * 20_000, strip_comments),
         ("/* a\n" * 20_000, strip_comments),
         ("<!-- a\n" * 20_000, strip_xml_comments),
+        ('"""a""' * 20_000 + '""""' * 20_000, strip_comments),
     ],
 )
 def test_unterminated_literals_and_comments_are_linear(text, strip):
@@ -161,6 +162,9 @@ def test_comment_stripping_keeps_literals_and_blanks_comments():
     # Triple-quoted strings keep their // and /* text; the code after them is still cleaned.
     assert strip_comments("s = '''\na /* b\n'''\nx // y\n") == "s = '''\na /* b\n'''\nx     \n"
     assert strip_comments('q = """a "b" // c\n"""\n') == 'q = """a "b" // c\n"""\n'
+    # A raw string ending in a quote closes at the last quote of the run, as in Kotlin.
+    raw = 'val s = """say "hi""""\nval url = "https://api.example.com" // x\n'
+    assert strip_comments(raw) == raw.replace("// x", "    ")
     # A /* with no */ after it (here a JS regex literal) stays text, so later code is still read.
     js = "const re = /\\/*/;\nconsole.log('token', password) // log\n"
     assert strip_comments(js) == "const re = /\\/*/;\nconsole.log('token', password)       \n"

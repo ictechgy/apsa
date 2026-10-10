@@ -25,8 +25,9 @@ def rules() -> list[dict]:
 # Every token ends at its terminator or at the end of the line (character literals) or
 # file, so a start without a terminator is consumed once instead of rescanned from each
 # later quote (Android \' prose). Triple-quoted strings (Kotlin, Swift, Dart, Groovy) may
-# span lines and hold quotes. The named groups record whether a terminator was found.
-TRIPLE = r"'''[\s\S]*?(?:'''|\Z)|" + '"""' + r'[\s\S]*?(?:"""|\Z)'
+# span lines and hold quotes; a Kotlin raw string may end in extra quotes ("""say "hi"""").
+# The named groups record whether a terminator was found.
+TRIPLE = r"'''[\s\S]*?(?:'''|\Z)|" + '"""' + r'[\s\S]*?(?:"{3,}|\Z)'
 DOUBLE = r'"(?:\\[\s\S]|[^"\\])*(?:(?P<quote>")|\\?\Z)'
 SINGLE_AND_LINE = r"'(?:\\.|[^'\\\n])*(?:'|\\?$)|//[^\n]*"
 BLOCK = r"/\*[\s\S]*?(?:(?P<close>\*/)|\Z)"
