@@ -69,6 +69,8 @@ def test_staging_tiers():
         "test/java/ATest.kt",
         "src/__tests__/app.ts",
         "src/app.test.ts",
+        "mobile/test/widget_test.dart",
+        "integration_test/app_test.dart",
     ):
         assert kind(path) == "tests", path
 
@@ -233,20 +235,25 @@ def test_oversized_files_share_one_warning(tmp_path, monkeypatch):
     assert len(result["warnings"]) == 2
 
 
-def test_reopened_file_must_be_the_listed_file(tmp_path, monkeypatch):
+def test_a_file_replaced_after_listing_is_left_out_unread(tmp_path, monkeypatch):
     target = tmp_path / "input"
     target.mkdir()
     (target / "Main.kt").write_text("class Main")
-    other = tmp_path / "Other.kt"
-    other.write_text("class Other")
+    # The reopen lands on a different file of the same name (an editor's save or a swapped store).
     (tmp_path / "Main.kt").write_text("class Elsewhere")
     elsewhere = input_snapshot.os.open(tmp_path, input_snapshot.os.O_RDONLY)
     monkeypatch.setattr(
         input_snapshot, "open_parent", lambda root, directory: input_snapshot.os.dup(elsewhere)
     )
-    with pytest.raises(ValueError, match="Input changed during staging"):
-        stage_input(target, tmp_path / "staged")
-    input_snapshot.os.close(elsewhere)
+    try:
+        result = stage_input(target, tmp_path / "staged")
+    finally:
+        input_snapshot.os.close(elsewhere)
+    assert result["files"] == 0 and not (tmp_path / "staged/Main.kt").exists()
+    assert result["app_scope_complete"] is False
+    assert result["warnings"][0] == (
+        "Source staging could not read or stage 1 entry (first: Main.kt: replaced during staging); coverage partial"
+    )
 
 
 def test_copy_errors_omit_the_file_not_the_audit(tmp_path, monkeypatch):
@@ -409,3 +416,10 @@ def test_omitted_platform_cannot_pass_required_rules(store, tmp_path, monkeypatc
     policy = {"schema_version": 1, "fail_on_partial": False, "required_rules": ["IOS-UIWEBVIEW"]}
     decision = evaluate(report, policy)
     assert decision["state"] == "incomplete" and decision["exit_code"] == 3
+    # A supplied SBOM is the dependency source, so omitted lockfiles do not make it partial.
+    sbom = tmp_path / "sbom.json"
+    sbom.write_text('{"bomFormat": "CycloneDX", "specVersion": "1.5", "components": []}')
+    with_sbom = scan(store, target, sbom=sbom)
+    assert not any(
+        c["rule_id"] == "DEPENDENCY-CVE" and c["state"] == "partial" for c in with_sbom["coverage"]
+    )

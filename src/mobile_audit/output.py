@@ -240,11 +240,7 @@ def sarif(report: dict, root: str | None = None) -> dict:
                 "level": "warning",
                 "message": {
                     "text": "Input staging left files out of this audit"
-                    + (
-                        f" ({left_out} files)"
-                        if left_out
-                        else " (directories over the entry or depth budget)"
-                    )
+                    + (f" ({left_out} files)" if left_out else " (directories that were not read)")
                     + "; results in them are absent, not fixed. For a complete audit, scan a narrower folder "
                     "such as the app module."
                 },

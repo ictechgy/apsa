@@ -425,7 +425,8 @@ def scan(
                 "note": "Declared source versions may differ from the built artifact. Reachability is not inferred from version matching.",
             }
         )
-    if inventory.get("input_snapshot", {}).get("app_scope_complete") is False:
+    # A supplied SBOM is the dependency source of record, so omitted lockfiles do not matter then.
+    if inventory.get("input_snapshot", {}).get("app_scope_complete") is False and sbom is None:
         coverage.append(
             {
                 "rule_id": "DEPENDENCY-CVE",

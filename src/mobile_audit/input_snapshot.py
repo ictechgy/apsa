@@ -56,7 +56,7 @@ TEST_SOURCES = re.compile(
     r"(?:^|/)src/(?:test(?:[A-Z0-9]\w*)?|androidTest\w*|[a-z]\w*Test(?:[A-Z]\w*)?)/"
     r"|^(?:test(?:[A-Z0-9]\w*)?|androidTest\w*)/"
     r"|(?:^|/)(?:[\w-]*Tests|__tests__)/"
-    r"|\.(?:test|spec)\.[jt]s$"
+    r"|\.(?:test|spec)\.[jt]s$|_test\.dart$|(?:^|/)integration_test/"
 )
 
 
@@ -269,9 +269,12 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                         continue
                     try:
                         metadata = os.fstat(opened)
-                        # Files are reopened by name after the walk; it must still be the listed file.
+                        # Files are reopened by name after the walk; a different file (for example
+                        # an editor's save, or a swapped-in report store) is left out, never read.
                         if (metadata.st_dev, metadata.st_ino) != listed_identity:
-                            raise ValueError("Input changed during staging; audit refused")
+                            omit(kind, listed)
+                            unreadable.append(f"{child}: replaced during staging")
+                            continue
                         size = metadata.st_size
                         if size > MAX_FILE:
                             oversized.append(child)

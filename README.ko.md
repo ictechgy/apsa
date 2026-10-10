@@ -160,7 +160,7 @@ MASWE 약점으로 라벨을 붙인 공개 취약/수정 쌍 24개의 blind hold
   기본 `fail_on_partial`에서는 게이트가 여전히 실패하고 부분 보고서는 기준선이 될 수 없습니다. 항목
   100,000개·깊이 64단계 한도도 거부 대신 읽기를 멈춥니다.
 - 앱 코드·설정이나 기타 출하 텍스트가 빠지면(`app_scope_complete: false`) not-applicable coverage도
-  partial이 되고 `DEPENDENCY-CVE`에 partial 항목이 추가되므로, `fail_on_partial = false`여도 필수 규칙은
+  partial이 되고 `DEPENDENCY-CVE`에 partial 항목이 추가되므로(`--sbom`으로 의존성을 준 경우 제외), `fail_on_partial = false`여도 필수 규칙은
   통과하지 않습니다.
 - 이런 감사의 SARIF에는 경고 알림과 `run.properties.inputSnapshot`이 들어갑니다.
   `fail-on-incomplete: "false"`인 워크플로는 1.5.0에서 실패하던 경우에도 이제 경고와 함께 통과하고 부분 결과를

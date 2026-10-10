@@ -205,7 +205,8 @@ of refusing them and fixes a slowdown on Android translations.
   of refusing.
 - If app code, configuration or other shipped text is left out
   (`app_scope_complete: false`), not-applicable coverage becomes partial too
-  and `DEPENDENCY-CVE` gains a partial entry, so required rules cannot pass
+  and `DEPENDENCY-CVE` gains a partial entry (unless `--sbom` supplies the
+  dependencies), so required rules cannot pass
   even with `fail_on_partial = false`.
 - SARIF from such an audit carries a warning notification and
   `run.properties.inputSnapshot`. A workflow with `fail-on-incomplete: "false"`
