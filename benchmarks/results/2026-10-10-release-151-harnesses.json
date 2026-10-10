@@ -1,0 +1,335 @@
+{
+  "blind_holdout_development_rerun": {
+    "changed_pairs_vs_first_run": {
+      "osmand-open-gpx-deeplink-path-traversal": {
+        "audit_incomplete": true,
+        "first": "error (APSA exit 1, input staging budget)",
+        "labeled_file_states": {
+          "src/net/osmand/plus/helpers/IntentHelper.java": "checked"
+        },
+        "rerun": {
+          "discriminating_tp": false,
+          "fixed": "tn",
+          "vulnerable": "fn",
+          "vulnerable_line_level": false
+        }
+      }
+    },
+    "in_scope_totals": {
+      "discriminating_tp": 5,
+      "errors": 0,
+      "fn": 13,
+      "fp": 4,
+      "line_level_tp": 7,
+      "scored_pairs": 22,
+      "tn": 18,
+      "tp": 9,
+      "unscored_sides": 0
+    },
+    "kind": "development rerun on truth already seen; the first blind result stays in 2026-10-10-blind-holdout2-first.json",
+    "other_pairs": "hits identical to the first run",
+    "run": 38048789526,
+    "totals": {
+      "discriminating_tp": 5,
+      "errors": 0,
+      "fn": 15,
+      "fp": 4,
+      "line_level_tp": 7,
+      "scored_pairs": 24,
+      "tn": 20,
+      "tp": 9,
+      "unscored_sides": 0
+    }
+  },
+  "ci_runs": {
+    "runtime": 38048775936,
+    "runtime_note": "attempt 1: macos-15/3.12 hit the 250 ms native parse deadline in test_parser_depth; attempt 2 passed all 11 jobs"
+  },
+  "finding_diff_vs_1_5_0": {
+    "competitive": {
+      "added_by_rule": {},
+      "coverage_changes": 0,
+      "findings_new": 165,
+      "findings_old": 165,
+      "removed_by_rule": {},
+      "reports_compared": 138,
+      "runs": [
+        38028131804,
+        38048786165
+      ]
+    },
+    "fpfn_pairs": {
+      "added_by_rule": {},
+      "coverage_changes": 0,
+      "findings_new": 1621,
+      "findings_old": 1621,
+      "removed_by_rule": {},
+      "reports_compared": 26,
+      "runs": [
+        38028124357,
+        38048779572
+      ]
+    },
+    "holdout": {
+      "added_by_rule": {},
+      "coverage_changes": 0,
+      "findings_new": 87,
+      "findings_old": 87,
+      "removed_by_rule": {},
+      "reports_compared": 6,
+      "runs": [
+        38028126198,
+        38048781400
+      ]
+    },
+    "real": {
+      "added_by_rule": {},
+      "coverage_changes": 0,
+      "findings_new": 594,
+      "findings_old": 594,
+      "removed_by_rule": {},
+      "reports_compared": 18,
+      "runs": [
+        38028129938,
+        38048784600
+      ]
+    },
+    "replay": {
+      "added_by_rule": {},
+      "coverage_changes": 0,
+      "findings_new": 594,
+      "findings_old": 594,
+      "removed_by_rule": {},
+      "reports_compared": 18,
+      "runs": [
+        38028122415,
+        38048777665
+      ]
+    }
+  },
+  "fpfn_score": {
+    "discriminating_tp": 2,
+    "errors": 0,
+    "fn": 5,
+    "fp": 2,
+    "line_level_tp": 4,
+    "scored_pairs": 11,
+    "tn": 9,
+    "tp": 6,
+    "unscored_sides": 0
+  },
+  "harnesses": {
+    "competitive_synthetic": {
+      "apsa_1_5_1": {
+        "apk": {
+          "cases": 6,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 3,
+          "tp": 3,
+          "unstable": 0
+        },
+        "source-zip": {
+          "cases": 40,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 22,
+          "tp": 18,
+          "unstable": 0
+        }
+      },
+      "mobsf": {
+        "apk": {
+          "cases": 6,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 3,
+          "tp": 3,
+          "unstable": 0
+        },
+        "source-zip": {
+          "cases": 40,
+          "failed": 0,
+          "fn": 6,
+          "fp": 4,
+          "tn": 18,
+          "tp": 12,
+          "unstable": 0
+        }
+      },
+      "released_apsa_1_1_0": {
+        "apk": {
+          "cases": 6,
+          "failed": 0,
+          "fn": 0,
+          "fp": 0,
+          "tn": 3,
+          "tp": 3,
+          "unstable": 0
+        },
+        "source-zip": {
+          "cases": 40,
+          "failed": 0,
+          "fn": 4,
+          "fp": 4,
+          "tn": 18,
+          "tp": 14,
+          "unstable": 0
+        }
+      },
+      "run": 38048786165,
+      "source_revision": "a76fd9f19b303a457474199fad9510b334174478",
+      "summary_sha256": "c916122edce74e2e3e8e7af1ada0b3ab363d75de1c54ca5cdd2d631677255a1f"
+    },
+    "dependency_oracle_comparison": {
+      "identical": true,
+      "identical_to": "results/2026-10-09-dependency-final-head.json",
+      "result_sha256": "35eb0755d4d0b94c7e50d2c55d6d5888945a3dda27375b07ca525706de6d5fdc",
+      "run": 38048775788
+    },
+    "frozen_replay": {
+      "dependency_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 5,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 19,
+        "tp": 8,
+        "unknown": 5,
+        "unstable": 0
+      },
+      "run": 38048777665,
+      "selected_real_app_cve_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 0,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 3,
+        "tp": 1,
+        "unknown": 0,
+        "unstable": 0
+      },
+      "source_revision": "a76fd9f19b303a457474199fad9510b334174478",
+      "summary_sha256": "0dc33f5a0c43a0f71e89ff91cf9696fffc4b0cee454a469eab2c530d329e7079"
+    },
+    "generated_aab": {
+      "identical": true,
+      "identical_to": "results/2026-10-09-next-generated-aab-verified.json",
+      "run": 38048783228,
+      "summary_sha256": "cc1102f6258aa584b2b01c368cd2573bdc91a1fb318eed7c0260cbbf8fb1389c"
+    },
+    "independent_source_pairs": {
+      "run": 38048779572,
+      "score": {
+        "discriminating_tp": 2,
+        "errors": 0,
+        "fn": 5,
+        "fp": 2,
+        "line_level_tp": 4,
+        "scored_pairs": 11,
+        "tn": 9,
+        "tp": 6,
+        "unscored_sides": 0
+      }
+    },
+    "mastg_demos_development": {
+      "results_sha256": "7cd987f73c38bae9fd85adc31784affb2f1632099f7ca872703b1958a32728bc",
+      "run": 38048787820,
+      "strict_pairs": {
+        "correct": 0,
+        "tests": 2
+      },
+      "summary": {
+        "fn": 26,
+        "fp": 1,
+        "no-sample": 38,
+        "not-assessed": 22,
+        "tn": 4,
+        "tp": 52,
+        "unlabeled": 14
+      }
+    },
+    "next_holdout_replay": {
+      "cve_boundary_decisions_correct": [
+        16,
+        16
+      ],
+      "declared_facts_extracted": [
+        4,
+        4
+      ],
+      "remaining_parse_error_files": {
+        "tusky": 0,
+        "vlc-ios": 0
+      },
+      "run": 38048781400,
+      "source_revision": "a76fd9f19b303a457474199fad9510b334174478",
+      "stable": true,
+      "summary_sha256": "8ceced57c4fbec3ad9dca84878c63cdc82520795392bf2cbecae294f4ee2b5b1",
+      "unresolved_dependencies": {
+        "tusky": 15,
+        "vlc-ios": 0
+      }
+    },
+    "public_real_world_fresh_osv_capture": {
+      "apsa_scans_completed": [
+        6,
+        6
+      ],
+      "config_labels_correct": [
+        6,
+        6
+      ],
+      "dependency_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 5,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 19,
+        "tp": 8,
+        "unknown": 5,
+        "unstable": 0
+      },
+      "run": 38048784600,
+      "selected_real_app_cve_score": {
+        "completed_recall": 1.0,
+        "correct_abstentions": 0,
+        "end_to_end_recall": 1.0,
+        "failed": 0,
+        "failed_affected": 0,
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "tn": 3,
+        "tp": 1,
+        "unknown": 0,
+        "unstable": 0
+      },
+      "source_revision": "a76fd9f19b303a457474199fad9510b334174478",
+      "summary_sha256": "55741132393c023c18bfc4f6a1f774c4a9af48a77a05dfbdddad5836a12e5522"
+    }
+  },
+  "kind": "development-reruns-after-labels-seen",
+  "note": "Regression reruns of every evaluation harness on the frozen release runtime. They reuse truth that was already seen and are not new blind measurements; first blind results stay in their own files.",
+  "release": "1.5.1",
+  "rule_version": "2026.10.10.apsa.151",
+  "runtime_commit": "a76fd9f19b303a457474199fad9510b334174478",
+  "schema": "apsa-release-evaluation-v1",
+  "src_tree": "d194441e12df9f3f8cb2d2237321eabc549d9320",
+  "superseded_candidate_run": null
+}

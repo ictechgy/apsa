@@ -120,8 +120,8 @@ KeePassDroid·ZIPFoundation·Telnyx는 완전했습니다. 라벨 파일은 모�
   문제(Brave)는 동작에 대한 추론이 필요합니다.
 - **스캔 실패 (1).** 원본 결과에는 APSA가 종료 코드 1로 끝났다는 것만 기록됐습니다. 실행 후 취약 커밋의
   OsmAnd 앱 폴더를 로컬에서 스캔해 거부("Input staging total byte budget exceeded")를 재현했습니다. 이 폴더의
-  텍스트 입력은 71MB이고 그중 53MB가 번역 XML이라 64MB 입력 스테이징 한도를 넘습니다. APSA는 이런 감사를
-  부분 결과로 돌려주지 않고 거부합니다.
+  텍스트 입력은 71MB이고 그중 53MB가 번역 XML이라 64MB 입력 스테이징 한도를 넘습니다. APSA 1.5.0은 이런
+  감사를 부분 결과로 돌려주지 않고 거부합니다. 1.5.1은 부분 감사합니다(아래 개발 재실행 참조).
 
 ## 수정 쪽이 탐지된 이유
 
@@ -135,6 +135,22 @@ Nextcloud Talk의 화면 속 화면(PiP) receiver는 같은 기능의 별도 MAS
 파일 단위 TP 9개 중 2개는 수정 쪽에서도 발화하는 존재 일치이며 줄 단위 일치가 아닙니다. 위의 Talk
 PendingIntent와, `WKScriptMessageHandler` 클래스 선언·delegate 속성·초기화에 일치한 Home Assistant의
 `WEBVIEW-JS-BRIDGE`입니다.
+
+## 1.5.1 개발 재실행 (2026-10-10, blind 아님)
+
+같은 워크플로를 1.5.1 런타임 `a76fd9f`에서 다시 실행했습니다
+([실행 38048789526](https://github.com/ictechgy/apsa/actions/runs/38048789526)). 이미 본 정답을 쓰므로
+위의 blind 결과를 대신하지 않습니다.
+
+- **OsmAnd 쌍이 이제 스캔됩니다.** 스테이징 한도에 맞추려고 번역 파일을 빼므로 부분 감사입니다.
+  - 라벨이 붙은 `IntentHelper.java`는 스테이징·분석됐지만 어떤 규칙도 걸리지 않습니다.
+  - 취약 쪽은 FN, 수정 쪽은 TN입니다.
+  - 딥링크 `name`은 같은 함수 안에서 파일 경로에 닿지만, 앱 자체의 `getAppPath`와
+    `AndroidNetworkUtils.downloadFileAsync`를 거칩니다. `AST-PATH-TRAVERSAL`은 이것들을 파일 sink로 보지 않으며,
+    프로젝트 taint 명세가 있으면 잡을 수 있습니다.
+- **나머지 23쌍**의 탐지는 첫 실행과 같습니다.
+- **평가 대상 합계:** 채점 22쌍 중 7쌍(32%)을 라벨 줄에서 탐지했고, 판별 TP 5, 수정 쪽 FP는 22쌍 중 4쌍,
+  오류는 0입니다.
 
 ## 한계
 

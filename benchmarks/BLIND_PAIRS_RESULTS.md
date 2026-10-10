@@ -154,7 +154,8 @@ instance.
   After the run, scanning OsmAnd's app folder at the vulnerable commit locally
   reproduced the refusal ("Input staging total byte budget exceeded"): the folder
   has 71 MB of text input, 53 MB of it translation XML, above the 64 MB input
-  staging budget. APSA refuses such an audit instead of returning a partial one.
+  staging budget. APSA 1.5.0 refuses such an audit instead of returning a partial
+  one; 1.5.1 audits it partially (see the development rerun below).
 
 ## Why fixed sides were flagged
 
@@ -172,6 +173,25 @@ Two of the nine file-level TPs are presence matches that also fire on the fixed
 side and are not line-level hits: that Talk PendingIntent, and Home
 Assistant's `WEBVIEW-JS-BRIDGE`, which matches the `WKScriptMessageHandler`
 class declaration, its delegate property and initializer.
+
+## Development rerun on 1.5.1 (2026-10-10, not blind)
+
+The same workflow was re-run on the 1.5.1 runtime `a76fd9f`
+([run 38048789526](https://github.com/ictechgy/apsa/actions/runs/38048789526)),
+on truth already seen. This rerun does not replace the blind result above.
+
+- **The OsmAnd pair now scans.** Its audit is partial: localized translation
+  files are left out to fit the staging budget.
+  - The labeled `IntentHelper.java` was staged and analyzed, and no rule fires
+    on it.
+  - The vulnerable side is a FN and the fixed side a TN.
+  - The deep-link `name` reaches the file path in the same function, but
+    through the app's own `getAppPath` and `AndroidNetworkUtils.downloadFileAsync`.
+    `AST-PATH-TRAVERSAL` does not model these as file sinks; a project taint
+    specification could.
+- **The other 23 pairs** have the same hits as the first run.
+- **In-scope totals:** 22 scored pairs, 7 at the labeled lines (32%), 5
+  discriminating, fixed-side FP 4 of 22, no errors.
 
 ## Limits
 

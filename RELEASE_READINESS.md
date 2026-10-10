@@ -1,5 +1,102 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## APSA 1.5.1 large inputs — candidate, 2026-10-10
+
+1.5.1 is a patch on 1.5.0, developed on `dev/large-input`. Upgrade effects are listed in the README ("Upgrading from 1.5.0").
+
+- **Large source trees are audited partially, not refused.** 1.5.0 refused a tree over the 64 MiB or 12,000-file text staging budget; OsmAnd's app folder, with 71 MB of text, was the failed scan in the blind run.
+  - Files are now staged by kind:
+    1. app code and configuration: configuration, then native code, then JS/TS/Dart, then headers, vendored code and `assets/`;
+    2. other shipped text;
+    3. localized or qualified Android values;
+    4. tests.
+  - `inventory.input_snapshot.omitted` counts what was left out.
+  - `app_scope_complete` is false when code, configuration or shipped text was left out. Not-applicable coverage then becomes partial, so required rules cannot pass.
+  - The following now leave files out with one warning per cause instead of refusing:
+    - the entry budget (100,000, cut by name on every filesystem) and the depth budget (64);
+    - oversized and unreadable files;
+    - copy errors;
+    - files replaced after listing.
+  - SARIF carries a staging notification and `inputSnapshot`; MCP context carries `input.input_snapshot`.
+- **Translation slowdown fixed.** 1.5.0 cleaned XML with the source comment stripper, whose character-literal pattern backtracked quadratically on `strings.xml` prose with escaped apostrophes: 9 s for 172 KiB, and about 150 s for 694 KiB, past the 90 s parser timeout.
+  - XML now strips only `<!-- -->`.
+  - The source cleaner ends every unterminated token in linear time and keeps a stray quote or `/*` as text, as 1.5.0 did.
+  - It reads `'''` and `"""` strings as literals, including Kotlin raw strings that end in quotes.
+- **AST budget:** within the 32 MiB budget, tests are analyzed after shipped code.
+
+The evaluated runtime is public `a76fd9f19b303a457474199fad9510b334174478` (`src` tree `d194441e12df9f3f8cb2d2237321eabc549d9320`, package/rule version `1.5.1` / `2026.10.10.apsa.151`). Its [CI 38048775936](https://github.com/ictechgy/apsa/actions/runs/38048775936) passed all eleven jobs on the second attempt. The first attempt failed one job (macos-15, Python 3.12): `test_parser_depth` reached the parser's 250 ms native parse deadline on the runner. The change does not touch that path, and the same test passed in the other ten jobs and on the previous commit's [CI 38048342242](https://github.com/ictechgy/apsa/actions/runs/38048342242). Later commits may change only documentation and recorded results. The tag must leave `src`, `apsa`, `quaygate`, `pyproject.toml`, `uv.lock`, `requirements-release.txt`, `action.yml`, `server.json`, `plugins` and `.claude-plugin` identical to `a76fd9f`.
+
+Every evaluation harness was re-run on this runtime (`benchmarks/results/2026-10-10-release-151-harnesses.json`). These are development reruns on truth already seen.
+
+| Harness | Run | Result |
+| --- | --- | --- |
+| Gradle oracle comparison, three holdouts | [38048775788](https://github.com/ictechgy/apsa/actions/runs/38048775788) | Identical to `dependency-final-head.json` |
+| Frozen six-app replay | [38048777665](https://github.com/ictechgy/apsa/actions/runs/38048777665) | 8 TP / 0 FP / 0 FN / 19 TN / 5 correct abstentions; selected app CVE 1 TP / 3 TN |
+| Independent vulnerable/fixed source pairs | [38048779572](https://github.com/ictechgy/apsa/actions/runs/38048779572) | TP 6 / FN 5 / FP 2 / TN 9, line-level TP 4, same as 1.5.0 |
+| Next holdout replay | [38048781400](https://github.com/ictechgy/apsa/actions/runs/38048781400) | 4 / 4 declared facts, 16 / 16 Apple CVE boundary decisions, stable |
+| Generated AAPT2 AAB | [38048783228](https://github.com/ictechgy/apsa/actions/runs/38048783228) | Identical to `next-generated-aab-verified.json` |
+| Public real-world sources, fresh OSV capture | [38048784600](https://github.com/ictechgy/apsa/actions/runs/38048784600) | 6 / 6 scans, 6 / 6 configuration labels; 8 TP / 0 FP / 0 FN / 19 TN / 5 correct abstentions; selected app CVE 1 TP / 3 TN |
+| Synthetic APSA/MobSF comparison | [38048786165](https://github.com/ictechgy/apsa/actions/runs/38048786165) | APSA 1.5.1 source 18 / 18 risks, 0 / 22 control alerts; APK 3 / 3, 0 / 3. MobSF 12 / 18 with 4 control alerts |
+| OWASP MASTG v2.0 demos (development rerun) | [38048787820](https://github.com/ictechgy/apsa/actions/runs/38048787820) | In scope TP 52 / FN 26 / TN 4 / FP 1, every demo outcome the same as 1.5.0 |
+| Blind MASWE-labeled pairs (development rerun) | [38048789526](https://github.com/ictechgy/apsa/actions/runs/38048789526) | OsmAnd now scans; 7 of 22 scored in-scope pairs at the labeled lines, fixed-side FP 4 of 22 |
+
+**Findings compared with 1.5.0.** Reports were matched by path, and findings by rule, path, line and status, against the 1.5.0 runtime's runs:
+
+| Harness | Reports | Findings |
+| --- | --- | --- |
+| Frozen replay | 18 | 594 |
+| Next holdout | 6 | 87 |
+| Public real-world | 18 | 594 |
+| Synthetic comparison | 138 | 165 |
+| Independent pairs | 26 | 1,621 |
+
+No finding or coverage state was added or removed. On these inputs the cleaning, staging-order and AST-order changes changed no result. Cleaning OsmAnd's 2,946 code and Gradle files gives byte-identical output to 1.5.0.
+
+**OsmAnd (development rerun on truth already seen).**
+- **Local scan of the app folder at the vulnerable commit:**
+  - exit 3 (partial), 21 s, 167 MB RSS;
+  - 6,215 files (64 MiB) staged, and 10 localized values files (4.1 MiB) omitted;
+  - `app_scope_complete` true, 50 findings.
+- **Blind-holdout workflow rerun:** it scored the pair. The labeled `IntentHelper.java` was staged and analyzed with no finding on it: FN on the vulnerable side, TN on the fixed side. The deep-link name reaches the path through the app's own `getAppPath` and download helper, which `AST-PATH-TRAVERSAL` does not model as file sinks.
+- **Totals:** the in-scope totals become 7 of 22 at the labeled lines and fixed-side FP 4 of 22. The other 23 pairs' hits are identical to the first run.
+- **The blind result stays the first measurement** (7 of 21; [BLIND_PAIRS_RESULTS.md](benchmarks/BLIND_PAIRS_RESULTS.md)).
+
+Reviews were Claude subagent reviews, not an external lane:
+
+- **Code review: REQUEST CHANGES, then APPROVE, then REQUEST CHANGES.**
+  - **First round** (`be92012`), two P1s, both fixed by `d9bff91`:
+    - a copy error aborted the whole audit instead of leaving that file out;
+    - vendored code was staged before configuration.
+  - **APPROVE** on `3508a28`.
+  - **REQUEST CHANGES** on `cfa55b9`, for one regression: a Kotlin raw string ending in a quote swapped strings and code for the rest of the file. The proposed one-line fix was applied unchanged in `a76fd9f`.
+- **Architecture review: WATCH, code CLEAR on `a76fd9f`.**
+  - **First round** (`be92012`), three P1s, fixed in `fe3fbe1` through `d9bff91`:
+    - required rules could pass on an omitted platform when `fail_on_partial` is off;
+    - shipped files were ranked with tests, under prose keys;
+    - this release record was missing.
+  - **Later rounds** confirmed `fe3fbe1` through `a76fd9f`. The release verdict moves from WATCH to CLEAR once this record exists.
+
+Release steps, once approved:
+
+1. Tag `v1.5.1` on the release commit.
+2. The tag-context workflow publishes to PyPI by Trusted Publishing and to the MCP Registry by GitHub OIDC.
+3. Fast-forward `main` only after PyPI serves 1.5.1.
+4. Record the post-publication checks: the Action smoke test repository, a cold `uvx apsa@1.5.1` start, the marketplace plugin install and the registry listing.
+
+Deferred non-blocking items. Each one fails closed (partial or not-applicable-to-partial):
+
+- **Budget share:** lock files such as `package-lock.json` (up to 8 MiB each) are configuration and can use the budget before code.
+- **Module order:** within a kind, files go in path order, so a large tree can lose a whole module. There is no per-module round-robin or per-module omission count.
+- **AST budget order:** the AST byte budget moves only tests last; vendored code can use it before app code.
+- **SBOM fingerprint:** the SBOM app hash uses the partial input fingerprint.
+- **Missing incompleteness flags:** `reports compare` and the Action job summary carry no incompleteness flag. The SARIF run and the gates do.
+- **Classification:**
+  - production folders named like `*Tests/` are staged as tests;
+  - `Frameworks/` is always treated as vendored;
+  - JS template literals are not cleaned, as in 1.5.0.
+- **Parser headroom:** locally, a full-budget Kotlin/Java tree takes about 37 s of the 90 s parser timeout.
+- **1.5.0 items:** the other deferred items from the 1.5.0 entry below remain.
+
 ## Published 1.5.0 — 2026-10-10
 
 [1.5.0](https://github.com/ictechgy/apsa/releases/tag/v1.5.0) is bound to source commit `4a7fdff69c1f7085a9e199175eb99113959707cf` through a lightweight tag that was not moved. These paths are identical to the evaluated runtime `1fac679`: `src`, `apsa`, `quaygate`, `pyproject.toml`, `uv.lock`, `requirements-release.txt`, `action.yml`, `server.json`, `plugins` and `.claude-plugin`. Public `main` was fast-forwarded to the same commit, and that push skipped the main-context publish path as intended ([38030417846](https://github.com/ictechgy/apsa/actions/runs/38030417846)).
