@@ -105,13 +105,14 @@ APSA 1.4는 개발자와 코딩 에이전트가 바로 쓸 수 있도록 배포 
   `apsa skill install`로 업그레이드됩니다.
 
 APSA 1.5는 소스 스캔이 찾는 범위를 넓혔습니다. 새 검사는 MASTG 데모 미탐의 대부분에 해당하는 OWASP
-MASWE 약점을 다룹니다. 깨진 cipher와 암묵적 ECB, 상수로 만든 키 재료와 IV, 2048비트 미만 RSA 키,
+MASWE 약점을 다룹니다. 깨진 cipher와 암묵적 ECB, 상수로 만든 키 재료와 IV, 짧은(512–1536비트) RSA·DSA·DH 키 크기,
 CryptoKit `Insecure` 다이제스트, 키에 묶이지 않은 생체 인증 결과, 기기 비밀번호 대체 허용, 새 생체
 등록 후에도 유지되는 키, TLS 1.2 미만, App Transport Security 밖의 iOS 연결, 네트워크 보안 설정의
 사용자 CA·cleartext, 검증되지 않은 App Links, 인텐트 리다이렉션, 앱 내부용 암시적 Intent, 경로 조작,
 secure coding 없는 keyed unarchiving, 꺼진 Safe Browsing, UIWebView, WKWebView 파일 접근입니다.
-MASWE 약점으로 라벨을 붙인 공개 취약/수정 쌍 24개의 blind holdout에서 APSA 1.5.0은 평가 대상 21쌍 중
-7쌍을 라벨 줄에서 찾았습니다.
+MASWE 약점으로 라벨을 붙인 공개 취약/수정 쌍 24개의 blind holdout에서 APSA 1.5.0은 채점한 평가 대상 21쌍
+중 7쌍을 라벨 줄에서 찾았습니다(Wilson 95% 17–55%). 7쌍 중 2쌍은 1.5의 새 규칙이, 5쌍은 1.4에 있던 규칙이
+찾았습니다. 수정 쪽 FP 상한은 21쌍 중 4쌍이며, 22번째 평가 대상 쌍은 스캔에 실패했습니다.
 [blind 쌍 결과](https://github.com/ictechgy/apsa/blob/main/benchmarks/BLIND_PAIRS_RESULTS.ko.md)와
 [분석 범위와 한계](https://github.com/ictechgy/apsa/blob/main/docs/NEXT_ANALYSIS.md)를 참고하세요.
 
@@ -123,7 +124,11 @@ MASWE 약점으로 라벨을 붙인 공개 취약/수정 쌍 24개의 blind hold
   `SOURCE-WEAK-TLS-VERSION`, `IOS-ATS-BYPASS-API`, `ANDROID-NSC-USER-CA`, `ANDROID-DEEPLINK-AUTOVERIFY`,
   `AST-INTENT-REDIRECTION`, `AST-IMPLICIT-INTENT`, `IOS-WEBVIEW-FILE-ACCESS`, `WEBVIEW-SAFE-BROWSING-OFF`,
   `IOS-UIWEBVIEW`, `AST-PATH-TRAVERSAL`, `IOS-INSECURE-UNARCHIVE`. 기본 정책은 후보를 게이트에 쓰지
-  않지만, `required_rules`나 심각도 게이트가 있는 정책과 휴대형 기준선에는 새 항목으로 나타납니다.
+  않습니다. 새 configuration-confirmed 발견(`ANDROID-NSC-USER-CA`, 네트워크 보안 설정에서 나온
+  `ANDROID-CLEARTEXT`)은 기본 `allowed_statuses`에 들어가지만 medium·low 기준은 기본으로 꺼져 있습니다. 후보나
+  medium·low를 게이트에 쓰는 정책과 `only_new` 기준선에는 나타납니다.
+- MASWE 표가 바뀝니다. MASWE-0003·0013·0020·0021·0022가 not-assessed에서 벗어나고(이 소스 검사는 APK·IPA를
+  읽지 않으므로 그 입력에서는 not-run), `ANDROID-NSC-CONFIG`가 MASWE-0026·0027에 커버리지를 더합니다.
 - 기존 규칙도 더 찾습니다. `AST-CRYPTO-ECB`는 `"AES"`만 쓴 transformation도 보고하며(제목이 "AES in ECB
   mode is selected"로 바뀌고 fingerprint는 그대로), `AST-CRYPTO-WEAK-HASH`는 CryptoKit `Insecure.MD5`·
   `Insecure.SHA1`을, `AST-SQL-CONCAT`은 `SQLiteQueryBuilder.query`, groupBy/having/orderBy/limit 인자,
@@ -131,11 +136,12 @@ MASWE 약점으로 라벨을 붙인 공개 취약/수정 쌍 24개의 blind hold
   실행되어 iOS 전용 트리의 커버리지가 not-applicable에서 checked로 바뀝니다.
 - AST 엔진이 Kotlin `let`·`also`·`use`·`apply`·`run`·`with` 람다를 따라가므로, 모든 구조 규칙이 그 안의
   코드를 보고할 수 있습니다. `?.let` 람다나 `return@`이 있는 람다는 실행되지 않을 수도 있는 분기처럼
-  병합합니다.
+  병합하며, 항상 실행되는 람다 안의 재할당은 1.4의 발견을 없앨 수도 있습니다. 다른 람다와 Swift 클로저는
+  여전히 분석하지 않습니다.
 - `ANDROID-CLEARTEXT`는 참조된 네트워크 보안 설정에서도 나옵니다(configuration-confirmed이므로 code
   scanning이 심각도를 매깁니다). 그 설정을 해석했고 minSdk가 24 이상이며, 설정이
   `cleartextTrafficPermitted`를 명시했거나 targetSdk가 28 이상이면 매니페스트 `usesCleartextTraffic`
-  후보는 빠집니다.
+  후보는 빠집니다. 여러 소스셋이 정의한 설정에서 나온 발견은 후보입니다.
 - 새 커버리지 상태로 감사가 불완전해질 수 있습니다. 참조된 설정을 해석할 수 없거나 스캔한 소스에 없거나
   빌드 placeholder이면 `ANDROID-NSC-USER-CA`·`ANDROID-NSC-CONFIG`가 partial이고, 일치 한도에 걸린 검사도
   partial입니다. 기본 `fail_on_partial`에서는 이런 스캔이 게이트에서 실패하고 기준선으로 내보낼 수

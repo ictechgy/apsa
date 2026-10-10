@@ -180,7 +180,8 @@ states what it reads.
 - **Cryptography.** Framework `Cipher.getInstance` with DES, 3DES, RC4, RC2 or
   Blowfish, or a bare `"AES"` whose provider default is ECB; CommonCrypto
   broken algorithms and ECB options; CryptoKit `Insecure.MD5` and
-  `Insecure.SHA1`; RSA key sizes below 2048 bits. Key and IV material counts as
+  `Insecure.SHA1`; literal RSA, DSA and DH key sizes of 512, 768, 1024 or
+  1536 bits; and `SOURCE-INSECURE-RANDOM` on Swift and Objective-C. Key and IV material counts as
   constant when it is a literal, a literal array, a `BuildConfig` field, an
   immutable literal-initialized constant of the same file, or a conversion or
   decoder of those. A local passed to another call, written element by element,
@@ -230,7 +231,9 @@ states what it reads.
 - **Evaluation.** [OWASP MASTG demos](../benchmarks/MASTG_RESULTS.md) (a
   development rerun: 52 of 78 in-scope failing demos, one false positive) and the
   [blind MASWE-labeled pairs](../benchmarks/BLIND_PAIRS_RESULTS.md) (first run:
-  7 of 21 in-scope pairs at the labeled lines). Known gaps: flow across
+  7 of 21 scored in-scope pairs at the labeled lines, Wilson 95% 17–55%; two of
+  them from rules new in 1.5; fixed-side FP upper bound 4 of 21; one more
+  in-scope pair failed to scan). Known gaps: flow across
   functions, controls that were never added, inputs above the 64 MB text
   staging budget (refused), and very large functions with many branches or
   PendingIntent calls, which are slow but bounded.
@@ -340,8 +343,8 @@ OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 
 영어 원본의 "APSA 1.5.0 additions" 절을 요약한 번역입니다. 1.4.0 이후 `dev/detection`에서 개발했습니다.
 
 - **암호.** DES·3DES·RC4·RC2·Blowfish를 고르거나 provider 기본값이 ECB인 `"AES"`만 쓴 `Cipher.getInstance`,
-  CommonCrypto의 깨진 알고리즘과 ECB 옵션, CryptoKit `Insecure.MD5`·`Insecure.SHA1`, 2048비트 미만 RSA
-  키를 봅니다. 키와 IV 재료는 리터럴, 리터럴 배열, `BuildConfig` 필드, 같은 파일의 불변 리터럴 상수, 또는 그
+  CommonCrypto의 깨진 알고리즘과 ECB 옵션, CryptoKit `Insecure.MD5`·`Insecure.SHA1`, 512·768·1024·1536비트
+  리터럴 RSA·DSA·DH 키 크기를 보며, `SOURCE-INSECURE-RANDOM`은 Swift·Objective-C에서도 실행됩니다. 키와 IV 재료는 리터럴, 리터럴 배열, `BuildConfig` 필드, 같은 파일의 불변 리터럴 상수, 또는 그
   변환·디코딩일 때 상수로 봅니다. 다른 호출에 넘기거나 원소를 쓰거나 따라가지 않는 클로저에서 이름이 나온
   지역 값은 런타임에 채운 것으로 보며, 0으로 채운 필드는 상수가 아닙니다.
 - **로컬 인증.** CryptoObject 없는 `BiometricPrompt`·`FingerprintManager` 호출(인자 개수 기준), Keychain
@@ -373,6 +376,7 @@ OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 
   텍스트로 인식하며 지배 관계는 보지 않습니다. 함수·파일 단위 예산이 비용을 제한하고, 일치 예산에 걸린
   검사는 partial입니다.
 - **평가.** [OWASP MASTG 데모](../benchmarks/MASTG_RESULTS.ko.md)(개발 재실행: 평가 대상 실패 데모 78개 중
-  52개, FP 1개)와 [blind MASWE 라벨 쌍](../benchmarks/BLIND_PAIRS_RESULTS.ko.md)(첫 실행: 평가 대상 21쌍 중
-  7쌍을 라벨 줄에서 탐지). 알려진 한계는 함수 간 흐름, 추가된 적 없는 통제, 64MB 텍스트 스테이징 한도를
+  52개, FP 1개)와 [blind MASWE 라벨 쌍](../benchmarks/BLIND_PAIRS_RESULTS.ko.md)(첫 실행: 채점한 평가 대상 21쌍 중
+  7쌍을 라벨 줄에서 탐지, Wilson 95% 17–55%; 그중 2쌍은 1.5의 새 규칙; 수정 쪽 FP 상한 21쌍 중 4쌍; 평가 대상
+  1쌍은 스캔 실패). 알려진 한계는 함수 간 흐름, 추가된 적 없는 통제, 64MB 텍스트 스테이징 한도를
   넘는 입력(거부), 분기나 PendingIntent 호출이 매우 많은 큰 함수(느리지만 제한됨)입니다.

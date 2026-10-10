@@ -4,7 +4,7 @@
 
 1.5.0 adds source checks, developed on `dev/detection` after 1.4.0, for the OWASP MASWE weaknesses behind most OWASP MASTG demo misses:
 
-- **Crypto:** broken ciphers and implicit ECB, constant key material and IVs, RSA keys under 2048 bits, CryptoKit `Insecure` digests.
+- **Crypto:** broken ciphers and implicit ECB, constant key material and IVs, short (512–1536-bit) RSA/DSA/DH key sizes, CryptoKit `Insecure` digests.
 - **Local authentication:** event-bound biometrics, device-credential fallback, keys that survive new enrollment.
 - **Transport:** TLS below 1.2, iOS APIs outside ATS, user CAs and cleartext in the referenced network security configuration.
 - **Platform:** unverified App Links, intent redirection, implicit internal Intents.
@@ -17,16 +17,16 @@ The evaluated runtime is public `1fac6797df1fcccb55c415f48f2fbe47463cc6e8` (`src
 
 **Blind measurement.** An independent agent labeled 24 public vulnerable/fixed pairs by MASWE weakness while the rules were written. The truth was committed in `be1911b` before its first scan; [run 38028093532](https://github.com/ictechgy/apsa/actions/runs/38028093532) is the blind result.
 
-- **Primary result:** 7 of 21 in-scope pairs found at the labeled lines (Wilson 95% 17–55%).
+- **Primary result:** 7 of 21 scored in-scope pairs found at the labeled lines (Wilson 95% 17–55%). Two come from rules new in 1.5; on the labeled files, 1.4.0 finds the other five (a post-run check by the architecture reviewer).
 - **Discriminating TP:** 5 of 21.
 - **Fixed-side FP:** 4 of 21. This is file-level, so an upper bound.
-- **Errors:** 1 scan refused by the 64 MB input staging budget (OsmAnd).
+- **Errors:** 1 scan failed (exit 1, no message in the raw result). A post-run local scan reproduced the cause: OsmAnd's 71 MB of text input exceeds the 64 MB input staging budget.
 
 [BLIND_PAIRS_RESULTS.md](benchmarks/BLIND_PAIRS_RESULTS.md) discloses:
 
 - the protocol, including its deviation from the 1.4 roadmap wording;
 - the attestation basis: the same lead coordinated the curator and wrote the rules;
-- the post-freeze commits `35d2d88` through `1fac679`, all made without access to the truth;
+- the nine post-freeze commits `35d2d88` through `1fac679`, four of which finalized the scoring, all made without access to the truth;
 - per-pair results and why pairs were missed.
 
 Every other evaluation harness was re-run on this runtime (`benchmarks/results/2026-10-10-release-150-harnesses.json`). These are development reruns on truth already seen.

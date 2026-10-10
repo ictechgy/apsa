@@ -128,16 +128,18 @@ Registry and as a Claude Code plugin, with a documented
 
 APSA 1.5 widens what a source scan looks for. New checks cover the OWASP
 MASWE weaknesses behind most MASTG demo misses: broken ciphers and implicit
-ECB, key material and IVs built from constants, RSA keys under 2048 bits and
-CryptoKit `Insecure` digests; biometric results not bound to a key,
+ECB, key material and IVs built from constants, short (512–1536-bit) RSA, DSA
+and DH key sizes and CryptoKit `Insecure` digests; biometric results not bound to a key,
 device-credential fallback and keys that survive new enrollment; TLS below
 1.2, iOS connections outside App Transport Security, and user CAs or cleartext
 in the network security configuration; unverified App Links, intent
 redirection and implicit internal Intents; path traversal and keyed
 unarchiving without secure coding; and Safe Browsing turned off, UIWebView and
 WKWebView file access. On a blind holdout of 24 public vulnerable/fixed pairs
-labeled by MASWE weakness, APSA 1.5.0 found 7 of the 21 in-scope pairs at the
-labeled lines; see the
+labeled by MASWE weakness, APSA 1.5.0 found 7 of the 21 scored in-scope pairs
+at the labeled lines (Wilson 95% 17–55%). Two of the seven come from rules new
+in 1.5 and five from rules 1.4 already had; the fixed-side FP upper bound is 4
+of 21, and a 22nd in-scope pair failed to scan. See the
 [blind pair results](https://github.com/ictechgy/apsa/blob/main/benchmarks/BLIND_PAIRS_RESULTS.md)
 and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/NEXT_ANALYSIS.md).
 
@@ -151,9 +153,15 @@ and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/
   `ANDROID-DEEPLINK-AUTOVERIFY`, `AST-INTENT-REDIRECTION`,
   `AST-IMPLICIT-INTENT`, `IOS-WEBVIEW-FILE-ACCESS`,
   `WEBVIEW-SAFE-BROWSING-OFF`, `IOS-UIWEBVIEW`, `AST-PATH-TRAVERSAL` and
-  `IOS-INSECURE-UNARCHIVE`. The default policy does not gate candidates, but a
-  policy with `required_rules` or severity gates, and portable baselines, see
-  them as new.
+  `IOS-INSECURE-UNARCHIVE`. Candidates are not gated by default. The new
+  configuration-confirmed findings (`ANDROID-NSC-USER-CA`, and
+  `ANDROID-CLEARTEXT` from the network security configuration) count under the
+  default `allowed_statuses`, but medium and low thresholds are off by default.
+  Policies that gate candidates or medium/low findings, and `only_new`
+  baselines, will see them.
+- The MASWE matrix changes: MASWE-0003, 0013, 0020, 0021 and 0022 leave
+  not-assessed (they are not-run for APK and IPA, which these source checks do
+  not read), and `ANDROID-NSC-CONFIG` adds coverage to MASWE-0026 and 0027.
 - Existing rules find more: `AST-CRYPTO-ECB` also reports a bare `"AES"`
   transformation (its title is now "AES in ECB mode is selected"; fingerprints
   are unchanged), `AST-CRYPTO-WEAK-HASH` reports CryptoKit `Insecure.MD5` and
@@ -163,12 +171,15 @@ and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/
   iOS-only trees changes from not-applicable to checked).
 - The AST engine now follows Kotlin `let`, `also`, `use`, `apply`, `run` and
   `with` lambdas, so every structural rule can report code inside them. A
-  `?.let` lambda, or one with `return@`, merges like a branch that may not run.
+  `?.let` lambda, or one with `return@`, merges like a branch that may not run;
+  a reassignment inside a lambda that always runs can now also remove a 1.4
+  finding. Other lambdas and Swift closures are still not analyzed.
 - `ANDROID-CLEARTEXT` also comes from the referenced network security
   configuration (configuration-confirmed, so code scanning rates it). The
   manifest's `usesCleartextTraffic` candidate is dropped when that
   configuration was parsed, minSdk is 24 or higher, and the configuration states
-  `cleartextTrafficPermitted` or targetSdk is 28 or higher.
+  `cleartextTrafficPermitted` or targetSdk is 28 or higher. Findings from a
+  configuration that several source sets define are candidates.
 - New coverage states can make an audit incomplete: `ANDROID-NSC-USER-CA` and
   `ANDROID-NSC-CONFIG` are partial when a referenced configuration cannot be
   parsed, is missing from the scanned sources or is a build placeholder, and
