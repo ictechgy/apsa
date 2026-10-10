@@ -1,5 +1,31 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## Published 1.5.0 — 2026-10-10
+
+[1.5.0](https://github.com/ictechgy/apsa/releases/tag/v1.5.0) is bound to source commit `4a7fdff69c1f7085a9e199175eb99113959707cf` through a lightweight tag that was not moved. These paths are identical to the evaluated runtime `1fac679`: `src`, `apsa`, `quaygate`, `pyproject.toml`, `uv.lock`, `requirements-release.txt`, `action.yml`, `server.json`, `plugins` and `.claude-plugin`. Public `main` was fast-forwarded to the same commit, and that push skipped the main-context publish path as intended ([38030417846](https://github.com/ictechgy/apsa/actions/runs/38030417846)).
+
+The tag-context [release workflow 38030112570](https://github.com/ictechgy/apsa/actions/runs/38030112570) passed all 17 jobs:
+
+- **CI:** the eleven CI jobs.
+- **Packaging and publication:** the verified package build, PyPI Trusted Publishing, MCP Registry publication by GitHub OIDC and the GitHub release downloads.
+
+PyPI lists `apsa-1.5.0-py3-none-any.whl` (sha256 `67a7bf26935be6178054b003fb870a8ab9689e627a44ebbc94b26b1b1170f5df`) and `apsa-1.5.0.tar.gz` (sha256 `3e0c83e8d76ccd9a946cfc2d3da46feaa99ab1aee2582deda2c568e464bdda5c`). The MCP Registry lists `io.github.ictechgy/apsa` 1.5.0 as active.
+
+Post-publication checks ran on newly generated synthetic projects:
+
+- **Action install path:** uv 0.12.1 installed the hash-locked `requirements-release.txt` and then `apsa==1.5.0` from PyPI. The SARIF scan exited 0 and passed `scripts/check_sarif.py` with repository-relative URIs and a MASWE summary.
+  - The first attempt could not resolve `apsa==1.5.0`, because the PyPI simple index had not yet listed it; it did so seconds later.
+- **Cold start:** `uvx --python 3.12 apsa@1.5.0` with an empty cache reported 1.5.0.
+  - Over MCP stdio it served 23 tools, and `audit_scan` completed.
+  - `tool_manifest_sha256` equalled both the hash recomputed from `tools/list` and the published default in [MCP_SECURITY.md](docs/MCP_SECURITY.md), unchanged from 1.4.0.
+- **Plugin:** Claude Code 2.1.296, with an isolated configuration directory, installed plugin 1.5.0 from the marketplace.
+  - The plugin's skill includes the 1.5 paragraph.
+  - Its MCP server runs `uvx --python 3.12 apsa@1.5.0`.
+- **GitHub-hosted Action:** [ictechgy/apsa-action-smoke](https://github.com/ictechgy/apsa-action-smoke) ran `uses: ictechgy/apsa@4a7fdff69c1f7085a9e199175eb99113959707cf` with default inputs ([run 38030510902](https://github.com/ictechgy/apsa-action-smoke/actions/runs/38030510902)).
+  - It installed `apsa==1.5.0` with no version-mismatch warning, and the audit exited 0.
+  - Code scanning recorded analysis 1927830806 for `APSA 1.5.0` with 7 results and no processing errors.
+  - The seven alerts from the 1.4.0 analysis remained the same open alerts, so fingerprints carried over unchanged.
+
 ## APSA 1.5.0 detection breadth — candidate, 2026-10-10
 
 1.5.0 adds source checks, developed on `dev/detection` after 1.4.0, for the OWASP MASWE weaknesses behind most OWASP MASTG demo misses:
