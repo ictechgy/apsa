@@ -722,3 +722,282 @@ def test_evaluate_policy_declarations_are_not_calls():
     )
     assert [f["evidence"][0]["line"] for f in _apple_auth("A.swift", swift)] == [7]
     assert [f["evidence"][0]["line"] for f in _apple_auth("A.m", objc)] == [2]
+
+
+# Review round 1 regressions.
+
+RUNTIME_FILLED_KT = """package com.example.breadth
+
+import java.security.SecureRandom
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+
+class Sealed(private val random: SecureRandom, private val lock: Any) {
+    private val iv = ByteArray(12)
+
+    init {
+        SecureRandom().nextBytes(iv)
+    }
+
+    fun field() = GCMParameterSpec(128, iv)
+
+    fun closures() {
+        val a = ByteArray(12)
+        synchronized(lock) { random.nextBytes(a) }
+        val first = GCMParameterSpec(128, a)
+        val b = ByteArray(16)
+        runCatching { random.nextBytes(b) }
+        val second = SecretKeySpec(b, "AES")
+        val c = ByteArray(16)
+        repeat(1) { SecureRandom().nextBytes(c) }
+        val third = SecretKeySpec(c, "AES")
+        val d = ByteArray(12)
+        with(SecureRandom()) { nextBytes(d) }
+        val fourth = GCMParameterSpec(128, d)
+    }
+}
+"""
+
+RUNTIME_FILLED_JAVA = """package com.example.breadth;
+
+import java.security.SecureRandom;
+import javax.crypto.spec.IvParameterSpec;
+
+class Sealed {
+    private final byte[] iv = new byte[16];
+
+    Sealed() {
+        new SecureRandom().nextBytes(iv);
+    }
+
+    IvParameterSpec spec() {
+        return new IvParameterSpec(iv);
+    }
+}
+"""
+
+
+def test_runtime_filled_arrays_are_not_constant_material():
+    assert ast("Sealed.kt", RUNTIME_FILLED_KT) == {}
+    assert ast("Sealed.java", RUNTIME_FILLED_JAVA) == {}
+
+
+PATH_NEGATIVES_KT = """package com.example.breadth
+
+import android.app.Activity
+import java.io.File
+import java.io.FileInputStream
+
+class Imports : Activity() {
+    fun copy(root: File, entry: FileEntry) {
+        val pfd = contentResolver.openFileDescriptor(intent.data!!, "r")
+        val input = FileInputStream(pfd!!.fileDescriptor)
+        val listed = File(root, entry.name)
+        val stored = openFileOutput(intent.getStringExtra("name"), MODE_PRIVATE)
+    }
+}
+"""
+
+PATH_NEGATIVES_JAVA = """package com.example.breadth;
+
+import android.app.Activity;
+import android.os.ParcelFileDescriptor;
+import java.io.File;
+import java.io.FileInputStream;
+
+class Imports extends Activity {
+    void copy(File root, PlaylistEntry entry) throws Exception {
+        ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(getIntent().getData(), "r");
+        FileInputStream input = new FileInputStream(pfd.getFileDescriptor());
+        File listed = new File(root, entry.getName());
+    }
+}
+"""
+
+
+def test_descriptors_custom_entries_and_context_files_are_not_paths():
+    assert "AST-PATH-TRAVERSAL" not in ast("Imports.kt", PATH_NEGATIVES_KT)
+    assert "AST-PATH-TRAVERSAL" not in ast("Imports.java", PATH_NEGATIVES_JAVA)
+
+
+SCOPES_KT = """package com.example.breadth
+
+import android.app.Activity
+import android.app.PendingIntent
+import android.content.Intent
+import android.webkit.WebView
+
+class Scopes : Activity() {
+    fun load(webView: WebView) {
+        val url = BuildConfig.HOME_URL
+        intent.extras?.let {
+            val url = intent.getStringExtra("x")
+            log(url)
+        }
+        webView.loadUrl(url)
+        Intent(this, ReplyReceiver::class.java).let { reply ->
+            PendingIntent.getBroadcast(this, 0, reply, PendingIntent.FLAG_MUTABLE)
+        }
+    }
+
+    fun forward() {
+        intent.getParcelableExtra<Intent>("next")?.let { startActivity(it) }
+        val next = intent.getParcelableExtra<Intent>("after") ?: return
+        startActivity(next)
+    }
+
+    fun ciphers() {
+        val transformation = "DES/CBC/PKCS5Padding"
+        val cipher = javax.crypto.Cipher.getInstance(transformation)
+    }
+}
+"""
+
+
+def test_scope_lambdas_are_blocks_with_bound_parameters():
+    found = ast("Scopes.kt", SCOPES_KT)
+    assert "AST-WEBVIEW-UNTRUSTED-URL" not in found
+    assert "AST-PENDINGINTENT-MUTABLE" not in found
+    assert found["AST-INTENT-REDIRECTION"] == [22, 24]
+
+
+def test_local_literal_transformations_are_resolved():
+    java = (
+        "import javax.crypto.Cipher;\n"
+        "class A {\n"
+        "    void f() throws Exception {\n"
+        '        String alg = "RC4";\n'
+        "        Cipher c = Cipher.getInstance(alg);\n"
+        '        String later = "AES/GCM/NoPadding";\n'
+        '        later = "DES";\n'
+        "        Cipher d = Cipher.getInstance(later);\n"
+        "    }\n"
+        "}\n"
+    )
+    assert ast("A.java", java).get("AST-CRYPTO-WEAK-CIPHER") == [5]
+    assert ast("Scopes.kt", SCOPES_KT).get("AST-CRYPTO-WEAK-CIPHER") == [29]
+
+
+BROADCAST_KT = """package com.example.app.sync
+
+import android.content.Context
+import android.content.Intent
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
+
+class Bus(context: Context) {
+    private val broadcaster = LocalBroadcastManager.getInstance(context)
+    private lateinit var lbm: LocalBroadcastManager
+
+    fun done(context: Context) {
+        broadcaster.sendBroadcast(Intent("com.example.app.SYNC_DONE"))
+        lbm.sendBroadcast(Intent("com.example.app.SYNC_DONE"))
+        context.startActivity(Intent("com.google.zxing.client.android.SCAN"))
+        context.startActivity(Intent("org.openintents.action.PICK_FILE"))
+        context.sendBroadcast(Intent("com.example.app.SYNC_DONE"))
+    }
+}
+"""
+
+
+def test_implicit_intents_skip_local_broadcasts_and_other_apps():
+    assert ast("Bus.kt", BROADCAST_KT).get("AST-IMPLICIT-INTENT") == [16]
+
+
+def test_time_bound_keys_bind_the_biometric_result():
+    from mobile_audit.platform_checks import _android_auth
+
+    code = (
+        "import androidx.biometric.BiometricPrompt\n"
+        "class Unlock(private val prompt: BiometricPrompt) {\n"
+        "    fun go(info: BiometricPrompt.PromptInfo) {\n"
+        '        val spec = KeyGenParameterSpec.Builder("k", 3).setUserAuthenticationRequired(true)\n'
+        "            .setUserAuthenticationParameters(10, AUTH_BIOMETRIC_STRONG)\n"
+        "        prompt.authenticate(info)\n"
+        "    }\n"
+        "}\n"
+    )
+    assert not [f for f in _android_auth("Unlock.kt", code) if f["rule_id"] == "SOURCE-BIOMETRIC-EVENT-BOUND"]
+    # A key that does not require authentication binds nothing (MASTG-DEMO-0090).
+    unbound = code.replace("setUserAuthenticationRequired(true)", "setUserAuthenticationRequired(false)")
+    assert [f["rule_id"] for f in _android_auth("Unlock.kt", unbound)] == ["SOURCE-BIOMETRIC-EVENT-BOUND"]
+
+
+def test_network_config_lines_debug_sets_and_unreadable_files(store, android):
+    (android / "res/xml/network_security_config.xml").write_text(
+        "<network-security-config>\n"
+        "  <base-config><trust-anchors><certificates src='user' /></trust-anchors></base-config>\n"
+        '  <domain-config cleartextTrafficPermitted="true">\n'
+        "    <domain>a.example.com</domain>\n"
+        '    <trust-anchors><certificates src="user" /></trust-anchors>\n'
+        "  </domain-config>\n"
+        '  <domain-config cleartextTrafficPermitted="true"><domain>localhost</domain></domain-config>\n'
+        "</network-security-config>\n"
+    )
+    debug = android / "src/debug/res/xml"
+    debug.mkdir(parents=True)
+    (debug / "network_security_config.xml").write_text(
+        '<network-security-config><base-config cleartextTrafficPermitted="true"><trust-anchors>'
+        '<certificates src="user" /></trust-anchors></base-config></network-security-config>\n'
+    )
+    report = scan(store, android)
+    user = sorted(
+        (f["evidence"][0]["line"], f["evidence"][0]["scope"]) for f in by_rule(report, "ANDROID-NSC-USER-CA")
+    )
+    assert user == [(2, "base-config"), (5, "domain-config")]
+    cleartext = [
+        f["evidence"][0]
+        for f in by_rule(report, "ANDROID-CLEARTEXT")
+        if f["evidence"][0]["path"].endswith(".xml")
+    ]
+    assert [(c["path"], c["line"], c["domains"]) for c in cleartext] == [
+        ("res/xml/network_security_config.xml", 3, ["a.example.com"])
+    ]
+    (android / "res/xml/network_security_config.xml").write_text("<network-security-config><unclosed>\n")
+    (debug / "network_security_config.xml").unlink()
+    coverage = next(c for c in scan(store, android)["coverage"] if c["rule_id"] == "ANDROID-NSC-USER-CA")
+    assert coverage["state"] == "partial"
+
+
+def test_case_sensitive_api_rules_and_narrow_webview_access(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    root = tmp_path / "ios-negatives"
+    root.mkdir()
+    (root / "Info.plist").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>'
+        "<key>CFBundleIdentifier</key><string>com.example.breadth</string></dict></plist>"
+    )
+    (root / "View.swift").write_text(
+        "import WebKit\n"
+        "final class View {\n"
+        "    @IBOutlet weak var uiWebView: WKWebView!\n"
+        '    let label = "uiwebview"\n'
+        "    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!\n"
+        "    func show(page: URL) {\n"
+        '        let help = docs.appendingPathComponent("help/index.html")\n'
+        "        uiWebView.loadFileURL(page, allowingReadAccessTo: help)\n"
+        "        uiWebView.loadFileURL(page, allowingReadAccessTo: docs)\n"
+        "    }\n"
+        "}\n"
+    )
+    report = scan(store, root)
+    assert not by_rule(report, "IOS-UIWEBVIEW")
+    assert lines(report, "IOS-WEBVIEW-FILE-ACCESS") == [9]
+
+
+def test_adversarial_inputs_stay_fast():
+    import time
+
+    from mobile_audit.platform_checks import _android_auth
+
+    normalize = "\n".join(f"        p{i}.normalize()" for i in range(4000))
+    sinks = "\n".join("        File(dir, name)" for _ in range(40))
+    kotlin = (
+        "import java.io.File\nclass A : Activity() {\n    fun f(dir: File) {\n"
+        '        val name = intent.getStringExtra("n")\n' + normalize + "\n" + sinks + "\n    }\n}\n"
+    )
+    launches = "\n".join(f"        startActivity(i{i})" for i in range(8000))
+    intents = "class B : Activity() {\n    fun g() {\n" + launches + "\n    }\n}\n"
+    started = time.monotonic()
+    analyze_sources([("A.kt", kotlin), ("B.kt", intents)])
+    _android_auth("C.kt", "// BiometricPrompt\nval x = " + "a" * 40_000 + " + 1\n")
+    assert time.monotonic() - started < 10

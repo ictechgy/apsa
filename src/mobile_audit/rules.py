@@ -55,7 +55,8 @@ def static_checks(
                     continue
                 # Some APIs are a property of the file (for example a deprecated class); report its first use.
                 matches = islice(
-                    re.finditer(rule["pattern"], cleaned, re.I), 1 if rule.get("once_per_file") else 31
+                    re.finditer(rule["pattern"], cleaned, 0 if rule.get("case_sensitive") else re.I),
+                    1 if rule.get("once_per_file") else 31,
                 )
                 for index, match in enumerate(matches):
                     if index == 30:

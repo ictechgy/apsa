@@ -7,8 +7,9 @@ for source trees and AAB manifests, where that engine does not.
 from __future__ import annotations
 
 import re
+from xml.sax.handler import ContentHandler
 
-from defusedxml import ElementTree as ET
+from defusedxml import sax as defused_sax
 
 from .core import finding, load_plist
 from .rules import strip_comments
@@ -116,6 +117,12 @@ APPLE_ENROLLMENT = re.compile(
     r"(?<!\w)\.(?:biometryAny|touchIDAny)\b|\bkSecAccessControl(?:BiometryAny|TouchIDAny)\b"
 )
 ANDROID_FALLBACK = re.compile(r"\bsetDeviceCredentialAllowed\s*\(\s*true\b")
+# A Keystore key that requires authentication within a positive time window (time-bound).
+ANDROID_AUTH_REQUIRED = re.compile(r"\bsetUserAuthenticationRequired\s*\(\s*true\b")
+ANDROID_AUTH_WINDOW = re.compile(
+    r"\bsetUserAuthenticationParameters\s*\(\s*[1-9]|\bsetUserAuthenticationValidityDurationSeconds\s*\(\s*[1-9]"
+)
+DEBUG_SOURCE_SET = re.compile(r"(?:^|/)src/[^/]*[Dd]ebug[^/]*/")
 ANDROID_FALLBACK_ARGUMENTS = {
     "setAllowedAuthenticators": "DEVICE_CREDENTIAL",
     "setUserAuthenticationParameters": "AUTH_DEVICE_CREDENTIAL",
@@ -703,11 +710,19 @@ def _auth_finding(rule: str, path: str, text: str, offset: int, api: str, basis:
 def _android_auth(path: str, text: str) -> list[dict]:
     masked = _masked_code(text)
     findings = []
-    for match in re.finditer(r"(\w+|\))\s*\??\.\s*authenticate\s*\(", masked):
+    # A key that requires recent authentication (time-bound) binds the result to the Keystore.
+    bound = bool(ANDROID_AUTH_REQUIRED.search(masked) and ANDROID_AUTH_WINDOW.search(masked))
+    for count, match in enumerate(re.finditer(r"\.\s*authenticate\s*\(", masked)):
+        if count >= MAX_PATTERN_FINDINGS or bound:
+            break
+        head = re.search(r"(\w{1,200}|\))\s*\??\s*$", masked[max(0, match.start() - 220) : match.start()])
         args = _arguments(masked, match.end() - 1)
-        if args is None:
+        if args is None or head is None:
             continue
-        receiver = match[1]
+        receiver = head[1]
+        receiver_start = match.start() - (
+            len(masked[max(0, match.start() - 220) : match.start()]) - head.start(1)
+        )
         if receiver == ")":
             # A call chain such as BiometricPrompt.Builder(...).build().authenticate(...).
             window = masked[max(0, match.start() - 600) : match.start()]
@@ -724,7 +739,7 @@ def _android_auth(path: str, text: str) -> list[dict]:
                     "SOURCE-BIOMETRIC-EVENT-BOUND",
                     path,
                     text,
-                    match.start(1),
+                    receiver_start,
                     "FingerprintManager.authenticate" if fingerprint else "BiometricPrompt.authenticate",
                     "authenticate call without a CryptoObject argument",
                 )
@@ -912,6 +927,12 @@ def _ios_webview_file_access(
             identifier = re.fullmatch(r"(?:(?:self|Self|\w+)\.)?(\w+)!?", argument)
             resolved = [argument] + (_assigned_values(cleaned, identifier[1]) if identifier else [])
             broad = next(filter(None, (BROAD_DIRECTORY.search(value) for value in resolved)), None)
+            # A file or subdirectory appended to the directory narrows the access.
+            if broad and re.search(
+                r"\bappendingPathComponent\b|\bappending\s*\(|\bURLByAppendingPathComponent\b",
+                broad.string[broad.end() :],
+            ):
+                broad = None
             if broad:
                 findings.append(
                     finding(
@@ -951,8 +972,61 @@ def _ios_webview_file_access(
     ]
 
 
-def _outside(spans: list[tuple[int, int]], offset: int) -> bool:
-    return not any(start <= offset < end for start, end in spans)
+class _NetworkConfig(ContentHandler):
+    """Collect user trust anchors and cleartext permissions outside <debug-overrides>, with lines."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.locator = None
+        self.stack: list[str] = []
+        self.configs: list[dict] = []
+        self.user: list[tuple[int, str]] = []
+        self.cleartext: list[dict] = []
+        self.domain: list[str] | None = None
+
+    def setDocumentLocator(self, locator) -> None:  # noqa: N802 - SAX API
+        self.locator = locator
+
+    def startElement(self, name, attrs) -> None:  # noqa: N802 - SAX API
+        line = (self.locator.getLineNumber() or 0) if self.locator else 0
+        debug = "debug-overrides" in self.stack
+        if not debug and name in {"base-config", "domain-config"}:
+            self.configs.append(
+                {
+                    "tag": name,
+                    "line": line,
+                    "cleartext": attrs.get("cleartextTrafficPermitted") == "true",
+                    "domains": [],
+                }
+            )
+        elif not debug and name == "domain" and self.configs:
+            self.domain = []
+        elif (
+            not debug
+            and name == "certificates"
+            and attrs.get("src") == "user"
+            and self.configs
+            and "trust-anchors" in self.stack
+        ):
+            self.user.append((line, self.configs[-1]["tag"]))
+        self.stack.append(name)
+
+    def characters(self, content) -> None:
+        if self.domain is not None:
+            self.domain.append(content)
+
+    def endElement(self, name) -> None:  # noqa: N802 - SAX API
+        if self.stack:
+            self.stack.pop()
+        if name == "domain" and self.domain is not None and self.configs:
+            self.configs[-1]["domains"].append("".join(self.domain).strip()[:200])
+            self.domain = None
+        elif (
+            name in {"base-config", "domain-config"} and self.configs and "debug-overrides" not in self.stack
+        ):
+            config = self.configs.pop()
+            if config["cleartext"]:
+                self.cleartext.append(config)
 
 
 def _network_security_config(
@@ -969,69 +1043,46 @@ def _network_security_config(
     read, unreadable = 0, []
     for path, text in sources:
         stem = path.rsplit("/", 1)[-1].removesuffix(".xml")
-        if not path.endswith(".xml") or stem not in referenced or "<network-security-config" not in text:
+        # A debug source set's configuration applies to debug builds only.
+        if not path.endswith(".xml") or stem not in referenced or DEBUG_SOURCE_SET.search(path):
             continue
+        handler = _NetworkConfig()
         try:
-            root = ET.fromstring(text.encode("utf-8"))
+            defused_sax.parseString(text.encode("utf-8"), handler)
         except Exception:  # noqa: BLE001 - any parse failure leaves this file unverified
             unreadable.append(path)
             continue
         read += 1
-        cleaned = re.sub(r"<!--[\s\S]*?-->", lambda m: re.sub(r"[^\n]", " ", m[0]), text)
-        debug = [
-            (m.start(), m.end())
-            for m in re.finditer(r"<debug-overrides\b[\s\S]*?</debug-overrides\s*>", cleaned)
-        ]
-        configs = [element for element in root.iter() if element.tag in {"base-config", "domain-config"}]
-        user_scopes = [
-            config.tag
-            for config in configs
-            for anchors in config.findall("trust-anchors")
-            for certificates in anchors.findall("certificates")
-            if certificates.get("src") == "user"
-        ]
-        user_offsets = [
-            m.start()
-            for m in re.finditer(r'<certificates\b[^>]*\bsrc\s*=\s*"user"', cleaned)
-            if _outside(debug, m.start())
-        ]
-        for scope, offset in zip(user_scopes, user_offsets, strict=False):
+        for line, scope in handler.user:
             findings.append(
                 finding(
                     "ANDROID-NSC-USER-CA",
                     "Network security configuration trusts user-installed CAs",
                     "medium",
                     "configuration-confirmed",
-                    [{"path": path, "line": _line(cleaned, offset), "offset": offset, "scope": scope}],
+                    [{"path": path, "line": line, "scope": scope}],
                     'Remove <certificates src="user"/> from release configurations; keep it only under '
                     "<debug-overrides>, and pin certificates for sensitive hosts.",
                     "MASVS-NETWORK",
                     [NSC_REFERENCE],
                 )
             )
-        cleartext = [config for config in configs if config.get("cleartextTrafficPermitted") == "true"]
-        cleartext_offsets = [
-            m.start()
-            for m in re.finditer(r'\bcleartextTrafficPermitted\s*=\s*"true"', cleaned)
-            if _outside(debug, m.start())
-        ]
-        for config, offset in zip(cleartext, cleartext_offsets, strict=False):
-            domains = [str(d.text or "").strip()[:200] for d in config.findall("domain")][:20]
+        for config in handler.cleartext:
+            domains = config["domains"][:20]
             # Loopback traffic does not leave the device (for example a local media server).
-            if config.tag == "domain-config" and domains and all(d.lower() in LOOPBACK for d in domains):
+            if config["tag"] == "domain-config" and domains and all(d.lower() in LOOPBACK for d in domains):
                 continue
             findings.append(
                 finding(
                     "ANDROID-CLEARTEXT",
                     "Network security configuration permits cleartext traffic",
-                    "medium" if config.tag == "base-config" else "low",
+                    "medium" if config["tag"] == "base-config" else "low",
                     "configuration-confirmed",
                     [
                         {
                             "path": path,
-                            "line": _line(cleaned, offset),
-                            "offset": offset,
-                            "scope": config.tag,
+                            "line": config["line"],
+                            "scope": config["tag"],
                             **({"domains": domains} if domains else {}),
                         }
                     ],
@@ -1040,17 +1091,20 @@ def _network_security_config(
                     [NSC_REFERENCE],
                 )
             )
-    note = "Referenced network security configuration; <debug-overrides> is excluded."
-    if unreadable:
-        note += f" {len(unreadable)} configuration(s) could not be parsed."
+    if not referenced:
+        state, note = "checked", "No networkSecurityConfig is referenced; platform defaults apply."
+    elif unreadable or not read:
+        state = "partial"
+        note = "The referenced network security configuration could not be read"
+        note += f" ({len(unreadable)} unparsable)." if unreadable else " from the scanned sources."
+    else:
+        state, note = "checked", "Referenced network security configuration; <debug-overrides> is excluded."
     return findings, [
         {
             "rule_id": "ANDROID-NSC-USER-CA",
-            "state": "partial" if unreadable else "checked" if inventory.get("android_config") else "not-run",
+            "state": state if inventory.get("android_config") else "not-run",
             "method": "configuration",
-            "note": note
-            if referenced
-            else "No networkSecurityConfig is referenced; platform defaults apply.",
+            "note": note,
         }
     ]
 
@@ -1095,7 +1149,13 @@ def _app_links(inventory: dict) -> tuple[list[dict], list[dict]]:
     return findings, [
         {
             "rule_id": "ANDROID-DEEPLINK-AUTOVERIFY",
-            "state": "checked" if inventory.get("android_config") else "not-run",
+            "state": (
+                "partial"
+                if any("Deep-link combinations limited" in str(w) for w in inventory.get("warnings", []))
+                else "checked"
+            )
+            if inventory.get("android_config")
+            else "not-run",
             "method": "configuration",
             "note": "Declared intent filters; assetlinks.json and the verification result are not checked.",
         }

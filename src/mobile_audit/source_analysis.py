@@ -270,12 +270,25 @@ ENTRY_ITERATORS = {
     "getNextJarEntry",
 }
 NESTED_INTENT_GETTERS = {"getParcelableExtra", "getParcelable"}
-PATH_GUARD = re.compile(
-    r"\b(?:canonicalPath|getCanonicalPath|canonicalFile|getCanonicalFile|toRealPath|normalize|standardizedFileURL"
-    r"|resolvingSymlinksInPath|standardized)\b[\s\S]*\b(?:startsWith|hasPrefix)\b"
-    r"|\b(?:startsWith|hasPrefix)\b[\s\S]*\b(?:canonicalPath|getCanonicalPath|toRealPath|standardizedFileURL)\b"
-    r'|"\.\."'
+# Path containment checks: a canonical or normalized path compared by prefix, or a ".." test.
+CANONICAL_PATHS = (
+    "canonicalPath",
+    "getCanonicalPath",
+    "canonicalFile",
+    "getCanonicalFile",
+    "toRealPath",
+    "normalize(",
+    "standardizedFileURL",
+    "resolvingSymlinksInPath",
+    "standardized",
 )
+ARCHIVE_ENTRY = re.compile(
+    r"(?:[\w.]*\.)?(?:ZipEntry|JarEntry|ZipArchiveEntry|TarArchiveEntry|ArchiveEntry)\??"
+)
+FILE_DESCRIPTOR = re.compile(r"(?:\bfileDescriptor|\bgetFileDescriptor\s*\(\s*\)|\.fd)\s*!*$")
+ACTION_HINT = re.compile(r'\bIntent\s*\(\s*(?:"|[A-Z_][\w.]*\s*[,)])|\baction\s*=|\bsetAction\s*\(')
+MAX_INTENT_CHECKS = 200
+CONSTANT_SCOPES = {"class_body", "source_file", "program", "enum_body", "enum_class_body", "protocol_body"}
 NON_SCALAR_LITERALS = {
     "array_literal",
     "dictionary_literal",
@@ -429,6 +442,17 @@ class Analyzer:
         # Immutable file-level constants (const/static final/let): name -> (description, string value).
         self.constants: dict[str, tuple[str, str | None]] = {}
         self.function: Any = None
+        self.function_source = ""
+        self.path_guarded: bool | None = None
+        self.action_hint: bool | None = None
+        self.intent_checks = 0
+        # Kotlin lambda parameters bound to the receiver of let/also/use, for Intent text lookups.
+        self.aliases: dict[str, Any] = {}
+        package = re.search(r"^\s*package\s+([\w.]+)", text, re.M)
+        parts = package[1].split(".") if package else []
+        # Actions an app defines share its package namespace; other prefixes belong to other apps.
+        self.package_prefix = ".".join(parts[: min(3, len(parts))])
+        self.local_broadcasters: dict[str, bool] = {}
 
     def text(self, node: Any) -> str:
         return self.raw[node.start_byte : node.end_byte].decode("utf-8", errors="replace") if node else ""
@@ -812,7 +836,7 @@ class Analyzer:
             value = self.value(base, frame)
             if member in ENTRY_ITERATORS:
                 return Value(type_name="ZipEntry")
-            if member == "name" and re.search(r"Entry\b", value.type_name):
+            if member == "name" and ARCHIVE_ENTRY.fullmatch(value.type_name.strip()):
                 return self.source(node, "Archive entry name", "text")
             if (member in {"name", "fileName"} and value.category == "path") or member == "lastPathComponent":
                 return self.basename(node, value)
@@ -864,7 +888,7 @@ class Analyzer:
                 return self.source(node, "Content provider display name", "text")
             if call.name in ENTRY_ITERATORS:
                 return Value(type_name="ZipEntry")
-            if call.name == "getName" and re.search(r"Entry\b", receiver.type_name):
+            if call.name == "getName" and ARCHIVE_ENTRY.fullmatch(receiver.type_name.strip()):
                 return self.source(node, "Archive entry name", "text")
             if (call.name in {"getName", "getFileName"} and receiver.category == "path") or (
                 call.name == "substringAfterLast" and call.args and self.literal(call.args[0]) == "/"
@@ -884,6 +908,11 @@ class Analyzer:
             if simple == "File" and call.receiver is None and self.language in {"java", "kotlin"}:
                 # changed() would reset the category; a File keeps "path" so wrappers are not re-reported.
                 return Value(self.changed(node, _union([receiver, *args])).traces, "path", "File")
+            declared = self.spec_entry("source", call, frame)
+            if declared:
+                return self.source(
+                    node, f"Project specification source {declared['id']}", declared["returns"], receiver
+                )
             if (
                 call.receiver is None
                 and simple[:1].isupper()
@@ -892,14 +921,17 @@ class Analyzer:
             ):
                 # A constructor of an imported class: keep input provenance and record the type.
                 return self.changed(node, Value(_union([receiver, *args]).traces, "unknown", simple))
-            declared = self.spec_entry("source", call, frame)
-            if declared:
-                return self.source(
-                    node, f"Project specification source {declared['id']}", declared["returns"], receiver
-                )
             # Unknown calls retain input provenance, with no assumed sanitization or return type.
             return self.changed(node, _union([receiver, *args]))
         if node.type == "binary_expression" and self.language == "kotlin":
+            left, right = _field(node, "left"), _field(node, "right")
+            if (
+                left is not None
+                and right is not None
+                and self.raw[left.end_byte : right.start_byte].strip() == b"?:"
+            ):
+                kept = self.value(left, frame)
+                return Value(_union([kept, self.value(right, frame)]).traces, kept.category, kept.type_name)
             generic = self.generic_call(node)
             if generic is not None:
                 target, name = generic
@@ -941,7 +973,10 @@ class Analyzer:
 
     def generic_call(self, node: Any) -> tuple[Any, str] | None:
         """Kotlin's grammar reads receiver.method<T>(args) as comparisons; recover receiver and method."""
-        if not re.fullmatch(r"[\w.?!]+\.\s*\w+\s*<[\w.?<> ]+>\s*\([\s\S]*\)", self.text(node).strip()):
+        text = self.text(node).strip()
+        if len(text) > 400 or "<" not in text or not text.endswith(")"):
+            return None
+        if not re.fullmatch(r"[\w.?!]{1,200}?\.\s*\w+\s*<[\w.?<> ]{1,100}>\s*\([^\n]*\)", text):
             return None
         left = node
         while left is not None and left.type == "binary_expression":
@@ -959,6 +994,19 @@ class Analyzer:
             name = self.text(node)
             if name not in frame.values and name not in frame.types and name in self.constants:
                 return self.constants[name][1]
+        if node is not None and node.type in IDENTIFIERS and self.function is not None:
+            # A local declared with a literal and never reassigned before this use.
+            name = re.escape(self.text(node))
+            body = self.raw[self.function.start_byte : node.start_byte].decode("utf-8", errors="replace")
+            declared = list(
+                re.finditer(
+                    rf'(?:\b(?:val|var|let)\s+{name}\b(?:\s*:\s*String\??)?|\bString\s+{name})\s*=\s*"([^"\\\n]*)"\s*;?\s*$',
+                    body,
+                    re.M,
+                )
+            )
+            if declared and not re.search(rf"(?<![\w.]){name}\s*=(?!=)", body[declared[-1].end() :]):
+                return declared[-1][1]
         navigation = self.navigation(node) if node is not None else None
         if navigation and self.text(navigation[0]).split(".")[0] in {
             "Companion",
@@ -1277,7 +1325,29 @@ class Analyzer:
                     )
 
     def function_text(self) -> str:
-        return self.text(self.function) if self.function is not None else ""
+        return self.function_source
+
+    def path_guard(self) -> bool:
+        """A containment or ".." check anywhere in this function (computed once per function)."""
+        if self.path_guarded is None:
+            text = self.function_source
+            canonical = any(token in text for token in CANONICAL_PATHS)
+            prefix = "startsWith" in text or "hasPrefix" in text
+            self.path_guarded = (canonical and prefix) or '".."' in text
+        return self.path_guarded
+
+    def local_broadcaster(self, receiver: str) -> bool:
+        """Whether a receiver is a LocalBroadcastManager declared or assigned anywhere in this file."""
+        if receiver not in self.local_broadcasters:
+            name = re.escape(receiver.rsplit(".", 1)[-1])
+            self.local_broadcasters[receiver] = "LocalBroadcast" in receiver or bool(
+                re.search(
+                    rf"\b{name}\b\s*(?::\s*(?:[\w.]*\.)?LocalBroadcastManager\b|=\s*(?:[\w.]*\.)?LocalBroadcastManager\b)"
+                    rf"|\bLocalBroadcastManager\s+{name}\b",
+                    self.raw.decode("utf-8", errors="replace"),
+                )
+            )
+        return self.local_broadcasters[receiver]
 
     def check_key_material(self, call: Call, frame: Frame) -> None:
         name = call.name.rsplit(".", 1)[-1]
@@ -1330,11 +1400,7 @@ class Analyzer:
             if constant:
                 entry = self.constants.get(constant.rsplit(".", 1)[-1])
                 literal = entry[1] if entry else None
-            if (
-                literal
-                and "." in literal
-                and not literal.startswith(("android.", "com.android.", "com.google.android."))
-            ):
+            if literal and self.package_prefix and literal.startswith(self.package_prefix + "."):
                 return literal
         return None
 
@@ -1365,11 +1431,17 @@ class Analyzer:
             if self.text(call.args[1]).strip() not in {"null"}:
                 return  # receiver permission given
         receiver = self.key(call.receiver)
-        if "LocalBroadcast" in receiver or (
-            receiver and re.search(rf"\b{re.escape(receiver)}\s*=\s*LocalBroadcastManager\b", function)
-        ):
+        if receiver and self.local_broadcaster(receiver):
             return
-        expression, basis = self.intent_expression(self.unwrap(first) or first, call.node)
+        if self.action_hint is None:
+            self.action_hint = bool(ACTION_HINT.search(function))
+        if not self.action_hint or self.intent_checks >= MAX_INTENT_CHECKS:
+            return
+        self.intent_checks += 1
+        target = self.unwrap(first) or first
+        if target.type in IDENTIFIERS and self.text(target) in self.aliases:
+            target = self.aliases[self.text(target)]
+        expression, basis = self.intent_expression(target, call.node)
         action = self.custom_action(expression)
         explicit = re.search(
             r"::class|\.class\b|setClass|setComponent|setPackage|ComponentName|\b(?:component|`?package`?)\s*=",
@@ -1389,10 +1461,9 @@ class Analyzer:
         args = list(call.args)
         argument = None
         if self.language in {"java", "kotlin"}:
+            # Context.openFileOutput and similar reject path separators, so they are not sinks.
             if simple in FILE_SINKS and call.receiver is None and simple not in self.class_names and args:
                 argument = args[1] if simple == "File" and len(args) >= 2 else args[0]
-            elif call.name in {"openFileOutput", "openFileInput", "getFileStreamPath", "deleteFile"} and args:
-                argument = args[0]
         elif self.language == "swift":
             if call.name == "appendingPathComponent" and args:
                 argument = args[0]
@@ -1402,13 +1473,15 @@ class Analyzer:
                 argument = self.labeled_argument(call, "fileURLWithPath")
         if argument is None or self.name_only(call.node):
             return
+        if FILE_DESCRIPTOR.search(self.text(argument).strip()):
+            return  # a FileDescriptor opened by the platform is not a path
         value = self.value(argument, frame)
-        if value.category == "path":
+        if value.category == "path" or "FileDescriptor" in value.type_name:
             return  # the File it wraps was checked where it was built
         traces = tuple(trace for trace in value.traces if not trace.description.endswith(BASENAME))
         if not traces:
             return
-        if PATH_GUARD.search(self.function_text()):
+        if self.path_guard():
             return
         self.emit(
             "AST-PATH-TRAVERSAL",
@@ -1501,7 +1574,10 @@ class Analyzer:
             and len(call.args) >= 4
             and (mutability := self.pending_intent_mutability(call.args[3]))
         ):
-            wrapped, basis = self.intent_expression(call.args[2], call.node)
+            intent_node = call.args[2]
+            if intent_node.type in IDENTIFIERS and self.text(intent_node) in self.aliases:
+                intent_node = self.aliases[self.text(intent_node)]
+            wrapped, basis = self.intent_expression(intent_node, call.node)
             explicit = re.search(
                 r"::class|\.class\b|setClass|setComponent|setPackage|ComponentName|\b(?:component|`?package`?)\s*=",
                 wrapped,
@@ -1680,15 +1756,84 @@ class Analyzer:
                 self.visit(arg, frame, guards, conditions)
             self.check_call(call, frame, guards, conditions)
             self.release_constants(call, frame)
-            if self.language == "kotlin" and call.name in SCOPE_FUNCTIONS:
-                # Scope functions run their lambda once, in place; follow it in this frame.
-                for part in node.named_children:
-                    if part.type == "annotated_lambda":
-                        for lambda_node in part.named_children:
-                            self.visit(lambda_node, frame, guards, conditions)
+            scope = self.scope_function(call)
+            for lambda_node in self.trailing_lambdas(node):
+                if scope is not None:
+                    self.visit_scope_lambda(lambda_node, frame, guards, conditions, *scope)
+                else:
+                    # An unfollowed closure may fill any array it names.
+                    for part in _walk(lambda_node):
+                        if part.type in IDENTIFIERS:
+                            frame.constants.pop(self.text(part), None)
             return
         for child in node.named_children:
             self.visit(child, frame, guards, conditions)
+
+    @staticmethod
+    def trailing_lambdas(node: Any) -> list[Any]:
+        """Kotlin annotated lambdas and Swift trailing closures attached to a call."""
+        found = []
+        for part in node.named_children:
+            if part.type == "annotated_lambda":
+                found += [child for child in part.named_children if child.type == "lambda_literal"]
+            elif part.type == "call_suffix":
+                found += [child for child in part.named_children if child.type == "lambda_literal"]
+        return found
+
+    def scope_function(self, call: Call) -> tuple[str, Any] | None:
+        """Kotlin scope function name and its receiver: x.let {}, x.use {}, with(x) {}."""
+        if self.language != "kotlin":
+            return None
+        if call.name in SCOPE_FUNCTIONS:
+            return call.name, call.receiver
+        callee = call.node.named_children[0] if call.node.named_children else None
+        inner = self.call(callee) if callee is not None and callee.type == "call_expression" else None
+        if inner is not None and inner.name == "with" and inner.receiver is None and inner.args:
+            return "with", inner.args[0]
+        return None
+
+    def visit_scope_lambda(
+        self,
+        node: Any,
+        frame: Frame,
+        guards: dict[int, set[str]],
+        conditions: list[Any],
+        scope: str,
+        receiver: Any,
+    ) -> None:
+        """Follow a scope function's lambda once, as a block whose parameter is the receiver."""
+        local = frame.copy()
+        parameters = next((part for part in node.named_children if part.type == "lambda_parameters"), None)
+        names = (
+            [self.text(part) for part in _walk(parameters) if part.type in IDENTIFIERS] if parameters else []
+        )
+        declared = set()
+        saved = dict(self.aliases)
+        if scope in {"let", "also", "use"}:
+            name = names[0] if names else "it"
+            declared.add(name)
+            local.values[name] = self.value(receiver, frame) if receiver is not None else Value()
+            local.constants.pop(name, None)
+            if receiver is not None:
+                self.aliases[name] = receiver
+        local_guards = {origin: checks.copy() for origin, checks in guards.items()}
+        for child in node.named_children:
+            if child is parameters:
+                continue
+            parsed = self.declaration(child)
+            if parsed:
+                declared.add(parsed[0])
+            self.visit(child, local, local_guards, conditions.copy())
+        self.aliases = saved
+        for key in frame.values:
+            if key not in declared:
+                frame.values[key] = local.values[key]
+        frame.bridges = local.bridges
+        frame.javascript = local.javascript
+        frame.constants = {
+            **{key: value for key, value in local.constants.items() if key not in declared},
+            **{key: value for key, value in frame.constants.items() if key in declared},
+        }
 
     def release_constants(self, call: Call, frame: Frame) -> None:
         """A constant passed to or called on by a method that may fill it is no longer known to be constant."""
@@ -1746,6 +1891,8 @@ class Analyzer:
         """Immutable declarations outside functions: Kotlin val/const val, Java final fields, Swift let."""
         declarations = []
         for node in _walk(root, descend_functions=False):
+            if node.parent is None or node.parent.type not in CONSTANT_SCOPES:
+                continue
             if node.type == "field_declaration" and re.search(
                 r"\bfinal\b", self.text(_field(node, "modifiers") or node.named_children[0])
             ):
@@ -1763,7 +1910,8 @@ class Analyzer:
                     continue
                 name, expression, _ = parsed
                 described = self.constant(expression, Frame())
-                if described:
+                # A zero-filled field is storage that constructors or init blocks fill; it is not a constant.
+                if described and described != "zero-filled array":
                     self.constants[name] = (described, self.literal(self.unwrap(expression)))
 
     def class_fields(self, function: Any) -> dict[str, str]:
@@ -1827,6 +1975,10 @@ class Analyzer:
             name = _field(function, "name")
             self.scope = self.text(name)
             self.function = function
+            self.function_source = self.text(function)
+            self.path_guarded = self.action_hint = None
+            self.intent_checks = 0
+            self.aliases = {}
             self.field_types = self.class_fields(function)
             enclosing = function.parent
             while enclosing and enclosing.type != "class_declaration":

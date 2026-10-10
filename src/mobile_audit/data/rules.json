@@ -293,7 +293,8 @@
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
     "maswe": [
       "MASWE-0007"
-    ]
+    ],
+    "case_sensitive": true
   },
   {
     "id": "SOURCE-WEAK-KEY-SIZE",
@@ -322,7 +323,8 @@
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
     "maswe": [
       "MASWE-0013"
-    ]
+    ],
+    "case_sensitive": true
   },
   {
     "id": "SOURCE-WEAK-TLS-VERSION",
@@ -351,11 +353,12 @@
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
     "maswe": [
       "MASWE-0026"
-    ]
+    ],
+    "case_sensitive": true
   },
   {
     "id": "IOS-ATS-BYPASS-API",
-    "title": "Network API outside App Transport Security opens a connection without TLS",
+    "title": "Connection opened with an API that App Transport Security does not cover",
     "mode": "source",
     "platform": "ios",
     "suffixes": [
@@ -366,7 +369,7 @@
     "pattern": "\\bNWConnection\\s*\\([^)]*\\busing\\s*:\\s*\\.(?:tcp|udp)\\b|\\bNWParameters\\s*\\(\\s*tls\\s*:\\s*nil\\b|\\bNWParameters\\.(?:tcp|udp)\\b|\\bnw_parameters_create_secure_(?:tcp|udp)\\s*\\(\\s*NW_PARAMETERS_DISABLE_PROTOCOL\\b|(?<![\\w.])socket\\s*\\(\\s*(?:AF_INET6?|PF_INET6?|Int32\\s*\\(\\s*AF_INET6?\\s*\\)|[\\w.]*ai_family)\\b|\\bCFStreamCreatePairWithSocketToHost\\b|\\bgetStreamsToHost(?:WithName)?\\b",
     "severity": "low",
     "masvs": "MASVS-NETWORK",
-    "remediation": "Use URLSession, or Network.framework with NWParameters.tls / NWParameters(tls:), so traffic is encrypted. ATS does not apply to Network.framework, BSD sockets or CFStream.",
+    "remediation": "Use URLSession, or Network.framework with NWParameters.tls / NWParameters(tls:), so traffic is encrypted. ATS does not apply to Network.framework, BSD sockets or CFStream; if TLS is added to the connection later, confirm it is required for every host.",
     "references": [
       "https://developer.apple.com/documentation/security/preventing-insecure-network-connections",
       "https://mas.owasp.org/MASWE/MASVS-NETWORK/MASWE-0026/"
@@ -377,7 +380,8 @@
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
     "maswe": [
       "MASWE-0026"
-    ]
+    ],
+    "case_sensitive": true
   },
   {
     "id": "IOS-INSECURE-UNARCHIVE",
@@ -403,7 +407,8 @@
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
     "maswe": [
       "MASWE-0050"
-    ]
+    ],
+    "case_sensitive": true
   },
   {
     "id": "WEBVIEW-SAFE-BROWSING-OFF",
@@ -429,7 +434,8 @@
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
     "maswe": [
       "MASWE-0035"
-    ]
+    ],
+    "case_sensitive": true
   },
   {
     "id": "IOS-UIWEBVIEW",
@@ -456,6 +462,7 @@
     "maswe": [
       "MASWE-0035"
     ],
-    "once_per_file": true
+    "once_per_file": true,
+    "case_sensitive": true
   }
 ]

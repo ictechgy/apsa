@@ -2,6 +2,11 @@
 
 Truth schema v1 names the expected rule IDs; v2 names MASWE weaknesses, so a side is flagged by any
 finding mapped to one of them and the truth does not depend on APSA's rule names.
+
+Because a weakness such as MASWE-0050 is broad, a v2 file-level hit can come from unrelated code in the
+labeled file. For v2 truth the primary recall measure is therefore ``line_level_tp`` (a hit within the
+labeled lines, with a small tolerance); file-level TP and FP are reported alongside. Fixed sides have no
+line ranges, so their FP stays file-level.
 """
 
 from __future__ import annotations
@@ -17,7 +22,11 @@ from pathlib import Path, PurePosixPath
 
 from benchmarks.dependency_oracle import extract
 from mobile_audit.core import report_incomplete
-from mobile_audit.maswe import RULE_WEAKNESSES, finding_weaknesses
+from mobile_audit.maswe import finding_weaknesses
+from mobile_audit.rules import rules as rule_catalog
+
+# Weaknesses a source tree can be checked for; runtime, binary and package-lint rules do not run on source.
+SOURCE_MODES = {"source", "ast", "source-pattern", "configuration"}
 
 HERE = Path(__file__).resolve().parent
 TRUTH = HERE / "fpfn_truth.json"
@@ -79,7 +88,12 @@ def evaluate(pair: dict, work: Path) -> dict:
     root_name = PurePosixPath(locations[0]["path"]).parts[0]
     rules = set(pair.get("expected_rules", []))
     weaknesses = frozenset(pair.get("weaknesses", []))
-    covered = {weakness for mapped in RULE_WEAKNESSES.values() for weakness in mapped}
+    covered = {
+        weakness
+        for rule in rule_catalog()
+        if rule.get("mode") in SOURCE_MODES and not rule["id"].startswith("QG-")
+        for weakness in rule.get("maswe", [])
+    }
     result = {
         "id": pair["id"],
         "repository": pair["repository"],
@@ -202,7 +216,7 @@ def main() -> None:
             results.append({"id": pair["id"], "error": f"{type(error).__name__}: {error}"[:500]})
     totals = totals_for(results)
     summary = {
-        "schema": "apsa-fpfn-results-v2",
+        "schema": "apsa-fpfn-results-v3",
         "truth": str(args.truth.resolve().relative_to(HERE.parent))
         if args.truth.resolve().is_relative_to(HERE.parent)
         else args.truth.name,
