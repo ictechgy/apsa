@@ -123,9 +123,8 @@ ANDROID_AUTH_REQUIRED = re.compile(r"\bsetUserAuthenticationRequired\s*\(\s*true
 ANDROID_AUTH_WINDOW = re.compile(
     r"\bsetUserAuthenticationParameters\s*\(\s*[1-9]|\bsetUserAuthenticationValidityDurationSeconds\s*\(\s*[1-9]"
 )
-NON_RELEASE_SOURCE_SET = re.compile(
-    r"(?:^|/)src/(?:[^/]*[Dd]ebug[^/]*|androidTest\w*|test\w*|[^/]*[Tt]est[A-Z]\w*)/"
-)
+# Debug and test source sets (debug, androidTest, test, testFixtures, sharedTest, ...) never ship in release.
+NON_RELEASE_SOURCE_SET = re.compile(r"(?:^|/)src/(?:[^/]*[Dd]ebug[^/]*|[^/]*[Tt]est[^/]*)/")
 ANDROID_FALLBACK_ARGUMENTS = {
     "setAllowedAuthenticators": "DEVICE_CREDENTIAL",
     "setUserAuthenticationParameters": "AUTH_DEVICE_CREDENTIAL",
@@ -635,6 +634,15 @@ def _insecure_random(inventory: dict, sources: list[tuple[str, str]]) -> tuple[l
     ]
 
 
+def _capped(matches) -> tuple[list, bool]:
+    """At most MAX_PATTERN_FINDINGS matches, and whether more were left unread."""
+    taken = list(islice(matches, MAX_PATTERN_FINDINGS + 1))
+    return taken[:MAX_PATTERN_FINDINGS], len(taken) > MAX_PATTERN_FINDINGS
+
+
+TRUNCATED = {"truncated": True}
+
+
 def _masked_code(text: str) -> str:
     """Blank comments and string contents (quotes kept) so brackets inside them do not nest."""
     return re.sub(
@@ -719,7 +727,7 @@ def _android_auth(path: str, text: str) -> list[dict]:
         if bound:
             break
         if count >= MAX_PATTERN_FINDINGS:
-            findings.append({"truncated": True})
+            findings.append(TRUNCATED)
             break
         head = re.search(r"(\w{1,200}|\))\s*\??\s*$", masked[max(0, match.start() - 220) : match.start()])
         args = _arguments(masked, match.end() - 1)
@@ -750,7 +758,9 @@ def _android_auth(path: str, text: str) -> list[dict]:
                     "authenticate call without a CryptoObject argument",
                 )
             )
-    for match in islice(ANDROID_FALLBACK.finditer(masked), MAX_PATTERN_FINDINGS + 1):
+    matches, cut = _capped(ANDROID_FALLBACK.finditer(masked))
+    findings += [TRUNCATED] * cut
+    for match in matches:
         findings.append(
             _auth_finding(
                 "SOURCE-BIOMETRIC-FALLBACK",
@@ -762,7 +772,9 @@ def _android_auth(path: str, text: str) -> list[dict]:
             )
         )
     for method, token in ANDROID_FALLBACK_ARGUMENTS.items():
-        for match in islice(re.finditer(rf"\b{method}\s*\(", masked), MAX_PATTERN_FINDINGS + 1):
+        matches, cut = _capped(re.finditer(rf"\b{method}\s*\(", masked))
+        findings += [TRUNCATED] * cut
+        for match in matches:
             args = _arguments(masked, match.end() - 1)
             if args and any(re.search(rf"\b{token}\b", masked[a:b]) for a, b in args):
                 findings.append(
@@ -775,7 +787,9 @@ def _android_auth(path: str, text: str) -> list[dict]:
                         f"{token} among the allowed authenticators",
                     )
                 )
-    for match in islice(ANDROID_ENROLLMENT.finditer(masked), MAX_PATTERN_FINDINGS + 1):
+    matches, cut = _capped(ANDROID_ENROLLMENT.finditer(masked))
+    findings += [TRUNCATED] * cut
+    for match in matches:
         findings.append(
             _auth_finding(
                 "SOURCE-BIOMETRIC-ENROLLMENT",
@@ -794,7 +808,9 @@ def _apple_auth(path: str, text: str) -> list[dict]:
     findings = []
     if not APPLE_AUTH_BINDING.search(masked):
         # Calls only: a protocol requirement, a mock or an Objective-C method definition is not use.
-        for match in islice(re.finditer(r"\bevaluatePolicy\s*[(:]", masked), MAX_PATTERN_FINDINGS + 1):
+        policies, cut = _capped(re.finditer(r"\bevaluatePolicy\s*[(:]", masked))
+        findings += [TRUNCATED] * cut
+        for match in policies:
             line_start = masked.rfind("\n", 0, match.start()) + 1
             # A declaration starts its line within a short prefix; longer prefixes are calls.
             prefix = masked[max(line_start, match.start() - 200) : match.start()]
@@ -814,7 +830,9 @@ def _apple_auth(path: str, text: str) -> list[dict]:
             )
     fallback = [APPLE_FALLBACK_POLICY] + [APPLE_FALLBACK_FLAGS] * ("SecAccessControl" in masked)
     for pattern in fallback:
-        for match in islice(pattern.finditer(masked), MAX_PATTERN_FINDINGS + 1):
+        matches, cut = _capped(pattern.finditer(masked))
+        findings += [TRUNCATED] * cut
+        for match in matches:
             findings.append(
                 _auth_finding(
                     "SOURCE-BIOMETRIC-FALLBACK",
@@ -826,7 +844,9 @@ def _apple_auth(path: str, text: str) -> list[dict]:
                 )
             )
     if "SecAccessControl" in masked:
-        for match in islice(APPLE_ENROLLMENT.finditer(masked), MAX_PATTERN_FINDINGS + 1):
+        matches, cut = _capped(APPLE_ENROLLMENT.finditer(masked))
+        findings += [TRUNCATED] * cut
+        for match in matches:
             findings.append(
                 _auth_finding(
                     "SOURCE-BIOMETRIC-ENROLLMENT",
@@ -853,7 +873,9 @@ def _local_auth(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]
         elif path.endswith(APPLE_SOURCES):
             scanned = True
             if re.search(r"evaluatePolicy|SecAccessControl", text):
-                findings += _apple_auth(path, text)
+                found = _apple_auth(path, text)
+                truncated = truncated or any(item.get("truncated") for item in found)
+                findings += [item for item in found if not item.get("truncated")]
     if len(findings) > MAX_PATTERN_FINDINGS:
         findings, truncated = findings[:MAX_PATTERN_FINDINGS], True
     notes = {
@@ -893,7 +915,7 @@ def _ios_webview_file_access(
         return [], [
             {"rule_id": "IOS-WEBVIEW-FILE-ACCESS", "state": "not-applicable", "method": "source-pattern"}
         ]
-    findings, scanned = [], 0
+    findings, scanned, truncated = [], 0, False
     for path, text in sources:
         if not path.endswith(APPLE_SOURCES):
             continue
@@ -901,7 +923,9 @@ def _ios_webview_file_access(
         if "allow" not in text:
             continue
         cleaned = strip_comments(text)
-        for match in islice(FILE_ACCESS_KEY.finditer(cleaned), MAX_PATTERN_FINDINGS + 1):
+        keys, cut = _capped(FILE_ACCESS_KEY.finditer(cleaned))
+        truncated = truncated or cut
+        for match in keys:
             findings.append(
                 finding(
                     "IOS-WEBVIEW-FILE-ACCESS",
@@ -925,7 +949,9 @@ def _ios_webview_file_access(
             )
         masked = _masked_code(cleaned)
         assigned: dict[str, list[str]] = {}
-        for match in islice(READ_ACCESS.finditer(cleaned), MAX_PATTERN_FINDINGS + 1):
+        accesses, cut = _capped(READ_ACCESS.finditer(cleaned))
+        truncated = truncated or cut
+        for match in accesses:
             end = match.end()
             depth = 0
             while end < len(masked) and end - match.end() < 300:
@@ -990,7 +1016,7 @@ def _ios_webview_file_access(
     return findings[:MAX_PATTERN_FINDINGS], [
         {
             "rule_id": "IOS-WEBVIEW-FILE-ACCESS",
-            "state": ("partial" if len(findings) > MAX_PATTERN_FINDINGS else "checked")
+            "state": ("partial" if truncated or len(findings) > MAX_PATTERN_FINDINGS else "checked")
             if scanned
             else "not-run",
             "method": "source-pattern",
@@ -1070,27 +1096,35 @@ def _network_security_config(
     inventory: dict, sources: list[tuple[str, str]]
 ) -> tuple[list[dict], list[dict]]:
     if "android" not in inventory.get("platforms", []):
-        return [], [{"rule_id": "ANDROID-NSC-USER-CA", "state": "not-applicable", "method": "configuration"}]
+        return [], [
+            {"rule_id": rule, "state": "not-applicable", "method": "configuration"}
+            for rule in ("ANDROID-NSC-USER-CA", "ANDROID-NSC-CONFIG")
+        ]
     # Each selected manifest's reference resolves in its own module's res/xml, never another module's.
-    referenced = {
-        (
-            _module_root(str(config.get("path") or "")),
-            str(config["network_security_config"]).rsplit("/", 1)[-1],
-        )
-        for config in inventory.get("android_config", [])
-        if config.get("network_security_config") and config.get("bundle_role") != "embedded"
-    }
+    referenced: dict[tuple[str, str], list[str]] = {}
+    for config in inventory.get("android_config", []):
+        if config.get("network_security_config") and config.get("bundle_role") != "embedded":
+            manifest = str(config.get("path") or "")
+            name = str(config["network_security_config"]).rsplit("/", 1)[-1]
+            referenced.setdefault((_module_root(manifest), name), []).append(manifest)
     findings: list[dict] = []
-    read, unreadable = 0, []
+    read, unreadable, compiled = 0, [], []
+    parsed_for: set[str] = set()
     for path, text in sources:
+        # Debug and test source sets do not ship in the release build.
+        if not path.endswith(".xml") or "/res/xml/" not in "/" + path or NON_RELEASE_SOURCE_SET.search(path):
+            continue
         stem = path.rsplit("/", 1)[-1].removesuffix(".xml")
-        if (
-            not path.endswith(".xml")
-            or "/res/xml/" not in "/" + path
-            # Debug and test source sets do not ship in the release build.
-            or NON_RELEASE_SOURCE_SET.search(path)
-            or not any(stem == name and path.startswith(root) for root, name in referenced)
-        ):
+        owners = [
+            manifest
+            for (module, name), manifests in referenced.items()
+            if stem == name and path.startswith(module)
+            for manifest in manifests
+        ]
+        if not owners:
+            continue
+        if not text.lstrip().startswith("<"):
+            compiled.append(path)  # AAB resources are compiled protobuf, not XML text
             continue
         handler = _NetworkConfig()
         try:
@@ -1099,6 +1133,7 @@ def _network_security_config(
             unreadable.append(path)
             continue
         read += 1
+        parsed_for.update(owners)
         for line, scope in handler.user:
             findings.append(
                 finding(
@@ -1137,21 +1172,26 @@ def _network_security_config(
                     [NSC_REFERENCE],
                 )
             )
+    # Read by the worker: a parsed configuration overrides the manifest's usesCleartextTraffic on API 24+.
+    inventory["network_security_parsed"] = sorted(parsed_for)
     if not referenced:
         state, note = "checked", "No networkSecurityConfig is referenced; platform defaults apply."
-    elif unreadable or not read:
+    elif unreadable:
         state = "partial"
-        note = "The referenced network security configuration could not be read"
-        note += f" ({len(unreadable)} unparsable)." if unreadable else " from the scanned sources."
+        note = f"{len(unreadable)} referenced network security configuration(s) could not be parsed."
+    elif compiled and not read:
+        state = "not-run"
+        note = "The referenced configuration is compiled (AAB protobuf resources) and is not decoded."
+    elif not read:
+        state = "partial"
+        note = "The referenced network security configuration is not among the scanned sources."
     else:
         state, note = "checked", "Referenced network security configuration; <debug-overrides> is excluded."
+    state = state if inventory.get("android_config") else "not-run"
     return findings, [
-        {
-            "rule_id": "ANDROID-NSC-USER-CA",
-            "state": state if inventory.get("android_config") else "not-run",
-            "method": "configuration",
-            "note": note,
-        }
+        {"rule_id": "ANDROID-NSC-USER-CA", "state": state, "method": "configuration", "note": note},
+        # The same read decides whether cleartext permissions in the configuration were checked (MASWE-0026).
+        {"rule_id": "ANDROID-NSC-CONFIG", "state": state, "method": "configuration", "note": note},
     ]
 
 

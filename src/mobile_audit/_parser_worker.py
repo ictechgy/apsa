@@ -69,6 +69,22 @@ def analyze(
     from .platform_checks import platform_checks
 
     platform_findings, platform_coverage = platform_checks(inventory, sources)
+    # With a parsed network security configuration, Android 7+ ignores usesCleartextTraffic.
+    minimum = android_levels(inventory).get("min")
+    overridden = (
+        set(inventory.get("network_security_parsed", []))
+        if isinstance(minimum, int) and minimum >= 24
+        else set()
+    )
+    findings = [
+        item
+        for item in findings
+        if not (
+            item["rule_id"] == "ANDROID-CLEARTEXT"
+            and "configuration" in item["evidence"][0]
+            and item["evidence"][0].get("path") in overridden
+        )
+    ]
     findings.extend(platform_findings)
     coverage.extend(platform_coverage)
     if inventory.get("aab_manifest", {}).get("unresolved_attributes"):

@@ -6,7 +6,13 @@ finding mapped to one of them and the truth does not depend on APSA's rule names
 Because a weakness such as MASWE-0050 is broad, a v2 file-level hit can come from unrelated code in the
 labeled file. For v2 truth the primary recall measure is therefore ``line_level_tp`` (a hit within the
 labeled lines, with a small tolerance); file-level TP and FP are reported alongside. Fixed sides have no
-line ranges, so their FP stays file-level.
+line ranges, so their FP stays file-level and is an upper bound: any finding of a labeled weakness in a
+fixed file counts.
+
+Declared before the first blind v2 run, as the secondary measure: ``discriminating_tp`` counts vulnerable
+sides with an in-range hit from a rule that has no hit in the fixed side's labeled files, so the fix made
+that rule go quiet. ``totals`` covers all pairs, where pairs outside APSA's source checks count as FN;
+``in_scope_totals`` covers pairs with a weakness some source check relates to.
 """
 
 from __future__ import annotations
@@ -83,17 +89,55 @@ def located(report: dict, rules: set[str], path: str, weaknesses: frozenset[str]
     return hits
 
 
+def source_rules() -> list[dict]:
+    return [
+        rule
+        for rule in rule_catalog()
+        if rule.get("mode") in SOURCE_MODES and not rule["id"].startswith("QG-")
+    ]
+
+
+def source_weaknesses() -> set[str]:
+    """MASWE weaknesses that at least one source-tree check relates to."""
+    return {weakness for rule in source_rules() for weakness in rule.get("maswe", [])}
+
+
+def provenance() -> dict:
+    """Evaluator, catalog and checkout identity, so a result can be tied to what produced it."""
+    catalog = sorted(
+        (rule["id"], rule.get("mode", ""), tuple(rule.get("maswe", []))) for rule in source_rules()
+    )
+    commit, dirty = os.environ.get("GITHUB_SHA", ""), None
+    try:
+        if not commit:
+            commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True, check=True
+            ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=HERE,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        dirty = bool(status.stdout.strip())
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    return {
+        "apsa_commit": commit,
+        "worktree_dirty": dirty,
+        "evaluator_sha256": sha(Path(__file__).read_bytes()),
+        "source_catalog_sha256": sha(json.dumps(catalog).encode()),
+        "source_weaknesses": sorted(source_weaknesses()),
+    }
+
+
 def evaluate(pair: dict, work: Path) -> dict:
     locations = pair["vulnerable_locations"]
     root_name = PurePosixPath(locations[0]["path"]).parts[0]
     rules = set(pair.get("expected_rules", []))
     weaknesses = frozenset(pair.get("weaknesses", []))
-    covered = {
-        weakness
-        for rule in rule_catalog()
-        if rule.get("mode") in SOURCE_MODES and not rule["id"].startswith("QG-")
-        for weakness in rule.get("maswe", [])
-    }
+    covered = source_weaknesses()
     result = {
         "id": pair["id"],
         "repository": pair["repository"],
@@ -144,7 +188,9 @@ def evaluate(pair: dict, work: Path) -> dict:
             "missing_labeled_paths": missing,
             "labeled_file_states": {path: files.get(path, "not-analyzed-as-source") for path in relative},
             "hits": hits[:20],
+            "hit_rules": sorted({hit["rule_id"] for hit in hits}),
             "hits_in_labeled_lines": in_range[:20],
+            "in_range_rules": sorted({hit["rule_id"] for hit in in_range}),
             "any_rule_findings_in_labeled_files": [
                 hit for path in relative for hit in located(report, set(), path)
             ][:20],
@@ -165,6 +211,9 @@ def evaluate(pair: dict, work: Path) -> dict:
             if fixed_hit
             else "tn",
             "vulnerable_line_level": bool(result["vulnerable"]["hits_in_labeled_lines"]),
+            # An in-range rule that no longer fires anywhere in the fixed labeled files.
+            "discriminating_tp": not result["vulnerable"]["missing_labeled_paths"]
+            and bool(set(result["vulnerable"]["in_range_rules"]) - set(result["fixed"]["hit_rules"])),
         }
     else:
         result["outcome"] = {"vulnerable": "out-of-scope", "fixed": "out-of-scope"}
@@ -179,6 +228,7 @@ def totals_for(results: list[dict]) -> dict:
         "fp": sum(r["outcome"]["fixed"] == "fp" for r in scored),
         "tn": sum(r["outcome"]["fixed"] == "tn" for r in scored),
         "line_level_tp": sum(r["outcome"].get("vulnerable_line_level", False) for r in scored),
+        "discriminating_tp": sum(r["outcome"].get("discriminating_tp", False) for r in scored),
         "errors": sum("error" in r for r in results),
         "unscored_sides": sum(
             side == "unscored" for r in scored for side in (r["outcome"]["vulnerable"], r["outcome"]["fixed"])
@@ -225,7 +275,7 @@ def main() -> None:
         if amendments_path and amendments_path.is_file()
         else None,
         "in_scope_totals": totals_for([r for r in results if r.get("in_scope")]),
-        "apsa_commit": os.environ.get("GITHUB_SHA", ""),
+        **provenance(),
         "totals": totals,
         "pairs": results,
     }

@@ -75,6 +75,7 @@ RULE_WEAKNESSES: dict[str, tuple[str, ...]] = {
     "ANDROID-DEBUG": ("MASWE-0063",),
     "ANDROID-CLEARTEXT": ("MASWE-0026",),
     "ANDROID-CONFIG": ("MASWE-0026", "MASWE-0063"),
+    "ANDROID-NSC-CONFIG": ("MASWE-0026", "MASWE-0027"),
     "IOS-ATS": ("MASWE-0026",),
     "IOS-CONFIG": ("MASWE-0026",),
     # Runtime scenarios on prepared test apps.

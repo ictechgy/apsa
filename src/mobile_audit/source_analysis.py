@@ -247,6 +247,15 @@ PURE_METHODS = CONSTANT_CONVERSIONS | {
     "println",
     "NSLog",
 }
+# Implicit service Intents throw on API 21+, so only activities and broadcasts can be hijacked.
+IMPLICIT_LAUNCHERS = {
+    "startActivity",
+    "startActivityForResult",
+    "startActivityIfNeeded",
+    "sendBroadcast",
+    "sendOrderedBroadcast",
+    "sendStickyBroadcast",
+}
 INTENT_LAUNCHERS = {
     "startActivity",
     "startActivityForResult",
@@ -315,7 +324,9 @@ FILE_SINKS = {
 }
 LIMITS_NOTE = (
     "Function-scoped local def-use analysis; no method dispatch, interprocedural flow, "
-    "component reachability, redirect, or authentication-state proof."
+    "component reachability, redirect, or authentication-state proof. Kotlin scope-function lambdas "
+    "(let, also, use, apply, run, with) are followed as blocks that may not run; other lambdas and "
+    "Swift closures are not analyzed."
 )
 
 
@@ -1377,7 +1388,11 @@ class Analyzer:
             text = self.function_source
             canonical = any(token in text for token in CANONICAL_PATHS)
             prefix = "startsWith" in text or "hasPrefix" in text
-            self.path_guarded = (canonical and prefix) or '".."' in text
+            # A containment test for "..", not a replace("..", ...) that a crafted name can bypass.
+            dotdot = re.search(
+                r'(?:contains|startsWith|endsWith|indexOf|equals)\s*\(\s*"\.\."|==\s*"\.\."', text
+            )
+            self.path_guarded = (canonical and prefix) or dotdot is not None
         return self.path_guarded
 
     def local_broadcaster(self, receiver: str) -> bool:
@@ -1453,9 +1468,11 @@ class Analyzer:
             target = self.unwrap(first)
             name = self.text(target) if target is not None and target.type in IDENTIFIERS else None
             if name is not None and name not in self.checked_intents:
+                # A comparison of the nested Intent's component or package, not a mere mention (such as a log).
                 self.checked_intents[name] = bool(
                     re.search(
-                        rf"\b{re.escape(name)}\b[^\n]{{0,80}}\b(?:component|resolveActivity|getComponent|packageName|getPackage|className)\b",
+                        rf"\b{re.escape(name)}\b[^\n]{{0,80}}\b(?:component|getComponent|packageName|getPackage|className)\b"
+                        r"[^\n]{0,60}(?:==|!=|\.equals\s*\(|\bin\b|\.contains\s*\(|\.startsWith\s*\()",
                         function,
                     )
                 )
@@ -1468,6 +1485,8 @@ class Analyzer:
                     sink=call.name,
                     validation="no component or package check on the nested Intent in this function",
                 )
+            return
+        if call.name not in IMPLICIT_LAUNCHERS:
             return
         if call.name in {"sendBroadcast", "sendOrderedBroadcast"} and len(call.args) > 1:
             if self.text(call.args[1]).strip() not in {"null"}:

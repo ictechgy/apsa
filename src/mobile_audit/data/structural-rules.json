@@ -52,7 +52,7 @@
       "https://developer.android.com/privacy-and-security/risks/sql-injection"
     ],
     "mapping_scope": "partial",
-    "scope": "Function-scoped known platform-input flow to SQLiteDatabase rawQuery/execSQL first argument; no method dispatch, arbitrary-parameter taint, helper sanitization or exploit proof. 1.5 adds SQLiteQueryBuilder.query and the groupBy, having, orderBy and limit arguments of query, types locals built with an imported class's constructor, and reads nested provider classes (Outer$Inner)."
+    "scope": "Function-scoped known platform-input flow to SQLiteDatabase rawQuery/execSQL first argument; no method dispatch, arbitrary-parameter taint, helper sanitization or exploit proof. Sinks include SQLiteQueryBuilder.query and the groupBy, having, orderBy and limit arguments of query; locals built with an imported class's constructor are typed, and nested provider classes (Outer$Inner) are matched."
   },
   {
     "id": "AST-WEBVIEW-UNTRUSTED-URL",
@@ -298,7 +298,7 @@
     "title": "Cleartext traffic configuration",
     "masvs": "MASVS-NETWORK",
     "mapping_scope": "partial",
-    "scope": "See per-report coverage and assertion evidence."
+    "scope": "usesCleartextTraffic=\"true\" in the manifest (a candidate when a network security configuration exists; dropped when that configuration was parsed and minSdk is 24 or higher, where Android ignores the attribute), and cleartextTrafficPermitted=\"true\" in the referenced configuration's base-config or domain-config (medium and low; loopback-only domains excluded). Coverage: ANDROID-CONFIG and ANDROID-NSC-CONFIG."
   },
   {
     "id": "IOS-ATS",
@@ -559,7 +559,7 @@
     "references": [
       "https://developer.android.com/privacy-and-security/risks/intent-redirection"
     ],
-    "scope": "getParcelableExtra/getParcelable (including IntentCompat, Kotlin generic forms, elvis fallbacks and let/also parameters) on the component's Intent or its extras, passed to startActivity, startService, bindService or sendBroadcast in the same function without a component or package check."
+    "scope": "getParcelableExtra/getParcelable (including IntentCompat, Kotlin generic forms, elvis fallbacks and let/also parameters) on the component's Intent or its extras, passed to startActivity, startService, bindService or sendBroadcast in the same function, unless a line compares the nested Intent's component or package (==, !=, equals, in, contains, startsWith). Wrapping it in a new Intent(...) is not followed."
   },
   {
     "id": "AST-IMPLICIT-INTENT",
@@ -577,7 +577,7 @@
     "references": [
       "https://developer.android.com/privacy-and-security/risks/implicit-intent-hijacking"
     ],
-    "scope": "An Intent built in the same function (or the receiver of let/also) with a literal or file-constant action in the source file's package namespace and no class, component or package, passed to startActivity, startService, bindService or sendBroadcast without a receiver permission. LocalBroadcastManager receivers declared anywhere in the file are excluded; actions of other apps are not reported."
+    "scope": "An Intent built in the same function (or the receiver of let/also) with a literal or file-constant action whose prefix matches the first three labels of the source file's package, and no class, component or package, passed to startActivity or sendBroadcast without a receiver permission. Implicit service Intents are excluded (they throw on API 21+), as are LocalBroadcastManager receivers declared anywhere in the file."
   },
   {
     "id": "AST-PATH-TRAVERSAL",
@@ -597,7 +597,7 @@
       "https://developer.android.com/privacy-and-security/risks/path-traversal",
       "https://developer.android.com/privacy-and-security/risks/zip-path-traversal"
     ],
-    "scope": "Intent data and extras, exported-provider arguments, content provider display names, ZipEntry/JarEntry/commons-compress archive entry names and URL query items reaching File, FileOutputStream/FileInputStream, FileWriter/FileReader, RandomAccessFile, URL.appendingPathComponent, appending(path:) or URL(fileURLWithPath:) in the same function. File descriptors are not paths, and Context.openFileOutput and similar reject separators. File(x).name, lastPathComponent and substringAfterLast(\"/\") reduce input to a file name; a canonical-path prefix check or a '..' check anywhere in the function suppresses the result."
+    "scope": "Intent data and extras, exported-provider arguments, content provider display names, ZipEntry/JarEntry/commons-compress archive entry names and URL query items reaching File, FileOutputStream/FileInputStream, FileWriter/FileReader, RandomAccessFile, URL.appendingPathComponent, appending(path:) or URL(fileURLWithPath:) in the same function. File descriptors are not paths, and Context.openFileOutput and similar reject separators. File(x).name, lastPathComponent and substringAfterLast(\"/\") reduce input to a file name; a canonical-path prefix comparison, or a contains/startsWith/equals test for \"..\", anywhere in the function suppresses the result; neither is tied to the tainted variable, and replace(\"..\", ...) is not a check."
   },
   {
     "id": "SOURCE-BIOMETRIC-EVENT-BOUND",
@@ -665,7 +665,7 @@
       "https://developer.android.com/privacy-and-security/security-config"
     ],
     "mapping_scope": "partial",
-    "scope": "The network security configuration referenced by the manifest, outside debug source sets: user certificates in base-config or domain-config trust anchors; debug-overrides are excluded. Cleartext permitted there is reported as ANDROID-CLEARTEXT, except domain-configs that list only loopback hosts. Coverage is partial when the referenced file cannot be read."
+    "scope": "The network security configuration referenced by the selected manifest, read from the same module's res/xml outside debug and test source sets: user certificates in base-config or domain-config trust anchors; debug-overrides are excluded. Unparsable text XML is partial; compiled AAB resources are not-run."
   },
   {
     "id": "ANDROID-DEEPLINK-AUTOVERIFY",

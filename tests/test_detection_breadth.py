@@ -1140,3 +1140,93 @@ def test_text_rules_do_not_claim_binary_packages(store, monkeypatch):
     report = scan(store, Path(__file__).parent / "fixtures/Test-debug.apk")
     states = {c["rule_id"]: c["state"] for c in report["coverage"]}
     assert states.get("WEBVIEW-SAFE-BROWSING-OFF") in {None, "not-run", "not-applicable"}
+
+
+# Architecture review P1s.
+
+
+def test_parsed_network_config_overrides_manifest_cleartext_on_api_24(store, tmp_path, monkeypatch):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    root = tmp_path / "override"
+    (root / "res/xml").mkdir(parents=True)
+    (root / "res/xml/network_security_config.xml").write_text(
+        '<network-security-config><base-config cleartextTrafficPermitted="false" /></network-security-config>\n'
+    )
+
+    def manifest_cleartext(min_sdk: int) -> list[dict]:
+        (root / "AndroidManifest.xml").write_text(
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.o">'
+            f'<uses-sdk android:minSdkVersion="{min_sdk}" android:targetSdkVersion="35" />'
+            '<application android:usesCleartextTraffic="true" '
+            'android:networkSecurityConfig="@xml/network_security_config" /></manifest>'
+        )
+        report = scan(store, root)
+        return [f for f in by_rule(report, "ANDROID-CLEARTEXT") if "configuration" in f["evidence"][0]]
+
+    assert manifest_cleartext(26) == []
+    assert len(manifest_cleartext(21)) == 1
+
+
+def test_compiled_network_config_is_not_run_and_maps_cleartext_coverage(store, android):
+    (android / "res/xml/network_security_config.xml").write_bytes(b"\x0a\x12\x08\x01compiled-protobuf")
+    report = scan(store, android)
+    states = {c["rule_id"]: c["state"] for c in report["coverage"]}
+    assert states["ANDROID-NSC-USER-CA"] == states["ANDROID-NSC-CONFIG"] == "not-run"
+    assert weaknesses_for("ANDROID-NSC-CONFIG") == ("MASWE-0026", "MASWE-0027")
+
+
+def test_capped_match_loops_mark_partial_even_without_findings():
+    from mobile_audit.platform_checks import _ios_webview_file_access
+
+    narrow = "    v.loadFileURL(p, allowingReadAccessTo: p)\n" * 60
+    swift = (
+        "let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!\n"
+        "func f(v: WKWebView, p: URL) {\n" + narrow + "    v.loadFileURL(p, allowingReadAccessTo: docs)\n}\n"
+    )
+    findings, coverage = _ios_webview_file_access({"platforms": ["ios"]}, [("V.swift", swift)])
+    assert findings == [] and coverage[0]["state"] == "partial"
+
+
+GUARDS_KT = """package com.example.breadth
+
+import android.app.Activity
+import android.content.Intent
+import android.util.Log
+import java.io.File
+
+class Guards : Activity() {
+    fun logged() {
+        val next = intent.getParcelableExtra<Intent>("next")
+        Log.d("T", "forwarding " + next + " component")
+        startActivity(next)
+    }
+
+    fun compared() {
+        val next = intent.getParcelableExtra<Intent>("next")
+        if (next?.component?.packageName == packageName) startActivity(next)
+    }
+
+    fun replaced(dir: File) {
+        val name = intent.getStringExtra("n")!!.replace("..", "")
+        val out = File(dir, name)
+    }
+
+    fun contained(dir: File) {
+        val name = intent.getStringExtra("n")!!
+        if (name.contains("..")) return
+        val out = File(dir, name)
+    }
+
+    fun services() {
+        startService(Intent("com.example.breadth.WORK"))
+        bindService(Intent("com.example.breadth.WORK"), connection, 0)
+    }
+}
+"""
+
+
+def test_guards_need_comparisons_and_services_are_not_implicit_targets():
+    found = ast("Guards.kt", GUARDS_KT)
+    assert found["AST-INTENT-REDIRECTION"] == [12]
+    assert found["AST-PATH-TRAVERSAL"] == [22]
+    assert "AST-IMPLICIT-INTENT" not in found
