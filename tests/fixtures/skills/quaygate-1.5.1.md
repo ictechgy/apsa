@@ -41,7 +41,7 @@ apsa --json reports compare audit_BEFORE audit_AFTER
 
 Crypto-material, biometric, Intent, path and WebView-setting findings added in 1.5 are candidates from local patterns or same-function flows. Confirm the operation's sensitivity, the data's origin and any guard before reporting one as a vulnerability; a missing finding does not show those controls exist.
 
-A source tree over the staging budgets is staged app code and configuration first, then tests and other text, then localized Android values; the audit is partial and `inventory.input_snapshot.omitted` counts what was left out. Omitted files were not checked; for a complete audit, scan a narrower folder such as the app module.
+A source tree over the staging budgets is staged by kind (app code and configuration, other shipped text, localized Android values, then tests); the audit is partial and `inventory.input_snapshot.omitted` counts what was left out. Omitted files were not checked, and when `app_scope_complete` is false even not-applicable rules are unknown; for a complete audit, scan a narrower folder such as the app module.
 
 To check a finding claimed by another tool or AI reviewer, use `apsa verify TARGET --weakness MASWE-NNNN|CWE-N --path FILE --line N` or MCP verify_finding; verdicts are corroborated, same-file-other-location, not-observed, partial, not-run or not-assessed, and APSA never refutes a claim. For project wrappers and cross-file flows, propose a project taint specification (exact source/sink function names, see docs/PROJECT_SPECS.md), validate it with specs validate or MCP specs_validate, and pass it to scan --specs or audit_scan specs; its findings stay candidates, and a human must review the specification before its findings enter a baseline.
 

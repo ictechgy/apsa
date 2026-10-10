@@ -42,7 +42,7 @@ apsa reports verify --home /absolute/restored-home --json
 
 ## 유한 검사와 지속 작업
 
-기본 입력 제한은 파일 8 MiB, 소스 합계 64 MiB, 12,000개 파일, 아카이브 512 MiB입니다. AST 추가 제한은 파일 2 MiB, 합계 32 MiB, 파일당 100,000개 노드·전체 500개 발견입니다. 큰 DEX·Mach-O와 캡처에도 별도 제한이 있습니다. 제한으로 빠진 범위는 경고와 `partial` 또는 `not-run`으로 보고하며 보안 통과로 해석하지 않습니다. 소스 폴더가 합계·파일 수 한도를 넘어도 감사를 거부하지 않습니다. 앱 코드·설정(Kotlin·Java·Swift·Objective-C, Gradle·잠금 파일, 매니페스트, `res/xml`, plist)을 먼저, 테스트 코드·기타 텍스트 리소스를 다음으로, Android 번역·한정자 values(`res/values-*`)를 마지막으로 스테이징하고, 한도에 들지 못한 파일은 종류별 파일 수·바이트로 `inventory.input_snapshot.omitted`에 남깁니다. 디렉터리 항목 100,000개·깊이 64단계를 넘는 부분은 읽지 않습니다. 어느 경우든 감사는 `partial`이며, 스테이징 시간 한도(90초)와 경고 한도만 감사를 거부합니다. 잘린 결과를 피하려면 소스 범위를 나누거나 실제 빌드 SBOM을 함께 제공하십시오.
+기본 입력 제한은 파일 8 MiB, 소스 합계 64 MiB, 12,000개 파일, 아카이브 512 MiB입니다. AST 추가 제한은 파일 2 MiB, 합계 32 MiB, 파일당 100,000개 노드·전체 500개 발견입니다. 큰 DEX·Mach-O와 캡처에도 별도 제한이 있습니다. 제한으로 빠진 범위는 경고와 `partial` 또는 `not-run`으로 보고하며 보안 통과로 해석하지 않습니다. 소스 폴더가 합계·파일 수 한도를 넘어도 감사를 거부하지 않습니다. 앱 코드·설정(Kotlin·Java·Swift·Objective-C·Dart·JS/TS, Gradle·잠금 파일, 매니페스트, `res/xml`, plist, `google-services.json` 등), 기타 출하 텍스트(기본 리소스·JSON·YAML), Android 번역·한정자 values(`res/values-*`), 테스트 순으로 스테이징하고, 한도에 들지 못한 파일은 종류별 파일 수·바이트로 `inventory.input_snapshot.omitted`에 남깁니다. 디렉터리 항목 100,000개(트리 전체, 이름순)·깊이 64단계를 넘는 부분은 읽지 않습니다. 어느 경우든 감사는 `partial`이며, 앱 코드·설정이나 기타 출하 텍스트가 빠지면 not-applicable coverage도 `partial`이 되어 필수 규칙이 통과하지 않습니다. 스테이징 시간 한도(90초)와 경고 한도만 감사를 거부합니다. 잘린 결과를 피하려면 소스 범위를 나누거나 실제 빌드 SBOM을 함께 제공하십시오.
 
 소스 폴더 열거·파일 상태 확인·읽기가 실패하면 경고와 불완전한 fingerprint/coverage로 남고, 읽을 수 있는 다른 파일의 근거는 보존합니다. 지원하는 파일을 하나도 읽지 못하면 명시적인 실행 오류로 종료합니다. 의도적으로 제외한 폴더와 심볼릭 링크는 계속 검사 대상에서 제외합니다. iOS 저장소 캡처의 열거·파일 확인·읽기 실패는 `not-run`이며 canary 삭제 통과로 바뀌지 않습니다. 캡처 오류에 포함된 canary 값도 label로 가립니다.
 

@@ -425,6 +425,15 @@ def scan(
                 "note": "Declared source versions may differ from the built artifact. Reachability is not inferred from version matching.",
             }
         )
+    if inventory.get("input_snapshot", {}).get("app_scope_complete") is False:
+        coverage.append(
+            {
+                "rule_id": "DEPENDENCY-CVE",
+                "state": "partial",
+                "method": "dependency inventory",
+                "note": "Input staging left out app code or configuration; dependencies declared there were not read.",
+            }
+        )
     if not inventory["dependencies"]:
         coverage.append(
             {

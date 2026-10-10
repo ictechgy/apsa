@@ -36,11 +36,14 @@ receives a minimal environment; report stores are excluded before staging and
 overlapping runtime mounts are masked. The original app path is never a Linux
 bind source. Changed root identity aborts the audit; unreadable/oversized source
 omissions retain incomplete coverage. Staging has byte/file/depth/entry/time
-budgets. Over the byte or file budget, app code and configuration are staged
-first, then tests and other text, then localized Android values; the rest is
-omitted and counted by kind in `inventory.input_snapshot.omitted`. Entries
-beyond the entry or depth budget are not read. Either way the audit is partial;
-only the time and warning budgets refuse it. A directory snapshot is not
+budgets. Over the byte or file budget, files are staged by kind: app code and
+configuration, other shipped text, localized or qualified Android values, then
+tests; the rest is omitted and counted by kind in
+`inventory.input_snapshot.omitted`. Entries beyond the tree-wide entry budget
+(read in name order) or the depth budget are not read. Either way the audit is
+partial; when app code, configuration or shipped text is left out,
+not-applicable coverage becomes partial too. Only the time and warning budgets
+refuse the audit. A directory snapshot is not
 an atomic build snapshot across every file; scan a stable build for that assurance.
 CPU/RSS/time/output limits remain separate controls.
 
@@ -273,10 +276,11 @@ app-bundle 인터프리터만 실행할 수 있습니다. `doctor`는 가용성,
 복사 전 제외하며 런타임 마운트와 겹치면 가립니다. 원본 앱 경로는 Linux bind
 원본으로 쓰지 않습니다. 루트 식별자 변경은 감사를 거부하고 읽기 실패·초과
 소스 누락은 불완전 범위를 남깁니다. 복사에는 바이트·파일·깊이·항목·시간 제한이
-있습니다. 바이트·파일 한도를 넘으면 앱 코드·설정, 테스트·기타 텍스트, Android 번역
-values 순으로 복사하고 나머지는 생략해 `inventory.input_snapshot.omitted`에 종류별로
-셉니다. 항목·깊이 한도를 넘는 부분은 읽지 않습니다. 어느 경우든 감사는 partial이며
-시간·경고 한도만 감사를 거부합니다. 여러 파일의 복사는 원자적 빌드 스냅샷이 아니므로
+있습니다. 바이트·파일 한도를 넘으면 앱 코드·설정, 기타 출하 텍스트, Android 번역·한정자
+values, 테스트 순으로 복사하고 나머지는 생략해 `inventory.input_snapshot.omitted`에
+종류별로 셉니다. 트리 전체 항목 한도(이름순)·깊이 한도를 넘는 부분은 읽지 않습니다. 어느
+경우든 감사는 partial이며, 앱 코드·설정이나 출하 텍스트가 빠지면 not-applicable coverage도
+partial이 됩니다. 시간·경고 한도만 감사를 거부합니다. 여러 파일의 복사는 원자적 빌드 스냅샷이 아니므로
 그 보장이 필요하면 안정된 빌드를 검사하세요. CPU·RSS·시간·출력 제한은 별도로
 유지합니다.
 

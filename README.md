@@ -196,17 +196,29 @@ and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/
 of refusing them and fixes a slowdown on Android translations.
 
 - A source tree over the text staging budgets (64 MiB, 12,000 files) no longer
-  fails with an input-budget error (exit 1). App code and configuration are
-  staged first, then tests and other text, then localized Android
-  `res/values-*` files; the rest is omitted, `inventory.input_snapshot.omitted`
-  counts it by kind, and the audit is incomplete (exit 3, and with the default
-  `fail_on_partial` the gate fails). Directories beyond 100,000 entries or 64
-  levels are skipped the same way.
+  fails with an input-budget error (exit 1). Files are staged by kind: app
+  code and configuration, other shipped text, localized or qualified Android
+  `res/values-*` files, then tests. `inventory.input_snapshot.omitted` counts
+  what was left out, and the audit is incomplete (exit 3). With the default
+  `fail_on_partial` the gate still fails, and a partial report cannot become a
+  baseline. The 100,000-entry and 64-level budgets also stop reading instead
+  of refusing.
+- If app code, configuration or other shipped text is left out
+  (`app_scope_complete: false`), not-applicable coverage becomes partial too
+  and `DEPENDENCY-CVE` gains a partial entry, so required rules cannot pass
+  even with `fail_on_partial = false`.
+- SARIF from such an audit carries a warning notification and
+  `run.properties.inputSnapshot`. A workflow with `fail-on-incomplete: "false"`
+  now passes with a warning and uploads partial results where 1.5.0 failed;
+  code scanning sees no results for omitted files. Scan a narrower `path`
+  (one module per job, with its own `category`) for complete results. MCP
+  report context gains `input.input_snapshot`.
 - In 1.5.0, `strings.xml` files with many escaped apostrophes (`\'`), common in
   French and Italian translations, made `WEBVIEW-SAFE-BROWSING-OFF` slow enough
   to hit the parser timeout (about 150 s for a 694 KiB file). XML files are
   now cleaned of `<!-- -->` comments only, so `//` in XML text no longer hides
-  a match.
+  a match. Comment cleaning also stays linear on unterminated strings and
+  comments; an unterminated `/*` now runs to the end of the file.
 - Unmodified 1.5.0 skills upgrade with `apsa skill install`; the MCP tool
   manifest hash is unchanged.
 
@@ -314,7 +326,7 @@ apsa jobs status JOB_ID --json
 
 Severity gates exclude `candidate` findings by default. Opt in with `--include-candidates` or the policy's `allowed_statuses`. Required rules accept only `checked` or `not-applicable` coverage; partial execution and missing required checks do not pass. Waivers need a finding ID, a reason, and an expiry date. A background job being `completed` means it finished; check its `audit_incomplete` flag and report before treating the audit as complete.
 
-Unreadable source directories and files leave warnings and incomplete coverage; a source tree with no readable supported files fails explicitly. A source tree over the text staging budgets (64 MiB, 12,000 files) is audited partially rather than refused: app code and configuration are staged first, then tests and other text, then localized Android `res/values-*` files. `inventory.input_snapshot.omitted` counts the omitted files and bytes by kind. Directories beyond 100,000 entries or 64 levels are not read, and the audit is partial. Storage capture failures remain `not-run` and cannot establish that a canary was deleted.
+Unreadable source directories and files leave warnings and incomplete coverage; a source tree with no readable supported files fails explicitly. A source tree over the text staging budgets (64 MiB, 12,000 files) is audited partially rather than refused. Files are staged by kind in this order: app code and configuration, other shipped text (base resources, JSON, YAML), localized or qualified Android `res/values-*` files, then tests. `inventory.input_snapshot.omitted` counts the files and bytes left out by kind (`code_and_config`, `other_text`, `localized_values`, `tests`), including files over the 8 MiB file limit. Unreadable files, and directories past the tree-wide budgets of 100,000 entries (read in name order) or 64 levels, are reported as warnings instead. When app code, configuration or other shipped text is left out, `app_scope_complete` is false and not-applicable coverage also becomes partial. For a complete audit, scan a narrower folder such as the app module. Storage capture failures remain `not-run` and cannot establish that a canary was deleted.
 
 | Exit code | Meaning for the unified CLI |
 | --- | --- |

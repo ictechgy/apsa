@@ -364,7 +364,7 @@ def test_staging_growth_between_stat_checks_cannot_exceed_total_bytes(tmp_path, 
         if stat.S_ISREG(value.st_mode):
             regular_calls += 1
             if regular_calls == 1:
-                return SimpleNamespace(st_size=2)
+                return SimpleNamespace(st_size=2, st_dev=value.st_dev, st_ino=value.st_ino)
         return value
 
     monkeypatch.setattr(input_snapshot.os, "fstat", changed)

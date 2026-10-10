@@ -139,12 +139,16 @@ def analyze_target(
         "partial": bool(snapshot["warnings"]),
         # Files left out when the tree exceeded the staging budgets, by kind (staged in that order).
         "omitted": snapshot.get("omitted", {}),
+        "app_scope_complete": snapshot.get("app_scope_complete", True),
     }
     if snapshot["warnings"]:
         result["inventory"]["warnings"].extend(snapshot["warnings"])
         result["inventory"]["partial"] = True
         result["inventory"]["fingerprint_complete"] = False
+        # Without all app code and configuration, a rule may only look not-applicable
+        # (for example, the platform's sources were left out).
+        downgraded = {"checked"} | (set() if snapshot.get("app_scope_complete", True) else {"not-applicable"})
         for check in result.get("coverage", []):
-            if check["state"] == "checked":
+            if check["state"] in downgraded:
                 check["state"] = "partial"
     return result

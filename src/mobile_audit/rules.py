@@ -24,17 +24,23 @@ def rules() -> list[dict]:
 
 def strip_comments(text: str) -> str:
     # Preserve offsets/line numbers; don't remove URL slashes inside string literals.
-    # Character literals never span lines; bounding them keeps prose with escaped
-    # apostrophes (Android \' in strings.xml) from backtracking across the whole file.
-    pattern = r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\\n])*'|//[^\n]*|/\*[\s\S]*?\*/"""
+    # Every alternative ends at its terminator or at the end of the line (character
+    # literals) or file, so a start without a terminator is consumed once instead of
+    # rescanned from each later quote (Android \' prose, stray /* in hostile input).
+    pattern = (
+        r""""(?:\\[\s\S]|[^"\\])*(?:"|\\?\Z)|'(?:\\.|[^'\\\n])*(?:'|\\?$)|//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)"""
+    )
     return re.sub(
-        pattern, lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0].startswith(("//", "/*")) else m[0], text
+        pattern,
+        lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0].startswith(("//", "/*")) else m[0],
+        text,
+        flags=re.MULTILINE,
     )
 
 
 def strip_xml_comments(text: str) -> str:
     """Blank <!-- --> comments, keeping offsets; XML text has no // or /* */ comments."""
-    return re.sub(r"<!--[\s\S]*?-->", lambda m: re.sub(r"[^\n]", " ", m[0]), text)
+    return re.sub(r"<!--[\s\S]*?(?:-->|\Z)", lambda m: re.sub(r"[^\n]", " ", m[0]), text)
 
 
 def static_checks(

@@ -231,6 +231,25 @@ def sarif(report: dict, root: str | None = None) -> dict:
         if isinstance(item, dict) and item.get("state") in {"partial", "not-run"}:
             grouped.setdefault((str(item.get("rule_id") or "unknown"), item["state"]), []).append(item)
     notifications = []
+    snapshot = report.get("inventory", {}).get("input_snapshot") or {}
+    if snapshot.get("omitted") or snapshot.get("app_scope_complete") is False:
+        # Code scanning would otherwise read alerts in omitted files as fixed.
+        left_out = ", ".join(f"{v['files']} {kind}" for kind, v in snapshot.get("omitted", {}).items())
+        notifications.append(
+            {
+                "level": "warning",
+                "message": {
+                    "text": "Input staging left files out of this audit"
+                    + (
+                        f" ({left_out} files)"
+                        if left_out
+                        else " (directories over the entry or depth budget)"
+                    )
+                    + "; results in them are absent, not fixed. For a complete audit, scan a narrower folder "
+                    "such as the app module."
+                },
+            }
+        )
     for (rule_id, state), items in sorted(grouped.items())[:SARIF_NOTIFICATION_LIMIT]:
         note = next((i.get("note") for i in items if i.get("note")), "")
         text = f"{rule_id}: {state}" + (f" ({len(items)} entries)" if len(items) > 1 else "")
@@ -281,6 +300,7 @@ def sarif(report: dict, root: str | None = None) -> dict:
                     "auditIncomplete": report_incomplete(report),
                     "maswe": maswe_summary(report),
                     "coverage": report["coverage"],
+                    "inputSnapshot": snapshot,
                     "environmentAdvisories": report.get("environment_advisories", []),
                     "intelSnapshot": report["intel_snapshot"],
                 },
@@ -387,6 +407,7 @@ def assistant_context(report: dict) -> dict:
                 "fingerprint",
                 "fingerprint_complete",
                 "source_selection",
+                "input_snapshot",
             )
         },
         "engines": report["inventory"].get("engines", ["mobile-audit"]),
