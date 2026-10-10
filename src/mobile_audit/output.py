@@ -233,7 +233,7 @@ def sarif(report: dict, root: str | None = None) -> dict:
     notifications = []
     snapshot = report.get("inventory", {}).get("input_snapshot") or {}
     if snapshot.get("omitted") or snapshot.get("app_scope_complete") is False:
-        # Code scanning would otherwise read alerts in omitted files as fixed.
+        # Says why files have no results; code scanning may still close their earlier alerts.
         left_out = ", ".join(f"{v['files']} {kind}" for kind, v in snapshot.get("omitted", {}).items())
         notifications.append(
             {

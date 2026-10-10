@@ -26,7 +26,8 @@ STAGING_KINDS = {
 TIERS = tuple(STAGING_KINDS)
 # Omitting these kinds can hide a whole platform or module, so even not-applicable coverage is unknown.
 SCOPE_KINDS = {"code_and_config", "other_text"}
-CODE = {".kt", ".java", ".swift", ".m", ".mm", ".h", ".dart", ".js", ".ts"}
+NATIVE = {".kt", ".java", ".swift", ".m", ".mm"}
+CODE = NATIVE | {".h", ".dart", ".js", ".ts"}
 CONFIG = {".gradle", ".kts", ".toml", ".lock", ".lockfile", ".resolved", ".pbxproj", ".plist", ".xcprivacy"}
 CONFIG_NAMES = {
     "AndroidManifest.xml",
@@ -38,9 +39,10 @@ CONFIG_NAMES = {
     "google-services.json",
     "sbom.json",
 }
-# Third-party code checked into the tree goes after the app's own code and configuration.
+# Third-party code checked into the tree, and web assets, go after the app's own code.
 VENDORED = {
     ".build",
+    "assets",
     ".dart_tool",
     "Carthage",
     "Frameworks",
@@ -58,7 +60,7 @@ TEST_SOURCES = re.compile(
 
 
 def staging_rank(relative: Path) -> tuple[int, int]:
-    """(tier, rank): the index into TIERS, then configuration, app code, headers and vendored code."""
+    """(tier, rank): the index into TIERS, then configuration, native code, JS/TS/Dart, then the rest."""
     path = relative.as_posix()
     if TEST_SOURCES.search(path):
         return 3, 0
@@ -66,14 +68,14 @@ def staging_rank(relative: Path) -> tuple[int, int]:
         return 2, 0
     vendored = any(part in VENDORED or part.lower() in VENDORED for part in relative.parts[:-1])
     if relative.suffix in CODE:
-        return 0, 2 if vendored or relative.suffix == ".h" else 1
+        return 0, 3 if vendored or relative.suffix == ".h" else 1 if relative.suffix in NATIVE else 2
     if (
         relative.suffix in CONFIG
         or relative.name in CONFIG_NAMES
         or relative.name.endswith(".cdx.json")
         or re.search(r"(?:^|/)res/xml[^/]*/", path)
     ):
-        return 0, 2 if vendored else 0
+        return 0, 3 if vendored else 0
     return 1, 0
 
 
@@ -183,7 +185,8 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                     too_deep.append(relative)
                     return
                 with os.scandir(fd) as listing:
-                    # Name order makes the entry budget cut the same files on every filesystem.
+                    # Name order makes the entry budget cut the same files on every filesystem, except
+                    # within the directory where it runs out (that slice is read in listing order).
                     entries = sorted(
                         itertools.islice(listing, MAX_ENTRIES - counts["entries"] + 1), key=lambda e: e.name
                     )

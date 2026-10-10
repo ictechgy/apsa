@@ -218,7 +218,7 @@ of refusing them and fixes a slowdown on Android translations.
   to hit the parser timeout (about 150 s for a 694 KiB file). XML files are
   now cleaned of `<!-- -->` comments only, so `//` in XML text no longer hides
   a match. Comment cleaning also stays linear on unterminated strings and
-  comments; an unterminated `/*` now runs to the end of the file.
+  comments; a `/*` with no closing `*/` after it is read as text.
 - Unmodified 1.5.0 skills upgrade with `apsa skill install`; the MCP tool
   manifest hash is unchanged.
 

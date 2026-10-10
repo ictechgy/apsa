@@ -22,22 +22,34 @@ def rules() -> list[dict]:
     return [{**rule, "maswe": list(weaknesses_for(rule["id"]))} for rule in loaded]
 
 
+# Every literal ends at its terminator or at the end of the line (character literals) or
+# file, so a start without a terminator is consumed once instead of rescanned from each
+# later quote (Android \' prose). Triple-quoted strings (Kotlin, Swift, Dart, Groovy) may
+# span lines and hold quotes.
+LITERALS = (
+    r"'''[\s\S]*?(?:'''|\Z)|" + '"""' + r'[\s\S]*?(?:"""|\Z)|'
+    r""""(?:\\[\s\S]|[^"\\])*(?:"|\\?\Z)|'(?:\\.|[^'\\\n])*(?:'|\\?$)|//[^\n]*"""
+)
+WITH_BLOCK_COMMENTS = re.compile(LITERALS + r"|/\*[\s\S]*?(?:\*/|\Z)", re.MULTILINE)
+WITHOUT_BLOCK_COMMENTS = re.compile(LITERALS, re.MULTILINE)
+
+
 def strip_comments(text: str) -> str:
     # Preserve offsets/line numbers; don't remove URL slashes inside string literals.
-    # Every alternative ends at its terminator or at the end of the line (character
-    # literals) or file, so a start without a terminator is consumed once instead of
-    # rescanned from each later quote (Android \' prose, stray /* in hostile input).
-    # Triple-quoted strings (Kotlin, Swift, Dart, Groovy) may span lines and hold quotes.
-    pattern = (
-        r"'''[\s\S]*?(?:'''|\Z)|" + '"""' + r'[\s\S]*?(?:"""|\Z)|'
-        r""""(?:\\[\s\S]|[^"\\])*(?:"|\\?\Z)|'(?:\\.|[^'\\\n])*(?:'|\\?$)|//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)"""
-    )
-    return re.sub(
-        pattern,
-        lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0].startswith(("//", "/*")) else m[0],
-        text,
-        flags=re.MULTILINE,
-    )
+    parts, position, pattern = [], 0, WITH_BLOCK_COMMENTS
+    while match := pattern.search(text, position):
+        value = match[0]
+        if value.startswith("/*") and (len(value) < 4 or not value.endswith("*/")):
+            # No */ follows (a stray /* such as a JS regex literal): keep it as text, and stop
+            # looking for block comments, since every later /* is unterminated too.
+            parts.append(text[position : match.start() + 2])
+            position, pattern = match.start() + 2, WITHOUT_BLOCK_COMMENTS
+            continue
+        parts.append(text[position : match.start()])
+        parts.append(re.sub(r"[^\n]", " ", value) if value.startswith(("//", "/*")) else value)
+        position = match.end()
+    parts.append(text[position:])
+    return "".join(parts)
 
 
 def strip_xml_comments(text: str) -> str:

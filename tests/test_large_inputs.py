@@ -158,8 +158,10 @@ def test_comment_stripping_keeps_literals_and_blanks_comments():
     # Triple-quoted strings keep their // and /* text; the code after them is still cleaned.
     assert strip_comments("s = '''\na /* b\n'''\nx // y\n") == "s = '''\na /* b\n'''\nx     \n"
     assert strip_comments('q = """a "b" // c\n"""\n') == 'q = """a "b" // c\n"""\n'
-    # An unterminated block comment runs to the end of the file, as compilers read it.
-    assert strip_comments("/* open\nval x = 1\n").strip() == ""
+    # A /* with no */ after it (here a JS regex literal) stays text, so later code is still read.
+    js = "const re = /\\/*/;\nconsole.log('token', password) // log\n"
+    assert strip_comments(js) == "const re = /\\/*/;\nconsole.log('token', password)       \n"
+    assert strip_comments("/* a */ x /* b") == "        x /* b"
 
 
 def test_xml_rules_ignore_xml_comments(store, tmp_path, monkeypatch):
@@ -309,6 +311,49 @@ def test_configuration_and_app_code_go_before_vendored_code(tmp_path, monkeypatc
         "MyApp/AppDelegate.swift",
         "MyApp/Controllers/Home.swift",
         "MyApp/Info.plist",
+    ]
+
+
+def test_native_code_goes_before_web_assets(tmp_path, monkeypatch):
+    target = tmp_path / "input"
+    for path in (
+        "app/src/main/assets/www/lib/angular.js",
+        "app/src/main/assets/www/app.js",
+        "app/src/main/java/com/example/Main.kt",
+        "app/src/main/AndroidManifest.xml",
+        "lib/main.dart",
+    ):
+        (target / path).parent.mkdir(parents=True, exist_ok=True)
+        (target / path).write_text("x")
+    monkeypatch.setattr(input_snapshot, "MAX_FILES", 3)
+    staged = tmp_path / "staged"
+    stage_input(target, staged)
+    assert sorted(p.relative_to(staged).as_posix() for p in staged.rglob("*") if p.is_file()) == [
+        "app/src/main/AndroidManifest.xml",
+        "app/src/main/java/com/example/Main.kt",
+        "lib/main.dart",
+    ]
+
+
+def test_unreadable_directory_leaves_the_app_scope_unknown(tmp_path):
+    import os
+
+    target = tmp_path / "input"
+    (target / "android").mkdir(parents=True)
+    (target / "android/Main.kt").write_text("class Main")
+    ios = target / "ios"
+    ios.mkdir()
+    (ios / "View.swift").write_text("let web = UIWebView()")
+    ios.chmod(0)
+    try:
+        if os.access(ios, os.R_OK):
+            pytest.skip("running with privileges that ignore directory modes")
+        result = stage_input(target, tmp_path / "staged")
+    finally:
+        ios.chmod(0o700)
+    assert result["app_scope_complete"] is False
+    assert result["warnings"] == [
+        "Source staging could not read or stage 1 entry (first: ios: PermissionError); coverage partial"
     ]
 
 
