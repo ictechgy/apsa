@@ -300,6 +300,10 @@ MAX_INTENT_CHECKS = 200
 TARGET_TOKEN = re.compile(
     r"\b(?:component|getComponent|packageName|getPackageName|getPackage|className|getClassName)\b"
 )
+TARGET_ALIAS = re.compile(
+    r"(\w+)\s*(?::\s*[\w.?]+\s*)?=\s*(\w+)\s*\??\.\s*(?:getComponent\s*\(\s*\)|component\b"
+    r"|getPackage\s*\(\s*\)|`?package`?\b)"
+)
 COMPARISON = re.compile(r"==|!=|\.equals\s*\(|\bin\b|\.contains\s*\(|\.startsWith\s*\(")
 LOCAL_LITERAL = re.compile(
     rb'(?:\b(?:val|var|let)\s+(\w+)\b(?:\s*:\s*String\??)?|\bString\s+(\w+))\s*=\s*"([^"\\\n]*)"\s*;?[ \t]*$',
@@ -478,7 +482,7 @@ class Analyzer:
         self.package_prefix = ".".join(parts[: min(3, len(parts))])
         self.broadcaster_names: set[str] | None = None
         self.private_keys: bool | None = None
-        self.checked_intents: dict[str, bool] = {}
+        self.target_names: set[str] | None = None
         self.literal_table: tuple[dict[str, tuple[list[int], list[str]]], dict[str, list[int]]] | None = None
         # Rules whose checks stopped at a budget in this file; their coverage becomes partial.
         self.truncated_rules: set[str] = set()
@@ -1401,26 +1405,23 @@ class Analyzer:
             self.path_guarded = (canonical and prefix) or dotdot is not None
         return self.path_guarded
 
-    @staticmethod
-    def compares_target(name: str, function: str) -> bool:
-        """A line comparing the Intent's (or its component local's) component, package or class name."""
-        names = {name}
-        aliases = re.finditer(
-            rf"(\w+)\s*(?::\s*[\w.?]+\s*)?=\s*{re.escape(name)}\s*\??\.\s*(?:getComponent\s*\(\s*\)|component\b"
-            r"|getPackage\s*\(\s*\)|`?package`?\b)",
-            function,
-        )
-        names.update(match[1] for match in aliases)
-        # String contents are blanked, so a log message cannot pass for a comparison.
-        code = re.sub(r'"(?:\\.|[^"\\\n])*"', '""', function)
-        for line in code.splitlines():
-            if (
-                any(re.search(rf"\b{re.escape(item)}\b", line) for item in names if item in line)
-                and TARGET_TOKEN.search(line)
-                and COMPARISON.search(line)
-            ):
-                return True
-        return False
+    def compared_targets(self) -> set[str]:
+        """Names whose component, package or class name a line of this function compares (built once).
+
+        String contents are blanked, so a log message cannot pass for a comparison. A local assigned
+        from an Intent's component or package counts for that Intent.
+        """
+        if self.target_names is None:
+            code = re.sub(r'"(?:\\.|[^"\\\n])*"', '""', self.function_source)
+            compared: set[str] = set()
+            for line in code.splitlines():
+                if TARGET_TOKEN.search(line) and COMPARISON.search(line):
+                    compared.update(re.findall(r"[A-Za-z_]\w*", line))
+            for match in TARGET_ALIAS.finditer(code):
+                if match[1] in compared:
+                    compared.add(match[2])
+            self.target_names = compared
+        return self.target_names
 
     def local_broadcaster(self, receiver: str) -> bool:
         """Whether a receiver is a LocalBroadcastManager declared or assigned anywhere in this file."""
@@ -1494,10 +1495,8 @@ class Analyzer:
         if value.category == "nested-intent" and nested:
             target = self.unwrap(first)
             name = self.text(target) if target is not None and target.type in IDENTIFIERS else None
-            if name is not None and name not in self.checked_intents:
-                # A comparison of the nested Intent's component or package, not a mere mention (such as a log).
-                self.checked_intents[name] = self.compares_target(name, function)
-            checked = name is not None and self.checked_intents[name]
+            # A comparison of the nested Intent's component or package, not a mere mention (such as a log).
+            checked = name is not None and name in self.compared_targets()
             if not checked:
                 self.emit(
                     "AST-INTENT-REDIRECTION",
@@ -1771,10 +1770,11 @@ class Analyzer:
                 self.visit(else_node, alternative, guards, conditions)
             # Conservatively retain both possible assignments after a branch. Do not apply its guard outside it.
             for key in before.values:
-                values = [
-                    branch.values.get(key, before.values[key]),
-                    alternative.values.get(key, before.values[key]),
-                ]
+                previous = before.values[key]
+                values = [branch.values.get(key, previous), alternative.values.get(key, previous)]
+                # Untouched by both branches: the merge would rebuild the same value.
+                if values[0] is previous and values[1] is previous and len(previous.traces) <= 8:
+                    continue
                 frame.values[key] = _union(
                     values,
                     values[0].category if values[0].category == values[1].category else "unknown",
@@ -2091,7 +2091,7 @@ class Analyzer:
             self.intent_checks = 0
             self.literal_table = None
             self.private_keys = None
-            self.checked_intents = {}
+            self.target_names = None
             self.aliases = {}
             self.field_types = self.class_fields(function)
             enclosing = function.parent

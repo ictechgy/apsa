@@ -1406,3 +1406,32 @@ def test_log_messages_do_not_pass_for_redirection_checks():
         "}\n"
     )
     assert ast("L.kt", kotlin).get("AST-INTENT-REDIRECTION") == [8]
+
+
+def test_distinct_nested_intent_names_stay_fast():
+    import time
+
+    plain = "\n".join(
+        f'        val n{k} = intent.getParcelableExtra<Intent>("x")\n        startActivity(n{k})'
+        for k in range(4000)
+    )
+    guarded = "\n".join(
+        f'        val g{k} = intent.getParcelableExtra<Intent>("x")\n'
+        f"        if (g{k}.component == null) startActivity(g{k})"
+        for k in range(4000)
+    )
+    header = "package a\nimport android.content.Intent\nclass N : android.app.Activity() {\n    fun go() {\n"
+    started = time.monotonic()
+    analyze_sources([("P.kt", header + plain + "\n    }\n}\n"), ("G.kt", header + guarded + "\n    }\n}\n")])
+    assert time.monotonic() - started < 10
+
+
+def test_placeholder_network_config_references_are_partial():
+    from mobile_audit.platform_checks import _network_security_config
+
+    inventory = {
+        "platforms": ["android"],
+        "android_config": [{"path": "AndroidManifest.xml", "network_security_config": "${nscRes}"}],
+    }
+    _, coverage = _network_security_config(inventory, [])
+    assert coverage[0]["state"] == "partial" and "${nscRes}" in coverage[0]["note"]

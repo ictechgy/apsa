@@ -1109,13 +1109,16 @@ def _network_security_config(
         ]
     # Each selected manifest's reference resolves in its own module's res/xml, never another module's.
     referenced: dict[tuple[str, str], list[str]] = {}
-    unresolved = 0
+    unresolved, placeholders = 0, []
     for config in inventory.get("android_config", []):
         if config.get("network_security_config") and config.get("bundle_role") != "embedded":
             manifest = str(config.get("path") or "")
             value = str(config["network_security_config"])
+            if value == "unresolved-resource":
+                unresolved += 1  # a compiled AAB resource ID that was not decoded
+                continue
             if not value.startswith("@xml/"):
-                unresolved += 1  # e.g. a compiled AAB resource ID that was not decoded
+                placeholders.append(value[:80])  # e.g. a ${placeholder} filled in by the build
                 continue
             name = value.rsplit("/", 1)[-1]
             referenced.setdefault((_module_root(manifest), name), []).append(manifest)
@@ -1215,7 +1218,10 @@ def _network_security_config(
             )
     # Read by the worker: a parsed configuration overrides the manifest's usesCleartextTraffic on API 24+.
     inventory["network_security_parsed"] = sorted(parsed_for)
-    if unresolved and not referenced:
+    if placeholders:
+        state = "partial"
+        note = f"The networkSecurityConfig reference {placeholders[0]!r} is not a resolvable @xml resource."
+    elif unresolved and not referenced:
         state = "not-run"
         note = "The networkSecurityConfig reference is a compiled resource ID that was not resolved."
     elif not referenced:
@@ -1225,7 +1231,7 @@ def _network_security_config(
         note = f"{len(unreadable)} referenced network security configuration(s) could not be parsed."
     elif compiled and not read:
         state = "not-run"
-        note = "The referenced configuration is compiled (AAB protobuf resources) and is not decoded."
+        note = "The referenced configuration is a compiled or binary resource and is not decoded."
     elif not read:
         state = "partial"
         note = "The referenced network security configuration is not among the scanned sources."
