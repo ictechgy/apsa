@@ -98,6 +98,7 @@ APPLE_AUTH_REFERENCE = "https://developer.apple.com/documentation/localauthentic
 WEBVIEW_FILE_REFERENCE = "https://mas.owasp.org/MASWE/MASVS-PLATFORM/MASWE-0034/"
 NSC_REFERENCE = "https://developer.android.com/privacy-and-security/security-config"
 APP_LINKS_REFERENCE = "https://developer.android.com/training/app-links/verify-android-applinks"
+LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]", "ip6-localhost"}
 # A key or keychain item bound to the authentication; an evaluatePolicy result alone is a boolean.
 APPLE_AUTH_BINDING = re.compile(
     r"\bkSecAttrAccessControl\b|\bSecAccessControlCreateWithFlags\b|\bkSecUseAuthenticationContext\b"
@@ -771,7 +772,8 @@ def _apple_auth(path: str, text: str) -> list[dict]:
     masked = _masked_code(text)
     findings = []
     if not APPLE_AUTH_BINDING.search(masked):
-        for match in re.finditer(r"\bevaluatePolicy\s*[(:]", masked):
+        # Calls only: a protocol requirement, a mock or an Objective-C method definition is not use.
+        for match in re.finditer(r"(?<!func )(?<!\) )(?<!\))\bevaluatePolicy\s*[(:]", masked):
             findings.append(
                 _auth_finding(
                     "SOURCE-BIOMETRIC-EVENT-BOUND",
@@ -1015,6 +1017,9 @@ def _network_security_config(
         ]
         for config, offset in zip(cleartext, cleartext_offsets, strict=False):
             domains = [str(d.text or "").strip()[:200] for d in config.findall("domain")][:20]
+            # Loopback traffic does not leave the device (for example a local media server).
+            if config.tag == "domain-config" and domains and all(d.lower() in LOOPBACK for d in domains):
+                continue
             findings.append(
                 finding(
                     "ANDROID-CLEARTEXT",
@@ -1079,8 +1084,9 @@ def _app_links(inventory: dict) -> tuple[list[dict], list[dict]]:
                     "basis": 'VIEW and BROWSABLE http(s) filter without android:autoVerify="true"',
                 }
             ],
-            'Add android:autoVerify="true" and publish assetlinks.json for these hosts, so other apps cannot '
-            "claim the same links; validate every parameter the link carries.",
+            'For hosts the app owns, add android:autoVerify="true" and publish assetlinks.json so other apps '
+            "cannot claim the links. Links to hosts it does not own can be claimed by other apps, so treat "
+            "every parameter they carry as untrusted.",
             "MASVS-PLATFORM",
             [APP_LINKS_REFERENCE],
         )

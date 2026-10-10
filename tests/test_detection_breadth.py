@@ -52,6 +52,10 @@ NETWORK_CONFIG = """<?xml version="1.0" encoding="utf-8"?>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">legacy.example.com</domain>
     </domain-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
     <debug-overrides>
         <trust-anchors>
             <certificates src="user" />
@@ -698,3 +702,23 @@ def test_swift_only_projects_mark_android_structural_rules_not_applicable(tmp_pa
         assert states[rule] == "not-applicable"
     for rule in ("AST-CRYPTO-HARDCODED-KEY", "AST-CRYPTO-STATIC-IV", "AST-PATH-TRAVERSAL"):
         assert states[rule] == "checked"
+
+
+def test_evaluate_policy_declarations_are_not_calls():
+    from mobile_audit.platform_checks import _apple_auth
+
+    swift = (
+        "protocol LAContextProtocol {\n"
+        "    func evaluatePolicy(_ policy: LAPolicy, localizedReason: String, reply: @escaping (Bool, Error?) -> Void)\n"
+        "}\n"
+        "final class Mock: LAContextProtocol {\n"
+        "    func evaluatePolicy(_ policy: LAPolicy, localizedReason: String, reply: @escaping (Bool, Error?) -> Void) {}\n"
+        "}\n"
+        'func real(context: LAContext) { context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "x") { _, _ in } }\n'
+    )
+    objc = (
+        "- (void)evaluatePolicy:(LAPolicy)policy reply:(id)reply {}\n"
+        'void f(LAContext *c) { [c evaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics localizedReason:@"x" reply:nil]; }\n'
+    )
+    assert [f["evidence"][0]["line"] for f in _apple_auth("A.swift", swift)] == [7]
+    assert [f["evidence"][0]["line"] for f in _apple_auth("A.m", objc)] == [2]
