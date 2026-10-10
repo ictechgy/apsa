@@ -1,0 +1,1057 @@
+{
+  "schema": "apsa-fpfn-pairs-v2",
+  "labeled_on": "2026-10-10",
+  "labeler": "independent research agent; scanner not run or inspected; rule author blind to cases",
+  "scoring": "A side is flagged when an APSA finding mapped to one of the pair's weaknesses has evidence in a labeled file.",
+  "pairs": [
+    {
+      "id": "element-android-mainactivity-intent-redirection",
+      "repository": "element-hq/element-android",
+      "platform": "android",
+      "language": "kotlin",
+      "advisory": {
+        "id": "CVE-2024-26131 / GHSA-j6pr-fpc8-q9vm",
+        "url": "https://github.com/element-hq/element-android/security/advisories/GHSA-j6pr-fpc8-q9vm"
+      },
+      "vulnerable_commit": "355d091c941774503707384732afc34a774392d1",
+      "fixed_commit": "53734255ec270b0814946350787393dfcaa2a5a9",
+      "weaknesses": [
+        "MASWE-0032"
+      ],
+      "category": "Intent redirection: an exported entry point launches a nested Intent taken from an attacker-supplied extra",
+      "vulnerable_locations": [
+        {
+          "path": "vector/src/main/java/im/vector/app/features/MainActivity.kt",
+          "function": "MainActivity.handleAppStarted",
+          "start_line": 185,
+          "end_line": 189
+        },
+        {
+          "path": "vector/src/main/java/im/vector/app/features/MainActivity.kt",
+          "function": "MainActivity.startIntentAndFinish",
+          "start_line": 379,
+          "end_line": 382
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "vector/src/main/java/im/vector/app/features/MainActivity.kt",
+          "function": "MainActivity.handleAppStarted",
+          "note": "Line 200 adds ?.takeIf { it.isValid() } so the nested EXTRA_NEXT_INTENT is dropped unless it is valid."
+        },
+        {
+          "path": "vector/src/main/java/im/vector/app/features/MainActivity.kt",
+          "function": "MainActivity.isValid (Intent extension)",
+          "note": "Lines 396-401 resolve the component and require the app's own package and a class in the allowList (lines 122-128)."
+        }
+      ],
+      "evidence": "MainActivity is reachable from other apps through an exported launcher activity-alias. At the vulnerable commit, handleAppStarted reads a Parcelable Intent from the EXTRA_NEXT_INTENT extra and passes it to startIntentAndFinish, which calls startActivity on it unchanged. A third-party app can therefore start non-exported internal activities (PIN change, WebView, login configuration) with Element's identity. The fix keeps the nested Intent only when it resolves to an allow-listed activity of the app's own package.",
+      "verified_by": "gh api repos/element-hq/element-android/commits/{355d091c,53734255} (53734255's only parent is 355d091c; message 'Add a check on incoming intent.'). Read MainActivity.kt at both SHAs with contents?ref=. gh api repos/element-hq/element-android/security-advisories (GHSA-j6pr-fpc8-q9vm). NVD CVE-2024-26131 references commit 53734255. Shielder write-up 2024-04. compare 53734255...v1.6.12 = ahead."
+    },
+    {
+      "id": "nextcloud-android-implicit-mutable-pendingintent",
+      "repository": "nextcloud/android",
+      "platform": "android",
+      "language": "java",
+      "advisory": {
+        "id": "CVE-2022-24886 / GHSA-5cj3-v98r-2wmq",
+        "url": "https://github.com/nextcloud/security-advisories/security/advisories/GHSA-5cj3-v98r-2wmq"
+      },
+      "vulnerable_commit": "38c60b7618f9b6ddca152352ebed6c61791bd2af",
+      "fixed_commit": "4a29c2e4c430a257955e16d5388b9e6cc4ebc66b",
+      "weaknesses": [
+        "MASWE-0032"
+      ],
+      "category": "Mutable PendingIntent wrapping an empty implicit Intent in notifications",
+      "vulnerable_locations": [
+        {
+          "path": "src/main/java/com/owncloud/android/syncadapter/FileSyncAdapter.java",
+          "function": "FileSyncAdapter.notifyFailsInFavourites",
+          "start_line": 437,
+          "end_line": 440
+        },
+        {
+          "path": "src/main/java/com/owncloud/android/syncadapter/FileSyncAdapter.java",
+          "function": "FileSyncAdapter.notifyFailsInFavourites",
+          "start_line": 455,
+          "end_line": 458
+        },
+        {
+          "path": "src/main/java/com/owncloud/android/files/services/FileDownloader.java",
+          "function": "FileDownloader.notifyDownloadResult",
+          "start_line": 660,
+          "end_line": 662
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "src/main/java/com/owncloud/android/syncadapter/FileSyncAdapter.java",
+          "function": "FileSyncAdapter.notifyFailsInFavourites",
+          "note": "Lines 437 and 455 pass PendingIntent.FLAG_IMMUTABLE instead of 0 for the empty Intent."
+        },
+        {
+          "path": "src/main/java/com/owncloud/android/files/services/FileDownloader.java",
+          "function": "FileDownloader.notifyDownloadResult",
+          "note": "Lines 661-662 pass PendingIntent.FLAG_IMMUTABLE for the empty showDetailsIntent."
+        }
+      ],
+      "evidence": "At the vulnerable commit the sync and download notifications use PendingIntent.getActivity with a new Intent() that has no component or action, and flags 0, so the PendingIntent is mutable. Any app that can read notifications can fill in the empty Intent (action, data, grant flags) and fire it with Nextcloud's identity, which the advisory says gives access to contacts. The fix (PR 9726, 'Make PendingIntents immutable') adds FLAG_IMMUTABLE to these PendingIntents.",
+      "verified_by": "gh api repos/nextcloud/android/commits/{38c60b76,4a29c2e4} (4a29c2e4 is the PR 9726 merge; first parent 38c60b76). gh api repos/nextcloud/android/pulls/9726/files. Read both files at both SHAs with contents?ref=. gh api repos/nextcloud/security-advisories/security-advisories/GHSA-5cj3-v98r-2wmq. Fixed code present at tag stable-3.19.0."
+    },
+    {
+      "id": "nextcloud-talk-android-share-filename-path-traversal",
+      "repository": "nextcloud/talk-android",
+      "platform": "android",
+      "language": "kotlin",
+      "advisory": {
+        "id": "CVE-2023-39957 / GHSA-36f7-93f3-mcfj",
+        "url": "https://github.com/nextcloud/security-advisories/security/advisories/GHSA-36f7-93f3-mcfj"
+      },
+      "vulnerable_commit": "74e2108ef34383b771e59abbe8a60d85feac74ee",
+      "fixed_commit": "303e28c154656a60c241d2d01c060c879c2ad1c4",
+      "weaknesses": [
+        "MASWE-0050"
+      ],
+      "category": "Path traversal through an untrusted file name (content provider DISPLAY_NAME) when copying shared files into the cache",
+      "vulnerable_locations": [
+        {
+          "path": "app/src/main/java/com/nextcloud/talk/utils/FileUtils.kt",
+          "function": "FileUtils.copyFileToCache",
+          "start_line": 115,
+          "end_line": 135
+        },
+        {
+          "path": "app/src/main/java/com/nextcloud/talk/utils/FileUtils.kt",
+          "function": "FileUtils.getFileName",
+          "start_line": 137,
+          "end_line": 158
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "app/src/main/java/com/nextcloud/talk/utils/FileUtils.kt",
+          "function": "FileUtils.copyFileToCache",
+          "note": "Lines 118-122 reject a cachedFile whose canonicalPath is not inside context.cacheDir and return null."
+        },
+        {
+          "path": "app/src/main/java/com/nextcloud/talk/utils/FileUtils.kt",
+          "function": "FileUtils.getFileName",
+          "note": "Lines 160-163 now strip everything up to the last '/' for every name, including provider-supplied DISPLAY_NAME values."
+        }
+      ],
+      "evidence": "Shared files reach the app through an unprotected share intent. getFileName takes the file name from the sending app's content provider (DISPLAY_NAME) without removing path separators, and copyFileToCache writes to File(context.cacheDir, filename). A malicious provider can return a name with ../ and make Talk write outside its cache directory. The fix strips directory parts from all names and checks that the canonical path stays inside cacheDir.",
+      "verified_by": "gh api repos/nextcloud/talk-android/commits/{74e2108e,303e28c1} (303e28c1 merges PR 3064 'File util fixes'; first parent 74e2108e). Read FileUtils.kt at both SHAs with contents?ref=. gh api repos/nextcloud/security-advisories/security-advisories/GHSA-36f7-93f3-mcfj. Fixed check present at tag v17.0.0."
+    },
+    {
+      "id": "nextcloud-talk-android-unprotected-pip-receiver",
+      "repository": "nextcloud/talk-android",
+      "platform": "android",
+      "language": "java",
+      "advisory": {
+        "id": "CVE-2022-41926 / GHSA-564v-3rfc-352m",
+        "url": "https://github.com/nextcloud/security-advisories/security/advisories/GHSA-564v-3rfc-352m"
+      },
+      "vulnerable_commit": "32133b693c7647b856311459cf9839387fdb8049",
+      "fixed_commit": "c4d9105613cdbc39a1509e44f04c19df17ded9ed",
+      "weaknesses": [
+        "MASWE-0032",
+        "MASWE-0018"
+      ],
+      "category": "Dynamically registered broadcast receiver without a broadcast permission",
+      "vulnerable_locations": [
+        {
+          "path": "app/src/main/java/com/nextcloud/talk/activities/CallActivity.java",
+          "function": "CallActivity.onPictureInPictureModeChanged",
+          "start_line": 2541,
+          "end_line": 2558
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "app/src/main/java/com/nextcloud/talk/activities/CallActivity.java",
+          "function": "CallActivity.onPictureInPictureModeChanged",
+          "note": "Lines 2559-2562 register the receiver with BuildConfig.PERMISSION_LOCAL_BROADCAST (a signature-level permission declared in the manifest by the same PR)."
+        }
+      ],
+      "evidence": "During a call in picture-in-picture mode, CallActivity registers a BroadcastReceiver for the plain action string microphone_pip_intent with registerReceiver(receiver, filter) and no permission. Any app on the device can send that broadcast and mute or unmute the user's microphone. The fix registers the receiver with a signature-level custom permission so only the app itself can send it.",
+      "verified_by": "gh api repos/nextcloud/talk-android/commits/{32133b69,c4d91056} (c4d91056 merges PR 2148; first parent 32133b69). gh api repos/nextcloud/talk-android/pulls/2148/files. Read CallActivity.java at both SHAs with contents?ref=. gh api repos/nextcloud/security-advisories/security-advisories/GHSA-564v-3rfc-352m. compare c4d91056...v14.1.0 = ahead."
+    },
+    {
+      "id": "capgo-native-biometric-event-only-auth",
+      "repository": "Cap-go/capacitor-native-biometric",
+      "platform": "android",
+      "language": "java",
+      "advisory": {
+        "id": "CVE-2026-56294 / GHSA-vx5f-vmr6-32wf",
+        "url": "https://github.com/advisories/GHSA-vx5f-vmr6-32wf"
+      },
+      "vulnerable_commit": "b55f0795b16bd88a827b0a3aefc8c3f80ac7e1b3",
+      "fixed_commit": "1254602e942f8216e6258f646f0866d8e69c48a5",
+      "weaknesses": [
+        "MASWE-0020"
+      ],
+      "category": "Event-only biometric authentication: BiometricPrompt success callback trusted without a CryptoObject",
+      "vulnerable_locations": [
+        {
+          "path": "android/src/main/java/ee/forgr/biometric/AuthActivity.java",
+          "function": "AuthActivity.onCreate (AuthenticationCallback.onAuthenticationSucceeded)",
+          "start_line": 83,
+          "end_line": 87
+        },
+        {
+          "path": "android/src/main/java/ee/forgr/biometric/AuthActivity.java",
+          "function": "AuthActivity.onCreate",
+          "start_line": 102,
+          "end_line": 102
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "android/src/main/java/ee/forgr/biometric/AuthActivity.java",
+          "function": "AuthActivity.onCreate",
+          "note": "Lines 101-107 call validateCryptoObject(result) before reporting success; lines 123-128 authenticate with a CryptoObject."
+        },
+        {
+          "path": "android/src/main/java/ee/forgr/biometric/AuthActivity.java",
+          "function": "AuthActivity.generateSecretKey / validateCryptoObject",
+          "note": "Lines 187-209 create an AndroidKeyStore AES-GCM key with setUserAuthenticationRequired(true) and setInvalidatedByBiometricEnrollment(true); lines 221-235 require the returned cipher and run doFinal."
+        }
+      ],
+      "evidence": "The native Android code of this mobile plugin calls biometricPrompt.authenticate(promptInfo) without a CryptoObject, and onAuthenticationSucceeded reports success as soon as the callback runs. Hooking the callback (for example with Frida and a null CryptoObject) bypasses the check because no key operation depends on the biometric result. The fix binds authentication to a keystore cipher that requires user authentication and checks the returned CryptoObject before reporting success.",
+      "verified_by": "gh api repos/Cap-go/capacitor-native-biometric/commits/{b55f0795,1254602e} (1254602e's only parent is b55f0795; message 'Harden Android biometric auth'). Read AuthActivity.java at both SHAs with contents?ref=. gh api /advisories/GHSA-vx5f-vmr6-32wf (references commit 1254602e). compare 1254602e...8.3.6 = ahead, ...8.3.5 = behind."
+    },
+    {
+      "id": "osmand-open-gpx-deeplink-path-traversal",
+      "repository": "osmandapp/OsmAnd",
+      "platform": "android",
+      "language": "java",
+      "advisory": {
+        "id": "CVE-2026-65996 / GHSL-2026-106",
+        "url": "https://securitylab.github.com/advisories/GHSL-2026-106_OsmAnd/"
+      },
+      "vulnerable_commit": "ab284b70927c1f9e5998bea8f5aed06ef5ffd8a2",
+      "fixed_commit": "9887eeeaa1832a02129ec19ac9f245a04f2c1b75",
+      "weaknesses": [
+        "MASWE-0029",
+        "MASWE-0050"
+      ],
+      "category": "Unvalidated deep-link parameter used as a file name (path traversal on download)",
+      "vulnerable_locations": [
+        {
+          "path": "OsmAnd/src/net/osmand/plus/helpers/IntentHelper.java",
+          "function": "IntentHelper.parseOpenGpxIntent",
+          "start_line": 603,
+          "end_line": 611
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "OsmAnd/src/net/osmand/plus/helpers/IntentHelper.java",
+          "function": "IntentHelper.parseOpenGpxIntent",
+          "note": "Line 603 now always passes the name (or the url when the name is empty) through Algorithms.getFileWithoutDirs."
+        }
+      ],
+      "evidence": "The browsable https://osmand.net/open-gpx deep link takes url and name query parameters. At the vulnerable commit the name parameter is used unchanged when present (getFileWithoutDirs is applied only when it is empty), and the downloaded file is written to GPX_IMPORT_DIR + name. A name such as ../../favorites/x.gpx writes attacker-controlled GPX files outside tracks/import. The fix strips directory components from the supplied name too.",
+      "verified_by": "gh api repos/osmandapp/OsmAnd/commits/{ab284b70,9887eeea} (9887eeea's only parent is ab284b70; message 'Import improvements (#24917) * Fix path traversal fix in parseOpenGpxIntent'). Read IntentHelper.java at both SHAs with contents?ref=. GHSL-2026-106 advisory page (tested commit 3043c92b, CVE-2026-65996)."
+    },
+    {
+      "id": "mifos-mobile-trust-all-hostname-verifier",
+      "repository": "openMF/mifos-mobile",
+      "platform": "android",
+      "language": "kotlin",
+      "advisory": {
+        "id": "CVE-2021-21385 / GHSA-9657-33wf-rmvx",
+        "url": "https://github.com/openMF/mifos-mobile/security/advisories/GHSA-9657-33wf-rmvx"
+      },
+      "vulnerable_commit": "7ed4f22f2541d38f32c9e26ba075ca1b41424369",
+      "fixed_commit": "e505f62b92b19292bfdabd6e996ab76abfeaa90d",
+      "weaknesses": [
+        "MASWE-0027"
+      ],
+      "category": "Trust-all X509TrustManager and always-true HostnameVerifier on the OkHttp client",
+      "vulnerable_locations": [
+        {
+          "path": "app/src/main/java/org/mifos/mobile/api/SelfServiceOkHttpClient.kt",
+          "function": "SelfServiceOkHttpClient.mifosOkHttpClient (getter)",
+          "start_line": 23,
+          "end_line": 67
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "app/src/main/java/org/mifos/mobile/api/SelfServiceOkHttpClient.kt",
+          "function": "SelfServiceOkHttpClient.mifosOkHttpClient (getter)",
+          "note": "The whole try block (empty checkServerTrusted, SSLContext with trustAllCerts, hostnameVerifier { _, _ -> true }) is removed; the builder now uses OkHttp's default TLS validation."
+        }
+      ],
+      "evidence": "The app's HTTP client installs an X509TrustManager whose checkServerTrusted is empty, builds the socket factory from it, and sets hostnameVerifier { _, _ -> true }. Any certificate for any host is accepted, so traffic to the banking self-service backend can be intercepted. The advisory fix commit deletes this code.",
+      "verified_by": "gh api repos/openMF/mifos-mobile/commits/{7ed4f22f,e505f62b} (e505f62b 'Merge pull request from GHSA-9657-33wf-rmvx'; first parent 7ed4f22f). Read SelfServiceOkHttpClient.kt at both SHAs with contents?ref=. gh api repos/openMF/mifos-mobile/security-advisories/GHSA-9657-33wf-rmvx."
+    },
+    {
+      "id": "salesforce-android-login-webview-file-url-access",
+      "repository": "forcedotcom/SalesforceMobileSDK-Android",
+      "platform": "android",
+      "language": "kotlin",
+      "advisory": {
+        "id": "Salesforce ASA Program finding SA-01 (W-14893505), PR 2546",
+        "url": "https://github.com/forcedotcom/SalesforceMobileSDK-Android/pull/2546"
+      },
+      "vulnerable_commit": "b765d7db8f356b0bfb38d86be722bdc37cc72aa3",
+      "fixed_commit": "b83f4f6a8d40f72a12e316d5f9262bd75f310b8b",
+      "weaknesses": [
+        "MASWE-0034"
+      ],
+      "category": "WebView allows file access from file URLs (setAllowFileAccessFromFileURLs true) in the OAuth login WebView",
+      "vulnerable_locations": [
+        {
+          "path": "libs/SalesforceSDK/src/com/salesforce/androidsdk/ui/LoginActivity.kt",
+          "function": "LoginActivity.onCreate",
+          "start_line": 196,
+          "end_line": 204
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "libs/SalesforceSDK/src/com/salesforce/androidsdk/ui/LoginActivity.kt",
+          "function": "LoginActivity.onCreate",
+          "note": "The webView.settings.apply block (lines 196-203) no longer sets allowFileAccessFromFileURLs = true; JavaScript stays enabled."
+        }
+      ],
+      "evidence": "The SDK's login WebView enables JavaScript and explicitly sets allowFileAccessFromFileURLs = true, so script running in a file:// page can read other local files. The PR title records it as a security assessment finding ('App Enables Dangerous File Access via setAllowFileAccessFromFileURLs') and removes the setting.",
+      "verified_by": "gh api repos/forcedotcom/SalesforceMobileSDK-Android/commits/{b765d7db,b83f4f6a} (b83f4f6a is the PR 2546 merge commit with single parent b765d7db; PR commit 73f0a33f). gh api repos/forcedotcom/SalesforceMobileSDK-Android/pulls/2546 (title, body, files). Read LoginActivity.kt at both SHAs with contents?ref=."
+    },
+    {
+      "id": "salesforce-android-login-passcode-no-flag-secure",
+      "repository": "forcedotcom/SalesforceMobileSDK-Android",
+      "platform": "android",
+      "language": "java",
+      "advisory": {
+        "id": "Salesforce Mobile SDK PR 1100 (Preventing screenshots in login activity and passcode activity)",
+        "url": "https://github.com/forcedotcom/SalesforceMobileSDK-Android/pull/1100"
+      },
+      "vulnerable_commit": "a937abf629190dc07249cad9a3646bfed82a5966",
+      "fixed_commit": "9ee25271fcb79c9df2837cae010201f487a774b2",
+      "weaknesses": [
+        "MASWE-0038"
+      ],
+      "category": "Sensitive screens (login, passcode) without FLAG_SECURE",
+      "vulnerable_locations": [
+        {
+          "path": "libs/SalesforceSDK/src/com/salesforce/androidsdk/ui/LoginActivity.java",
+          "function": "LoginActivity.onCreate",
+          "start_line": 78,
+          "end_line": 90
+        },
+        {
+          "path": "libs/SalesforceSDK/src/com/salesforce/androidsdk/ui/PasscodeActivity.java",
+          "function": "PasscodeActivity.onCreate",
+          "start_line": 89,
+          "end_line": 94
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "libs/SalesforceSDK/src/com/salesforce/androidsdk/ui/LoginActivity.java",
+          "function": "LoginActivity.onCreate",
+          "note": "Lines 90-92 set WindowManager.LayoutParams.FLAG_SECURE before setContentView."
+        },
+        {
+          "path": "libs/SalesforceSDK/src/com/salesforce/androidsdk/ui/PasscodeActivity.java",
+          "function": "PasscodeActivity.onCreate",
+          "note": "Lines 96-98 set FLAG_SECURE before setContentView."
+        }
+      ],
+      "evidence": "The SDK's login activity (credentials entered in a WebView) and passcode activity create their windows without FLAG_SECURE, so their content can be captured in screenshots, screen recordings and the recent-apps thumbnail. The PR, described as 'Using FLAG_SECURE for sensitive screens', adds getWindow().setFlags(FLAG_SECURE, FLAG_SECURE) to both onCreate methods.",
+      "verified_by": "gh api repos/forcedotcom/SalesforceMobileSDK-Android/commits/{a937abf6,9ee25271} (9ee25271 merges PR 1100; first parent a937abf6; PR commit 265f329f). gh api repos/forcedotcom/SalesforceMobileSDK-Android/pulls/1100 (body and files). Read both Java files at both SHAs with contents?ref=."
+    },
+    {
+      "id": "freeotp-android-scan-activity-no-flag-secure",
+      "repository": "freeotp/freeotp-android",
+      "platform": "android",
+      "language": "java",
+      "advisory": {
+        "id": "freeotp-android issue 124 / PR 125",
+        "url": "https://github.com/freeotp/freeotp-android/pull/125"
+      },
+      "vulnerable_commit": "801a26e7484670b513e0b0f06fcad6f73cfd7323",
+      "fixed_commit": "184acef370dff959f22b13cef9930e16dc17f2ea",
+      "weaknesses": [
+        "MASWE-0038"
+      ],
+      "category": "QR scanning screen that shows OTP secrets without FLAG_SECURE",
+      "vulnerable_locations": [
+        {
+          "path": "app/src/main/java/org/fedorahosted/freeotp/add/ScanActivity.java",
+          "function": "ScanActivity.onCreate",
+          "start_line": 134,
+          "end_line": 138
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "app/src/main/java/org/fedorahosted/freeotp/add/ScanActivity.java",
+          "function": "ScanActivity.onCreate",
+          "note": "Line 137 sets FLAG_SECURE on the window before setContentView."
+        }
+      ],
+      "evidence": "Issue 124 reports that the main token list blocks screenshots but the barcode scan screen does not, so the camera preview of an otpauth QR code (which contains the TOTP/HOTP secret) can be captured. ScanActivity.onCreate set the content view without FLAG_SECURE. PR 125 ('Prevent screencaps in ScanActivity', fixes #124) adds the flag.",
+      "verified_by": "gh api repos/freeotp/freeotp-android/commits/{801a26e7,184acef3} (184acef3's only parent is 801a26e7; same change as PR commit 2753e0bc). gh api repos/freeotp/freeotp-android/issues/124 and pulls/125. Read ScanActivity.java at both SHAs with contents?ref=."
+    },
+    {
+      "id": "newpipe-backup-import-objectinputstream",
+      "repository": "TeamNewPipe/NewPipe",
+      "platform": "android",
+      "language": "kotlin",
+      "advisory": {
+        "id": "CVE-2024-32876 / GHSA-wxrm-jhpf-vp6v",
+        "url": "https://github.com/TeamNewPipe/NewPipe/security/advisories/GHSA-wxrm-jhpf-vp6v"
+      },
+      "vulnerable_commit": "235fb926382cfed5a6353106c732e85a9140d6da",
+      "fixed_commit": "d75a6eaa4164d3fc0ac67bc35048b021b85e9b6f",
+      "weaknesses": [
+        "MASWE-0050"
+      ],
+      "category": "Unsafe Java deserialization of an imported backup (ObjectInputStream without class filtering)",
+      "vulnerable_locations": [
+        {
+          "path": "app/src/main/java/org/schabi/newpipe/settings/export/ImportExportManager.kt",
+          "function": "ImportExportManager.loadSharedPreferences",
+          "start_line": 81,
+          "end_line": 84
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "app/src/main/java/org/schabi/newpipe/settings/export/ImportExportManager.kt",
+          "function": "ImportExportManager.loadSharedPreferences",
+          "note": "Lines 80-85 read the settings through PreferencesObjectInputStream instead of ObjectInputStream."
+        },
+        {
+          "path": "app/src/main/java/org/schabi/newpipe/settings/export/PreferencesObjectInputStream.java",
+          "function": "PreferencesObjectInputStream.resolveClass",
+          "note": "New class (added by the fix) that overrides resolveClass and only allows boxed primitives, HashMap and HashSet."
+        }
+      ],
+      "evidence": "Importing a backup zip deserializes its settings file with a plain java.io.ObjectInputStream and readObject(), so a crafted backup can instantiate arbitrary serializable classes in the app (the reporter's PoC ran System.exit). The fix replaces it with a whitelist-checking ObjectInputStream subclass.",
+      "verified_by": "gh api repos/TeamNewPipe/NewPipe/commits/{235fb926,d75a6eaa} (d75a6eaa's only parent is 235fb926; message 'Fix vulnerability with whitelist-aware ObjectInputStream'). Read ImportExportManager.kt at both SHAs and PreferencesObjectInputStream.java at d75a6eaa with contents?ref=. gh api repos/TeamNewPipe/NewPipe/security-advisories (GHSA-wxrm-jhpf-vp6v). compare d75a6eaa...v0.27.0 = ahead."
+    },
+    {
+      "id": "airmapview-webview-default-file-access",
+      "repository": "airbnb/AirMapView",
+      "platform": "android",
+      "language": "java",
+      "advisory": {
+        "id": "AirMapView PR 72 ([Security] Disable file access on WebView)",
+        "url": "https://github.com/airbnb/AirMapView/pull/72"
+      },
+      "vulnerable_commit": "2111ca027dd1c4525e1f47ade41409d4856b7acc",
+      "fixed_commit": "b1e8fd330fecb2659559e0ea9535b59a507057c2",
+      "weaknesses": [
+        "MASWE-0034"
+      ],
+      "category": "JavaScript-enabled WebView left with default file and content access (no setAllowFileAccess(false)/setAllowContentAccess(false))",
+      "vulnerable_locations": [
+        {
+          "path": "library/src/main/java/com/airbnb/android/airmapview/WebViewMapFragment.java",
+          "function": "WebViewMapFragment.onCreateView",
+          "start_line": 82,
+          "end_line": 91
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "library/src/main/java/com/airbnb/android/airmapview/WebViewMapFragment.java",
+          "function": "WebViewMapFragment.onCreateView",
+          "note": "Lines 86-87 add webViewSettings.setAllowFileAccess(false) and setAllowContentAccess(false)."
+        }
+      ],
+      "evidence": "The map WebView enables JavaScript and geolocation, exposes a JavaScript interface, and loads remote map scripts through loadDataWithBaseURL with a remote base domain. It never disables file:// or content:// access, which defaulted to allowed on the API levels targeted at the time, so script in the page could load local files or content-provider URIs. The PR, titled '[Security] Disable file access on WebView', explicitly disables both.",
+      "verified_by": "gh api repos/airbnb/AirMapView/commits/{2111ca02,b1e8fd33} (b1e8fd33 merges PR 72; first parent 2111ca02; PR commits da5760a2, 7d8a6a36). gh api repos/airbnb/AirMapView/pulls/72/files. Read WebViewMapFragment.java at both SHAs with contents?ref=."
+    },
+    {
+      "id": "stytch-android-pkce-time-seeded-random",
+      "repository": "stytchauth/stytch-android",
+      "platform": "android",
+      "language": "kotlin",
+      "advisory": {
+        "id": "Stytch Android PR 145 (SDK-1585: Use SecureRandom instead of Random for PKCE code challenges)",
+        "url": "https://github.com/stytchauth/stytch-android/pull/145"
+      },
+      "vulnerable_commit": "b10e1d062def322662608af89859b8263a4b4ebd",
+      "fixed_commit": "091ae50288d4032c37d495f6474e93efb65cb68b",
+      "weaknesses": [
+        "MASWE-0012"
+      ],
+      "category": "Non-cryptographic, time-seeded PRNG used for a PKCE code verifier",
+      "vulnerable_locations": [
+        {
+          "path": "sdk/src/main/java/com/stytch/sdk/common/EncryptionManager.kt",
+          "function": "EncryptionManager.generateCodeChallenge",
+          "start_line": 102,
+          "end_line": 105
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "sdk/src/main/java/com/stytch/sdk/common/EncryptionManager.kt",
+          "function": "EncryptionManager.generateCodeChallenge",
+          "note": "Lines 106-110 fill the byte array with SecureRandom().nextBytes; the kotlin.random.Random import is removed."
+        }
+      ],
+      "evidence": "The SDK generates the PKCE code verifier from kotlin.random.Random seeded with System.currentTimeMillis(). The output is predictable from the approximate time, which defeats PKCE's protection of the authorization code. The fix uses SecureRandom, as the PR title states ('cryptographically secure challenges for PKCE').",
+      "verified_by": "gh api repos/stytchauth/stytch-android/commits/{b10e1d06,091ae502} (091ae502 merges PR 145; first parent b10e1d06; PR commit 389fa6fc). gh api repos/stytchauth/stytch-android/pulls/145 (body and files). Read EncryptionManager.kt at both SHAs with contents?ref=."
+    },
+    {
+      "id": "keepassdroid-password-generator-java-util-random",
+      "repository": "bpellin/keepassdroid",
+      "platform": "android",
+      "language": "java",
+      "advisory": {
+        "id": "KeePassDroid PR 62 (java.util.Random is insecure, use java.security.SecureRandom instead)",
+        "url": "https://github.com/bpellin/keepassdroid/pull/62"
+      },
+      "vulnerable_commit": "1527b0aac18003352081dcfc800f88c588097378",
+      "fixed_commit": "0608fdec4fef4d58edb7aabbe53532616fb2f071",
+      "weaknesses": [
+        "MASWE-0012"
+      ],
+      "category": "java.util.Random used to generate passwords",
+      "vulnerable_locations": [
+        {
+          "path": "src/com/keepassdroid/password/PasswordGenerator.java",
+          "function": "PasswordGenerator.generatePassword",
+          "start_line": 57,
+          "end_line": 61
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "src/com/keepassdroid/password/PasswordGenerator.java",
+          "function": "PasswordGenerator.generatePassword",
+          "note": "Line 57 uses new SecureRandom(); the import changes to java.security.SecureRandom (line 22)."
+        }
+      ],
+      "evidence": "The password manager's password generator picks each character with java.util.Random, a linear congruential generator whose output is predictable and is not suitable for secrets. The fix commit ('java.util.Random is insecure, use java.security.SecureRandom instead') switches to SecureRandom.",
+      "verified_by": "gh api repos/bpellin/keepassdroid/commits/{1527b0aa,0608fdec} (0608fdec's only parent is 1527b0aa; it is on master, compare 0608fdec...master = ahead). gh api repos/bpellin/keepassdroid/pulls/62. Read PasswordGenerator.java at both SHAs with contents?ref=."
+    },
+    {
+      "id": "home-assistant-ios-url-actions-without-confirmation",
+      "repository": "home-assistant/iOS",
+      "platform": "ios",
+      "language": "swift",
+      "advisory": {
+        "id": "CVE-2023-44385 / GHSA-h2jp-7grc-9xpp (GHSL-2023-161)",
+        "url": "https://github.com/home-assistant/core/security/advisories/GHSA-h2jp-7grc-9xpp"
+      },
+      "vulnerable_commit": "7c55eb649c5ddd1e69505a024fb2c49bc13bc200",
+      "fixed_commit": "8eaaaac51677fb9c5d77ffeca4fbaeb9c55e32c0",
+      "weaknesses": [
+        "MASWE-0029"
+      ],
+      "category": "Deep links (URL scheme / x-callback-url) trigger authenticated service calls without user confirmation",
+      "vulnerable_locations": [
+        {
+          "path": "Sources/App/WebView/IncomingURLHandler.swift",
+          "function": "IncomingURLHandler.handle(url:)",
+          "start_line": 25,
+          "end_line": 30
+        },
+        {
+          "path": "Sources/App/WebView/IncomingURLHandler.swift",
+          "function": "IncomingURLHandler.registerCallbackURLKitHandlers",
+          "start_line": 223,
+          "end_line": 288
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "Sources/App/WebView/IncomingURLHandler.swift",
+          "function": "IncomingURLHandler.handle(url:)",
+          "note": "Lines 25-43 wrap call_service, fire_event and send_location in confirmAction alerts."
+        },
+        {
+          "path": "Sources/App/WebView/IncomingURLHandler.swift",
+          "function": "IncomingURLHandler.confirmAction / registerCallbackURLKitHandlers",
+          "note": "New confirmAction (lines 165-196) presents a Cancel/Yes alert; the x-callback-url handlers (lines 268-370) run only from the confirmation handler."
+        }
+      ],
+      "evidence": "homeassistant://call_service, fire_event, send_location and the x-callback-url variants are handled directly: the app calls the Home Assistant API with the user's stored token using service names and data taken from the URL. Any web page, QR code or app can make the victim run arbitrary services. The fix asks the user to confirm each URL-triggered action.",
+      "verified_by": "gh api repos/home-assistant/iOS/commits/{7c55eb64,8eaaaac5} (8eaaaac5's only parent is 7c55eb64; 'Add confirmation for URL actions (#2417)'). Read IncomingURLHandler.swift at both SHAs with contents?ref=. gh api repos/home-assistant/core/security-advisories/GHSA-h2jp-7grc-9xpp; GHSL-2023-161 page. compare 8eaaaac5...release/2023.7/2023.471 = ahead (release dated 2023-10-19)."
+    },
+    {
+      "id": "home-assistant-ios-script-bridge-all-frames",
+      "repository": "home-assistant/iOS",
+      "platform": "ios",
+      "language": "swift",
+      "advisory": {
+        "id": "CVE-2026-44698 / GHSA-7jp2-p2fw-mgvf (GHSL-2026-104)",
+        "url": "https://github.com/home-assistant/core/security/advisories/GHSA-7jp2-p2fw-mgvf"
+      },
+      "vulnerable_commit": "a20ae2f5936d1ff445d302eb8241b9cb083de92b",
+      "fixed_commit": "c8f35e4cff8369ff1cd85fdbeeda99cbd0168327",
+      "weaknesses": [
+        "MASWE-0033"
+      ],
+      "category": "WKScriptMessageHandler bridge (access-token provider) exposed to every frame, including cross-origin iframes",
+      "vulnerable_locations": [
+        {
+          "path": "Sources/App/Frontend/ExternalMessageBus/SafeScriptMessageHandler.swift",
+          "function": "SafeScriptMessageHandler.userContentController(_:didReceive:)",
+          "start_line": 12,
+          "end_line": 19
+        },
+        {
+          "path": "Sources/App/Frontend/WebView/WebViewController+WebViewSetup.swift",
+          "function": "WebViewController.setupUserContentController",
+          "start_line": 10,
+          "end_line": 15
+        },
+        {
+          "path": "Sources/App/Frontend/WebView/WebViewController.swift",
+          "function": "WebViewController.viewDidLoad",
+          "start_line": 204,
+          "end_line": 223
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "Sources/App/Frontend/ExternalMessageBus/SafeScriptMessageHandler.swift",
+          "function": "SafeScriptMessageHandler.userContentController(_:didReceive:)",
+          "note": "Lines 15-43 drop messages unless message.frameInfo.isMainFrame is true and the security origin host is one of the server's configured hosts."
+        },
+        {
+          "path": "Sources/App/Frontend/WebView/WebViewController.swift",
+          "function": "WebViewController.viewDidLoad",
+          "note": "Lines 207 and 222 change the injected user scripts to forMainFrameOnly: true."
+        },
+        {
+          "path": "Sources/App/Frontend/WebView/WebViewController+WebViewSetup.swift",
+          "function": "WebViewController.setupUserContentController",
+          "note": "Line 10 passes the server to SafeScriptMessageHandler so it can check origins."
+        }
+      ],
+      "evidence": "The companion app registers getExternalAuth, revokeExternalAuth and externalBus message handlers on the WKWebView, and SafeScriptMessageHandler forwards every message to the delegate without checking WKFrameInfo.isMainFrame or the origin. Bridge scripts are also injected with forMainFrameOnly: false. A cross-origin iframe shown on a dashboard can therefore call the native bridge and, with the callback-injection issue, obtain the user's access token. The fix accepts messages only from the main frame on an allowed server host and injects scripts into the main frame only.",
+      "verified_by": "gh api repos/home-assistant/iOS/commits/{a20ae2f5,c8f35e4c} (c8f35e4c's only parent is a20ae2f5; 'Prevent execution of WKUserScript from beyond main frame and allowed hosts (#4469)'). Read the three files at both SHAs with contents?ref=. gh api repos/home-assistant/core/security-advisories/GHSA-7jp2-p2fw-mgvf (iOS fixed in 2026.4.1)."
+    },
+    {
+      "id": "cryptomator-ios-keychain-biometry-any",
+      "repository": "cryptomator/ios",
+      "platform": "ios",
+      "language": "swift",
+      "advisory": {
+        "id": "GHSA-fmh3-xfw7-38cj",
+        "url": "https://github.com/cryptomator/ios/security/advisories/GHSA-fmh3-xfw7-38cj"
+      },
+      "vulnerable_commit": "41f463d43a9d451417344251d9f3a7184b100bba",
+      "fixed_commit": "f40530b89ab5eab2b1460831daec75d95aed9200",
+      "weaknesses": [
+        "MASWE-0022"
+      ],
+      "category": "Biometry-protected keychain item not invalidated on new biometric enrollment (.biometryAny)",
+      "vulnerable_locations": [
+        {
+          "path": "CryptomatorCommon/Sources/CryptomatorCommonCore/CryptomatorKeychain.swift",
+          "function": "CryptomatorUserPresenceKeychain.access",
+          "start_line": 99,
+          "end_line": 102
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "CryptomatorCommon/Sources/CryptomatorCommonCore/CryptomatorKeychain.swift",
+          "function": "CryptomatorUserPresenceKeychain.access",
+          "note": "Line 101 uses .biometryCurrentSet in SecAccessControlCreateWithFlags."
+        }
+      ],
+      "evidence": "Vault passwords are stored in the keychain with an access control created with .biometryAny. Anyone who can add a new fingerprint or face (for example with the device passcode) can then release the stored vault password. The advisory asks to switch to .biometryCurrentSet, which invalidates the item when the enrolled biometrics change; the fix commit does exactly that.",
+      "verified_by": "gh api repos/cryptomator/ios/commits/{41f463d4,f40530b8} (f40530b8's only parent is 41f463d4; 'Fixed #110'; issue 110 text equals the advisory). Read CryptomatorKeychain.swift at both SHAs with contents?ref=. gh api repos/cryptomator/ios/security-advisories/GHSA-fmh3-xfw7-38cj. compare f40530b8...2.0.0-beta9 = ahead."
+    },
+    {
+      "id": "cryptomator-ios-cache-in-icloud-backup",
+      "repository": "cryptomator/ios",
+      "platform": "ios",
+      "language": "swift",
+      "advisory": {
+        "id": "GHSA-385v-vfgq-jxc9",
+        "url": "https://github.com/cryptomator/ios/security/advisories/GHSA-385v-vfgq-jxc9"
+      },
+      "vulnerable_commit": "e6c7ac9cb4de05c33dfaedb74f818ca89628ec03",
+      "fixed_commit": "37293a5408f48fe8e7df01b52cd436ed46af36d5",
+      "weaknesses": [
+        "MASWE-0006"
+      ],
+      "category": "Decrypted file cache not excluded from iCloud backup",
+      "vulnerable_locations": [
+        {
+          "path": "FileProviderExtension/FileProviderExtension.swift",
+          "function": "FileProviderExtension.getBaseStorageDirectory",
+          "start_line": 279,
+          "end_line": 287
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "FileProviderExtension/FileProviderExtension.swift",
+          "function": "FileProviderExtension.getBaseStorageDirectory",
+          "note": "Lines 286-291 call excludeFileProviderDocumentStorageFromiCloudBackup() before returning the storage URL."
+        },
+        {
+          "path": "FileProviderExtension/FileProviderExtension.swift",
+          "function": "FileProviderExtension.excludeFileProviderDocumentStorageFromiCloudBackup",
+          "note": "New function (lines 321-326) sets URLResourceValues.isExcludedFromBackup = true on NSFileProviderManager.default.documentStorageURL."
+        }
+      ],
+      "evidence": "The File Provider extension keeps cleartext (decrypted) copies of vault files under NSFileProviderManager.default.documentStorageURL, returned by getBaseStorageDirectory, without excluding that directory from backup. Decrypted vault content could therefore end up in iCloud device backups. The fix marks the document storage directory isExcludedFromBackup.",
+      "verified_by": "gh api repos/cryptomator/ios/commits/{e6c7ac9c,37293a54} (37293a54's only parent is e6c7ac9c; 'Exclude FileProviderDocumentStorage from iCloud backup fixes #139'). Read FileProviderExtension.swift at both SHAs with contents?ref=. gh api repos/cryptomator/ios/security-advisories/GHSA-385v-vfgq-jxc9; issue 139 closed by 37293a54. compare 37293a54...2.0.4 = ahead."
+    },
+    {
+      "id": "salesforce-ios-push-secret-rsa-pkcs1-fallback",
+      "repository": "forcedotcom/SalesforceMobileSDK-iOS",
+      "platform": "ios",
+      "language": "objective-c",
+      "advisory": {
+        "id": "Salesforce ASA Program finding SA-02 cleanup (W-19320491), PR 4127",
+        "url": "https://github.com/forcedotcom/SalesforceMobileSDK-iOS/pull/4127"
+      },
+      "vulnerable_commit": "bac10297a628413a72a9ac0cc38bd6f0a15c695d",
+      "fixed_commit": "5d68112b199d5b2273cd7210a77e1af20b50e069",
+      "weaknesses": [
+        "MASWE-0007"
+      ],
+      "category": "RSA PKCS#1 v1.5 decryption fallback when OAEP fails (padding-oracle prone encryption mode)",
+      "vulnerable_locations": [
+        {
+          "path": "libs/SalesforceSDKCore/SalesforceSDKCore/Classes/PushNotification/SFSDKPushNotificationDecryption.m",
+          "function": "SFSDKPushNotificationDecryption getAESKeyFromSecret:error:",
+          "start_line": 189,
+          "end_line": 199
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "libs/SalesforceSDKCore/SalesforceSDKCore/Classes/PushNotification/SFSDKPushNotificationDecryption.m",
+          "function": "SFSDKPushNotificationDecryption getAESKeyFromSecret:error:",
+          "note": "Lines 189-198: OAEP-SHA256 is the only accepted algorithm; an OAEP failure is returned as an error and there is no PKCS1 fallback."
+        }
+      ],
+      "evidence": "The push-notification secret (AES key and IV) is RSA-decrypted with OAEP-SHA256, but on failure the code retries with kSecKeyAlgorithmRSAEncryptionPKCS1. Accepting PKCS#1 v1.5 padding keeps a downgrade path to the weaker scheme (Bleichenbacher-style padding oracles). The PR, part of the ASA security assessment cleanup, removes the fallback.",
+      "verified_by": "gh api repos/forcedotcom/SalesforceMobileSDK-iOS/commits/{bac10297,5d68112b} (5d68112b merges PR 4127; first parent bac10297; PR commit 1b19fd24). gh api repos/forcedotcom/SalesforceMobileSDK-iOS/pulls/4127 (body cites ASA Program finding SA-02). Read SFSDKPushNotificationDecryption.m at both SHAs with contents?ref=."
+    },
+    {
+      "id": "zipfoundation-uncontained-symlink-extraction",
+      "repository": "weichsel/ZIPFoundation",
+      "platform": "ios",
+      "language": "swift",
+      "advisory": {
+        "id": "CVE-2023-39138 / GHSA-c2cc-3569-6jh2",
+        "url": "https://github.com/advisories/GHSA-c2cc-3569-6jh2"
+      },
+      "vulnerable_commit": "de38ebca6cb226ed7a682c4aa6980ca54949c08c",
+      "fixed_commit": "4b24bdfa92cbcfdac482373a4a8a059d611150c8",
+      "weaknesses": [
+        "MASWE-0050"
+      ],
+      "category": "Zip extraction creates symlinks pointing outside the destination directory (zip-slip via symlink)",
+      "vulnerable_locations": [
+        {
+          "path": "Sources/ZIPFoundation/Archive+Reading.swift",
+          "function": "Archive.extract(_:to:bufferSize:skipCRC32:progress:)",
+          "start_line": 51,
+          "end_line": 59
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "Sources/ZIPFoundation/Archive+Reading.swift",
+          "function": "Archive.extract(_:to:bufferSize:skipCRC32:progress:)",
+          "note": "Lines 58-62 resolve the link target against the entry's parent directory and throw ArchiveError.uncontainedSymlink unless it is contained in it."
+        }
+      ],
+      "evidence": "For symlink entries, extract writes a symbolic link whose target is the entry data from the archive, without checking where it points. A crafted archive can create a link to an absolute path or ../ path; later entries or app code then read or write through it outside the extraction directory. Issue 282 reported this as the path traversal later assigned CVE-2023-39138; the fix adds a containment check.",
+      "verified_by": "gh api repos/weichsel/ZIPFoundation/commits/{de38ebca,4b24bdfa} (4b24bdfa's only parent is de38ebca; 'Guard against uncontained symlinks'). Read Archive+Reading.swift at both SHAs with contents?ref=. gh api /advisories/GHSA-c2cc-3569-6jh2 (<= 0.9.17, patched 0.9.18); issue 282. compare 0.9.17...0.9.18 lists 4b24bdfa; compare 4b24bdfa...0.9.18 = ahead."
+    },
+    {
+      "id": "afnetworking-default-policy-no-domain-validation",
+      "repository": "AFNetworking/AFNetworking",
+      "platform": "ios",
+      "language": "objective-c",
+      "advisory": {
+        "id": "CVE-2015-3996",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2015-3996"
+      },
+      "vulnerable_commit": "b0dd3d98346e98c9b1700ddd083559d7d4f15a68",
+      "fixed_commit": "3e631b203dd95bb82dfbcc2c47a2d84b59d1eeb4",
+      "weaknesses": [
+        "MASWE-0027"
+      ],
+      "category": "Default TLS policy does not validate the certificate host name",
+      "vulnerable_locations": [
+        {
+          "path": "AFNetworking/AFSecurityPolicy.m",
+          "function": "AFSecurityPolicy setSSLPinningMode:",
+          "start_line": 207,
+          "end_line": 219
+        },
+        {
+          "path": "AFNetworking/AFSecurityPolicy.m",
+          "function": "AFSecurityPolicy evaluateServerTrust:forDomain:",
+          "start_line": 249,
+          "end_line": 253
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "AFNetworking/AFSecurityPolicy.m",
+          "function": "AFSecurityPolicy init",
+          "note": "Line 201 sets validatesDomainName = YES for every policy; the setSSLPinningMode: override that cleared it for AFSSLPinningModeNone is deleted."
+        }
+      ],
+      "evidence": "With the default policy (AFSSLPinningModeNone), setSSLPinningMode: sets validatesDomainName = NO, and evaluateServerTrust:forDomain: then evaluates the chain with SecPolicyCreateBasicX509() instead of SecPolicyCreateSSL(true, domain). Any valid certificate for any host is accepted, enabling MITM. NVD CVE-2015-3996 (via issue 2619) describes this; the fix commit '[Issue #2619] Default validatesDomainName property to YES' enables host name validation by default.",
+      "verified_by": "gh api repos/AFNetworking/AFNetworking/commits/{b0dd3d98,3e631b20} (3e631b20's only parent is b0dd3d98). Read AFSecurityPolicy.m at both SHAs with contents?ref=. compare 2.5.2...2.5.3 includes 3e631b20. NVD CVE-2015-3996 description and reference to issue 2619."
+    },
+    {
+      "id": "vlc-ios-openurl-before-passcode",
+      "repository": "videolan/vlc-ios",
+      "platform": "ios",
+      "language": "objective-c",
+      "advisory": {
+        "id": "CVE-2018-19937",
+        "url": "https://nvd.nist.gov/vuln/detail/CVE-2018-19937"
+      },
+      "vulnerable_commit": "dd54f1ddfed075416b9cd35b695d888d30508ba7",
+      "fixed_commit": "d84d7c0a94eb7fba202d2c5fc3739276d2d3986f",
+      "weaknesses": [
+        "MASWE-0020"
+      ],
+      "category": "Passcode lock bypass: URL opens are processed before the local passcode is validated",
+      "vulnerable_locations": [
+        {
+          "path": "Sources/VLCAppDelegate.m",
+          "function": "VLCAppDelegate application:openURL:options:",
+          "start_line": 295,
+          "end_line": 403
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "Sources/VLCAppDelegate.m",
+          "function": "VLCAppDelegate application:openURL:options: / openURL:options:",
+          "note": "Lines 299-309 run validatePasscodeIfNeededWithCompletion first and only then call the new openURL:options: helper (line 311) that holds the previous handling."
+        }
+      ],
+      "evidence": "When a passcode lock is enabled, application:openURL:options: handled incoming URLs (Dropbox redirects, vlc-x-callback, file and stream URLs) and started playback or UI changes directly, without first calling validatePasscodeIfNeededWithCompletion. Opening a URL (and rotating the device, per the CVE) exposes the app behind the lock. The fix ('move openURLcalls behind passcode validation') gates URL handling on passcode validation.",
+      "verified_by": "gh api repos/videolan/vlc-ios/commits/{dd54f1dd,d84d7c0a} (d84d7c0a's only parent is dd54f1dd; 'VLCAppDelegate: move openURLcalls behind passcode validation'). Read VLCAppDelegate.m at both SHAs with contents?ref=. NVD CVE-2018-19937 references PR 178 commit d84d7c0a. Fixed handler present at tag 3.1.5."
+    },
+    {
+      "id": "telnyx-ios-sdk-self-signed-certs-accepted",
+      "repository": "team-telnyx/telnyx-webrtc-ios",
+      "platform": "ios",
+      "language": "swift",
+      "advisory": {
+        "id": "Telnyx iOS SDK PR 361 (VSUP-126 / VSDK-423)",
+        "url": "https://github.com/team-telnyx/telnyx-webrtc-ios/pull/361"
+      },
+      "vulnerable_commit": "7e19b535f58a0969a6edaf5105ac575b20fe8cec",
+      "fixed_commit": "d90b95880229bcb00eb293298369cf5abd48db86",
+      "weaknesses": [
+        "MASWE-0027"
+      ],
+      "category": "TLS certificate validation disabled for the signaling WebSocket and a URLSession delegate that trusts any server",
+      "vulnerable_locations": [
+        {
+          "path": "TelnyxRTC/Telnyx/Services/Socket.swift",
+          "function": "Socket.connect(signalingServer:)",
+          "start_line": 50,
+          "end_line": 53
+        },
+        {
+          "path": "TelnyxRTC/Telnyx/WebRTC/Stats/TelnyxCallReportCollector.swift",
+          "function": "TelnyxCallReportCollector.AllowSelfSignedDelegate.urlSession(_:didReceive:completionHandler:)",
+          "start_line": 270,
+          "end_line": 284
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "TelnyxRTC/Telnyx/Services/Socket.swift",
+          "function": "Socket.connect(signalingServer:)",
+          "note": "Lines 50-60: release builds always use FoundationSecurity(allowSelfSigned: false); self-signed is allowed only under #if DEBUG for local or private hosts."
+        },
+        {
+          "path": "TelnyxRTC/Telnyx/WebRTC/Stats/TelnyxCallReportCollector.swift",
+          "function": "TelnyxCallReportCollector.urlSession(for:)",
+          "note": "Lines 268-309: AllowSelfSignedDelegate exists only under #if DEBUG and only for local hosts; release builds use URLSession.shared."
+        }
+      ],
+      "evidence": "The SDK created its signaling WebSocket with FoundationSecurity(allowSelfSigned: true) ('don't validate SSL certificates'), and uploaded call reports through a URLSession delegate that answers every server-trust challenge with .useCredential and URLCredential(trust:) without evaluating it. The PR states this allowed MITM on production traffic and enforces standard validation in release builds.",
+      "verified_by": "gh api repos/team-telnyx/telnyx-webrtc-ios/commits/{7e19b535,d90b9588} (d90b9588 merges PR 361; first parent 7e19b535). gh api repos/team-telnyx/telnyx-webrtc-ios/pulls/361 (body and files). Read both files at both SHAs with contents?ref=."
+    },
+    {
+      "id": "brave-ios-opensearch-insecure-template-urls",
+      "repository": "brave/brave-ios",
+      "platform": "ios",
+      "language": "swift",
+      "advisory": {
+        "id": "brave-ios issue 7702 / PR 7721 (HackerOne report 2057565)",
+        "url": "https://github.com/brave/brave-ios/pull/7721"
+      },
+      "vulnerable_commit": "f82769ae3b31842623941e24f8b3033a89e40cb4",
+      "fixed_commit": "dd57a1673ecea75f6884bf41e8147d94ca995185",
+      "weaknesses": [
+        "MASWE-0026"
+      ],
+      "category": "Custom search engine added with http:// search/suggestion templates, so queries are later sent in cleartext",
+      "vulnerable_locations": [
+        {
+          "path": "Sources/Brave/Frontend/Browser/BrowserViewController/OpenSearch/BrowserViewController+OpenSearch.swift",
+          "function": "BrowserViewController.addSearchEngine",
+          "start_line": 185,
+          "end_line": 207
+        }
+      ],
+      "fixed_locations": [
+        {
+          "path": "Sources/Brave/Frontend/Browser/BrowserViewController/OpenSearch/BrowserViewController+OpenSearch.swift",
+          "function": "BrowserViewController.addSearchEngine",
+          "note": "Lines 196-206 refuse to add the engine (insecureSearchTemplateURL alert) unless both the search template and the suggest template URLs are secure (isSecureWebPage)."
+        }
+      ],
+      "evidence": "A web page can offer an OpenSearch description, and addSearchEngine stored the parsed engine after a confirmation alert without checking the scheme of its searchTemplate or suggestTemplate. An http:// template makes every later query (and every keystroke sent for suggestions) go over cleartext. The HackerOne-reported issue was fixed by rejecting engines whose templates are not secure URLs ('security concerns' in the PR).",
+      "verified_by": "gh api repos/brave/brave-ios/commits/{f82769ae,dd57a167} (dd57a167 is the squash merge of PR 7721; single parent f82769ae). gh api repos/brave/brave-ios/pulls/7721 (body) and issues/7702 (links hackerone.com/reports/2057565). Read BrowserViewController+OpenSearch.swift at both SHAs with contents?ref=."
+    }
+  ],
+  "rejected_candidates": [
+    {
+      "repository": "element-hq/element-android",
+      "reason": "CVE-2024-26132 / GHSA-8wj9-cx7h-pvm4 (forced sharing of internal files): the exposure is the multipicker FileProvider path resource (XML), changed together with MediaFileUtils. There is no source-code vulnerable location to label in the same file."
+    },
+    {
+      "repository": "wordpress-mobile/WordPress-Android",
+      "reason": "GHSL-2022-046 (EditPostActivity intent reflection): the fix PRs 16857/16858 only change AndroidManifest.xml (exported=false). The Java reflection code is unchanged."
+    },
+    {
+      "repository": "signalapp/Signal-Android",
+      "reason": "GHSL-2026-102 (intent redirection in the website-flavor APK update receiver): fix fecb30a8 only edits the website-flavor AndroidManifest.xml."
+    },
+    {
+      "repository": "home-assistant/android",
+      "reason": "CVE-2026-59717 (invite deep link opens attacker server in onboarding WebView): fix 26154d92 adds new invitation screens; the vulnerable LinkHandlerImpl code is unchanged. CVE-2026-54318 (exported LocationSensorManager receiver): the fix is mainly the manifest export change plus a new receiver class."
+    },
+    {
+      "repository": "home-assistant/iOS",
+      "reason": "CVE-2026-66061 (tag universal link fires events without confirmation, fix 45e05e66) is a valid pair but was left out by the 2-pairs-per-repository cap. CVE-2026-55844 (SSID allowlist ignored, token over http): the fix is a broad connection-security-level feature with no single labelable fix location."
+    },
+    {
+      "repository": "nextcloud/ios",
+      "reason": "CVE-2023-49790 and CVE-2023-28647 (app PIN bypass): the fixes (PRs 2665, 2344) are feature-sized (lock-timer rework; a new File Provider UI extension target). The bypass logic is not localized in one file."
+    },
+    {
+      "repository": "nextcloud/talk-android",
+      "reason": "CVE-2023-22473 (passcode bypass, PR 2598) is bundled with notification/navigation refactoring. The repository was also already at the 2-pair cap."
+    },
+    {
+      "repository": "nextcloud/news-android",
+      "reason": "CVE-2021-41256 (SettingsActivity reflects the caller's Intent via setResult) is a valid pair (fix 05449cb6) but was left out to keep the share of MASWE-0032 pairs down."
+    },
+    {
+      "repository": "truefedex/tv-bro",
+      "reason": "CVE-2023-43955: the referenced PR 182 is unmerged and only edits AndroidManifest.xml."
+    },
+    {
+      "repository": "haiwen/seadroid",
+      "reason": "CVE-2019-8919 (static CBC IV): issue 789 was closed without a code fix commit."
+    },
+    {
+      "repository": "Cap-go/capacitor-native-biometric",
+      "reason": "PR 77 (fixed all-zero GCM IV in NativeBiometric.java) was not used. The fixed file still uses RSA/ECB/PKCS1Padding and keeps a legacy zero-IV decrypt path, so the fixed side stays ambiguous for MASWE-0007. The repository is used for the biometric pair."
+    },
+    {
+      "repository": "forcedotcom/SalesforceMobileSDK-Android",
+      "reason": "PR 2432 (explicit SHA1PRNG replaced) is a compliance cleanup with weak security impact; the repository was already at the 2-pair cap."
+    },
+    {
+      "repository": "ForgeRock/forgerock-ios-sdk",
+      "reason": "PR 352 (NSSecureCoding insecure deserialization) changes subclass secureCoding declarations after reverting an earlier fix. No clear vulnerable decode site to label."
+    },
+    {
+      "repository": "google/j2objc",
+      "reason": "'Fix for IosHttpURLConnection not validating SSL certificates' (b89ad43f/1ad55f2c): the Objective-C is embedded as native comments in a .java file, so language and platform are ambiguous for scanning."
+    },
+    {
+      "repository": "marmelroy/Zip",
+      "reason": "CVE-2023-39135 (zip path traversal, fix PR 252) is valid but was left out to limit MASWE-0050 pairs; ZIPFoundation represents the iOS zip case."
+    },
+    {
+      "repository": "beemdevelopment/Aegis",
+      "reason": "GHSA-fw8c-jmjv-q6xf (icon pack zip path traversal, fix PR 1830) is valid but was left out to limit MASWE-0050 pairs."
+    },
+    {
+      "repository": "ankidroid/Anki-Android",
+      "reason": "GHSA-q29p-h3pp-mh3v (import path traversal) is valid but spread across many files in a backport PR (21676), and MASWE-0050 was already well covered."
+    },
+    {
+      "repository": "stoatchat/for-android",
+      "reason": "CVE-2026-57848 (ShareTargetActivity accepts app-private content URIs, fix 50d5f514) is valid but was left out to keep the total at 24."
+    },
+    {
+      "repository": "square/okhttp",
+      "reason": "CVE-2021-0341 (OkHostnameVerifier) is in a general JVM HTTP library rather than mobile app or mobile-specific code; left out."
+    },
+    {
+      "repository": "eu-digital-green-certificates/dgca-wallet-app-android",
+      "reason": "PR 199 ('ECB to GCM'): the 'ECB' is the RSA block-mode label, and the fixed code sets setRandomizedEncryptionRequired(false). Not a clean crypto pair."
+    },
+    {
+      "repository": "oxen-io/session-ios",
+      "reason": "PR 549 (link previews default to https) is a functional change (http previews were already never loaded), not a security fix."
+    },
+    {
+      "repository": "realm/realm-swift / mumble-voip/mumblekit / airbrake/airbrake-ios",
+      "reason": "http-to-https changes (PR 2113, PR 56, PR 77) are ATS or consistency changes and do not state a security problem."
+    },
+    {
+      "repository": "ionic-team/capacitor",
+      "reason": "CVE-2026-103922 (navigation guard ignores proxy path) is in a hybrid runtime and is fixed across several Android/iOS files plus proxy serving logic; not a single-file mobile app pair."
+    },
+    {
+      "repository": "openclaw/openclaw",
+      "reason": "Not used: very large monorepo (about 8 GB of history), already heavily represented in the earlier benchmark."
+    },
+    {
+      "repository": "wikimedia/apps-android-wikipedia",
+      "reason": "GHSL-2026-101/103 (deep link and WebView cookie theft) not used. The repository was marked as excluded in the earlier benchmark, so it was skipped to keep the holdout blind."
+    },
+    {
+      "repository": "brave/brave-ios",
+      "reason": "PR 7450 (sync settings behind Face ID, HackerOne) and PR 8456 (javascript: URLs from the omnibox) are logic/UI changes across several files; PR 7721 was used instead."
+    },
+    {
+      "repository": "signalapp/Signal-iOS",
+      "reason": "Issue 5588 (NSExceptionAllowsInsecureHTTPLoads for API domains): Info.plist-only, not source code. GHSL Signal-iOS advisories are authorization logic outside the target families."
+    },
+    {
+      "repository": "activehours/ios_sdk",
+      "reason": "PR 2 (fork of the Adjust SDK) removes unused MD5/SHA-1 helpers and changes keychain accessibility for a non-sensitive tracking UUID; weak security impact."
+    },
+    {
+      "repository": "openhab/openhab-android",
+      "reason": "PR 358 (hostname checks enabled by default) only changes a preferences XML default."
+    },
+    {
+      "repository": "AzureAD/azure-activedirectory-library-for-android / adobe/aepsdk-assurance-android / afterpay/sdk-android / hCaptcha/hcaptcha-android-sdk",
+      "reason": "Valid default-file-access WebView hardenings (PRs 1542, 115, 271, 61); one representative (AirMapView) was used to avoid duplicates."
+    },
+    {
+      "repository": "element-hq/element-android",
+      "reason": "Issue 8143 (conversation visible in recents before the PIN) is still open and unfixed."
+    },
+    {
+      "repository": "kiwix/kiwix-android",
+      "reason": "PR 3714 ('Security and trust issue reported by the playStore') only removes an unneeded location permission."
+    },
+    {
+      "repository": "(families with no pair)",
+      "reason": "No clean app-level vulnerable/fixed pair was found for MASWE-0035 (WebView loading untrusted content from intents or deep links, outside already-used advisories), iOS MASWE-0034 (broad loadFileURL read access), MASWE-0036 (secure text entry) or Android MASWE-0026 (cleartext set up in code with a stated security rationale)."
+    }
+  ]
+}
