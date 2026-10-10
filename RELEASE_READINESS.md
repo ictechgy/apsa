@@ -63,12 +63,13 @@ No finding or coverage state was added or removed. On these inputs the cleaning,
 
 Reviews were Claude subagent reviews, not an external lane:
 
-- **Code review: REQUEST CHANGES, then APPROVE, then REQUEST CHANGES.**
+- **Code review: APPROVE on `a76fd9f`.**
   - **First round** (`be92012`), two P1s, both fixed by `d9bff91`:
     - a copy error aborted the whole audit instead of leaving that file out;
     - vendored code was staged before configuration.
   - **APPROVE** on `3508a28`.
   - **REQUEST CHANGES** on `cfa55b9`, for one regression: a Kotlin raw string ending in a quote swapped strings and code for the rest of the file. The proposed one-line fix was applied unchanged in `a76fd9f`.
+  - **APPROVE** on `a76fd9f`: its repro gives the same `STORAGE-SENSITIVE-LOG` result as 1.5.0, and the staging probes are partial audits rather than refusals.
 - **Architecture review: WATCH, code CLEAR on `a76fd9f`.**
   - **First round** (`be92012`), three P1s, fixed in `fe3fbe1` through `d9bff91`:
     - required rules could pass on an omitted platform when `fail_on_partial` is off;
