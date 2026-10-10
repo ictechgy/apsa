@@ -290,6 +290,7 @@ def test_unreadable_files_share_one_warning(tmp_path):
     assert result["warnings"][0].startswith(
         "Source staging could not read or stage 130 entries (first: Locked000.kt"
     )
+    assert result["omitted"]["code_and_config"]["files"] == 130 and result["app_scope_complete"] is False
 
 
 def test_configuration_and_app_code_go_before_vendored_code(tmp_path, monkeypatch):
@@ -297,6 +298,7 @@ def test_configuration_and_app_code_go_before_vendored_code(tmp_path, monkeypatc
     for path in (
         ".build/checkouts/swift-nio/Sources/Channel.swift",
         "Vendor/Lib/Lib.m",
+        "THIRDPARTY/Kit/Kit.swift",
         "MyApp/AppDelegate.swift",
         "MyApp/Controllers/Home.swift",
         "MyApp/Info.plist",

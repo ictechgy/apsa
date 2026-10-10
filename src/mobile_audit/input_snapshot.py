@@ -39,16 +39,17 @@ CONFIG_NAMES = {
     "google-services.json",
     "sbom.json",
 }
-# Third-party code checked into the tree, and web assets, go after the app's own code.
+# Third-party code checked into the tree, and web assets, go after the app's own code
+# (directory names compared in lower case).
 VENDORED = {
     ".build",
-    "assets",
     ".dart_tool",
-    "Carthage",
-    "Frameworks",
-    "ThirdParty",
+    "assets",
+    "carthage",
     "external",
+    "frameworks",
     "third_party",
+    "thirdparty",
     "vendor",
 }
 TEST_SOURCES = re.compile(
@@ -66,7 +67,7 @@ def staging_rank(relative: Path) -> tuple[int, int]:
         return 3, 0
     if re.search(r"(?:^|/)res/values-[^/]+/", path):
         return 2, 0
-    vendored = any(part in VENDORED or part.lower() in VENDORED for part in relative.parts[:-1])
+    vendored = any(part.lower() in VENDORED for part in relative.parts[:-1])
     if relative.suffix in CODE:
         return 0, 3 if vendored or relative.suffix == ".h" else 1 if relative.suffix in NATIVE else 2
     if (
