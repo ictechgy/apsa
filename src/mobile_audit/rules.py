@@ -24,10 +24,17 @@ def rules() -> list[dict]:
 
 def strip_comments(text: str) -> str:
     # Preserve offsets/line numbers; don't remove URL slashes inside string literals.
-    pattern = r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|//[^\n]*|/\*[\s\S]*?\*/"""
+    # Character literals never span lines; bounding them keeps prose with escaped
+    # apostrophes (Android \' in strings.xml) from backtracking across the whole file.
+    pattern = r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\\n])*'|//[^\n]*|/\*[\s\S]*?\*/"""
     return re.sub(
         pattern, lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0].startswith(("//", "/*")) else m[0], text
     )
+
+
+def strip_xml_comments(text: str) -> str:
+    """Blank <!-- --> comments, keeping offsets; XML text has no // or /* */ comments."""
+    return re.sub(r"<!--[\s\S]*?-->", lambda m: re.sub(r"[^\n]", " ", m[0]), text)
 
 
 def static_checks(
@@ -54,7 +61,10 @@ def static_checks(
         else:
             state = "checked"
             for path, text in source_files:
-                cleaned = strip_comments(text)
+                # A required token absent from the raw text is absent after cleaning too.
+                if rule.get("requires") and not re.search(rule["requires"], text):
+                    continue
+                cleaned = strip_xml_comments(text) if PathSuffix(path) == ".xml" else strip_comments(text)
                 if rule.get("requires") and not re.search(rule["requires"], cleaned):
                     continue
                 # Some APIs are a property of the file (for example a deprecated class); report its first use.

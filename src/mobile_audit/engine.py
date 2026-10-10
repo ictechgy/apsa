@@ -137,6 +137,8 @@ def analyze_target(
         "files": snapshot["files"],
         "bytes": snapshot["bytes"],
         "partial": bool(snapshot["warnings"]),
+        # Files left out when the tree exceeded the staging budgets, by kind (staged in that order).
+        "omitted": snapshot.get("omitted", {}),
     }
     if snapshot["warnings"]:
         result["inventory"]["warnings"].extend(snapshot["warnings"])

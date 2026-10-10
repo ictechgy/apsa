@@ -435,7 +435,8 @@
     "maswe": [
       "MASWE-0035"
     ],
-    "case_sensitive": true
+    "case_sensitive": true,
+    "requires": "[Ss]afe[Bb]rowsing"
   },
   {
     "id": "IOS-UIWEBVIEW",

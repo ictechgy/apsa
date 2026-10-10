@@ -36,7 +36,11 @@ receives a minimal environment; report stores are excluded before staging and
 overlapping runtime mounts are masked. The original app path is never a Linux
 bind source. Changed root identity aborts the audit; unreadable/oversized source
 omissions retain incomplete coverage. Staging has byte/file/depth/entry/time
-budgets and fails explicitly on budget exhaustion. A directory snapshot is not
+budgets. Over the byte or file budget, app code and configuration are staged
+first, then tests and other text, then localized Android values; the rest is
+omitted and counted by kind in `inventory.input_snapshot.omitted`. Entries
+beyond the entry or depth budget are not read. Either way the audit is partial;
+only the time and warning budgets refuse it. A directory snapshot is not
 an atomic build snapshot across every file; scan a stable build for that assurance.
 CPU/RSS/time/output limits remain separate controls.
 
@@ -235,7 +239,7 @@ states what it reads.
   them from rules new in 1.5; fixed-side FP upper bound 4 of 21; one more
   in-scope pair failed to scan). Known gaps: flow across
   functions, controls that were never added, inputs above the 64 MB text
-  staging budget (refused), and very large functions with many branches or
+  staging budget (refused by 1.5.0; staged code first and audited partially since), and very large functions with many branches or
   PendingIntent calls, which are slow but bounded.
 
 # 분석 확장 (APSA 1.2)
@@ -269,7 +273,10 @@ app-bundle 인터프리터만 실행할 수 있습니다. `doctor`는 가용성,
 복사 전 제외하며 런타임 마운트와 겹치면 가립니다. 원본 앱 경로는 Linux bind
 원본으로 쓰지 않습니다. 루트 식별자 변경은 감사를 거부하고 읽기 실패·초과
 소스 누락은 불완전 범위를 남깁니다. 복사에는 바이트·파일·깊이·항목·시간 제한이
-있으며 한도 초과는 실패합니다. 여러 파일의 복사는 원자적 빌드 스냅샷이 아니므로
+있습니다. 바이트·파일 한도를 넘으면 앱 코드·설정, 테스트·기타 텍스트, Android 번역
+values 순으로 복사하고 나머지는 생략해 `inventory.input_snapshot.omitted`에 종류별로
+셉니다. 항목·깊이 한도를 넘는 부분은 읽지 않습니다. 어느 경우든 감사는 partial이며
+시간·경고 한도만 감사를 거부합니다. 여러 파일의 복사는 원자적 빌드 스냅샷이 아니므로
 그 보장이 필요하면 안정된 빌드를 검사하세요. CPU·RSS·시간·출력 제한은 별도로
 유지합니다.
 
@@ -379,4 +386,4 @@ OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 
   52개, FP 1개)와 [blind MASWE 라벨 쌍](../benchmarks/BLIND_PAIRS_RESULTS.ko.md)(첫 실행: 채점한 평가 대상 21쌍 중
   7쌍을 라벨 줄에서 탐지, Wilson 95% 17–55%; 그중 2쌍은 1.5의 새 규칙; 수정 쪽 FP 상한 21쌍 중 4쌍; 평가 대상
   1쌍은 스캔 실패). 알려진 한계는 함수 간 흐름, 추가된 적 없는 통제, 64MB 텍스트 스테이징 한도를
-  넘는 입력(거부), 분기나 PendingIntent 호출이 매우 많은 큰 함수(느리지만 제한됨)입니다.
+  넘는 입력(1.5.0은 거부, 이후 코드 우선 스테이징과 부분 감사), 분기나 PendingIntent 호출이 매우 많은 큰 함수(느리지만 제한됨)입니다.

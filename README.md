@@ -296,7 +296,7 @@ apsa jobs status JOB_ID --json
 
 Severity gates exclude `candidate` findings by default. Opt in with `--include-candidates` or the policy's `allowed_statuses`. Required rules accept only `checked` or `not-applicable` coverage; partial execution and missing required checks do not pass. Waivers need a finding ID, a reason, and an expiry date. A background job being `completed` means it finished; check its `audit_incomplete` flag and report before treating the audit as complete.
 
-Unreadable source directories and files leave warnings and incomplete coverage; a source tree with no readable supported files fails explicitly. Storage capture failures remain `not-run` and cannot establish that a canary was deleted.
+Unreadable source directories and files leave warnings and incomplete coverage; a source tree with no readable supported files fails explicitly. A source tree over the text staging budgets (64 MiB, 12,000 files) is audited partially rather than refused: app code and configuration are staged first, then tests and other text, then localized Android `res/values-*` files. `inventory.input_snapshot.omitted` counts the omitted files and bytes by kind. Directories beyond 100,000 entries or 64 levels are not read, and the audit is partial. Storage capture failures remain `not-run` and cannot establish that a canary was deleted.
 
 | Exit code | Meaning for the unified CLI |
 | --- | --- |
