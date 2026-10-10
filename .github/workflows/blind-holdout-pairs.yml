@@ -1,0 +1,45 @@
+name: Blind MASWE-labeled vulnerable and fixed source pairs
+
+on:
+  # The first run is the blind result: it starts when the frozen truth is committed.
+  push:
+    branches: ["dev/detection"]
+    paths: ["benchmarks/fpfn_truth_holdout2.json", ".github/workflows/blind-holdout-pairs.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - run: uv sync --locked --extra dev
+      - name: Scan each pinned vulnerable and fixed commit with APSA only
+        run: |
+          uv run --locked python -m benchmarks.fpfn_eval \
+            --truth benchmarks/fpfn_truth_holdout2.json \
+            --work "$RUNNER_TEMP/holdout-work" --out "$RUNNER_TEMP/holdout/results.json"
+      - name: Keep the captured public archives' hashes and reports
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/holdout/reports"
+          cd "$RUNNER_TEMP/holdout-work" 2>/dev/null && find . -name report.json -print0 \
+            | xargs -0 -I{} cp --parents {} "$RUNNER_TEMP/holdout/reports/" || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: blind-holdout-pairs
+          path: ${{ runner.temp }}/holdout
+          retention-days: 90
+          if-no-files-found: error
+      # Only APSA executes. No upstream app build, backend, device, private data or publishing.
