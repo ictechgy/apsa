@@ -155,6 +155,7 @@ FAILURE_REASONS = {
     "NEW iOS fixture rejected binding or transport": "ios-fixture-binding-or-http",
     "NEW iOS OS URL response challenge timed out": "ios-app-response-deadline",
     "NEW iOS fixture launch timed out": "ios-fixture-launch-deadline",
+    "NEW iOS URL lifecycle differs": "ios-os-url-lifecycle-mismatch",
     "Installed fixture transition unsupported": "installed-session-or-transition-unavailable",
     "Installed fixture target/build/transport response differs": "installed-target-build-transport-mismatch",
     "Installed fixture HTTP/session initialization differs": "installed-session-or-http-initialization",
@@ -199,6 +200,7 @@ def command_kind(argv: list[str]) -> str:
             "get_app_container",
             "openurl",
             "launch",
+            "terminate",
             "shutdown",
             "delete",
         }
@@ -644,6 +646,7 @@ class IosTarget:
 
     def __init__(self, root: Path, package: str, commands: Commands, runtime: str, device_type: str):
         self.package, self.commands, self.device = package, commands, None
+        self.delivery_observations: list[dict] = []
         device_set = commands.root / "simulator-set"
         device_set.mkdir(exist_ok=True)
         self.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(device_set)]
@@ -687,7 +690,13 @@ class IosTarget:
                     "LSRequiresIPhoneOS": True,
                     "UIDeviceFamily": [1, 2],
                     "UILaunchScreen": {},
-                    "CFBundleURLTypes": [{"CFBundleURLSchemes": ["apsatransport"]}],
+                    "CFBundleURLTypes": [
+                        {
+                            "CFBundleTypeRole": "Editor",
+                            "CFBundleURLName": package + ".transport",
+                            "CFBundleURLSchemes": ["apsatransport"],
+                        }
+                    ],
                     "NSAppTransportSecurity": {
                         "NSAllowsLocalNetworking": True,
                         "NSAllowsArbitraryLoads": True,
@@ -733,11 +742,14 @@ class IosTarget:
             commands.run(self.simctl + ["launch", self.device, self.package])
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
-                if self.stage_path.is_file() and self.stage_path.read_bytes() == b"startup-scene":
+                if self.stage_path.is_file() and self.stage_path.read_bytes() == b"scene-active":
                     break
                 time.sleep(0.1)
             else:
                 raise FixtureFailure("NEW iOS fixture launch timed out", self.lifecycle_observation())
+            # No URL, credentials or baseline exist yet. Force the first session URL
+            # through genuine cold OS scene connection; later captures/logout are warm.
+            commands.run(self.simctl + ["terminate", self.device, self.package])
         except Exception as error:
             commands.pre_cleanup_failure = failure_observation(
                 error, "ios-target-create-boot-install", commands.records
@@ -775,11 +787,26 @@ class IosTarget:
         allowed = {
             "startup-app",
             "startup-scene",
+            "scene-active",
+            "os-app-url-received",
+            "os-url-context-received",
+            "os-cold-url-context-received",
             "url-received",
+            "url-processing",
             "http-issue",
             "http-logout",
             "response-written",
             "binding-or-transport-failure",
+            "failure-url-shape",
+            "failure-session-fields",
+            "failure-session-policy",
+            "failure-session-binding",
+            "failure-http-issue",
+            "failure-http-logout",
+            "failure-store-write",
+            "failure-transition-fields",
+            "failure-capture-fields",
+            "failure-store-read-or-response",
         }
         stage = raw.decode("ascii", errors="replace")
         return {
@@ -805,11 +832,27 @@ class IosTarget:
                     if all(
                         response.get(k) == v for k, v in expected.items() if k not in {"backend", "retain"}
                     ):
+                        self.record_delivery(response, expected, raw=self.response.read_bytes())
                         return response
                 except json.JSONDecodeError:
                     pass
             time.sleep(0.1)
         raise FixtureFailure("NEW iOS OS URL response challenge timed out", self.lifecycle_observation())
+
+    def record_delivery(self, response: dict, expected: dict, *, raw: bytes):
+        lifecycle = "cold-url-context" if expected["action"] == "session" else "warm-url-context"
+        if response.get("delivery_lifecycle") != lifecycle:
+            raise FixtureFailure("NEW iOS URL lifecycle differs", self.lifecycle_observation())
+        self.delivery_observations.append(
+            {
+                "action": expected["action"],
+                "lifecycle": lifecycle,
+                "session_sha256": digest(expected["session"].encode()),
+                "capture_nonce_sha256": digest(expected["nonce"].encode()) if "nonce" in expected else None,
+                "response_sha256": digest(raw),
+                "response_bytes": len(raw),
+            }
+        )
 
     def close(self):
         if self.device:
@@ -855,6 +898,38 @@ def scenario(platform_name: str, package: str) -> dict:
             ],
         },
     }
+
+
+def ios_delivery_complete(observations: list[dict], before: dict, after: dict) -> bool:
+    """Bind cold/warm callback proof to the exact acquired session and captures."""
+    session = before.get("acquisition", {}).get("session_sha256")
+    if not isinstance(session, str) or not re.fullmatch(r"[a-f0-9]{64}", session):
+        return False
+    if after.get("acquisition", {}).get("session_sha256") != session:
+        return False
+    expected = [
+        ("session", "cold-url-context", None),
+        ("capture", "warm-url-context", before.get("acquisition", {}).get("capture_sha256")),
+        ("transition", "warm-url-context", None),
+        ("capture", "warm-url-context", after.get("acquisition", {}).get("capture_sha256")),
+    ]
+    if len(observations) != len(expected) or any(
+        not isinstance(nonce, str) or not re.fullmatch(r"[a-f0-9]{64}", nonce)
+        for action, _, nonce in expected
+        if action == "capture"
+    ):
+        return False
+    return all(
+        observation.get("action") == action
+        and observation.get("lifecycle") == lifecycle
+        and observation.get("session_sha256") == session
+        and observation.get("capture_nonce_sha256") == nonce
+        and isinstance(observation.get("response_sha256"), str)
+        and re.fullmatch(r"[a-f0-9]{64}", observation["response_sha256"]) is not None
+        and type(observation.get("response_bytes")) is int
+        and 0 < observation["response_bytes"] <= 1024 * 1024
+        for observation, (action, lifecycle, nonce) in zip(observations, expected, strict=True)
+    )
 
 
 def execute_case(target, *, invalidate: bool, retain: bool) -> dict:
@@ -904,6 +979,9 @@ def execute_case(target, *, invalidate: bool, retain: bool) -> dict:
             backend[0]["state"] == expected_backend
             and storage[0]["state"] == expected_storage
             and workflow[0]["state"] == "passed"
+            and (
+                target.platform != "ios" or ios_delivery_complete(target.delivery_observations, before, after)
+            )
         )
         return {
             "state": "passed" if verified else "inconclusive",
@@ -923,6 +1001,7 @@ def execute_case(target, *, invalidate: bool, retain: bool) -> dict:
             "workflow": workflow,
             "snapshots": snapshots,
             "authority_events": authority.events,
+            "os_delivery_observations": target.delivery_observations if target.platform == "ios" else [],
         }
     finally:
         server.close()

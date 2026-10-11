@@ -2,6 +2,7 @@
 
 import io
 import json
+import plistlib
 import subprocess
 from email.message import Message
 from pathlib import Path
@@ -24,6 +25,7 @@ from scripts.validate_runtime_transport import (
     OwnedResources,
     cleanup_owned,
     failure_observation,
+    ios_delivery_complete,
     main,
     scenario,
 )
@@ -374,7 +376,20 @@ def test_cleanup_failure_retains_new_evidence_and_state_for_retry(tmp_path, monk
     assert not journal.value["android"].get("emulator_closed")
 
 
-@pytest.mark.parametrize("stage", ["startup-app", "startup-scene", "http-issue", "new-synthetic-secret"])
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "startup-app",
+        "startup-scene",
+        "scene-active",
+        "os-url-context-received",
+        "url-processing",
+        "failure-url-shape",
+        "failure-http-issue",
+        "http-issue",
+        "new-synthetic-secret",
+    ],
+)
 def test_ios_lifecycle_diagnostics_retain_fixed_labels_only(stage, tmp_path):
     target = IosTarget.__new__(IosTarget)
     target.response = tmp_path / "new-response.json"
@@ -432,3 +447,115 @@ def test_unexpected_driver_error_records_terminal_failure_without_raw_text(tmp_p
     assert evidence["state"] == "inconclusive"
     assert evidence["failure_observation"]["exception_type"] == "other-validation-error"
     assert "new-synthetic-token-private-error-text" not in raw + capsys.readouterr().out
+
+
+def test_generated_ios_registration_has_required_role_and_target_identifier(tmp_path, monkeypatch):
+    commands = Commands(tmp_path, env={})
+    package = "apsa.fixture.new.case0"
+    root = tmp_path / "new-app-build"
+    calls = []
+
+    def public_build_double(argv, **kwargs):
+        calls.append(argv)
+        if "--show-sdk-path" in argv:
+            return b"/new-public-sdk"
+        if "swiftc" in argv:
+            Path(argv[argv.index("-o") + 1]).write_bytes(b"NEW synthetic executable stand-in")
+        if "create" in argv:
+            raise ValueError("stop-before-new-device-creation")
+        return b""
+
+    monkeypatch.setattr(commands, "run", public_build_double)
+    with pytest.raises(ValueError, match="stop-before-new-device-creation"):
+        IosTarget(root, package, commands, "new-runtime", "new-device-type")
+    value = plistlib.loads((root / "TransportFixture.app/Info.plist").read_bytes())
+    assert value["CFBundleIdentifier"] == package
+    assert value["CFBundleURLTypes"] == [
+        {
+            "CFBundleTypeRole": "Editor",
+            "CFBundleURLName": package + ".transport",
+            "CFBundleURLSchemes": ["apsatransport"],
+        }
+    ]
+    assert calls[-1][:4] == ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "simulator-set")]
+    assert not any("boot" in argv or "openurl" in argv for argv in calls)
+
+
+@pytest.mark.parametrize(
+    "action,lifecycle,accepted",
+    [
+        ("session", "cold-url-context", True),
+        ("session", "warm-url-context", False),
+        ("capture", "warm-url-context", True),
+        ("capture", "cold-url-context", False),
+        ("transition", "warm-url-context", True),
+        ("transition", "application-url-callback", False),
+    ],
+)
+def test_ios_delivery_requires_observed_cold_or_warm_callback_binding(
+    action, lifecycle, accepted, tmp_path, monkeypatch
+):
+    target = IosTarget.__new__(IosTarget)
+    target.device = "11111111-2222-3333-4444-555555555555"
+    target.commands = Commands(tmp_path, env={})
+    target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "new-set")]
+    target.response = tmp_path / "new-response.json"
+    target.stage_path = tmp_path / "new-stage.txt"
+    target.delivery_observations = []
+    expected = {"action": action, "session": "a" * 64}
+    if action == "capture":
+        expected["nonce"] = "b" * 64
+    raw = json.dumps({**expected, "delivery_lifecycle": lifecycle}).encode()
+    target.response.write_bytes(raw)
+    monkeypatch.setattr(target.commands, "run", lambda *args, **kwargs: b"")
+    if not accepted:
+        with pytest.raises(FixtureFailure, match="URL lifecycle differs"):
+            target.deliver("synthetic-url-never-opened", expected)
+        assert target.delivery_observations == []
+        return
+    target.deliver("synthetic-url-never-opened", expected)
+    observed = target.delivery_observations[0]
+    assert observed["lifecycle"] == lifecycle
+    assert observed["session_sha256"] == digest(expected["session"].encode())
+    assert observed["capture_nonce_sha256"] == (
+        digest(expected["nonce"].encode()) if action == "capture" else None
+    )
+    assert observed["response_sha256"] == digest(raw)
+    assert "a" * 64 not in json.dumps(observed)
+    assert "b" * 64 not in json.dumps(observed)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [None, "warm-session", "wrong-session", "wrong-capture", "missing-transition", "missing-capture-binding"],
+)
+def test_ios_case_requires_complete_callback_sequence_bound_to_acquisition(mutation):
+    before = {"acquisition": {"session_sha256": "1" * 64, "capture_sha256": "2" * 64}}
+    after = {"acquisition": {"session_sha256": "1" * 64, "capture_sha256": "3" * 64}}
+    observations = [
+        {
+            "action": action,
+            "lifecycle": lifecycle,
+            "session_sha256": "1" * 64,
+            "capture_nonce_sha256": nonce,
+            "response_sha256": "4" * 64,
+            "response_bytes": 100,
+        }
+        for action, lifecycle, nonce in [
+            ("session", "cold-url-context", None),
+            ("capture", "warm-url-context", "2" * 64),
+            ("transition", "warm-url-context", None),
+            ("capture", "warm-url-context", "3" * 64),
+        ]
+    ]
+    if mutation == "warm-session":
+        observations[0]["lifecycle"] = "warm-url-context"
+    elif mutation == "wrong-session":
+        observations[2]["session_sha256"] = "5" * 64
+    elif mutation == "wrong-capture":
+        observations[3]["capture_nonce_sha256"] = "6" * 64
+    elif mutation == "missing-transition":
+        observations.pop(2)
+    elif mutation == "missing-capture-binding":
+        del after["acquisition"]["capture_sha256"]
+    assert ios_delivery_complete(observations, before, after) is (mutation is None)

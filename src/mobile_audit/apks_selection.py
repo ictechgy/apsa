@@ -31,6 +31,7 @@ REFERENCE_URLS = (
     "https://github.com/google/bundletool/blob/master/src/main/java/com/android/tools/build/bundletool/device/SdkVersionMatcher.java",
     "https://github.com/google/bundletool/blob/master/src/main/java/com/android/tools/build/bundletool/device/LanguageMatcher.java",
     "https://github.com/google/bundletool/blob/master/src/main/java/com/android/tools/build/bundletool/model/targeting/ScreenDensitySelector.java",
+    "https://github.com/google/bundletool/blob/1.18.3/src/main/java/com/android/tools/build/bundletool/splitters/ModuleSplitter.java",
 )
 ABI_NAMES = {
     1: "armeabi",
@@ -421,6 +422,35 @@ def _matches(target: Targeting, spec: DeviceSpec) -> bool:
     return True
 
 
+def _config_dimension(target: Targeting) -> str:
+    active = [name for name, atom in target.dimensions() if atom.values or atom.alternatives]
+    if len(active) == 1:
+        return active[0]
+    # ModuleSplitter.addDefaultSdkApkTargeting puts the common module SDK
+    # minimum on every config split. It is an AND guard, not a second selector.
+    if (
+        len(active) == 2
+        and "sdk" in active
+        and len(target.sdk.values) == 1
+        and target.sdk.values[0] >= 21
+        and not target.sdk.alternatives
+    ):
+        return next(name for name in active if name != "sdk")
+    _fail("unsupported_toc", "Config splits must have one selector, optionally with a shared SDK minimum")
+
+
+def _validate_config_sdk_guards(apks: tuple[SelectedApk, ...]) -> None:
+    for apk in apks:
+        if apk.kind != "split" or apk.is_master_split or _config_dimension(apk.targeting) == "sdk":
+            continue
+        sdk = apk.targeting.sdk
+        if not sdk.values and not sdk.alternatives:
+            continue
+        masters = [item for item in apks if item.module_name == apk.module_name and item.is_master_split]
+        if not masters or any(item.targeting.sdk != sdk for item in masters):
+            _fail("unsupported_toc", "Config SDK minimum must match every master split of its module")
+
+
 def _validate_siblings(apks: tuple[SelectedApk, ...]) -> None:
     # Dimensions outside the contested one identify independent targeting groups.
     for dimension in ("sdk", "abi", "density", "language"):
@@ -593,12 +623,8 @@ def select_apks(
                         _fail("malformed_toc", "Duplicate module split ID")
                     split_ids.add(split_id)
                     kind = "split"
-                    active = [dim for dim, atom in targeting.dimensions() if atom.values or atom.alternatives]
-                    if not master and len(active) != 1:
-                        _fail(
-                            "unsupported_toc",
-                            "Config splits must have exactly one modeled targeting dimension",
-                        )
+                    if not master:
+                        _config_dimension(targeting)
                 else:
                     metadata = dec.fields(_one(apk, 4), {1, 3}, "standalone metadata")
                     fused = _names(_many(metadata, 1))
@@ -614,6 +640,7 @@ def select_apks(
                 "unsupported_toc",
                 "Mixed split/standalone or separate standalone feature modules are unsupported",
             )
+        _validate_config_sdk_guards(tuple(apks))
         _validate_siblings(tuple(apks))
         parsed.append((number, target, tuple(apks)))
     if {name for name in members if name.lower().endswith(".apk")} - all_paths:
@@ -647,6 +674,7 @@ def select_apks(
                     for apk in matching_apks
                     if apk.module_name == module
                     and not apk.is_master_split
+                    and _config_dimension(apk.targeting) == dimension
                     and (
                         getattr(apk.targeting, dimension).values
                         or getattr(apk.targeting, dimension).alternatives

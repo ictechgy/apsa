@@ -399,8 +399,67 @@ def test_missing_ambiguous_inconsistent_selector_groups_fail():
 
 def test_config_split_requires_modeled_single_dimension():
     for target in (b"", targeting(abi=((3,), ()), density=((480,), ()))):
-        with pytest.raises(ApkSetSelectionError, match="exactly one modeled"):
+        with pytest.raises(ApkSetSelectionError, match="must have one selector"):
             select(single(target=target, master=False), ["splits/base.apk"])
+
+
+def test_shared_sdk_guard_is_an_and_constraint_not_a_required_sdk_config():
+    sdk = ((21,), ())
+    paths = ["base.apk", "hdpi.apk", "xhdpi.apk", "fr.apk"]
+    apks = [
+        description(paths[0], targeting(sdk=sdk), master=True),
+        description(paths[1], targeting(sdk=sdk, density=((240,), (320,)))),
+        description(paths[2], targeting(sdk=sdk, density=((320,), (240,)))),
+        description(paths[3], targeting(sdk=sdk, language=(("fr",), ()))),
+    ]
+    raw = toc([variant([module(apks)])])
+    cases = [(240, ["en-US"], [0, 1]), (320, ["fr-FR"], [0, 2, 3]), (213, ["en-US", "fr-FR"], [0, 1, 3])]
+    for density, locales, selected_indices in cases:
+        result = select(raw, paths, {**DEFAULT_DEVICE, "screenDensity": density, "supportedLocales": locales})
+        assert [apk.path for apk in result.selected_apks] == [paths[i] for i in selected_indices]
+        assert all(apk.targeting.sdk.values == (21,) for apk in result.selected_apks)
+    with pytest.raises(ApkSetSelectionError) as error:
+        select(raw, paths, {**DEFAULT_DEVICE, "sdkVersion": 19})
+    assert error.value.code == "no_matching_apks"
+
+
+@pytest.mark.parametrize("sdk", [((20,), ()), ((), (21,)), ((21,), (30,))])
+def test_compound_config_sdk_guard_requires_single_released_split_minimum(sdk):
+    target = targeting(sdk=sdk, density=((240,), ()))
+    with pytest.raises(ApkSetSelectionError) as error:
+        select(single(target=target, master=False), ["splits/base.apk"])
+    assert error.value.code == "unsupported_toc"
+
+
+@pytest.mark.parametrize("master_sdk", [None, ((30,), ()), ((21,), (30,))])
+def test_config_sdk_guard_must_equal_its_module_master_sdk(master_sdk):
+    master_target = b"" if master_sdk is None else targeting(sdk=master_sdk)
+    apks = [
+        description("base.apk", master_target, master=True),
+        description("hdpi.apk", targeting(sdk=((21,), ()), density=((240,), ()))),
+    ]
+    with pytest.raises(ApkSetSelectionError, match="must match every master"):
+        select(toc([variant([module(apks)])]), ["base.apk", "hdpi.apk"])
+
+
+def test_shared_sdk_guard_does_not_allow_compound_config_selectors_or_unknown_targeting():
+    for target in (
+        targeting(sdk=((21,), ()), abi=((3,), ()), density=((240,), ())),
+        targeting(sdk=((21,), ()), language=(("fr",), ())) + field(11, b""),
+    ):
+        with pytest.raises(ApkSetSelectionError) as error:
+            select(single(target=target, master=False), ["splits/base.apk"])
+        assert error.value.code == "unsupported_toc"
+
+
+def test_shared_sdk_guards_preserve_density_sibling_completeness():
+    sdk = ((21,), ())
+    apks = [
+        description("base.apk", targeting(sdk=sdk), master=True),
+        description("hdpi.apk", targeting(sdk=sdk, density=((240,), (320,)))),
+    ]
+    with pytest.raises(ApkSetSelectionError, match="no corresponding sibling"):
+        select(toc([variant([module(apks)])]), ["base.apk", "hdpi.apk"])
 
 
 def test_standalone_requires_unique_match_and_fused_base():

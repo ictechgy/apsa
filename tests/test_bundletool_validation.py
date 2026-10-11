@@ -154,3 +154,92 @@ def test_failure_diagnostic_exposes_bounded_parser_reason_for_cases_and_install(
     assert observed["case_states"][0]["message"] == "m" * 256
     assert observed["installed_selection"] == observed["case_states"][0]
     assert observed["case_states"][0]["toc_sha256"] == "a" * 64
+
+
+def test_console_evidence_exposes_only_bounded_hashes_and_controls(driver):
+    comparison = {
+        "state": "matched",
+        "toc_sha256": "a" * 64,
+        "apsa_selected_sha256": {"splits/base.apk": "b" * 64},
+        "official_extracted_sha256": {"base.apk": "b" * 64},
+        "raw_output": "synthetic-secret",
+    }
+    result = {
+        "source": {"head_sha": "c" * 40, "driver_sha256": "d" * 64, "raw_output": "synthetic-secret"},
+        "bundletool_version": "1.18.3",
+        "artifact_sha256": {"fresh.aab": "e" * 64, "fresh.apks": "f" * 64},
+        "cases": [comparison] * 3,
+        "commands": [{"argv": ["-keypass", "synthetic-secret"], "stdout_base64": "opaque"}],
+        "installed": {
+            "state": "verified",
+            "selection": comparison,
+            "installed_sha256": {"0.apk": "b" * 64},
+            "installed_split_set_verified": True,
+            "resource_merge_verified": True,
+            "resource_probe": {
+                "expected_value_sha256": "a" * 64,
+                "observed_value_sha256": "a" * 64,
+                "value_equal": True,
+                "raw_output": "synthetic-secret",
+            },
+            "package_uninstall_returncode": 0,
+        },
+    }
+    evidence = driver.console_evidence(result)
+    assert len(evidence["cases"]) == 3
+    assert evidence["cases"][0]["apsa_selected_sha256"] == comparison["apsa_selected_sha256"]
+    assert evidence["installed"]["installed_sha256"] == {"0.apk": "b" * 64}
+    assert evidence["installed"]["package_uninstall_returncode"] == 0
+    assert "synthetic-secret" not in driver.json.dumps(evidence)
+    assert "stdout_base64" not in driver.json.dumps(evidence)
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"cases": [{"state": "matched"}] * 4},
+        {"artifact_sha256": {f"{i}.apk": "a" * 64 for i in range(65)}},
+        {"artifact_sha256": {"a" * 257: "a" * 64}},
+        {"artifact_sha256": {"fresh.apk": "invalid"}},
+    ],
+)
+def test_console_evidence_rejects_contract_overflow(driver, result):
+    with pytest.raises(ValueError):
+        driver.console_evidence(result)
+
+
+def test_resource_probe_evidence_requires_exact_french_value_package_and_code(driver):
+    output = (
+        "INSTRUMENTATION_RESULT: apsa_resource_value=bonjour-new-fixture\n"
+        f"INSTRUMENTATION_RESULT: apsa_resource_package={driver.PACKAGE}\n"
+        "INSTRUMENTATION_CODE: -1\n"
+    )
+    probe = driver.resource_probe_evidence(output, 0)
+    assert probe["value_equal"] and probe["package_equal"] and probe["instrumentation_success_code_observed"]
+    assert probe["expected_value_sha256"] == probe["observed_value_sha256"]
+    assert "bonjour-new-fixture" not in driver.json.dumps(probe)
+    assert (
+        driver.resource_probe_evidence(output.replace("-1", "-10"), 0)[
+            "instrumentation_success_code_observed"
+        ]
+        is False
+    )
+    assert (
+        driver.resource_probe_evidence(output.replace(driver.PACKAGE, driver.PACKAGE + ".other"), 0)[
+            "package_equal"
+        ]
+        is False
+    )
+    assert (
+        driver.resource_probe_evidence(output.replace("bonjour-new-fixture", "bonjour-new-fixture-other"), 0)[
+            "value_equal"
+        ]
+        is False
+    )
+    assert driver.resource_probe_evidence(output + output, 0)["value_equal"] is False
+    assert (
+        driver.resource_probe_evidence(output.replace("bonjour-new-fixture", "x" * 257), 0)[
+            "observed_value_sha256"
+        ]
+        is None
+    )

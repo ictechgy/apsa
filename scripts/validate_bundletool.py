@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import selectors
 import signal
 import struct
@@ -243,6 +244,91 @@ def failure_diagnostic(result: dict, records: list[dict]) -> dict:
     }
 
 
+def console_evidence(result: dict) -> dict:
+    """Public evidence for this driver's three cases and fresh resource probe."""
+
+    def hashes(value: dict) -> dict:
+        if len(value) > 64 or any(
+            not isinstance(name, str)
+            or len(name) > 256
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", digest)
+            for name, digest in value.items()
+        ):
+            raise ValueError("Console hash evidence exceeds the fresh fixture contract")
+        return dict(value)
+
+    def comparison(case: dict) -> dict:
+        return {
+            "state": case["state"],
+            "toc_sha256": case.get("toc_sha256"),
+            "apsa_selected_sha256": hashes(case.get("apsa_selected_sha256", {})),
+            "official_extracted_sha256": hashes(case.get("official_extracted_sha256", {})),
+        }
+
+    cases = result.get("cases", [])
+    if len(cases) > 3:
+        raise ValueError("Console case evidence exceeds the three-case fixture contract")
+    installed = result.get("installed", {})
+    source = result.get("source", {})
+    probe = installed.get("resource_probe")
+    return {
+        "source": {
+            key: source[key]
+            for key in ("source_root", "head_sha", "driver_sha256", "selector_sha256")
+            if key in source
+        },
+        "bundletool_version": result.get("bundletool_version"),
+        "artifact_sha256": hashes(result.get("artifact_sha256", {})),
+        "cases": [comparison(case) for case in cases],
+        "installed": {
+            "state": installed.get("state"),
+            "selection": comparison(installed["selection"]) if "selection" in installed else None,
+            "installed_sha256": hashes(installed.get("installed_sha256", {})),
+            "installed_split_set_verified": installed.get("installed_split_set_verified", False),
+            "resource_merge_verified": installed.get("resource_merge_verified", False),
+            "resource_probe": (
+                {
+                    key: probe[key]
+                    for key in (
+                        "expected_value_sha256",
+                        "observed_value_sha256",
+                        "value_equal",
+                        "package_equal",
+                        "instrument_command_returncode",
+                        "instrumentation_success_code_observed",
+                    )
+                    if key in probe
+                }
+                if probe is not None
+                else None
+            ),
+            "package_uninstall_returncode": installed.get("package_uninstall_returncode"),
+        },
+    }
+
+
+def resource_probe_evidence(output: str, returncode: int) -> dict:
+    """Retain digests and exact fixed-label controls, never instrumentation text."""
+    lines = output.splitlines()
+    value_prefix = "INSTRUMENTATION_RESULT: apsa_resource_value="
+    values = [line.removeprefix(value_prefix) for line in lines if line.startswith(value_prefix)]
+    observed = values[0] if len(values) == 1 and len(values[0]) <= 256 else None
+    expected_sha256 = hashlib.sha256(b"bonjour-new-fixture").hexdigest()
+    observed_sha256 = hashlib.sha256(observed.encode()).hexdigest() if observed is not None else None
+    package_prefix = "INSTRUMENTATION_RESULT: apsa_resource_package="
+    packages = [line.removeprefix(package_prefix) for line in lines if line.startswith(package_prefix)]
+    codes = [line for line in lines if line.startswith("INSTRUMENTATION_CODE:")]
+    return {
+        "expected_value_sha256": expected_sha256,
+        "observed_value_sha256": observed_sha256,
+        "value_equal": observed_sha256 == expected_sha256,
+        "package_equal": packages == [PACKAGE],
+        "instrument_command_returncode": returncode,
+        "instrumentation_success_code_observed": codes == ["INSTRUMENTATION_CODE: -1"],
+    }
+
+
 def compile_module(args: argparse.Namespace, root: Path, commands: Commands) -> Path:
     write_sources(root)
     resources = root / "compiled-res.zip"
@@ -319,6 +405,8 @@ def compare_extracted(apks: Path, extracted: Path, device: dict) -> dict:
                 "device_spec": device,
                 "toc_sha256": hashlib.sha256(raw_toc).hexdigest(),
             }
+        if len(selection.selected_apks) > 64:
+            raise ValueError("APSA selection exceeds the bounded fresh oracle APK set")
         observed = {
             item.path: hashlib.sha256(archive.read(item.path)).hexdigest() for item in selection.selected_apks
         }
@@ -326,6 +414,7 @@ def compare_extracted(apks: Path, extracted: Path, device: dict) -> dict:
     matches = sorted(observed.values()) == sorted(official.values())
     return {
         "state": "matched" if matches else "mismatch",
+        "toc_sha256": hashlib.sha256(raw_toc).hexdigest(),
         "device_spec": device,
         "apsa_selection": selection.as_dict(),
         "apsa_selected_sha256": observed,
@@ -367,8 +456,11 @@ def install_probe(
         return {"state": "partial", "selection": comparison, "resource_merge_verified": False}
     selected = sorted(extracted.rglob("*.apk"))
     commands.run(adb + ["install-multiple", *map(str, selected)])
+    result = {}
     try:
         installed_paths = commands.run(adb + ["shell", "pm", "path", PACKAGE]).splitlines()
+        if not 1 <= len(installed_paths) <= 64:
+            raise ValueError("New installed package must have a bounded nonempty split set")
         installed = root / "installed-acquired"
         installed.mkdir()
         acquired = {}
@@ -380,12 +472,11 @@ def install_probe(
             acquired[destination.name] = sha(destination)
         hashes_match = sorted(acquired.values()) == sorted(sha(path) for path in selected)
         output = commands.run(adb + ["shell", "am", "instrument", "-w", f"{PACKAGE}/.Probe"])
+        probe = resource_probe_evidence(output, commands.records[-1]["returncode"])
         merged = (
-            "INSTRUMENTATION_RESULT: apsa_resource_value=bonjour-new-fixture" in output
-            and f"INSTRUMENTATION_RESULT: apsa_resource_package={PACKAGE}" in output
-            and "INSTRUMENTATION_CODE: -1" in output
+            probe["value_equal"] and probe["package_equal"] and probe["instrumentation_success_code_observed"]
         )
-        return {
+        result = {
             "state": "verified" if merged and hashes_match else "mismatch",
             "acquired_device_spec": actual,
             "explicit_locale_override": device["supportedLocales"],
@@ -393,10 +484,13 @@ def install_probe(
             "installed_sha256": acquired,
             "installed_split_set_verified": hashes_match,
             "resource_merge_verified": merged,
+            "resource_probe": probe,
             "scope": "fresh base plus language/density config only; no feature, ABI, or physical-device claim",
         }
     finally:
         commands.run(adb + ["uninstall", PACKAGE])
+        result["package_uninstall_returncode"] = commands.records[-1]["returncode"]
+    return result
 
 
 def main() -> None:
@@ -426,6 +520,14 @@ def main() -> None:
         "installed_split_set_verified": False,
         "state": "started",
         "stage": "tool-input-hashes",
+        "source": {
+            "source_root": "repository-checkout",
+            "head_sha": os.environ.get("GITHUB_SHA")
+            if re.fullmatch(r"[a-f0-9]{40}", os.environ.get("GITHUB_SHA", ""))
+            else None,
+            "driver_sha256": sha(Path(__file__)),
+            "selector_sha256": sha(Path(select_apks.__code__.co_filename)),
+        },
     }
     exit_code = 1
     try:
@@ -569,6 +671,7 @@ def main() -> None:
         evidence.mkdir()
         (evidence / "summary.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
         output = {"state": result["state"], "evidence": str(evidence / "summary.json")}
+        output["validation"] = console_evidence(result)
         if exit_code:
             output["failure"] = failure_diagnostic(result, commands.records)
         print(json.dumps(output))

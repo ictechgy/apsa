@@ -159,6 +159,61 @@ TOC and public command-provenance changes. Current source still needs complete
 independent review and another isolated execution. Main, tags, releases and
 published MCP baselines have not been changed.
 
+## Third isolated execution
+
+The independently reviewed v8 source-only patch
+`50cecca6a918ceb15c8e125d9385610c0b5a660b561e5eb62cad7c034ef0a073`
+was transferred as exactly 345 manifest-bound files. Commit
+`2e7a9b756cdac8ddda88d4f02e2f3cddd8ec5a80`, tree
+`5c6eeacc5d854a0ecd2535899ff4a79a8793421b`. Code review APPROVE and
+architecture WATCH synthesized COMMENT / source READY. Broader legacy runtime
+capabilities are outside the trusted new-fixture validation path; release and
+physical-device claims remain separate.
+
+- [CI](https://github.com/ictechgy/apsa/actions/runs/38138930340) passed all
+  11 jobs; [package gates](https://github.com/ictechgy/apsa/actions/runs/38138930385)
+  passed all four. All eight full matrix executions reported 1,666 passed and
+  25 skipped. Ruff/formatting and Pyright passed. Actual stdio initialization
+  and default 23/runtime 25 tool hashes matched from checkout and clean wheels.
+- Repeated package hashes matched across those jobs: wheel
+  `2d6a524fec6fba0544d021191be4a7b4659d587ba037113438764549746aebef`,
+  sdist `6fedc1045c26f4b5ef6bd5efeb8a208d5a1e5914e494ca28c8d391579c68aebd`.
+  Full served response objects remain in new artifacts; local observations use
+  printed hashes and artifact digests. No baseline approval follows.
+- [Runtime](https://github.com/ictechgy/apsa/actions/runs/38138930413): backend
+  passed two HTTP controls and Android passed all four installed controls with
+  confirmed script and workflow cleanup. iOS remained inconclusive with zero
+  cases: the startup scene was observed but no URL-received label or matching
+  response appeared. Cleanup was confirmed. Missing required CFBundleTypeRole
+  is a concrete URL-registration defect; its contribution to this runtime
+  failure remains an inference until a fresh rerun. Active-scene readiness and
+  callback-entry diagnostics are being added without treating dispatch as proof.
+- [Official bundletool](https://github.com/ictechgy/apsa/actions/runs/38138930341)
+  now passes ordinary empty metadata, but all three selectors remain partial:
+  real config splits carry a shared SDK minimum alongside their density/language
+  selector. The reported TOC SHA is
+  `68d8e61a2bdac81eacdfdb546b08ef1d695cd4aa3bea2a6c24b34743ec27a7c7`.
+  New support requires one selector plus a single shared SDK minimum matching
+  the module masters, and still ANDs every modeled condition. Unknown, nonshared
+  or compound selector dimensions remain unsupported. This change requires a
+  new complete review and actual official rerun; no selection/install/resource
+  success is claimed from v8.
+- [Competitors](https://github.com/ictechgy/apsa/actions/runs/38138930292)
+  completed all 46 fresh cases and three repetitions. Each tool supplied 138
+  measured RSS samples; coverage abstention and distinct timing/RSS scopes
+  remain unchanged. Semgrep scored two true positives/two true negatives with
+  zero false positives/negatives on four eligible cases and abstained on 42.
+  Artifact ZIP SHA256:
+  `0e93a72bae8ccdbba55ed04ecae4fc0f2cf424967983741a2f836891b777e52b`.
+
+All v8 results remain bound to that exact head. Later SDK-selection support,
+bounded bundletool console evidence and iOS delivery changes stale current-source
+v8 approval. The next complete source review includes the required URL role and
+name, active-scene readiness, and acquisition-bound lifecycle observations. Its
+iOS driver terminates only its new target before the first session and requires
+the cold scene URL context, then requires warm contexts for capture and logout.
+These source checks do not establish actual OS delivery before the next CI run.
+
 ## New Apple development signature
 
 The user-authorized local lookup found a physical iPhone, an enabled developer
