@@ -88,6 +88,24 @@ def test_sbom_lists_dependencies_and_never_decides_exploitability(store, project
     assert not any(v["id"].startswith(("WEBVIEW", "AST-")) for v in bom["vulnerabilities"])
 
 
+@pytest.mark.parametrize("partial", ["fingerprint", "staging"])
+def test_sbom_partial_fingerprint_is_metadata_not_application_hash(store, project, partial):
+    report = scan(store, project)
+    inventory = report["inventory"]
+    full = cyclonedx(report)["metadata"]["component"]
+    assert full["hashes"] == [{"alg": "SHA-256", "content": inventory["fingerprint"]}]
+    if partial == "fingerprint":
+        inventory["fingerprint_complete"] = False
+    else:
+        inventory["input_snapshot"]["partial"] = True
+    application = cyclonedx(report)["metadata"]["component"]
+    assert "hashes" not in application
+    properties = {p["name"]: p["value"] for p in application["properties"]}
+    assert properties["apsa:input-fingerprint"] == inventory["fingerprint"]
+    assert properties["apsa:input-fingerprint-complete"] == "false"
+    assert properties["apsa:input-fingerprint-scope"] == "partial-audited-input"
+
+
 def test_cli_exports_cyclonedx(tmp_path, store, project, capsys):
     home = str(store.home)
     assert main(["--json", "--home", home, "scan", str(project)]) == 0

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath
 
+from .core import canonical_json, digest
 from .maswe import RULE_WEAKNESSES, UNMAPPED, finding_weaknesses, weakness_index, weaknesses_for
 from .rules import rules
 
@@ -21,6 +22,170 @@ NOTE = (
     "the claimed path matches no analyzed file exactly, and candidate_paths lists analyzed files it may name."
 )
 AST_SUFFIXES = (".java", ".kt", ".kts", ".swift", ".m")
+SOURCE_SUFFIXES = AST_SUFFIXES + (".js", ".jsx", ".jsbundle", ".ts", ".tsx", ".dart")
+
+
+def compare_reports(before: dict, after: dict) -> dict:
+    """Compare evidence snapshots without converting disappearance into remediation.
+
+    Audit fingerprints are retained as an explicit before/after build pair.
+    Runtime comparisons require the identical executable scenario scope and
+    observed installed build. Legacy records without those bindings are unknown.
+    """
+
+    def scope(report):
+        inventory = report.get("inventory", {})
+        return {
+            "target": report.get("target"),
+            "input_kind": inventory.get("input_kind"),
+            "platforms": sorted(inventory.get("platforms", [])),
+            "apps": sorted((a.get("platform", ""), a.get("package", "")) for a in inventory.get("apps", [])),
+            "package": inventory.get("package"),
+            "analysis_spec": inventory.get(
+                "project_specification", report.get("spec_hash", report.get("specs", {}))
+            ),
+            "source_selection": inventory.get("source_selection", {}),
+            "tool_version": report.get("tool_version"),
+            "rule_version": report.get("rule_version"),
+            "rules": sorted(c.get("rule_id", "") for c in report.get("coverage", [])),
+        }
+
+    before_scope, after_scope = scope(before), scope(after)
+    complete_scope = bool(before_scope["target"] and before_scope["input_kind"] and before_scope["platforms"])
+    scope_state = (
+        "unchanged"
+        if complete_scope and before_scope == after_scope
+        else ("changed" if complete_scope else "unavailable")
+    )
+    fingerprints = {
+        "before": before.get("inventory", {}).get("fingerprint"),
+        "after": after.get("inventory", {}).get("fingerprint"),
+    }
+    build_state = (
+        "unavailable"
+        if not all(fingerprints.values())
+        or any(r.get("inventory", {}).get("fingerprint_complete") is False for r in (before, after))
+        else ("same-build" if fingerprints["before"] == fingerprints["after"] else "different-builds")
+    )
+    old = {f["id"]: f for f in before.get("findings", [])}
+    new = {f["id"]: f for f in after.get("findings", [])}
+    changes = []
+    for identifier in sorted(old.keys() | new.keys()):
+        initial, final = old.get(identifier), new.get(identifier)
+        observation = (
+            "still-observed" if initial and final else ("newly-observed" if final else "no-longer-observed")
+        )
+        item = final if final is not None else old[identifier]
+        changes.append(
+            {
+                "finding_id": identifier,
+                "rule_id": item["rule_id"],
+                "observation": observation,
+                "before_status": initial.get("status") if initial else None,
+                "after_status": final.get("status") if final else None,
+                "verification": "comparable-observation" if scope_state == "unchanged" else "inconclusive",
+                "source_traces": [
+                    {
+                        k: e[k]
+                        for k in ("path", "line", "source", "sink", "sink_api", "trace", "source_trace")
+                        if k in e
+                    }
+                    for e in item.get("evidence", [])
+                ],
+            }
+        )
+    runtime_pairs = []
+    for current in after.get("runtime", []):
+        # Child reports retain history. Compare only observations newly added after the baseline.
+        if current.get("id") in {r.get("id") for r in before.get("runtime", [])}:
+            continue
+        candidates = [
+            r
+            for r in before.get("runtime", [])
+            if current.get("scenario_scope") and r.get("scenario_scope") == current["scenario_scope"]
+        ]
+        prior = candidates[-1] if candidates else None
+        binding = current.get("app_binding", {})
+        exact_build = (
+            prior is not None
+            and binding.get("state") == "bound"
+            and prior.get("app_binding", {}).get("state") == "bound"
+            and binding.get("identity") == prior.get("app_binding", {}).get("identity")
+        )
+        runtime_pairs.append(
+            {
+                "before_runtime_id": prior.get("id") if prior else None,
+                "after_runtime_id": current.get("id"),
+                "scenario_scope": current.get("scenario_scope"),
+                "scenario_identity": current.get("scenario_identity"),
+                "before_build": prior.get("app_binding") if prior else None,
+                "after_build": binding,
+                "scope_pairing": "unchanged" if prior else "unavailable",
+                "build_pairing": "same-build" if exact_build else "unavailable-or-different",
+                "assertion_pairing": "unchanged"
+                if prior
+                and current.get("scenario_identity")
+                and current["scenario_identity"] == prior.get("scenario_identity")
+                else "unavailable-or-changed",
+                "verification": "comparable-observation"
+                if scope_state == "unchanged"
+                and prior is not None
+                and exact_build
+                and current.get("scenario_identity")
+                and current["scenario_identity"] == prior.get("scenario_identity")
+                and not prior.get("partial", True)
+                and not current.get("partial", True)
+                else "inconclusive",
+                "before_assertions": prior.get("assertions", []) if prior else [],
+                "after_assertions": current.get("assertions", []),
+            }
+        )
+    for change in changes:
+        item = new.get(change["finding_id"]) or old[change["finding_id"]]
+        if item.get("status") == "runtime-confirmed":
+            evidence_runs = {e.get("runtime_id") for e in item.get("evidence", [])}
+            paired = [
+                p
+                for p in runtime_pairs
+                if p["before_runtime_id"] in evidence_runs or p["after_runtime_id"] in evidence_runs
+            ]
+            change["verification"] = (
+                "comparable-observation"
+                if paired and all(p["verification"] == "comparable-observation" for p in paired)
+                else "inconclusive"
+            )
+        else:
+            states = [
+                c.get("state")
+                for r in (before, after)
+                for c in r.get("coverage", [])
+                if c.get("rule_id") == change["rule_id"]
+            ]
+            if (
+                not states
+                or any(state not in {"checked", "observed"} for state in states)
+                or any(
+                    r.get("partial") or r.get("inventory", {}).get("fingerprint_complete") is False
+                    for r in (before, after)
+                )
+            ):
+                change["verification"] = "inconclusive"
+    return {
+        "schema_version": 1,
+        "before_report_id": before.get("id"),
+        "after_report_id": after.get("id"),
+        "scope_pairing": {
+            "state": scope_state,
+            "before": before_scope,
+            "after": after_scope,
+            "before_sha256": digest(canonical_json(before_scope).encode()),
+            "after_sha256": digest(canonical_json(after_scope).encode()),
+        },
+        "build_pairing": {"state": build_state, **fingerprints},
+        "finding_transitions": changes,
+        "runtime_pairs": runtime_pairs,
+        "note": "No-longer-observed describes these snapshots only; it is not proof of remediation, complete deletion, or backend session invalidation. Changed scope or unbound runtime builds remain inconclusive.",
+    }
 
 
 def _weaknesses(weakness: str | None, rule: str | None) -> list[str]:
@@ -107,7 +272,8 @@ def verify_claim(
         | ({rule} if rule else set())
     )
     target = str(report.get("target", ""))
-    spellings = [target] + [str(report["requested_target"])] * bool(report.get("requested_target"))
+    requested = report.get("requested_target")
+    spellings = [target] + ([str(requested)] if requested else [])
     claimed = _relative(path, spellings) if path else None
     states: dict[str, set[str]] = {}
     for item in report.get("coverage", []):
@@ -143,22 +309,25 @@ def verify_claim(
     if claimed is not None:
         records = [
             r
-            for r in (report.get("inventory", {}).get("source_analysis") or {}).get("files", [])
+            for key in ("source_analysis", "hybrid_analysis")
+            for r in (report.get("inventory", {}).get(key) or {}).get("files", [])
             if isinstance(r, dict) and isinstance(r.get("path"), str)
         ]
         for record in records:
             if _same_file(record["path"], claimed, target):
                 file_state = record.get("state")
-        if file_state is None and claimed.endswith(AST_SUFFIXES):
+        if file_state is None and claimed.endswith(SOURCE_SUFFIXES):
             # A claim relative to another root (a module, a bare file name) may name an analyzed
             # file APSA cannot pick out; list the analyzed files it could mean.
             # A bare file name may mean any analyzed file of that name; a longer claim only
             # files that end with the whole claimed path.
             bare = "/" not in claimed
             candidates = sorted(
-                r["path"]
-                for r in records
-                if r["path"].endswith("/" + claimed) or (bare and r["path"] == claimed)
+                {
+                    r["path"]
+                    for r in records
+                    if r["path"].endswith("/" + claimed) or (bare and r["path"] == claimed)
+                }
             )
             file_state = "path-unmatched" if candidates else "not-analyzed"
     observed = set().union(*states.values()) if states else set()

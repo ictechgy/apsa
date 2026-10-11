@@ -50,6 +50,11 @@ def main() -> None:
                 configuration=payload.get("configuration"),
                 source_module=payload.get("source_module"),
                 specs=payload.get("specs"),
+                dependency_selection=payload.get("dependency_selection"),
+                osv_policy=payload.get("osv_policy"),
+                osv_query_mode=payload.get("osv_query_mode", "auto"),
+                apk_set_device=payload.get("apk_set_device"),
+                ipa_trust_policy=payload.get("ipa_trust_policy"),
             )
         else:
             jobs.update(store, identifier, stage="device-scenario", progress=10)

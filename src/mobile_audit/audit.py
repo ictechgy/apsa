@@ -86,6 +86,9 @@ def dependency_coverage_state(dep: dict, health: dict | None) -> str:
     """One rule for scans and refreshes: superseded entries are covered by resolved ones."""
     if superseded(dep):
         return "not-applicable"
+    query = dep.get("osv_query")
+    if query and not query.get("checked"):
+        return "partial" if query.get("state") in {"partial", "error"} else "not-run"
     if dep.get("confidence") != "unknown" and health and health["status"] == "ok" and not health["stale"]:
         return "checked"
     return "not-run"
@@ -363,6 +366,11 @@ def scan(
     configuration: str | None = None,
     source_module: str | None = None,
     specs: dict | None = None,
+    dependency_selection: dict | None = None,
+    osv_policy: dict | None = None,
+    osv_query_mode: str = "auto",
+    apk_set_device: dict | None = None,
+    ipa_trust_policy: dict | None = None,
 ) -> dict:
     if progress:
         progress("input-analysis", 5)
@@ -392,7 +400,15 @@ def scan(
             }
         }
     analyzed = analyze_target(
-        target, sbom, expected_target, configuration, report_home=store.home, specs=specs
+        target,
+        sbom,
+        expected_target,
+        configuration,
+        report_home=store.home,
+        specs=specs,
+        dependency_selection=dependency_selection,
+        apk_set_device=apk_set_device,
+        ipa_trust_policy=ipa_trust_policy,
     )
     inventory, findings, coverage = analyzed["inventory"], analyzed["findings"], analyzed["coverage"]
     if specs:
@@ -408,7 +424,22 @@ def scan(
     warnings = inventory["warnings"].copy()
     failures = []
     if online:
-        _, failures = query_dependencies(store, inventory["dependencies"])
+        from .dependency_policy import DependencyTransmissionPolicy
+
+        policy = DependencyTransmissionPolicy(**(osv_policy or {}))
+        states: list[dict] = []
+        _, failures = query_dependencies(
+            store,
+            inventory["dependencies"],
+            query_mode=osv_query_mode,
+            exclusion_policy=policy,
+            package_states=states,
+        )
+        inventory["dependency_query"] = {
+            "mode": osv_query_mode,
+            "packages": states,
+            "transmission_exclusions": osv_policy or {},
+        }
         warnings.extend(failures)
     records = store.intelligence(limit=100000)
     feeds = source_health(store)
@@ -476,9 +507,19 @@ def scan(
     return store.save_report(report)
 
 
-def refresh_report(store: Store, report_id: str, *, save=True) -> dict:
+def refresh_report(store: Store, report_id: str, *, save=True, dependency_query: dict | None = None) -> dict:
     previous = store.report(report_id)
     report = copy.deepcopy(previous)
+    if dependency_query is not None:
+        report["inventory"]["dependency_query"] = copy.deepcopy(dependency_query)
+        states = {(s["ecosystem"], s["name"], s["version"]): s for s in dependency_query["packages"]}
+        deps = list(report["inventory"]["dependencies"]) + [
+            c["dependency"] for c in report["coverage"] if c.get("dependency")
+        ]
+        for dep in deps:
+            state = states.get((dep["ecosystem"], dep["name"], dep["version"]))
+            if state:
+                dep["osv_query"] = copy.deepcopy(state)
     report["id"] = uid("audit")
     report["created"] = now()
     report["parent_report"] = previous["id"]
@@ -542,5 +583,15 @@ def compare(store: Store, before: str, after: str) -> dict:
         ],
         "coverage_before": a["coverage"],
         "coverage_after": b["coverage"],
+        "audit_incomplete_before": report_incomplete(a),
+        "audit_incomplete_after": report_incomplete(b),
+        "input_before": {
+            key: a.get("inventory", {}).get(key)
+            for key in ("fingerprint", "fingerprint_complete", "input_snapshot")
+        },
+        "input_after": {
+            key: b.get("inventory", {}).get(key)
+            for key in ("fingerprint", "fingerprint_complete", "input_snapshot")
+        },
         "note": "No longer observed means absent from this scan, not proof of remediation. Compare input and coverage before closing a finding.",
     }

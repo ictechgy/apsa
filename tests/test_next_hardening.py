@@ -23,7 +23,7 @@ from mobile_audit.inputs import inspect_target
 from mobile_audit.skills import install_skill, skill_status
 from mobile_audit.source_analysis import analyze_sources
 from mobile_audit.source_context import plist_references
-from tests.test_binary_analysis import FIXTURES, _macho
+from tests.test_binary_analysis import _macho
 
 
 def test_kotlin_constructor_newline_keeps_original_evidence_coordinates():
@@ -126,9 +126,9 @@ def manifest(*, unknown=False):
     return xmlnode("manifest", attribute("package", "audit.synthetic"), (sdk, app))
 
 
-def bundle(tmp_path, *, unknown=False):
+def bundle(tmp_path, compiled_apks, *, unknown=False):
     path = tmp_path / "Synthetic.aab"
-    with zipfile.ZipFile(FIXTURES / "unsafe.apk") as source:
+    with zipfile.ZipFile(compiled_apks / "unsafe.apk") as source:
         dex = source.read("classes.dex")
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("base/manifest/AndroidManifest.xml", manifest(unknown=unknown))
@@ -138,8 +138,8 @@ def bundle(tmp_path, *, unknown=False):
     return path
 
 
-def test_aab_protobuf_base_identity_and_declared_module_dex_are_inspected(tmp_path):
-    path = bundle(tmp_path)
+def test_aab_protobuf_base_identity_and_declared_module_dex_are_inspected(tmp_path, compiled_apks):
+    path = bundle(tmp_path, compiled_apks)
     inventory, _ = inspect_target(path)
     assert inventory["package"] == "audit.synthetic"
     assert inventory["android_config"][0]["debuggable"] == "true"
@@ -156,8 +156,8 @@ def test_aab_protobuf_base_identity_and_declared_module_dex_are_inspected(tmp_pa
     assert inventory["partial"]
 
 
-def test_unknown_aab_resource_is_partial_configuration_not_false_default(tmp_path):
-    report = analyze(bundle(tmp_path, unknown=True), None)
+def test_unknown_aab_resource_is_partial_configuration_not_false_default(tmp_path, compiled_apks):
+    report = analyze(bundle(tmp_path, compiled_apks, unknown=True), None)
     inventory = report["inventory"]
     assert inventory["android_config"][0]["debuggable"] == "unresolved-resource"
     assert inventory["aab_manifest"]["unresolved_attributes"]
@@ -299,8 +299,8 @@ def test_objc_conditional_import_is_not_a_platform_identity_proof():
     assert "OBJC-WEBVIEW-UNTRUSTED-REQUEST" not in {f["rule_id"] for f in report["findings"]}
 
 
-def test_undeclared_aab_module_dex_is_skipped_with_partial_coverage(tmp_path):
-    target = bundle(tmp_path)
+def test_undeclared_aab_module_dex_is_skipped_with_partial_coverage(tmp_path, compiled_apks):
+    target = bundle(tmp_path, compiled_apks)
     with zipfile.ZipFile(target, "a") as archive:
         archive.writestr("junk/dex/classes.dex", archive.read("base/dex/classes.dex"))
     report = analyze_binary(target, {})
@@ -447,6 +447,7 @@ def test_parser_command_does_not_inherit_parent_input(monkeypatch, tmp_path):
 
 
 def test_macos_policy_maps_only_trusted_executable_roots(monkeypatch, tmp_path):
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "required")
     target, scratch, runtime = (tmp_path / name for name in ("input", "scratch", "runtime"))
     for path in (target, scratch, runtime):
         path.mkdir()

@@ -17,7 +17,7 @@ MAX_FILE = 8 * 1024 * 1024
 MAX_ARCHIVE_TOTAL = 512 * 1024 * 1024
 MAX_FILES = 12000
 MAX_SOURCE_TOTAL = 64 * 1024 * 1024
-RULE_VERSION = "2026.10.10.apsa.151"
+RULE_VERSION = "2026.10.11.apsa.next"
 
 
 def now() -> str:
@@ -239,9 +239,14 @@ def report_incomplete(report: dict) -> bool:
     runtime = report.get("runtime", [])
     online = report.get("online_query", {})
     inventory = report.get("inventory", {})
+    snapshot = inventory.get("input_snapshot") if isinstance(inventory, dict) else None
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
     return bool(
         report.get("partial") is True
         or (isinstance(inventory, dict) and inventory.get("partial") is True)
+        or (isinstance(inventory, dict) and inventory.get("fingerprint_complete") is False)
+        or snapshot.get("partial") is True
+        or snapshot.get("app_scope_complete") is False
         or any(check.get("state") == "partial" for check in report.get("coverage", []))
         or (
             isinstance(runtime, list)

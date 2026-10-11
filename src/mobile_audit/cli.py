@@ -49,6 +49,12 @@ def parser() -> Parser:
     scan_parser = commands.add_parser("scan", help="Audit source folder, APK or IPA")
     scan_parser.add_argument("target", type=Path)
     scan_parser.add_argument(
+        "--apk-set-device", type=Path, help="Explicit bundletool device-spec JSON for an .apks archive"
+    )
+    scan_parser.add_argument(
+        "--ipa-trust-policy", type=Path, help="Pinned public trust-anchor policy JSON for an IPA"
+    )
+    scan_parser.add_argument(
         "--online", action="store_true", help="Query OSV for discovered dependency versions"
     )
     scan_parser.add_argument("--sbom", type=Path, help="CycloneDX JSON inventory for the actual build")
@@ -71,6 +77,28 @@ def parser() -> Parser:
         "--specs", type=Path, help="Project taint specification (TOML/JSON) declaring extra sources and sinks"
     )
     scan_parser.add_argument("--source-module", help="Relative source module directory")
+    scan_parser.add_argument(
+        "--dependency-module", help="Relative application module for recorded Gradle resolution"
+    )
+    scan_parser.add_argument(
+        "--runtime-configuration",
+        help="Literal Gradle runtime configuration, for example releaseRuntimeClasspath",
+    )
+    scan_parser.add_argument(
+        "--dependency-evidence",
+        action="append",
+        help="Relative lockfile path; repeat to select recorded evidence",
+    )
+    scan_parser.add_argument("--osv-query-mode", choices=["auto", "legacy", "batch"], default="auto")
+    scan_parser.add_argument(
+        "--osv-exclude-ecosystem", action="append", help="Exclude ecosystem glob from transmission"
+    )
+    scan_parser.add_argument(
+        "--osv-exclude-name", action="append", help="Exclude package name glob from transmission"
+    )
+    scan_parser.add_argument(
+        "--osv-exclude-coordinate", action="append", help="Exclude ecosystem:name glob from transmission"
+    )
     scan_parser.add_argument(
         "--configuration",
         help="Relative manifest/.plist within selected source module; no build-system merge",
@@ -191,6 +219,9 @@ def parser() -> Parser:
     comparison = reports.add_parser("compare")
     comparison.add_argument("before")
     comparison.add_argument("after")
+    comparison.add_argument(
+        "--verification", action="store_true", help="Include paired static/runtime observation evidence"
+    )
     refresh = reports.add_parser("reassess")
     refresh.add_argument("id", nargs="?", default="latest")
     runtime = commands.add_parser(
@@ -460,6 +491,18 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
         result = jobs.cancel(store, args.id) if args.action == "cancel" else jobs.get(store, args.id)
         return result, 3 if result["state"] in {"failed", "interrupted"} else 0
     if cmd == "scan":
+        from .run_options import artifact_options, build_selection, transmission_policy
+
+        apk_set_device = read_json(args.apk_set_device) if args.apk_set_device else None
+        ipa_trust_policy = read_json(args.ipa_trust_policy) if args.ipa_trust_policy else None
+        apk_set_device, ipa_trust_policy = artifact_options(args.target, apk_set_device, ipa_trust_policy)
+
+        dependency_selection = build_selection(
+            args.dependency_module, args.runtime_configuration, args.dependency_evidence
+        )
+        osv_policy = transmission_policy(
+            args.osv_exclude_ecosystem, args.osv_exclude_name, args.osv_exclude_coordinate
+        )
         if args.sarif_root is not None and (not args.out or args.format != "sarif"):
             raise UsageError("--sarif-root requires --out with --format sarif")
         args.sarif_root = checked_sarif_root(args.sarif_root)
@@ -487,6 +530,11 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                     "sbom": str(args.sbom.resolve()) if args.sbom else None,
                     "environment": read_json(args.device_info) if args.device_info else None,
                     "specs": load_specs(args.specs) if args.specs else None,
+                    "dependency_selection": dependency_selection,
+                    "osv_policy": osv_policy,
+                    "osv_query_mode": args.osv_query_mode,
+                    "apk_set_device": apk_set_device,
+                    "ipa_trust_policy": ipa_trust_policy,
                 },
             ), 0
         baseline = policy_baseline(args, store) if args.policy else None
@@ -500,6 +548,11 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             configuration=args.configuration,
             source_module=args.source_module,
             specs=load_specs(args.specs) if args.specs else None,
+            dependency_selection=dependency_selection,
+            osv_policy=osv_policy,
+            osv_query_mode=args.osv_query_mode,
+            apk_set_device=apk_set_device,
+            ipa_trust_policy=ipa_trust_policy,
         )
         if args.out:
             export_report(result, args.out, args.format, args.sarif_root)
@@ -635,7 +688,12 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 return item, 0
             return report, 0
         if args.action == "compare":
-            return compare(store, args.before, args.after), 0
+            result = compare(store, args.before, args.after)
+            if args.verification:
+                from .verify import compare_reports
+
+                result["verification"] = compare_reports(store.report(args.before), store.report(args.after))
+            return result, 0
         if args.action == "reassess":
             return refresh_report(store, args.id), 0
         if args.action == "history":

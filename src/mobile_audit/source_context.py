@@ -281,6 +281,89 @@ def _declares(pattern: re.Pattern[str], code: str) -> bool:
     return any(not NOT_APPLIED.match(code, match.end()) for match in pattern.finditer(code))
 
 
+def _module_mappings(sources, scripts):
+    """Read literal settings projectDir mappings; computed or escaping paths abstain."""
+    keys = {_module_key(list(directory.parts)): directory for directory in scripts}
+    warnings = []
+    unresolved = False
+    assigned = {}
+    for path, text in sources:
+        if PurePosixPath(path).name not in {"settings.gradle", "settings.gradle.kts"}:
+            continue
+        try:
+            stream = tokens(text)
+        except ValueError:
+            warnings.append(f"Gradle settings token budget exceeded: {path}")
+            unresolved = True
+            continue
+        root = PurePosixPath(path).parent
+        depth = 0
+        for index, (kind, value, line) in enumerate(stream):
+            if kind == "code" and value == "{":
+                depth += 1
+            elif kind == "code" and value == "}":
+                depth -= 1
+            if kind != "code" or value != "projectDir":
+                continue
+            # project(":logical").projectDir = file("physical/location")
+            head = stream[max(0, index - 5) : index]
+            tail = stream[index + 1 : index + 6]
+            logical = head[2][1][1:-1] if len(head) == 5 and head[2][0] == "string" else None
+            valid = (
+                depth == 0
+                and len(head) == 5
+                and head[0][1] == "project"
+                and head[1][1] == "("
+                and head[3][1] == ")"
+                and head[4][1] == "."
+                and len(tail) == 5
+                and [t[1] for t in tail[:3]] == ["=", "file", "("]
+                and tail[3][0] == "string"
+                and tail[4][1] == ")"
+            )
+            after = stream[index + 6 : index + 7]
+            prefix = stream[max(0, index - 64) : max(0, index - 5)]
+            for previous_kind, previous, _ in reversed(prefix):
+                if previous_kind == "code" and previous in {";", "}"}:
+                    break
+                if previous_kind == "code" and previous in {"if", "when", "for", "while"}:
+                    valid = False
+                    break
+            if (
+                after
+                and after[0][1] not in {";", "}"}
+                and (after[0][2] <= tail[-1][2] or after[0][1] in {".", "+", "-", "?", "("})
+            ):
+                valid = False
+            key = _module_key(logical.split(":")) if logical else None
+            if valid and logical is not None and key is not None:
+                destination = tail[3][1][1:-1]
+                try:
+                    relative_source_path(destination)
+                    if (
+                        "$" in destination
+                        or "\\" in destination
+                        or re.match(r"[A-Za-z]:", destination)
+                        or not re.fullmatch(r":[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*", logical)
+                    ):
+                        raise ValueError("Computed or unsafe module mapping")
+                    directory = root / destination
+                    if directory not in scripts:
+                        raise ValueError("Mapped build script is absent")
+                    if key in assigned:
+                        raise ValueError("Repeated module mapping is ambiguous")
+                    assigned[key] = directory
+                    keys[key] = directory
+                    continue
+                except ValueError:
+                    pass
+            unresolved = True
+            if key:
+                keys.pop(key, None)
+            warnings.append(f"Gradle projectDir mapping unresolved or unsafe: {path}:{line}")
+    return keys, warnings, unresolved
+
+
 class ModuleGraph:
     """Gradle project roles and shipped reachability from build scripts.
 
@@ -302,11 +385,12 @@ class ModuleGraph:
         roles: dict[PurePosixPath, str] = {}
         self.applications: set[PurePosixPath] = set()
         libraries: set[PurePosixPath] = set()
-        keys = {_module_key(list(directory.parts)): directory for directory in scripts}
+        keys, mapping_warnings, mapping_partial = _module_mappings(sources, scripts)
+        self.warnings.extend(mapping_warnings)
         edges: dict[PurePosixPath, list[tuple[PurePosixPath, str]]] = {}
-        complete = not partial
+        complete = not partial and not mapping_partial
         # An unreadable project reference may hide a consumer of any module.
-        self.unresolved_project_references = False
+        self.unresolved_project_references = mapping_partial
         for directory, text in scripts.items():
             try:
                 stream = tokens(text)
@@ -392,6 +476,9 @@ class ModuleGraph:
             self.warnings.append(
                 "Gradle module consumption was not used to exclude modules because the source inventory is partial."
             )
+        self.role_resolution_partial = not complete
+        self.partial = not complete or self.unresolved_project_references
+        self.module_directories = {key: value.as_posix() for key, value in keys.items()}
         self.roles = {directory.as_posix(): role for directory, role in roles.items()}
         for directory in self.applications:
             self.roles[directory.as_posix()] = "application"
@@ -591,7 +678,7 @@ def supersede(dependencies: list[dict], graph: ModuleGraph | None, *, partial: b
             dep["version_source"] = "gradle-lockfile-non-application-module"
             continue
         resolved.setdefault(dep["name"], {}).setdefault(module.as_posix(), set()).add(dep["version"])
-    if not graph or partial:
+    if not graph or partial or graph.role_resolution_partial:
         # Omitted build scripts could hide another shipping consumer.
         return
     for dep in dependencies:

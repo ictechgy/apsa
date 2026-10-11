@@ -85,11 +85,39 @@ def summary(path: str, code: str) -> str:
     if not report:
         error = (result.get("error") or {}).get("message", "no report was produced")
         return "\n".join(lines + [f"APSA did not complete: {error} (exit code {code})."]) + "\n"
-    incomplete = bool((report.get("summary") or {}).get("incomplete", code == "3"))
+    inventory = report.get("inventory") or {}
+    snapshot = inventory.get("input_snapshot") or {}
+    incomplete = bool(
+        (report.get("summary") or {}).get("incomplete")
+        or code == "3"
+        or report.get("partial")
+        or inventory.get("partial")
+        or inventory.get("fingerprint_complete") is False
+        or snapshot.get("partial")
+        or snapshot.get("app_scope_complete") is False
+        or any(item.get("state") == "partial" for item in report.get("coverage", []))
+    )
     lines += [
         f"- Report: `{report.get('id')}` · APSA {report.get('tool_version')} · rules `{report.get('rule_version')}`",
         f"- Audit execution: **{'incomplete' if incomplete else 'complete for the stated scope'}** (exit code {code})",
     ]
+    if snapshot:
+        lines.append(
+            f"- Input staging: **{'partial' if snapshot.get('partial') else 'complete'}**; "
+            f"{snapshot.get('files', '?')} files, {snapshot.get('bytes', '?')} bytes staged; "
+            f"app scope {'unknown' if snapshot.get('app_scope_complete') is False else 'retained'}."
+        )
+        for kind, count in sorted((snapshot.get("omitted") or {}).items()):
+            lines.append(f"- Omitted {kind}: {count['files']} files, {count['bytes']} bytes.")
+        modules = snapshot.get("omitted_by_module") or {}
+        if modules:
+            lines.append(
+                f"- Input omissions affect {snapshot.get('omitted_module_groups', len(modules))} "
+                "inferred module group(s); "
+                "see the report's input_snapshot.omitted_by_module for file and byte counts."
+            )
+        if snapshot.get("omitted_by_module_truncated"):
+            lines.append("- Additional module counts are combined in input_snapshot.omitted_other_modules.")
     findings = report.get("findings", [])
     severities = Counter(item.get("severity", "unknown") for item in findings)
     statuses = Counter(item.get("status", "unknown") for item in findings)

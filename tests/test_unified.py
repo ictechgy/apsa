@@ -6,11 +6,8 @@ import plistlib
 import shutil
 import sys
 import zipfile
-from pathlib import Path
 
 import pytest
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 from pydantic import AnyUrl
 
 from mobile_audit import jobs, quaygate_analysis
@@ -40,9 +37,9 @@ def test_android_both_engines_share_input_report(store, apk):
     assert store.verify_reports()["state"] == "passed"
 
 
-def test_debug_configuration_is_deduplicated_in_real_parser(store, tmp_path):
+def test_debug_configuration_is_deduplicated_in_real_parser(store, tmp_path, compiled_apks):
     target = tmp_path / "debug.apk"
-    with zipfile.ZipFile(Path(__file__).parent / "fixtures/binary_analysis/unsafe.apk") as source:
+    with zipfile.ZipFile(compiled_apks / "unsafe.apk") as source:
         dex = source.read("classes.dex")
     with zipfile.ZipFile(target, "w") as archive:
         archive.writestr(
@@ -102,14 +99,16 @@ def test_source_scan_and_both_cli_names_use_common_engine(store, demo, capsys):
     assert json.loads(capsys.readouterr().out)["data"]["rules"][0]["engine"] == "quaygate-lint"
 
 
-def test_backend_failure_preserves_other_evidence_and_fails_required_policy(tmp_path, monkeypatch):
+def test_backend_failure_preserves_other_evidence_and_fails_required_policy(
+    tmp_path, monkeypatch, compiled_apks
+):
     from mobile_audit._parser_worker import analyze
 
     def failed(_):
         raise ValueError("secret/private error must not be copied")
 
     monkeypatch.setattr(quaygate_analysis, "_audit", failed)
-    target = Path(__file__).parent / "fixtures/binary_analysis/unsafe.apk"
+    target = compiled_apks / "unsafe.apk"
     result = analyze(target, None)
     assert result["inventory"]["partial"] is True
     assert any(f["rule_id"] == "BINARY-WEBVIEW-FILE-ACCESS" for f in result["findings"])
@@ -217,6 +216,9 @@ async def test_background_binary_job_contains_both_engines(store, apk):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("module", ["apsa", "quaygate", "mobile_audit"])
 async def test_unified_mcp_binary_scan_root_and_resource_contract(store, apk, tmp_path, module):
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
     root = tmp_path / "owned"
     root.mkdir()
     target = root / "app.apk"

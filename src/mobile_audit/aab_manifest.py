@@ -1,9 +1,13 @@
-"""Bounded AAPT2 XmlNode decoding; no bundletool/build execution or resource resolution."""
+"""Bounded AAPT2 XmlNode decoding with optional conservative scalar resolution."""
 
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 from xml.etree import ElementTree as XML
+
+if TYPE_CHECKING:
+    from .aab_resources import ResourceResolver
 
 MAX_BYTES = 2 * 1024 * 1024
 MAX_NODES = 20_000
@@ -79,8 +83,12 @@ def _bytes(fields: dict, number: int) -> bytes:
     return value
 
 
-def _compiled(raw: bytes) -> str | None:
+def _compiled(raw: bytes, resources: ResourceResolver | None = None) -> str | None:
+    if resources is not None:
+        return resources.resolve_item(raw)
     item = _fields(raw)
+    if set(item) - set(range(1, 11)) or any(_one(item, key, 0, 0) for key in (8, 9)) or _string(item, 10):
+        return None
     variants = [key for key in range(1, 8) if key in item]
     if len(variants) != 1:
         raise ValueError("Invalid compiled attribute oneof")
@@ -107,7 +115,7 @@ def _compiled(raw: bytes) -> str | None:
     return None
 
 
-def decode_manifest(raw: bytes) -> tuple[bytes, list[str]]:
+def decode_manifest(raw: bytes, *, resources: ResourceResolver | None = None) -> tuple[bytes, list[str]]:
     if not raw or len(raw) > MAX_BYTES:
         raise ValueError("AAB manifest exceeds byte budget or is empty")
     warnings = []
@@ -144,8 +152,13 @@ def decode_manifest(raw: bytes) -> tuple[bytes, list[str]]:
             if qualified in output.attrib:
                 raise ValueError("Duplicate AAB XML attribute")
             declared = _string(attrs, 3) if 3 in attrs else None
-            compiled = _compiled(_bytes(attrs, 6)) if 6 in attrs else None
-            if declared is not None and compiled is not None and declared != compiled:
+            compiled = _compiled(_bytes(attrs, 6), resources) if 6 in attrs else None
+            if (
+                declared is not None
+                and compiled is not None
+                and declared != compiled
+                and not (resources is not None and declared.startswith("@"))
+            ):
                 raise ValueError("Conflicting declared and compiled attribute")
             text = compiled if compiled is not None else declared
             if 6 in attrs and compiled is None:
@@ -165,4 +178,6 @@ def decode_manifest(raw: bytes) -> tuple[bytes, list[str]]:
     root = element(raw, 0)
     if root is None or root.tag != "manifest":
         raise ValueError("AAB base XML is not a manifest")
+    if resources is not None:
+        warnings.extend(resources.warnings)
     return XML.tostring(root, encoding="utf-8"), list(dict.fromkeys(warnings))[:128]

@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from mobile_audit import engine, inputs, jobs, mcp_server
+from mobile_audit import engine, inputs, jobs
 from mobile_audit._parser_worker import analyze
 from mobile_audit.audit import correlate, scan
 from mobile_audit.core import finding_identity, read_json
@@ -398,6 +398,8 @@ def test_bound_readers_refuse_replaced_paths(tmp_path, reader, replacement):
     "tool_name", ["audit_scan", "audit_start", "policy_evaluate", "runtime_start", "runtime_execute"]
 )
 def test_mcp_reads_reject_parent_swap_after_authorization(store, demo, tmp_path, monkeypatch, tool_name):
+    from mobile_audit import mcp_server
+
     allowed = tmp_path / "allowed"
     allowed.mkdir()
     project = allowed / "project"
@@ -442,6 +444,8 @@ def test_mcp_reads_reject_parent_swap_after_authorization(store, demo, tmp_path,
 
 @pytest.mark.parametrize("tool_name", ["runtime_start", "runtime_execute"])
 def test_mcp_runtime_uses_the_validated_scenario_value(store, demo, tmp_path, monkeypatch, tool_name):
+    from mobile_audit import mcp_server
+
     report = scan(store, demo)
     value = plan(report)
     path = tmp_path / "scenario.json"

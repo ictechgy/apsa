@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from mobile_audit import mcp_server
 from mobile_audit.audit import scan
 from mobile_audit.baselines import baseline_artifact, load_baseline
 from mobile_audit.cli import main
@@ -147,6 +146,8 @@ def test_bad_configuration_cannot_become_a_complete_report(store, tmp_path, conf
 
 
 def test_mcp_selected_module_background_job_preserves_scope(store, tmp_path):
+    from mobile_audit import mcp_server
+
     root = tmp_path / "repository"
     source(root / "owned")
     source(root / "other", package="other.app")
@@ -254,6 +255,8 @@ def test_portable_baseline_requires_approval_completeness_and_external_hash(stor
 def test_mcp_baseline_export_authorizes_paths_and_does_not_follow_replaced_parent(
     store, tmp_path, monkeypatch
 ):
+    from mobile_audit import mcp_server
+
     root = source(tmp_path / "owned")
     report = scan(store, root)
     server = mcp_server.create_server(store.home, roots=[root])
@@ -301,6 +304,8 @@ def test_mcp_baseline_export_authorizes_paths_and_does_not_follow_replaced_paren
 
 
 def test_mcp_dependency_errors_cannot_exceed_model_budget(store, tmp_path, monkeypatch):
+    from mobile_audit import mcp_server
+
     root = source(tmp_path / "owned")
     report = scan(store, root)
     server = mcp_server.create_server(store.home, roots=[root])

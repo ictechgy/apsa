@@ -37,8 +37,40 @@ def test_command_timeout_includes_children_holding_pipes():
 
 def test_parser_resident_memory_is_bounded():
     script = "import time; data=bytearray(80*1024*1024); time.sleep(20)"
-    with pytest.raises(ValueError, match="memory exceeds limit"):
+    try:
         command([sys.executable, "-c", script], timeout=3, max_rss=30 * 1024 * 1024)
+    except ValueError as error:
+        if str(error) == "RSS inspection unavailable; resource-limited execution refused":
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                pytest.fail("Disposable CI must measure actual RSS enforcement")
+            pytest.skip("Host guard denies child RSS inspection; memory enforcement is unmeasured")
+        assert "memory exceeds limit" in str(error)
+    else:
+        pytest.fail("Parser exceeded the resident-memory limit without refusal")
+
+
+def test_unavailable_rss_refuses_and_reaps_the_owned_child(monkeypatch):
+    import psutil
+
+    from mobile_audit import processes
+
+    owned = []
+    original = processes.subprocess.Popen
+
+    def spawned(*args, **kwargs):
+        child = original(*args, **kwargs)
+        owned.append(child)
+        return child
+
+    class Denied:
+        def memory_info(self):
+            raise psutil.AccessDenied()
+
+    monkeypatch.setattr(processes.subprocess, "Popen", spawned)
+    monkeypatch.setattr(processes.psutil, "Process", lambda _: Denied())
+    with pytest.raises(ValueError, match="RSS inspection unavailable; resource-limited execution refused"):
+        command([sys.executable, "-c", "import time; time.sleep(20)"], timeout=3, max_rss=1024)
+    assert len(owned) == 1 and owned[0].poll() is not None
 
 
 def test_sdk_tools_are_discovered_without_path(monkeypatch, tmp_path):

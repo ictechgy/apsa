@@ -107,9 +107,11 @@ def test_sarif_meets_code_scanning_constraints_for_source_targets(demo_report):
     assert run["properties"]["maswe"]["summary"] == coverage_matrix(demo_report)["summary"]
 
 
-def test_sarif_places_binary_findings_on_the_archive_and_never_omits_locations(store, monkeypatch):
+def test_sarif_places_binary_findings_on_the_archive_and_never_omits_locations(
+    store, monkeypatch, compiled_apks
+):
     monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
-    report = scan(store, ROOT / "tests/fixtures/binary_analysis/unsafe.apk")
+    report = scan(store, compiled_apks / "unsafe.apk")
     run = sarif(report, "build/app.apk")["runs"][0]
     assert run["results"]
     for result in run["results"]:
@@ -432,6 +434,35 @@ def test_action_helper_paths_and_summary(tmp_path):
     assert result.stdout == ""
 
 
+def test_action_summary_exposes_staging_even_if_summary_is_inconsistent(tmp_path):
+    envelope = tmp_path / "result.json"
+    envelope.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "summary": {"incomplete": False},
+                    "inventory": {
+                        "input_snapshot": {
+                            "partial": True,
+                            "app_scope_complete": False,
+                            "files": 2,
+                            "bytes": 20,
+                            "omitted": {"code_and_config": {"files": 4, "bytes": 40}},
+                            "omitted_by_module": {"a": {"code_and_config": {"files": 4, "bytes": 40}}},
+                        }
+                    },
+                },
+            }
+        )
+    )
+    text = summary(str(envelope), "0")
+    assert "Audit execution: **incomplete**" in text
+    assert "Input staging: **partial**; 2 files, 20 bytes staged; app scope unknown" in text
+    assert "Omitted code_and_config: 4 files, 40 bytes" in text
+    assert "1 inferred module group(s)" in text
+
+
 def test_action_pins_dependencies_and_release_version():
     action = yaml.safe_load((ROOT / "action.yml").read_text())
     assert action["inputs"]["version"]["default"] == VERSION
@@ -460,7 +491,10 @@ def test_registry_and_plugin_metadata_follow_the_package_version():
 def test_mcp_tool_surface_is_fixed_and_annotated(tmp_path):
     from mobile_audit.mcp_server import create_server, manifest_sha256, tool_manifest
 
-    snapshot = json.loads((ROOT / "tests/fixtures/mcp_tool_manifest.json").read_text())
+    # This is the proposed contract. The published 1.5.1 baseline is retained
+    # separately and is not approved or overwritten by this validation.
+    snapshot = json.loads((ROOT / "tests/contracts/mcp_tool_manifest_pending.json").read_text())
+    assert snapshot["status"] == "pending-served-validation"
     root = tmp_path / "root"
     root.mkdir()
     for variant, runtime in (("default", False), ("runtime", True)):

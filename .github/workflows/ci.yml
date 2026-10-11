@@ -13,7 +13,7 @@ jobs:
   verify:
     name: ${{ matrix.os }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +28,14 @@ jobs:
           version: "0.12.1"
           python-version: ${{ matrix.python }}
           enable-cache: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          packages: "platforms;android-36 build-tools;36.0.0"
+          log-accepted-android-sdk-licenses: false
       - name: Install exact interpreter and locked development environment
         run: |
           uv python install "${{ matrix.python }}"
@@ -38,10 +46,10 @@ jobs:
       - name: Tests, formatting, types, and standalone corpus
         run: |
           node --version
-          make test benchmark
+          APSA_TEST_ANDROID_SDK="$ANDROID_HOME" make test benchmark BENCHMARK_OUT="$RUNNER_TEMP/apsa-fresh-benchmark"
       - name: Repeated builds, hashes, attribution, and clean offline scan
         run: uv run --locked --extra dev python scripts/release.py --out "${{ runner.temp }}/apsa-release"
-      # No registry publishing, artifact uploading, SDK installation, or device mutation.
+      # New static APKs only; no registry publishing or device mutation.
 
   parser-isolation:
     name: Parser OS isolation / ${{ matrix.os }}

@@ -18,6 +18,22 @@ def rules() -> list[dict]:
         + json.loads(data.joinpath("structural-rules.json").read_text())
         + catalog()
     )
+    # Import lazily: the hybrid interpreter uses this module's comment cleaner.
+    from .hybrid_analysis import RULES as hybrid_rules
+
+    loaded.extend(
+        {
+            "id": rule,
+            "title": title,
+            "severity": "medium" if rule == "HYBRID-NATIVE-BRIDGE" else "high",
+            "mode": "structural",
+            "method": "hybrid-structural-flow",
+            "masvs": masvs,
+            "scope": "Bounded JS/TS/Dart token/block argument-return flow; always partial; unknown native dispatch and sanitizers require review.",
+            "references": ["https://mas.owasp.org/MASTG/"],
+        }
+        for rule, (title, masvs) in hybrid_rules.items()
+    )
     # One MASWE v1.0 mapping for the catalog, findings, SARIF and coverage matrix.
     return [{**rule, "maswe": list(weaknesses_for(rule["id"]))} for rule in loaded]
 
@@ -40,8 +56,109 @@ CLEANERS = {
 }
 
 
-def strip_comments(text: str) -> str:
+def _strip_template_comments(text: str) -> str:
+    """Blank JS comments while preserving nested template literals and offsets."""
+    cleaned = list(text)
+    # Zero denotes template text; positive depths denote ${...} expressions.
+    stack: list[int] = []
+    position, block, expression, regex = 0, True, True, True
+    while position < len(text):
+        token = text[position]
+        if stack and stack[-1] == 0:
+            if token == "\\":
+                position += 2
+            elif token == "`":
+                stack.pop()
+                position += 1
+                expression = False
+            elif text.startswith("${", position):
+                stack.append(1)
+                position += 2
+                expression = True
+            else:
+                position += 1
+            continue
+        if token == "`":
+            stack.append(0)
+        elif token in {"'", '"'}:
+            quote = token
+            position += 1
+            while position < len(text) and text[position] not in {quote, "\n"}:
+                position += 2 if text[position] == "\\" else 1
+            if position < len(text) and text[position] == quote:
+                position += 1
+            expression = False
+            continue
+        elif text.startswith("//", position) or (block and text.startswith("/*", position)):
+            line = text[position + 1] == "/"
+            end = text.find("\n" if line else "*/", position + 2)
+            if end < 0 and not line:
+                # As in the generic cleaner, a stray regex-like /* stays text;
+                # avoid searching the rest of the file again for every later /*.
+                block = False
+            else:
+                end = len(text) if end < 0 else end if line else end + 2
+                for index in range(position, end):
+                    if text[index] != "\n":
+                        cleaned[index] = " "
+                position = end
+                continue
+        elif token == "/" and expression and regex:
+            end, character_class = position + 1, False
+            while end < len(text) and text[end] != "\n":
+                if text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end] == "[":
+                    character_class = True
+                elif text[end] == "]":
+                    character_class = False
+                elif text[end] == "/" and not character_class:
+                    break
+                end += 1
+            if end < len(text) and text[end] == "/":
+                position = end + 1
+                expression = False
+                continue
+            # At most one failed regex scan per line, keeping malformed input linear.
+            regex = False
+        elif token.isalnum() or token in {"_", "$"}:
+            end = position + 1
+            while end < len(text) and (text[end].isalnum() or text[end] in {"_", "$"}):
+                end += 1
+            expression = text[position:end] in {
+                "return",
+                "throw",
+                "case",
+                "yield",
+                "await",
+                "typeof",
+                "void",
+                "delete",
+                "in",
+                "of",
+            }
+            position = end
+            continue
+        elif stack:
+            if token == "{":
+                stack[-1] += 1
+            elif token == "}":
+                stack[-1] -= 1
+                if stack[-1] == 0:
+                    stack.pop()
+        if token == "\n":
+            regex = True
+        if not token.isspace():
+            expression = token in "=([{,:;!?&|+-*%^~<>/"
+        position += 1
+    return "".join(cleaned)
+
+
+def strip_comments(text: str, *, templates: bool = False) -> str:
     # Preserve offsets/line numbers; don't remove URL slashes inside string literals.
+    if templates and "`" in text:
+        return _strip_template_comments(text)
     parts, position, double, block = [], 0, True, True
     while match := CLEANERS[double, block].search(text, position):
         value, groups = match[0], match.groupdict()
@@ -73,15 +190,20 @@ def static_checks(
 ) -> tuple[list[dict], list[dict]]:
     findings = []
     coverage = []
+    compiled_package = inventory.get("input_kind") in {"apk", "ipa"}
+    packaged_source_suffixes = {".js", ".jsx", ".jsbundle", ".ts", ".tsx", ".dart"}
     for rule in rules():
         if rule["mode"] != "source":
             continue
         applicable = not rule.get("platform") or rule["platform"] in inventory["platforms"]
-        # Compiled packages carry binary XML; a text pattern cannot run on it.
+        # Native code and manifests in compiled packages are not source input,
+        # even if a member happens to contain plaintext. Bundled hybrid sources
+        # remain inspectable by the source rules that support their language.
         source_files = [
             (path, text)
             for path, text in sources
             if PathSuffix(path) in rule.get("suffixes", [])
+            and (not compiled_package or PathSuffix(path) in packaged_source_suffixes)
             and (PathSuffix(path) != ".xml" or text.lstrip("\ufeff \t\r\n").startswith("<"))
         ]
         truncated = False
@@ -95,7 +217,11 @@ def static_checks(
                 # A required token absent from the raw text is absent after cleaning too.
                 if rule.get("requires") and not re.search(rule["requires"], text):
                     continue
-                cleaned = strip_xml_comments(text) if PathSuffix(path) == ".xml" else strip_comments(text)
+                cleaned = (
+                    strip_xml_comments(text)
+                    if PathSuffix(path) == ".xml"
+                    else strip_comments(text, templates=PathSuffix(path) in {".js", ".jsx", ".ts", ".tsx"})
+                )
                 if rule.get("requires") and not re.search(rule["requires"], cleaned):
                     continue
                 # Some APIs are a property of the file (for example a deprecated class); report its first use.
@@ -149,6 +275,11 @@ def static_checks(
                 "mapping_scope": rule.get("mapping_scope", "partial"),
                 "truncated": truncated,
                 "note": "Pattern check is not proof of exploitability or complete absence of defects."
+                + (
+                    " Native source and manifest members of compiled packages are not inspected by source patterns."
+                    if compiled_package
+                    else ""
+                )
                 + (
                     " Per-file finding limit reached; additional matching evidence was omitted."
                     if truncated

@@ -1,0 +1,84 @@
+// NEW CI-only synthetic fixture. Credentials stay in process memory.
+import UIKit
+import CryptoKit
+
+@main
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    var session = "", account = "", token = "", backend = ""
+    var after = false, retain = false
+    let queue = DispatchQueue(label: "apsa.synthetic.transport")
+    var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
+    func sha(_ url: URL) throws -> String { SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined() }
+    func build() throws -> String { try sha(Bundle.main.executableURL!) }
+    func emit(_ value: [String: Any]) throws {
+        var output = value
+        output.merge(["package": Bundle.main.bundleIdentifier!, "executable_sha256": try build(),
+                      "info_plist_sha256": try sha(Bundle.main.bundleURL.appendingPathComponent("Info.plist")),
+                      "session": session, "account": account, "state": account.isEmpty ? "logged_out" : "authenticated",
+                      "delivery": after ? "target-observed" : "baseline", "delivery_transport": "ios-os-url-context"]) { _, new in new }
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]).write(to: documents.appendingPathComponent("response.json"), options: [.atomic])
+    }
+    func http(_ route: String) throws -> [String: Any] {
+        var request = URLRequest(url: URL(string: backend + route)!)
+        request.httpMethod = "POST"; request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !token.isEmpty { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["session": session, "package": Bundle.main.bundleIdentifier!, "build": try build()])
+        let wait = DispatchSemaphore(value: 0)
+        var result: Data?, status = 0
+        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+            result = data; status = (response as? HTTPURLResponse)?.statusCode ?? 0; wait.signal()
+        }
+        task.resume()
+        guard wait.wait(timeout: .now() + 15) == .success, status == 200, let data = result,
+              let output = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { task.cancel(); throw FixtureError.invalid }
+        return output
+    }
+    enum FixtureError: Error { case invalid }
+    func receive(_ url: URL) {
+        queue.async {
+            do {
+                guard url.scheme == "apsatransport", url.host == "fixture", let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { throw FixtureError.invalid }
+                var fields: [String: String] = [:]
+                for item in items { guard fields[item.name] == nil, let value = item.value, value.utf8.count <= 512 else { throw FixtureError.invalid }; fields[item.name] = value }
+                guard let challenge = fields["session"], challenge.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw FixtureError.invalid }
+                if fields["action"] == "session" {
+                    guard self.session.isEmpty, let backend = fields["backend"], backend.range(of: "^http://127\\.0\\.0\\.1:[0-9]+$", options: .regularExpression) != nil else { throw FixtureError.invalid }
+                    self.session = challenge; self.backend = backend; self.account = "a"; self.retain = fields["retain"] == "true"
+                    try FileManager.default.createDirectory(at: self.documents, withIntermediateDirectories: true)
+                    guard let credential = try self.http("/issue")["credential"] as? String else { throw FixtureError.invalid }
+                    self.token = credential
+                    try "synthetic-unique-a synthetic-unique-login_a".write(to: self.documents.appendingPathComponent("state.dat"), atomically: true, encoding: .utf8)
+                    try self.emit(["action": "session", "fresh_store": true])
+                } else {
+                    guard self.session == challenge else { throw FixtureError.invalid }
+                    if fields["action"] == "transition" {
+                        guard !self.after, fields["kind"] == "logout" else { throw FixtureError.invalid }
+                        _ = try self.http("/logout"); self.account = ""; self.token = ""; self.after = true
+                        try ("synthetic-unique-state synthetic-unique-delivery" + (self.retain ? " synthetic-unique-a" : "")).write(to: self.documents.appendingPathComponent("state.dat"), atomically: true, encoding: .utf8)
+                        try self.emit(["action": "transition", "kind": "logout"])
+                    } else if fields["action"] == "capture" {
+                        guard let nonce = fields["nonce"], nonce.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil, let snapshot = fields["snapshot"], fields["account"] == self.account,
+                              fields["state"] == (self.account.isEmpty ? "logged_out" : "authenticated"), fields["transition"] == (self.after ? "logout" : "") else { throw FixtureError.invalid }
+                        try self.emit(["action": "capture", "nonce": nonce, "snapshot": snapshot, "transition": self.after ? "logout" : "", "completeness": "complete",
+                                       "storage": try String(contentsOf: self.documents.appendingPathComponent("state.dat"), encoding: .utf8)])
+                    } else { throw FixtureError.invalid }
+                }
+            } catch { try? self.emit(["action": "fixture-error", "code": "binding-or-transport"]) }
+        }
+    }
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool { true }
+}
+
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+        guard let scene = scene as? UIWindowScene else { return }
+        let window = UIWindow(windowScene: scene); window.rootViewController = UIViewController(); self.window = window; window.makeKeyAndVisible()
+        for context in options.urlContexts { (UIApplication.shared.delegate as? AppDelegate)?.receive(context.url) }
+    }
+    func scene(_ scene: UIScene, openURLContexts contexts: Set<UIOpenURLContext>) {
+        for context in contexts { (UIApplication.shared.delegate as? AppDelegate)?.receive(context.url) }
+    }
+}

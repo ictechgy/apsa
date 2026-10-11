@@ -93,6 +93,31 @@ def test_platform_input_alias_reaches_typed_webview(suffix, source, function, so
     assert "interprocedural" in item["analysis_limits"]
 
 
+def test_class_field_inventory_reuse_keeps_enclosing_class_types_separate():
+    report = scan(
+        "java",
+        """
+        class Handler {
+            private WebView browser;
+            void first(Intent incoming) { browser.loadUrl(incoming.getStringExtra("url")); }
+            void second(Intent incoming) { browser.loadUrl(incoming.getStringExtra("url")); }
+            class Nested {
+                private OtherWidget browser;
+                void unrelated(Intent incoming) { browser.loadUrl(incoming.getStringExtra("url")); }
+            }
+        }
+        class Separate {
+            private OtherWidget browser;
+            void unrelated(Intent incoming) { browser.loadUrl(incoming.getStringExtra("url")); }
+        }
+    """,
+    )
+    assert report["warnings"] == []
+    assert {f["evidence"][0]["function"] for f in report["findings"]} == {"first", "second"}
+    assert rules(report) == {URL_RULE}
+    assert report["metadata"]["functions"]["analyzed"] == 4
+
+
 @pytest.mark.parametrize(
     ("suffix", "source"),
     [

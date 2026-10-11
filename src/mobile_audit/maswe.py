@@ -62,6 +62,10 @@ RULE_WEAKNESSES: dict[str, tuple[str, ...]] = {
     "IOS-UIWEBVIEW": ("MASWE-0035",),
     "AST-PATH-TRAVERSAL": ("MASWE-0050",),
     "IOS-INSECURE-UNARCHIVE": ("MASWE-0050",),
+    "HYBRID-UNTRUSTED-URL": ("MASWE-0029",),
+    "HYBRID-JS-EVAL": ("MASWE-0033",),
+    "HYBRID-SQL-INPUT": ("MASWE-0050",),
+    "HYBRID-NATIVE-BRIDGE": ("MASWE-0033",),
     # Compiled code and binary metadata.
     "BINARY-WEBVIEW-SSL-BYPASS": ("MASWE-0027",),
     "BINARY-WEBVIEW-JS-BRIDGE": ("MASWE-0033",),

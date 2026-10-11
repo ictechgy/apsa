@@ -2,12 +2,21 @@ name: Synthetic APSA and MobSF comparison
 
 on:
   push:
-    branches: ["benchmark/mobsf-v1"]
+    branches: ["benchmark/mobsf-v1", "validation/apsa-final-*"]
     paths:
       - "benchmarks/competitive*.py"
+      - "benchmarks/semgrep_compare.py"
+      - "benchmarks/process_measure.py"
       - "tests/test_competitive.py"
+      - "tests/test_competitive_*.py"
+      - "tests/test_semgrep_compare.py"
+      - "tests/test_process_measure.py"
       - ".github/workflows/competitive-benchmark.yml"
       - "src/mobile_audit/**"
+      - "apsa/**"
+      - "quaygate/**"
+      - "pyproject.toml"
+      - "uv.lock"
   workflow_dispatch:
 
 permissions:
@@ -21,21 +30,39 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-          fetch-depth: 0
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.1"
           python-version: "3.12.13"
           enable-cache: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Install locked APSA and validate benchmark driver
         run: |
           uv sync --locked --extra dev
-          uv run --locked python -m pytest tests/test_competitive.py
-          uv run --locked python -m ruff check benchmarks/competitive.py benchmarks/competitive_cases.py tests/test_competitive.py
+          uv run --locked python -m pytest tests/test_competitive.py tests/test_semgrep_compare.py
+          uv run --locked python -m ruff check benchmarks/competitive.py benchmarks/competitive_cases.py benchmarks/semgrep_compare.py tests/test_competitive.py tests/test_semgrep_compare.py
       - name: Generate and compile fresh synthetic inputs
         run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
           uv run --locked python benchmarks/competitive.py generate --fixtures "$RUNNER_TEMP/competitive-fixtures"
           uv run --locked python benchmarks/competitive.py build-apks --fixtures "$RUNNER_TEMP/competitive-fixtures" --sdk "$ANDROID_HOME"
+      - name: Prepare pinned Semgrep CE and upstream local rules
+        run: |
+          uv venv --python 3.12.13 "$RUNNER_TEMP/semgrep-venv"
+          uv pip install --no-cache --python "$RUNNER_TEMP/semgrep-venv/bin/python" semgrep==1.179.0
+          uv pip freeze --python "$RUNNER_TEMP/semgrep-venv/bin/python" > "$RUNNER_TEMP/semgrep-packages.txt"
+          mkdir "$RUNNER_TEMP/semgrep-blobs"
+          for blob in 2315e864a09297798df07409356c455203a2a719 15d8f45591363532c307c8e87d4b9b14f8129e58; do
+            curl --fail --location --proto '=https' --tlsv1.2 "https://api.github.com/repos/semgrep/semgrep-rules/git/blobs/$blob" --output "$RUNNER_TEMP/semgrep-blobs/$blob.json"
+          done
+          uv run --locked python benchmarks/semgrep_compare.py prepare-rules --blobs "$RUNNER_TEMP/semgrep-blobs" --out "$RUNNER_TEMP/semgrep-rules"
+      - name: Measure limited Semgrep component slice on the same fresh sources
+        run: |
+          uv run --locked python benchmarks/semgrep_compare.py run --fixtures "$RUNNER_TEMP/competitive-fixtures" --rules "$RUNNER_TEMP/semgrep-rules" --semgrep "$RUNNER_TEMP/semgrep-venv/bin/semgrep" --out "$RUNNER_TEMP/semgrep-results"
       - name: Prepare MobSF's expected public JADX release
         run: |
           curl --fail --location --proto '=https' --tlsv1.2 https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip --output "$RUNNER_TEMP/jadx-1.5.0.zip"
@@ -55,14 +82,7 @@ jobs:
           docker exec apsa-synthetic-mobsf /benchmark-jadx/bin/jadx --version
           docker exec apsa-synthetic-mobsf python -c 'import hashlib,pathlib; root=pathlib.Path("/home/mobsf/Mobile-Security-Framework-MobSF"); expected={"mobsf/StaticAnalyzer/views/android/rules/android_rules.yaml":"b5a2411ab48cec34a9743212aab300634f748cf4","mobsf/StaticAnalyzer/views/ios/rules/swift_rules.yaml":"f19571a3ac950bad02ecc4b8c44a9e91acfe889e"}; observed={name:hashlib.sha1(b"blob "+str(len(data)).encode()+b"\0"+data).hexdigest() for name in expected for data in [(root/name).read_bytes()]}; assert observed==expected, observed; print(observed)'
           echo "MOBSF_BENCHMARK_IP=$(docker inspect apsa-synthetic-mobsf --format '{{(index .NetworkSettings.Networks "apsa-synthetic-benchmark").IPAddress}}')" >> "$GITHUB_ENV"
-      - name: Install immutable released APSA baseline
-        run: |
-          mkdir "$RUNNER_TEMP/apsa-baseline-source"
-          git archive 6d2216e8ade07208c0b0495507b81574dbb64c61 | tar -x -C "$RUNNER_TEMP/apsa-baseline-source"
-          uv sync --project "$RUNNER_TEMP/apsa-baseline-source" --locked --extra dev
-      - name: Measure released baseline on the same inputs
-        run: |
-          uv run --locked python benchmarks/competitive.py run --fixtures "$RUNNER_TEMP/competitive-fixtures" --out "$RUNNER_TEMP/competitive-baseline" --apsa-python "$RUNNER_TEMP/apsa-baseline-source/.venv/bin/python" --repeats 3
+          echo "MOBSF_BENCHMARK_PID=$(docker inspect apsa-synthetic-mobsf --format '{{.State.Pid}}')" >> "$GITHUB_ENV"
       - name: Compare actual scans with frozen labels
         env:
           MOBSF_BENCHMARK_KEY: synthetic-benchmark-only
@@ -82,11 +102,13 @@ jobs:
           path: |
             ${{ runner.temp }}/competitive-fixtures
             ${{ runner.temp }}/competitive-results
-            ${{ runner.temp }}/competitive-baseline
             ${{ runner.temp }}/mobsf-image-digests.json
             ${{ runner.temp }}/jadx-provenance.txt
             ${{ runner.temp }}/mobsf-synthetic-state.json
             ${{ runner.temp }}/mobsf-synthetic-startup.txt
+            ${{ runner.temp }}/semgrep-packages.txt
+            ${{ runner.temp }}/semgrep-rules
+            ${{ runner.temp }}/semgrep-results
           retention-days: 30
           if-no-files-found: error
       - name: Remove benchmark-only service

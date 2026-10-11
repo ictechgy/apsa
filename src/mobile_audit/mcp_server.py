@@ -187,10 +187,21 @@ def create_server(
         source_module: str | None = None,
         configuration: str | None = None,
         specs: str | None = None,
+        dependency_module: str | None = None,
+        runtime_configuration: str | None = None,
+        dependency_evidence: list[str] | None = None,
+        apk_set_device: dict[str, Any] | None = None,
+        ipa_trust_policy: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Inspect local source/APK/IPA using cached intelligence. Configuration selects a relative manifest or .plist in a source directory, without build-system merge. specs is a project taint specification file (see specs_validate); findings it causes stay candidates. No network or device mutation."""
+        """Inspect local source/APK/AAB/APKS/IPA using cached intelligence. APKS requires apk_set_device with sdkVersion, supportedAbis, screenDensity and supportedLocales; selected APKs are inspected individually without installation or manifest/resource merging. ipa_trust_policy supplies explicit digest-bound DER anchors for cryptographic chain checks only, without Apple signer identity, revocation or app authenticity verification. Configuration selects a relative manifest or .plist without build-system merge. dependency_module and runtime_configuration select recorded Gradle lock resolution, with optional relative dependency_evidence paths; freshness and installed-build correspondence remain unverified. specs declares project sources/sinks; findings stay candidates. No network or device mutation."""
         authorized_target = select_source_module(authorize(target), source_module)
         declared = load_specs(authorize(specs)) if specs else None
+        from .run_options import artifact_options, build_selection
+
+        selection = build_selection(dependency_module, runtime_configuration, dependency_evidence)
+        apk_set_device, ipa_trust_policy = artifact_options(
+            authorized_target, apk_set_device, ipa_trust_policy
+        )
         with database() as store:
             report = scan(
                 store,
@@ -201,6 +212,9 @@ def create_server(
                 configuration=configuration,
                 source_module=source_module,
                 specs=declared,
+                dependency_selection=selection,
+                apk_set_device=apk_set_device,
+                ipa_trust_policy=ipa_trust_policy,
             )
             return assistant_context(load_report(store, report["id"]))
 
@@ -285,10 +299,21 @@ def create_server(
         source_module: str | None = None,
         configuration: str | None = None,
         specs: str | None = None,
+        dependency_module: str | None = None,
+        runtime_configuration: str | None = None,
+        dependency_evidence: list[str] | None = None,
+        apk_set_device: dict[str, Any] | None = None,
+        ipa_trust_policy: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Start a persistent offline audit. Configuration selects a relative manifest or .plist in a source directory, without build-system merge. specs is a project taint specification file. Use jobs_status for progress and jobs_cancel to stop it."""
+        """Start a persistent offline audit. APKS requires apk_set_device with sdkVersion, supportedAbis, screenDensity and supportedLocales; selected APKs are inspected individually without installation or manifest/resource merging. ipa_trust_policy supplies explicit digest-bound DER anchors for cryptographic chain checks only, without Apple signer identity, revocation or app authenticity verification. Configuration selects a relative manifest or .plist without build-system merge. dependency_module and runtime_configuration select recorded Gradle lock resolution; optional dependency_evidence paths narrow it, without verifying freshness or installation. specs declares project sources/sinks. Use jobs_status for progress and jobs_cancel to stop it."""
         authorized_target = select_source_module(authorize(target), source_module)
         declared = load_specs(authorize(specs)) if specs else None
+        from .run_options import artifact_options, build_selection
+
+        selection = build_selection(dependency_module, runtime_configuration, dependency_evidence)
+        apk_set_device, ipa_trust_policy = artifact_options(
+            authorized_target, apk_set_device, ipa_trust_policy
+        )
         with database() as store:
             return jobs.start(
                 store,
@@ -303,6 +328,9 @@ def create_server(
                     if device_info
                     else None,
                     "specs": declared,
+                    "dependency_selection": selection,
+                    "apk_set_device": apk_set_device,
+                    "ipa_trust_policy": ipa_trust_policy,
                 },
             )
 
@@ -392,11 +420,16 @@ def create_server(
             )
 
     @server.tool(annotations=READ)
-    def reports_compare(before: str, after: str) -> dict[str, Any]:
-        """Compare exact report IDs, retaining coverage differences and unproven remediation states."""
+    def reports_compare(before: str, after: str, verification: bool = False) -> dict[str, Any]:
+        """Compare exact report IDs, retaining coverage differences and unproven remediation states. verification=true adds source traces and scope/build/assertion pairing for runtime observations; disappearance never proves remediation."""
         with database() as store:
             a, b = load_report(store, before), load_report(store, after)
-            return compare(store, a["id"], b["id"])
+            result = compare(store, a["id"], b["id"])
+            if verification:
+                from .verify import compare_reports
+
+                result["verification"] = compare_reports(a, b)
+            return result
 
     @server.tool(annotations=LOCAL)
     def audit_reassess(report_id: str) -> dict[str, Any]:
@@ -405,12 +438,32 @@ def create_server(
             return assistant_context(refresh_report(store, load_report(store, report_id)["id"]))
 
     @server.tool(annotations=NETWORK)
-    def dependency_check(report_id: str = "latest") -> dict[str, Any]:
-        """Query OSV for inventoried package versions, refresh cached matches and save a reassessed report."""
+    def dependency_check(
+        report_id: str = "latest",
+        query_mode: str = "auto",
+        exclude_ecosystems: list[str] | None = None,
+        exclude_names: list[str] | None = None,
+        exclude_coordinates: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Query OSV for inventoried package versions and save a reassessed report. query_mode is auto, legacy or batch; auto batches above 100 packages. Exclusion lists are case-sensitive globs for ecosystems, package names or ecosystem:name coordinates. Excluded packages are never transmitted or marked checked from cache. Batched queries preserve per-package pagination and partial failures."""
         with database() as store:
             report = load_report(store, report_id)
-            _, errors = query_dependencies(store, report["inventory"]["dependencies"])
-            result = assistant_context(refresh_report(store, report["id"]), max_bytes=49152)
+            from .dependency_policy import DependencyTransmissionPolicy
+            from .run_options import transmission_policy
+
+            policy = transmission_policy(exclude_ecosystems, exclude_names, exclude_coordinates)
+            states: list[dict] = []
+            _, errors = query_dependencies(
+                store,
+                report["inventory"]["dependencies"],
+                query_mode=query_mode,
+                exclusion_policy=DependencyTransmissionPolicy(**policy),
+                package_states=states,
+            )
+            query = {"mode": query_mode, "packages": states, "transmission_exclusions": policy}
+            result = assistant_context(
+                refresh_report(store, report["id"], dependency_query=query), max_bytes=49152
+            )
             result["dependency_query_errors"] = [
                 str(error).encode("utf-8")[:1024].decode("utf-8", errors="ignore") for error in errors[:8]
             ]

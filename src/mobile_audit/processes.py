@@ -38,12 +38,17 @@ def command(
     output = bytearray()
     error_bytes = 0
     deadline = time.monotonic() + timeout
-    monitored = psutil.Process(process.pid) if max_rss else None
+    monitored = None
     selector = selectors.DefaultSelector()
     assert process.stdout is not None and process.stderr is not None
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
     try:
+        if max_rss:
+            try:
+                monitored = psutil.Process(process.pid)
+            except psutil.Error:
+                raise ValueError("RSS inspection unavailable; resource-limited execution refused") from None
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -57,6 +62,10 @@ def command(
                         raise ValueError("Parser memory exceeds limit; audit incomplete")
                 except psutil.NoSuchProcess:
                     pass
+                except psutil.Error:
+                    raise ValueError(
+                        "RSS inspection unavailable; resource-limited execution refused"
+                    ) from None
             for key, _ in selector.select(min(remaining, 0.1)):
                 chunk = os.read(key.fd, 65536)
                 if not chunk:

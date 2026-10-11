@@ -8,6 +8,7 @@ import pytest
 from benchmarks.competitive import (
     MobSF,
     apsa_observation,
+    measurement_state,
     mobsf_observation,
     observation_signature,
     read_manifest,
@@ -60,6 +61,37 @@ def test_failed_risky_scan_is_not_silently_excluded_from_end_to_end_recall():
     assert result["failed"] == result["failed_risky"] == 1
     assert result["tn"] == 1
     assert score([negative], "apsa")["alert_precision"] is None
+
+
+@pytest.mark.parametrize("state", ["partial", "unsupported", "unmeasured"])
+def test_abstained_report_is_neither_false_negative_nor_true_negative(state):
+    record = {
+        "input_kind": "source-zip",
+        "category": "ssl",
+        "risky": True,
+        "tools": {"apsa": {"state": state, "matched": [], "seconds": [0.1]}},
+    }
+    result = score([record], "apsa")
+    assert result[state] == 1
+    assert result["fn"] == result["tn"] == result["failed"] == 0
+    assert result["completed_case_recall"] is None
+    assert result["median_elapsed_seconds"] == 0.1
+
+
+def test_report_completion_requires_explicit_coverage_not_only_successful_process():
+    partial = apsa_observation(
+        {
+            "findings": [],
+            "coverage": [{"rule_id": "AST-CRYPTO-WEAK-HASH", "state": "partial"}],
+            "summary": {"incomplete": True},
+        }
+    )
+    assert measurement_state([partial], "apsa", "md5") == "partial"
+    unknown = mobsf_observation({"file_name": "new.zip", "code_analysis": {"findings": {}}})
+    assert measurement_state([unknown], "mobsf", "md5") == "partial"
+    assert measurement_state([unknown], "mobsf", "url") == "unsupported"
+    complete = apsa_observation({"findings": [], "coverage": [], "summary": {"incomplete": False}})
+    assert measurement_state([complete], "apsa", "md5") == "completed"
 
 
 @pytest.mark.parametrize("mutation", ["extra", "kind", "rehashed"])

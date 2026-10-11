@@ -1,7 +1,7 @@
 """Offline, function-scoped mobile source checks over bundled Tree-sitter grammars.
 
-These checks follow local assignments and known platform input APIs. They do not
-resolve methods, prove that an Android component is exported, or model navigation
+These checks follow local assignments, bounded direct calls and known platform input APIs. They do not
+prove that an Android component is exported, or model navigation
 redirects, lifecycle state, reflection, or an arbitrary sanitizer's implementation.
 Every result remains a candidate for validation on the application's test build.
 """
@@ -17,7 +17,7 @@ from pathlib import PurePath
 from typing import Any
 
 from .core import code_excerpt, finding
-from .input_snapshot import TEST_SOURCES
+from .input_snapshot import prioritized_paths
 from .maswe import weaknesses_for
 from .specs import SINK_KINDS
 
@@ -25,6 +25,7 @@ MAX_AST_BYTES = 2 * 1024 * 1024
 MAX_AST_TOTAL = 32 * 1024 * 1024
 MAX_AST_NODES = 100_000
 MAX_AST_FINDINGS = 500
+MAX_PATH_ROUTE_EVIDENCE = 32
 LANGUAGES = {".java": "java", ".kt": "kotlin", ".kts": "kotlin", ".swift": "swift", ".m": "objc"}
 UNSUPPORTED_SOURCE = {".mm", ".dart", ".js", ".jsx", ".ts", ".tsx", ".cs"}
 FUNCTIONS = {
@@ -332,11 +333,14 @@ FILE_SINKS = {
     "RandomAccessFile": "java.io.RandomAccessFile",
 }
 LIMITS_NOTE = (
-    "Function-scoped local def-use analysis; no method dispatch, interprocedural flow, "
+    "Local def-use and bounded direct interprocedural flow; no dynamic method dispatch, unbounded interprocedural flow, "
     "component reachability, redirect, or authentication-state proof. Kotlin scope-function lambdas "
     "(let, also, use, apply, run, with) are followed as blocks that may not run; other lambdas and "
-    "Swift closures are not analyzed."
+    "Swift closures are not analyzed. Lexical path containment does not prove symlink-free storage "
+    "or race-free filesystem access."
 )
+TRACE_PARTIAL = " [native-flow-partial]"
+GuardKey = int | tuple[int, str]
 
 
 def _walk(node: Any, *, descend_functions: bool = True):
@@ -357,12 +361,32 @@ def _fields(node: Any, name: str) -> list[Any]:
     return [child for i, child in enumerate(node.children) if node.field_name_for_child(i) == name]
 
 
+def _package_name(text: str) -> str:
+    """Extract once per file, including the negative result; whitespace stays on its line."""
+    package = re.search(r"^[ \t]*package[ \t]+([\w.]+)", text, re.M)
+    return package[1] if package else ""
+
+
+@dataclass(frozen=True)
+class SourceNode:
+    """A trace step carries its own file location across callable boundaries."""
+
+    node: Any
+    location: dict
+
+    @property
+    def type(self) -> str:
+        return self.node.type
+
+
 @dataclass(frozen=True)
 class Trace:
     origin: int
     source: Any
     description: str
     steps: tuple[Any, ...] = ()
+    path_safe: bool = False
+    path_route: str = ""
 
 
 @dataclass(frozen=True)
@@ -370,18 +394,53 @@ class Value:
     traces: tuple[Trace, ...] = ()
     category: str = "unknown"
     type_name: str = ""
+    identity: str = ""
 
     def bind(self, node: Any) -> Value:
         return Value(
-            tuple(Trace(t.origin, t.source, t.description, (t.steps + (node,))[-12:]) for t in self.traces),
+            tuple(
+                Trace(t.origin, t.source, t.description, (t.steps + (node,))[-12:], t.path_safe, t.path_route)
+                for t in self.traces
+            ),
             self.category,
             self.type_name,
+            self.identity,
         )
 
 
 def _union(values: list[Value], category: str = "unknown", type_name: str = "") -> Value:
-    traces = {trace.origin: trace for value in values for trace in value.traces}
-    return Value(tuple(traces.values())[:8], category, type_name)
+    traces: dict[tuple[int, str], Trace] = {}
+    for value in values:
+        for trace in value.traces:
+            key = (trace.origin, trace.path_route)
+            previous = traces.get(key)
+            if previous is not None:
+                description = trace.description
+                if TRACE_PARTIAL in previous.description and TRACE_PARTIAL not in description:
+                    description += TRACE_PARTIAL
+                trace = Trace(
+                    trace.origin,
+                    trace.source,
+                    description,
+                    trace.steps,
+                    previous.path_safe and trace.path_safe,
+                    trace.path_route,
+                )
+            traces[key] = trace
+    kept = tuple(traces.values())
+    if len(kept) > 8:
+        last = kept[-1]
+        kept = (
+            *kept[:7],
+            Trace(
+                hash(("trace-budget", tuple(traces))),
+                last.source,
+                last.description + TRACE_PARTIAL,
+                last.steps,
+            ),
+        )
+    identities = {value.identity for value in values}
+    return Value(kept, category, type_name, identities.pop() if len(identities) == 1 else "")
 
 
 @dataclass(frozen=True)
@@ -400,6 +459,8 @@ class Frame:
     javascript: dict[str, str] = field(default_factory=dict)
     # Local names bound to constant key, IV or byte material in this function: name -> description.
     constants: dict[str, str] = field(default_factory=dict)
+    object_fields: dict[str, dict[str, Value]] = field(default_factory=dict)
+    call_results: dict[tuple, Value] = field(default_factory=dict)
 
     def copy(self) -> Frame:
         return Frame(
@@ -408,6 +469,8 @@ class Frame:
             self.bridges.copy(),
             self.javascript.copy(),
             self.constants.copy(),
+            {key: values.copy() for key, values in self.object_fields.items()},
+            self.call_results.copy(),
         )
 
 
@@ -458,8 +521,10 @@ class Analyzer:
         self.lines = text.split("\n")
         self.language = language
         self.findings: list[dict] = []
+        self.finding_ids: set[str] = set()
         self.scope = ""
         self.field_types: dict[str, str] = {}
+        self.class_field_nodes: dict[tuple[int, int], list[Any]] = {}
         self.parameter_types: dict[str, str] = {}
         self.activity_scope = False
         self.imports: set[str] = set()
@@ -477,8 +542,8 @@ class Analyzer:
         self.intent_checks = 0
         # Kotlin lambda parameters bound to the receiver of let/also/use, for Intent text lookups.
         self.aliases: dict[str, Any] = {}
-        package = re.search(r"^\s*package\s+([\w.]+)", text, re.M)
-        parts = package[1].split(".") if package else []
+        self.package_name = _package_name(text)
+        parts = self.package_name.split(".") if self.package_name else []
         # Actions an app defines share its package namespace; other prefixes belong to other apps.
         self.package_prefix = ".".join(parts[: min(3, len(parts))])
         self.broadcaster_names: set[str] | None = None
@@ -487,11 +552,20 @@ class Analyzer:
         self.literal_table: tuple[dict[str, tuple[list[int], list[str]]], dict[str, list[int]]] | None = None
         # Rules whose checks stopped at a budget in this file; their coverage becomes partial.
         self.truncated_rules: set[str] = set()
+        self.native_flow: Any = None
+        self.return_values: list[Value] = []
+        self.guarded_paths: set[tuple[int, str]] = set()
+        self.unguarded_paths: set[tuple[int, str]] = set()
+        self.finding_start = 0
+        self.pending_paths: list[tuple[Any, str, set[tuple[int, str]]]] = []
+        self.active_guards: dict[GuardKey, set[str]] = {}
 
     def text(self, node: Any) -> str:
         return self.raw[node.start_byte : node.end_byte].decode("utf-8", errors="replace") if node else ""
 
     def location(self, node: Any) -> dict:
+        if isinstance(node, SourceNode):
+            return node.location.copy()
         row = bisect_right(self.line_offsets, node.start_byte) - 1
         return {
             "path": self.path,
@@ -499,6 +573,9 @@ class Analyzer:
             "column": node.start_byte - self.line_offsets[row] + 1,
             "offset": node.start_byte,
         }
+
+    def point(self, node: Any) -> SourceNode:
+        return node if isinstance(node, SourceNode) else SourceNode(node, self.location(node))
 
     def key(self, node: Any) -> str:
         return re.sub(r"[?!\s]", "", self.text(node)).removeprefix("this.").removeprefix("self.")
@@ -818,7 +895,29 @@ class Analyzer:
 
     def source(self, node: Any, description: str, category: str, prior: Value | None = None) -> Value:
         steps = prior.traces[0].steps if prior and prior.traces else ()
-        return Value((Trace(node.start_byte, node, description, (steps + (node,))[-12:]),), category)
+        point = self.point(node)
+        return Value(
+            (Trace(hash((self.path, node.start_byte)), point, description, (steps + (point,))[-12:]),),
+            category,
+        )
+
+    def archive_name(self, node: Any, entry: Value) -> Value:
+        """Repeated immutable name reads share an origin only for the same known entry."""
+        value = self.source(node, "Archive entry name", "text")
+        if not entry.identity:
+            return value
+        trace = value.traces[0]
+        return Value(
+            (
+                Trace(
+                    hash((self.path, "archive-name", entry.identity)),
+                    trace.source,
+                    trace.description,
+                    trace.steps,
+                ),
+            ),
+            "text",
+        )
 
     def changed(self, node: Any, value: Value) -> Value:
         # Checking one URL must not bless a later concatenation or an unknown helper's return value.
@@ -827,8 +926,8 @@ class Analyzer:
                 Trace(
                     hash((node.start_byte, trace.origin)),
                     trace.source,
-                    trace.description,
-                    (trace.steps + (node,))[-12:],
+                    trace.description.removesuffix(BASENAME),
+                    (trace.steps + (self.point(node),))[-12:],
                 )
                 for trace in value.traces
             ),
@@ -846,6 +945,10 @@ class Analyzer:
                 if part.type in {"interpolated_expression", "interpolation", "interpolated_string_expression"}
             ]
             return self.changed(node, _union([self.value(part, frame) for part in interpolations], "text"))
+        if node.type in {"binary_expression", "additive_expression"}:
+            rooted = self.rooted_path(node, frame)
+            if rooted is not None:
+                return rooted
         if node.type in IDENTIFIERS:
             name = self.text(node)
             if (
@@ -862,16 +965,31 @@ class Analyzer:
             argument = _field(node, "argument")
             if argument is not None:
                 return self.value(argument, frame)
+        if node.type == "unary_expression" and self.text(node).lstrip().startswith("!"):
+            # Kotlin attaches a prefix negation to the receiver of a following call.
+            argument = _field(node, "argument")
+            if argument is not None:
+                return self.value(argument, frame)
         navigation = self.navigation(node)
         if navigation:
             base, member = navigation
+            if self.native_flow is not None:
+                stored = self.native_flow.member(self, base, member, frame)
+                if stored is not None:
+                    return stored
             if self.text(base) in {"this", "self"}:
                 return frame.values.get(member, Value(type_name=self.field_types.get(member, "")))
             value = self.value(base, frame)
+            if member in {"canonicalPath", "canonicalFile"} and value.category == "path":
+                return Value(value.traces, "canonical-path", value.type_name)
+            if member == "standardizedFileURL" and value.category in {"path", "url"}:
+                return Value(value.traces, "canonical-path", value.type_name)
+            if member == "path" and value.category == "canonical-path":
+                return value
             if member in ENTRY_ITERATORS:
-                return Value(type_name="ZipEntry")
+                return Value(type_name="ZipEntry", identity=f"{self.path}:{node.start_byte}")
             if member == "name" and ARCHIVE_ENTRY.fullmatch(value.type_name.strip()):
-                return self.source(node, "Archive entry name", "text")
+                return self.archive_name(node, value)
             if (member in {"name", "fileName"} and value.category == "path") or member == "lastPathComponent":
                 return self.basename(node, value)
             if member == "fileDescriptor":
@@ -895,6 +1013,10 @@ class Analyzer:
         if call:
             receiver = self.value(call.receiver, frame)
             args = [self.value(arg, frame) for arg in call.args]
+            if self.native_flow is not None:
+                result = self.native_flow.call(self, call, frame, receiver, args)
+                if result is not None:
+                    return result
             if call.name == "getIntent" and (call.receiver is None or self.text(call.receiver) == "this"):
                 return self.source(node, "Activity Intent", "intent")
             if call.name in {"getData", "getDataString"} and receiver.category == "intent":
@@ -910,6 +1032,8 @@ class Analyzer:
             if call.name == "parse" and self.key(call.receiver) in {"Uri", "URI"}:
                 return _union(args, "url", "Uri")
             if call.name in {"URI", "URL", "URLComponents"}:
+                if call.name == "URL" and self.labeled_argument(call, "fileURLWithPath") is not None:
+                    return self.path_value(node, _union(args, "path", call.name))
                 return _union(args, "url", call.name)
             if call.name == "URLRequest":
                 return _union(args, "request", "URLRequest")
@@ -923,9 +1047,9 @@ class Analyzer:
             if call.name == "getString" and args and args[0].category == "display-name-column":
                 return self.source(node, "Content provider display name", "text")
             if call.name in ENTRY_ITERATORS:
-                return Value(type_name="ZipEntry")
+                return Value(type_name="ZipEntry", identity=f"{self.path}:{node.start_byte}")
             if call.name == "getName" and ARCHIVE_ENTRY.fullmatch(receiver.type_name.strip()):
-                return self.source(node, "Archive entry name", "text")
+                return self.archive_name(node, receiver)
             if (call.name in {"getName", "getFileName"} and receiver.category == "path") or (
                 call.name == "substringAfterLast" and call.args and self.literal(call.args[0]) == "/"
             ):
@@ -945,7 +1069,19 @@ class Analyzer:
             simple = call.name.rsplit(".", 1)[-1]
             if simple == "File" and call.receiver is None and self.language in {"java", "kotlin"}:
                 # changed() would reset the category; a File keeps "path" so wrappers are not re-reported.
-                return Value(self.changed(node, _union([receiver, *args])).traces, "path", "File")
+                return self.path_value(node, Value(_union([receiver, *args]).traces, "path", "File"))
+            if call.name in {"getCanonicalPath", "getCanonicalFile"} and receiver.category == "path":
+                return Value(receiver.traces, "canonical-path", receiver.type_name)
+            if call.name == "toPath" and receiver.category == "path":
+                return Value(receiver.traces, "path", "Path")
+            if call.name == "toRealPath" and receiver.category == "path":
+                return Value(receiver.traces, "canonical-path", "Path")
+            if call.name == "resolvingSymlinksInPath" and receiver.category in {"path", "url"}:
+                return Value(receiver.traces, "canonical-path", receiver.type_name)
+            if call.name in {"appendingPathComponent", "appending"} and self.language == "swift":
+                return self.path_value(node, _union([receiver, *args], "path", "URL"))
+            if simple in self.class_names and call.receiver is None:
+                return Value(type_name=simple, identity=f"{self.path}:{node.start_byte}")
             declared = self.spec_entry("source", call, frame)
             if declared:
                 return self.source(
@@ -969,7 +1105,12 @@ class Analyzer:
                 and self.raw[left.end_byte : right.start_byte].strip() == b"?:"
             ):
                 kept = self.value(left, frame)
-                return Value(_union([kept, self.value(right, frame)]).traces, kept.category, kept.type_name)
+                from .native_guards import exits
+
+                if exits(self, right):
+                    return kept  # The fallback cannot reach this expression's continuation.
+                merged = _union([kept, self.value(right, frame)])
+                return Value(merged.traces, kept.category, kept.type_name, merged.identity)
             generic = self.generic_call(node)
             if generic is not None:
                 target, name = generic
@@ -1007,6 +1148,65 @@ class Analyzer:
             ),
             value.category,
             value.type_name,
+        )
+
+    def path_value(self, node: Any, value: Value) -> Value:
+        """Attach the exact construction and caller route without changing input provenance."""
+        callers = self.native_flow.call_sites if self.native_flow is not None else []
+        route = "|".join([*callers, f"{self.path}:{node.start_byte}"])
+        point = self.point(node)
+        return Value(
+            tuple(
+                Trace(
+                    trace.origin,
+                    trace.source,
+                    trace.description,
+                    (trace.steps + (point,))[-12:],
+                    trace.path_safe,
+                    route,
+                )
+                for trace in value.traces
+            ),
+            value.category,
+            value.type_name,
+            value.identity,
+        )
+
+    def rooted_path(self, node: Any, frame: Frame) -> Value | None:
+        """Preserve only lexical path validation through a trusted absolute prefix."""
+        left = _field(node, "left") or _field(node, "lhs")
+        right = _field(node, "right") or _field(node, "rhs")
+        if left is None or right is None or self.raw[left.end_byte : right.start_byte].strip() != b"+":
+            return None
+        prefix = self.literal(left)
+        if (
+            not prefix
+            or prefix == "/"
+            or prefix.startswith("//")
+            or not prefix.startswith("/")
+            or not prefix.endswith("/")
+        ):
+            return None
+        if any(part in {".", ".."} for part in prefix.split("/")):
+            return None
+        value = self.value(right, frame)
+        if not value.traces or any(
+            TRACE_PARTIAL in trace.description
+            or not (
+                trace.path_safe
+                or trace.description.endswith(BASENAME)
+                or "path-contained" in self.active_guards.get(trace.origin, set())
+            )
+            for trace in value.traces
+        ):
+            return None
+        changed = self.changed(node, value)
+        return Value(
+            tuple(
+                Trace(trace.origin, trace.source, trace.description, trace.steps, True)
+                for trace in changed.traces
+            ),
+            "text",
         )
 
     def generic_call(self, node: Any) -> tuple[Any, str] | None:
@@ -1101,7 +1301,7 @@ class Analyzer:
         ]
         return self.text(name), values[-1] if values else None, self.text(type_node)
 
-    def constraints(self, node: Any, frame: Frame) -> dict[int, set[str]]:
+    def constraints(self, node: Any, frame: Frame) -> dict[GuardKey, set[str]]:
         if node is None:
             return {}
         if node.type == "parenthesized_expression" and node.named_children:
@@ -1111,6 +1311,8 @@ class Analyzer:
         if left and right:
             operator = self.raw[left.end_byte : right.start_byte].decode().strip()
             if operator == "&&":
+                if re.search(r"\bfalse\b", self.text(node)):
+                    return {}
                 result = self.constraints(left, frame)
                 for origin, checks in self.constraints(right, frame).items():
                     result.setdefault(origin, set()).update(checks)
@@ -1136,22 +1338,30 @@ class Analyzer:
                     and self.hostname(literal[1:])
                 ):
                     return {trace.origin: {"host"} for trace in receiver.traces}
-        return {}
+        from .native_guards import path_predicate
+
+        return path_predicate(self, node, frame)
 
     @staticmethod
     def hostname(value: str) -> bool:
         return bool(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", value)) and ".." not in value
 
-    def comparison(self, expression: Any, literal_node: Any, frame: Frame) -> dict[int, set[str]]:
+    def comparison(self, expression: Any, literal_node: Any, frame: Frame) -> dict[GuardKey, set[str]]:
         value = self.value(expression, frame)
         literal = self.literal(literal_node)
         valid = value.category == "scheme" and literal == "https"
         valid |= value.category == "host" and literal is not None and self.hostname(literal)
-        return {trace.origin: {value.category} for trace in value.traces} if valid else {}
+        result: dict[GuardKey, set[str]] = (
+            {trace.origin: {value.category} for trace in value.traces} if valid else {}
+        )
+        return result
 
     def emit(self, rule: str, node: Any, *, traces: tuple[Trace, ...] = (), **details: Any) -> None:
         if len(self.findings) >= MAX_AST_FINDINGS:
+            self.truncated_rules.add(rule)
             return
+        if any(TRACE_PARTIAL in trace.description for trace in traces):
+            self.truncated_rules.add(rule)
         title, severity, remediation, reference = RULES[rule]
         row = self.location(node)["line"] - 1
         evidence = {
@@ -1167,30 +1377,46 @@ class Analyzer:
                 {**self.location(trace.source), "kind": trace.description} for trace in traces
             ]
             evidence["flow"] = [{**self.location(step), "operation": step.type} for step in traces[0].steps]
-        self.findings.append(
-            finding(
-                rule,
-                title,
-                severity,
-                "candidate",
-                [evidence],
-                remediation,
-                "MASVS-CRYPTO"
-                if "CRYPTO" in rule
-                else "MASVS-CODE"
-                if "SQL" in rule or "PATH" in rule
-                else "MASVS-NETWORK"
-                if "SSL" in rule
-                else "MASVS-PLATFORM",
-                [reference],
-                confidence="structural",
-                origin="source-analysis",
-                analysis_limits=LIMITS_NOTE,
-                mapping_scope="partial",
-                mastg_tests=[],
-                maswe=list(weaknesses_for(rule)),
-            )
+        item = finding(
+            rule,
+            title,
+            severity,
+            "candidate",
+            [evidence],
+            remediation,
+            "MASVS-CRYPTO"
+            if "CRYPTO" in rule
+            else "MASVS-CODE"
+            if "SQL" in rule or "PATH" in rule
+            else "MASVS-NETWORK"
+            if "SSL" in rule
+            else "MASVS-PLATFORM",
+            [reference],
+            confidence="structural",
+            origin="source-analysis",
+            analysis_limits=LIMITS_NOTE,
+            mapping_scope="partial",
+            mastg_tests=[],
+            maswe=list(weaknesses_for(rule)),
         )
+        if item["id"] not in self.finding_ids:
+            self.finding_ids.add(item["id"])
+            self.findings.append(item)
+        elif rule == "AST-PATH-TRAVERSAL":
+            existing = next(previous for previous in self.findings if previous["id"] == item["id"])
+            previous_routes = {
+                route for entry in existing["evidence"] for route in entry.get("modeled_routes", [])
+            }
+            if not set(evidence.get("modeled_routes", [])) <= previous_routes:
+                if len(existing["evidence"]) < MAX_PATH_ROUTE_EVIDENCE:
+                    existing["evidence"].append(evidence)
+                else:
+                    self.truncated_rules.add(rule)
+                    if self.native_flow is not None:
+                        self.native_flow.partial("path route evidence budget", self)
+                    sentinel = (0, "unmodeled-path-route-budget")
+                    if sentinel not in previous_routes:
+                        existing["evidence"][-1].setdefault("modeled_routes", []).append(sentinel)
 
     def is_webview(self, node: Any, frame: Frame) -> bool:
         value = self.value(node, frame)
@@ -1274,13 +1500,13 @@ class Analyzer:
             )
 
     def check_call(
-        self, call: Call, frame: Frame, guards: dict[int, set[str]], conditions: list[Any]
+        self, call: Call, frame: Frame, guards: dict[GuardKey, set[str]], conditions: list[Any]
     ) -> None:
         receiver_key = self.key(call.receiver)
         self.check_security_call(call, frame)
         self.check_key_material(call, frame)
         self.check_intent_launch(call, frame)
-        self.check_file_path(call, frame)
+        self.check_file_path(call, frame, guards, conditions)
         if call.name == "proceed" and self.scope == "onReceivedSslError":
             if "SslErrorHandler" in self.value(call.receiver, frame).type_name:
                 self.emit(
@@ -1309,7 +1535,9 @@ class Analyzer:
             unsafe = tuple(
                 trace
                 for trace in value.traces
-                if declared["kind"] == "sql" or guards.get(trace.origin, set()) != {"scheme", "host"}
+                if declared["kind"] == "sql"
+                or TRACE_PARTIAL in trace.description
+                or not {"scheme", "host"} <= guards.get(trace.origin, set())
             )
             if unsafe:
                 self.emit(
@@ -1339,7 +1567,9 @@ class Analyzer:
         unsafe = tuple(
             trace
             for trace in value.traces
-            if javascript_sink or guards.get(trace.origin, set()) != {"scheme", "host"}
+            if javascript_sink
+            or TRACE_PARTIAL in trace.description
+            or not {"scheme", "host"} <= guards.get(trace.origin, set())
         )
         validation = {
             "recognized_guard": not bool(unsafe),
@@ -1390,21 +1620,6 @@ class Analyzer:
         if self.private_keys is None:
             self.private_keys = "kSecAttrKeyClassPrivate" in self.function_source
         return self.private_keys
-
-    def path_guard(self) -> bool:
-        """A containment or ".." check anywhere in this function (computed once per function)."""
-        if self.path_guarded is None:
-            text = self.function_source
-            canonical = any(token in text for token in CANONICAL_PATHS)
-            prefix = "startsWith" in text or "hasPrefix" in text
-            # A containment test for "..", not a replace("..", ...) that a crafted name can bypass.
-            dotdot = re.search(
-                r'(?:contains|startsWith|endsWith|indexOf|equals)\s*\(\s*"\.\.[/\\]*"'
-                r'|==\s*"\.\.[/\\]*"|"\.\.[/\\]*"\s+in\b',
-                text,
-            )
-            self.path_guarded = (canonical and prefix) or dotdot is not None
-        return self.path_guarded
 
     def compared_targets(self) -> set[str]:
         """Names whose component, package or class name a line of this function compares (built once).
@@ -1541,14 +1756,42 @@ class Analyzer:
                 intent_argument=basis,
             )
 
-    def check_file_path(self, call: Call, frame: Frame) -> None:
+    def check_file_path(
+        self, call: Call, frame: Frame, guards: dict[GuardKey, set[str]], conditions: list[Any]
+    ) -> None:
         simple = call.name.rsplit(".", 1)[-1]
         args = list(call.args)
         argument = None
+        construction = simple == "File" or self.language == "swift"
         if self.language in {"java", "kotlin"}:
             # Context.openFileOutput and similar reject path separators, so they are not sinks.
             if simple in FILE_SINKS and call.receiver is None and simple not in self.class_names and args:
                 argument = args[1] if simple == "File" and len(args) >= 2 else args[0]
+            elif (
+                self.language == "kotlin"
+                and call.name
+                in {"writeText", "writeBytes", "appendText", "appendBytes", "readText", "readBytes"}
+                and self.value(call.receiver, frame).category in {"path", "canonical-path"}
+            ):
+                argument = call.receiver
+                construction = False
+            elif (
+                self.key(call.receiver) in {"Files", "java.nio.file.Files"}
+                and call.name
+                in {
+                    "newOutputStream",
+                    "newInputStream",
+                    "write",
+                    "writeString",
+                    "readAllBytes",
+                    "readString",
+                    "copy",
+                    "move",
+                }
+                and args
+            ):
+                argument = args[0]
+                construction = False
         elif self.language == "swift":
             if call.name == "appendingPathComponent" and args:
                 argument = args[0]
@@ -1556,24 +1799,68 @@ class Analyzer:
                 argument = self.labeled_argument(call, "path")
             elif call.name == "URL":
                 argument = self.labeled_argument(call, "fileURLWithPath")
+            elif call.name in {"write", "createFile"}:
+                argument = (
+                    self.labeled_argument(call, "to")
+                    or self.labeled_argument(call, "toFile")
+                    or self.labeled_argument(call, "atPath")
+                )
+                construction = False
+            elif call.name in {"FileHandle", "Data", "NSData", "String", "NSString"}:
+                argument = (
+                    self.labeled_argument(call, "forWritingTo")
+                    or self.labeled_argument(call, "forReadingFrom")
+                    or self.labeled_argument(call, "contentsOfFile")
+                    or self.labeled_argument(call, "contentsOf")
+                )
+                construction = False
         if argument is None or self.name_only(call.node):
             return
         if FILE_DESCRIPTOR.search(self.text(argument).strip()):
             return  # a FileDescriptor opened by the platform is not a path
         value = self.value(argument, frame)
-        if value.category == "path" or "FileDescriptor" in value.type_name:
-            return  # the File it wraps was checked where it was built
-        traces = tuple(trace for trace in value.traces if not trace.description.endswith(BASENAME))
+        if construction:
+            value = self.path_value(call.node, value)
+        if "FileDescriptor" in value.type_name:
+            return
+        traces = tuple(
+            trace
+            for trace in value.traces
+            if not trace.description.endswith(BASENAME) or TRACE_PARTIAL in trace.description
+        )
         if not traces:
             return
-        if self.path_guard():
+        unsafe = tuple(
+            trace
+            for trace in traces
+            if TRACE_PARTIAL in trace.description
+            or (
+                not trace.path_safe
+                and "path-contained" not in guards.get(trace.origin, set())
+                and "path-contained" not in guards.get((trace.origin, trace.path_route), set())
+            )
+        )
+        if not unsafe:
+            if not conditions:
+                self.guarded_paths.update(
+                    (trace.origin, trace.path_route) for trace in traces if trace.path_route
+                )
+            return
+        if not construction:
+            self.unguarded_paths.update(
+                (trace.origin, trace.path_route) for trace in unsafe if trace.path_route
+            )
+        if value.category in {"path", "canonical-path"} and not construction:
+            # The corresponding path construction already carries a candidate.
             return
         self.emit(
             "AST-PATH-TRAVERSAL",
             call.node,
-            traces=traces,
+            traces=unsafe,
             sink=call.name,
-            validation="no canonical-path containment or '..' check in this function",
+            validation="same input is not contained by a dominating guard before this path operation",
+            path_operation="construction" if construction else "file-io",
+            modeled_routes=[(trace.origin, trace.path_route) for trace in unsafe],
             unknown_helpers_are_sanitizers=False,
         )
 
@@ -1703,13 +1990,28 @@ class Analyzer:
                     (call.node.start_byte, call.node.end_byte)
                 )
 
-    def visit(self, node: Any, frame: Frame, guards: dict[int, set[str]], conditions: list[Any]) -> None:
+    def visit(self, node: Any, frame: Frame, guards: dict[GuardKey, set[str]], conditions: list[Any]) -> None:
+        self.active_guards = guards
         if node.type in COMMENTS or node.type in FUNCTIONS:
             return
         if node.type in STRINGS:
             for part in node.named_children:
                 if "interpolat" in part.type:
                     self.visit(part, frame, guards, conditions)
+            return
+        if node.type in {
+            "return_statement",
+            "return_expression",
+            "control_transfer_statement",
+            "jump_expression",
+        } and self.text(node).lstrip().startswith("return"):
+            for part in node.named_children:
+                self.visit(part, frame, guards, conditions)
+            expressions = [
+                part for part in node.named_children if part.type not in {"return_keyword", "label"}
+            ]
+            if expressions:
+                self.return_values.append(self.value(expressions[-1], frame).bind(self.point(node)))
             return
         declaration = self.declaration(node)
         if declaration:
@@ -1721,8 +2023,10 @@ class Analyzer:
                 frame.constants[name] = described
             else:
                 frame.constants.pop(name, None)
-            value = self.value(expression, frame).bind(node)
-            frame.values[name] = Value(value.traces, value.category, type_name or value.type_name)
+            value = self.value(expression, frame).bind(self.point(node))
+            frame.values[name] = Value(
+                value.traces, value.category, type_name or value.type_name, value.identity
+            )
             if type_name:
                 frame.types[name] = type_name
             return
@@ -1745,11 +2049,13 @@ class Analyzer:
                     base = next((part for part in _walk(left) if part.type in IDENTIFIERS), None)
                     if base is not None:
                         frame.constants.pop(self.text(base), None)
-                value = self.value(right, frame).bind(node)
+                value = self.value(right, frame).bind(self.point(node))
                 if key in frame.types or key in frame.values:
                     frame.values[key] = Value(
-                        value.traces, value.category, frame.types.get(key, value.type_name)
+                        value.traces, value.category, frame.types.get(key, value.type_name), value.identity
                     )
+                elif self.native_flow is not None:
+                    self.native_flow.assign_member(self, left, value, frame)
                 return
         if node.type in {"if_statement", "if_expression"}:
             condition = _field(node, "condition")
@@ -1768,7 +2074,22 @@ class Analyzer:
                 self.visit(then_node, branch, positive, [*conditions, condition] if condition else conditions)
             alternative = before.copy()
             if else_node:
-                self.visit(else_node, alternative, guards, conditions)
+                self.visit(
+                    else_node, alternative, guards, [*conditions, condition] if condition else conditions
+                )
+            from .native_guards import exits, path_predicate
+
+            if exits(self, then_node) and not else_node:
+                continuation = path_predicate(self, condition, before, positive=False)
+                for origin, checks in continuation.items():
+                    guards.setdefault(origin, set()).update(checks)
+                    if "path-contained" in checks and not conditions and isinstance(origin, tuple):
+                        self.guarded_paths.add(origin)
+            elif exits(self, else_node):
+                for origin, checks in self.constraints(condition, before).items():
+                    guards.setdefault(origin, set()).update(checks)
+                    if "path-contained" in checks and not conditions and isinstance(origin, tuple):
+                        self.guarded_paths.add(origin)
             # Conservatively retain both possible assignments after a branch. Do not apply its guard outside it.
             for key in before.values:
                 previous = before.values[key]
@@ -1783,6 +2104,12 @@ class Analyzer:
                 )
             frame.bridges.update(branch.bridges)
             frame.bridges.update(alternative.bridges)
+            for identity in branch.object_fields.keys() | alternative.object_fields.keys():
+                one, two = branch.object_fields.get(identity, {}), alternative.object_fields.get(identity, {})
+                frame.object_fields[identity] = {
+                    key: _union([one.get(key, Value()), two.get(key, Value())])
+                    for key in one.keys() | two.keys()
+                }
             frame.constants = {
                 key: value for key, value in branch.constants.items() if key in alternative.constants
             }
@@ -1790,15 +2117,16 @@ class Analyzer:
         if node.type == "guard_statement" and self.language == "swift":
             # The continuation is guarded only when the else body exits the function.
             bodies = [part for part in node.named_children if part.type == "statements"]
-            exits = bodies and any(
-                part.type == "control_transfer_statement" and self.text(part).startswith(("return", "throw"))
-                for part in bodies[0].named_children
-            )
+            from .native_guards import exits as definitely_exits
+
+            exits = bool(bodies and definitely_exits(self, bodies[0]))
             for condition in _fields(node, "condition"):
                 self.visit(condition, frame, guards, conditions)
                 if exits:
                     for origin, checks in self.constraints(condition, frame).items():
                         guards.setdefault(origin, set()).update(checks)
+                        if "path-contained" in checks and not conditions and isinstance(origin, tuple):
+                            self.guarded_paths.add(origin)
                     conditions.append(condition)
             return
         if node.type in BLOCKS:
@@ -1813,11 +2141,16 @@ class Analyzer:
                     if declaration:
                         declared.add(declaration[0])
                 self.visit(child, local, local_guards, local_conditions)
+                from .native_guards import exits
+
+                if exits(self, child):
+                    break
             for key in frame.values:
                 if key not in declared:
                     frame.values[key] = local.values[key]
             frame.bridges = local.bridges
             frame.javascript = local.javascript
+            frame.object_fields = local.object_fields
             frame.constants = {
                 **{key: value for key, value in local.constants.items() if key not in declared},
                 **{key: value for key, value in frame.constants.items() if key in declared},
@@ -1840,6 +2173,10 @@ class Analyzer:
                 self.visit(call.receiver, frame, guards, conditions)
             for arg in call.args:
                 self.visit(arg, frame, guards, conditions)
+            if self.native_flow is not None:
+                self.native_flow.active_guards = guards
+                self.native_flow.active_conditions = conditions
+                self.value(call.node, frame)
             self.check_call(call, frame, guards, conditions)
             self.release_constants(call, frame)
             scope = self.scope_function(call)
@@ -1887,7 +2224,7 @@ class Analyzer:
         self,
         node: Any,
         frame: Frame,
-        guards: dict[int, set[str]],
+        guards: dict[GuardKey, set[str]],
         conditions: list[Any],
         scope: str,
         receiver: Any,
@@ -2032,9 +2369,17 @@ class Analyzer:
             parent = parent.parent
         fields = {}
         if parent:
-            for declaration in parent.named_children:
-                if declaration.type not in {"field_declaration", "property_declaration"}:
-                    continue
+            key = (parent.start_byte, parent.end_byte)
+            if key not in self.class_field_nodes:
+                # Avoid scanning every method in a large class again for each function.
+                # Only declarations are cached: value/type inference still uses the
+                # current function's context, as before.
+                self.class_field_nodes[key] = [
+                    node
+                    for node in parent.named_children
+                    if node.type in {"field_declaration", "property_declaration"}
+                ]
+            for declaration in self.class_field_nodes[key]:
                 nodes = (
                     declaration.named_children if declaration.type == "field_declaration" else [declaration]
                 )
@@ -2046,8 +2391,133 @@ class Analyzer:
                         fields[name] = type_name or value.type_name
         return fields
 
-    def analyze(self, root: Any) -> None:
-        for node in _walk(root):
+    def start_function(self, function: Any) -> Frame:
+        self.finding_start = len(self.findings)
+        self.pending_paths = []
+        self.active_guards = {}
+        name = _field(function, "name")
+        self.scope = self.text(name)
+        self.function = function
+        self.function_source = self.text(function)
+        self.path_guarded = self.action_hint = None
+        self.intent_checks = 0
+        self.literal_table = None
+        self.private_keys = None
+        self.target_names = None
+        self.aliases = {}
+        self.field_types = self.class_fields(function)
+        self.return_values = []
+        self.guarded_paths = set()
+        self.unguarded_paths = set()
+        enclosing = function.parent
+        while enclosing and enclosing.type != "class_declaration":
+            enclosing = enclosing.parent
+        bases = (
+            [
+                part
+                for part in enclosing.named_children
+                if part.type in {"superclass", "delegation_specifiers"}
+            ]
+            if enclosing
+            else []
+        )
+        self.activity_scope = any(
+            re.search(
+                r"\b(?:Activity|AppCompatActivity|ComponentActivity|FragmentActivity)\b", self.text(base)
+            )
+            for base in bases
+        )
+        provider_scope = (
+            self.language in {"java", "kotlin"}
+            and enclosing is not None
+            and self.text(_field(enclosing, "name")) in self.exposed_providers
+            and any(re.search(r"\bContentProvider\b", self.text(base)) for base in bases)
+        )
+        parameters = self.parameters(function)
+        self.parameter_types = {name: type_name for name, type_name, _ in parameters}
+        frame = Frame(types={**self.field_types, **self.parameter_types})
+        frame.values.update({name: Value(type_name=kind) for name, kind in self.field_types.items()})
+        # Typed field values must not hide immutable material from this file.
+        # Parameters shadow fields; subsequent local writes still invalidate it.
+        frame.constants.update(
+            {
+                name: self.constants[name][0]
+                for name in self.field_types
+                if name in self.constants and name not in self.parameter_types
+            }
+        )
+        if self.native_flow is not None:
+            frame.values.update(self.native_flow.initial_fields(self, function))
+        for name, type_name, node in parameters:
+            if ARCHIVE_ENTRY.fullmatch(type_name.strip()):
+                frame.values[name] = Value(type_name=type_name, identity=f"{self.path}:{node.start_byte}")
+            category = None
+            description = ""
+            if re.search(r"\bIntent\b", type_name):
+                category, description = "intent", "Intent parameter (external origin requires validation)"
+            elif "WebResourceRequest" in type_name:
+                category, description = "request", "WebView navigation request parameter"
+            elif "WKNavigationAction" in type_name:
+                category, description = "navigation", "WKWebView navigation action parameter"
+            elif "UIOpenURLContext" in type_name:
+                category, description = "url-context", "iOS scene URL context parameter"
+            elif (
+                provider_scope
+                and self.scope in PROVIDER_METHODS
+                and re.search(r"\b(?:String|Uri)\b", type_name)
+            ):
+                category = "url" if re.search(r"\bUri\b", type_name) else "text"
+                description = "ContentProvider caller-supplied argument"
+            elif self.scope == "shouldOverrideUrlLoading" and re.search(r"\bString\b", type_name):
+                category, description = "text", "WebView navigation URL parameter"
+            elif (
+                self.language == "swift"
+                and self.scope in {"application", "scene"}
+                and re.search(r"\bURL\b", type_name)
+            ):
+                category, description = "url", "iOS application URL callback parameter"
+            if category:
+                value = self.source(node, description, category)
+                frame.values[name] = Value(value.traces, value.category, type_name)
+        return frame
+
+    def finish_paths(self) -> None:
+        safe = self.guarded_paths - self.unguarded_paths
+        if not safe:
+            return
+        self.close_path_routes(safe, scope=self.scope)
+        for analyzer, identity, origins in self.pending_paths:
+            if origins and origins <= safe:
+                analyzer.close_path_routes(origins, identity=identity)
+
+    def close_path_routes(
+        self, safe: set[tuple[int, str]], *, identity: str | None = None, scope: str | None = None
+    ) -> None:
+        retained = []
+        for item in self.findings:
+            if item["rule_id"] != "AST-PATH-TRAVERSAL" or identity is not None and item["id"] != identity:
+                retained.append(item)
+                continue
+            evidence = []
+            for entry in item["evidence"]:
+                routes = set(entry.get("modeled_routes", []))
+                if (
+                    entry.get("path_operation") == "construction"
+                    and routes
+                    and routes <= safe
+                    and (scope is None or entry.get("function") == scope)
+                ):
+                    continue
+                evidence.append(entry)
+            if evidence:
+                item["evidence"] = evidence
+                retained.append(item)
+        self.findings[:] = retained
+        self.finding_ids = {item["id"] for item in self.findings}
+
+    def prepare(self, root: Any, nodes: list[Any]) -> None:
+        self.class_field_nodes.clear()
+        for node in nodes:
             if node.type in {"import_declaration", "import_header", "import"}:
                 self.imports.add(re.sub(r"^import\s+|;\s*$", "", self.text(node)).strip())
             if node.type == "class_declaration":
@@ -2072,7 +2542,12 @@ class Analyzer:
                 if name is not None:
                     self.class_names.add(self.text(name))
         self.collect_constants(root)
-        for function in _walk(root):
+
+    def analyze(self, root: Any, nodes: list[Any] | None = None, *, prepared: bool = False) -> None:
+        nodes = list(_walk(root)) if nodes is None else nodes
+        if not prepared:
+            self.prepare(root, nodes)
+        for function in nodes:
             if function.type not in FUNCTIONS:
                 continue
             self.function_counts["observed"] += 1
@@ -2084,73 +2559,7 @@ class Analyzer:
             if uncertain:
                 self.function_counts["skipped"] += 1
                 continue
-            name = _field(function, "name")
-            self.scope = self.text(name)
-            self.function = function
-            self.function_source = self.text(function)
-            self.path_guarded = self.action_hint = None
-            self.intent_checks = 0
-            self.literal_table = None
-            self.private_keys = None
-            self.target_names = None
-            self.aliases = {}
-            self.field_types = self.class_fields(function)
-            enclosing = function.parent
-            while enclosing and enclosing.type != "class_declaration":
-                enclosing = enclosing.parent
-            bases = (
-                [
-                    part
-                    for part in enclosing.named_children
-                    if part.type in {"superclass", "delegation_specifiers"}
-                ]
-                if enclosing
-                else []
-            )
-            self.activity_scope = any(
-                re.search(
-                    r"\b(?:Activity|AppCompatActivity|ComponentActivity|FragmentActivity)\b", self.text(base)
-                )
-                for base in bases
-            )
-            provider_scope = (
-                self.language in {"java", "kotlin"}
-                and enclosing is not None
-                and self.text(_field(enclosing, "name")) in self.exposed_providers
-                and any(re.search(r"\bContentProvider\b", self.text(base)) for base in bases)
-            )
-            parameters = self.parameters(function)
-            self.parameter_types = {name: type_name for name, type_name, _ in parameters}
-            frame = Frame(types=self.parameter_types.copy())
-            for name, type_name, node in parameters:
-                category = None
-                description = ""
-                if re.search(r"\bIntent\b", type_name):
-                    category, description = "intent", "Intent parameter (external origin requires validation)"
-                elif "WebResourceRequest" in type_name:
-                    category, description = "request", "WebView navigation request parameter"
-                elif "WKNavigationAction" in type_name:
-                    category, description = "navigation", "WKWebView navigation action parameter"
-                elif "UIOpenURLContext" in type_name:
-                    category, description = "url-context", "iOS scene URL context parameter"
-                elif (
-                    provider_scope
-                    and self.scope in PROVIDER_METHODS
-                    and re.search(r"\b(?:String|Uri)\b", type_name)
-                ):
-                    category = "url" if re.search(r"\bUri\b", type_name) else "text"
-                    description = "ContentProvider caller-supplied argument"
-                elif self.scope == "shouldOverrideUrlLoading" and re.search(r"\bString\b", type_name):
-                    category, description = "text", "WebView navigation URL parameter"
-                elif (
-                    self.language == "swift"
-                    and self.scope in {"application", "scene"}
-                    and re.search(r"\bURL\b", type_name)
-                ):
-                    category, description = "url", "iOS application URL callback parameter"
-                if category:
-                    value = self.source(node, description, category)
-                    frame.values[name] = Value(value.traces, value.category, type_name)
+            frame = self.start_function(function)
             body = _field(function, "body") or next(
                 (node for node in function.named_children if node.type == "function_body"), None
             )
@@ -2185,19 +2594,22 @@ class Analyzer:
                                 security_purpose="unverified",
                             )
                 self.visit(body, frame, {}, [])
+                if self.native_flow is not None:
+                    self.native_flow.finish(self, function, frame)
+                self.finish_paths()
             else:
                 self.function_counts["without_body"] += 1
 
 
-def _test_source_last(source: Any) -> bool:
+def _source_path(source: Any) -> str:
     path = (
         source.get("path")
         if isinstance(source, dict)
         else source[0]
-        if isinstance(source, (tuple, list))
+        if isinstance(source, (tuple, list)) and source
         else ""
     )
-    return isinstance(path, str) and bool(TEST_SOURCES.search(path))
+    return path if isinstance(path, str) else ""
 
 
 def analyze_sources(
@@ -2223,10 +2635,13 @@ def analyze_sources(
     file_metrics = []
     truncated_rules: set[str] = set()
     function_totals = {"observed": 0, "analyzed": 0, "skipped": 0, "without_body": 0}
+    native_files: list[tuple[Analyzer, Any, list[Any]]] = []
+    native_metrics: list[tuple[Analyzer, dict]] = []
     normalized_files = 0
     remaining_records = 0
-    # Within the AST byte budget, shipped code goes before tests, as in input staging.
-    sources = sorted(sources, key=_test_source_last)
+    # Share staging priorities and module fairness so vendored code cannot consume
+    # the AST budget before the app's own sources.
+    sources = [sources[index] for index in prioritized_paths([_source_path(source) for source in sources])]
     for source_index, source in enumerate(sources):
         if isinstance(source, dict):
             path, text = source.get("path"), source.get("text")
@@ -2301,9 +2716,11 @@ def analyze_sources(
                     tree = parsers[language].parse(compatible)
                     if tree is None:
                         raise ValueError("compatibility parser deadline exceeded")
+                    nodes = []
                     for count, _node in enumerate(_walk(tree.root_node), 1):
                         if count > MAX_AST_NODES:
                             raise ValueError("compatibility AST node budget exceeded")
+                        nodes.append(_node)
                     normalized_files += 1
                     warnings.append(
                         f"AST parser compatibility in {path}: {adaptations}; source remains partial."
@@ -2323,22 +2740,19 @@ def analyze_sources(
                 analyzer = ObjCAnalyzer(path, text, uncertain_spans=dropped)
                 skipped += 1  # Preprocessing, dynamic dispatch and unsupported flows remain partial.
                 metric["state"] = "partial"
+                analyzer.analyze(tree.root_node)
             else:
                 analyzer = Analyzer(path, text, language, specs, exposed_providers, android_levels)
-            analyzer.analyze(tree.root_node)
+                native_files.append((analyzer, tree.root_node, nodes))
+                native_metrics.append((analyzer, metric))
             metric["state"] = "partial" if tree.root_node.has_error or adaptations else "checked"
             if language == "objc":
                 metric["state"] = "partial"
             metric["functions"] = analyzer.function_counts
-            for name, value in analyzer.function_counts.items():
-                function_totals[name] += value
-            findings.extend(analyzer.findings)
-            truncated_rules |= getattr(analyzer, "truncated_rules", set())
-            if not tree.root_node.has_error and not adaptations and language != "objc":
-                pattern_exclusions[path] = {
-                    rule: [{"start": start, "end": end} for start, end in sorted(offsets)]
-                    for rule, offsets in analyzer.pattern_exclusions.items()
-                }
+            if language == "objc":
+                for name, value in analyzer.function_counts.items():
+                    function_totals[name] += value
+                findings.extend(analyzer.findings)
             parsed += 1
             if len(findings) >= MAX_AST_FINDINGS:
                 findings = findings[:MAX_AST_FINDINGS]
@@ -2351,6 +2765,34 @@ def analyze_sources(
             warnings.append(f"AST analysis skipped {path}: {error}.")
             metric["reason"] = str(error)
             skipped += 1
+    flow_metadata = {"state": "not-run", "reasons": []}
+    if native_files:
+        from .native_flow import NativeFlow
+
+        flow = NativeFlow(native_files)
+        flow.run()
+        flow_metadata = flow.metadata()
+        for analyzer, metric in native_metrics:
+            metric["functions"] = analyzer.function_counts
+            for name, value in analyzer.function_counts.items():
+                function_totals[name] += value
+            for item in analyzer.findings:
+                for evidence in item["evidence"]:
+                    evidence.pop("modeled_routes", None)
+            findings.extend(analyzer.findings)
+            truncated_rules |= analyzer.truncated_rules
+            if metric["state"] == "checked":
+                pattern_exclusions[analyzer.path] = {
+                    rule: [{"start": start, "end": end} for start, end in sorted(offsets)]
+                    for rule, offsets in analyzer.pattern_exclusions.items()
+                }
+        if flow.reasons:
+            truncated_rules.update(RULES)
+            warnings.append("Native flow remains partial: " + "; ".join(sorted(flow.reasons)) + ".")
+    if len(findings) >= MAX_AST_FINDINGS:
+        findings = findings[:MAX_AST_FINDINGS]
+        truncated_rules.update(RULES)
+        warnings.append("AST finding budget reached; remaining candidates were truncated.")
     for language, reason in unavailable.items():
         warnings.append(
             f"AST grammar unavailable for {language} ({reason}); install the bundled grammar dependency."
@@ -2410,6 +2852,7 @@ def analyze_sources(
         "warnings": warnings,
         "pattern_exclusions": pattern_exclusions,
         "metadata": {
+            "native_flow": flow_metadata,
             "files": file_metrics,
             "functions": function_totals,
             "function_inventory_complete": bool(parsed) and not skipped,

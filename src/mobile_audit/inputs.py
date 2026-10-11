@@ -57,7 +57,10 @@ TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
     ".js",
+    ".jsx",
+    ".jsbundle",
     ".ts",
+    ".tsx",
     ".dart",
     ".xcprivacy",
     ".resolved",
@@ -253,7 +256,16 @@ def android_manifest(raw: bytes, origin: str, inventory: dict) -> None:
     inventory["package"] = root.get("package", inventory.get("package", ""))
     if root.get("package"):
         inventory.setdefault("apps", []).append(
-            {"platform": "android", "package": root.get("package"), "path": origin, "basis": "manifest"}
+            {
+                "platform": "android",
+                "package": root.get("package"),
+                "path": origin,
+                "basis": "manifest",
+                "version_code": root.get(ANDROID_NS + "versionCode", ""),
+                "version_name": root.get(ANDROID_NS + "versionName", ""),
+                "split": root.get("split", ""),
+                "config_for_split": root.get("configForSplit", ""),
+            }
         )
     sdk = root.find("uses-sdk")
     if sdk is not None:
@@ -456,11 +468,21 @@ def _outer_app_index(parts: tuple[str, ...]) -> int | None:
 
 
 def inspect_target(
-    target: Path, sbom: Path | None = None, *, authorized: bool = False, configuration: str | None = None
+    target: Path,
+    sbom: Path | None = None,
+    *,
+    authorized: bool = False,
+    configuration: str | None = None,
+    dependency_selection: dict | None = None,
+    ipa_trust_policy: dict | None = None,
 ) -> tuple[dict, list[tuple[str, str]]]:
     target = target if authorized else target.expanduser().resolve()
     if not target.exists():
         raise ValueError(f"Input not found: {target}")
+    if dependency_selection and not target.is_dir():
+        raise ValueError("Dependency build selection requires a source directory")
+    if ipa_trust_policy is not None and target.suffix.lower() != ".ipa":
+        raise ValueError("IPA trust policy requires an .ipa archive")
     inventory = {
         "target": str(target),
         "input_kind": "source" if target.is_dir() else target.suffix.lower().lstrip("."),
@@ -481,6 +503,10 @@ def inspect_target(
         "partial": False,
     }
     sources = []
+    if ipa_trust_policy is not None:
+        from .apple_trust import validate_trust_policy
+
+        inventory["ipa_trust_policy"] = validate_trust_policy(ipa_trust_policy)
     source_plists = {}
     main_plists = set()
     app_archive = False
@@ -500,6 +526,9 @@ def inspect_target(
         "configuration_semantics": "declared source file; no build-system merge",
     }
     hasher = hashlib.sha256()
+    resource_resolver = None
+    resource_bytes = 0
+    tables: dict[str, bytes] = {}
 
     def primary_android(name: str) -> bool:
         return (
@@ -541,13 +570,13 @@ def inspect_target(
                 if target.suffix.lower() == ".aab" and not raw.lstrip().startswith(b"<"):
                     from .aab_manifest import decode_manifest
 
-                    raw, notes = decode_manifest(raw)
+                    raw, notes = decode_manifest(raw, resources=resource_resolver)
                     inventory["warnings"].extend(notes)
                     inventory["partial"] |= bool(notes)
                     inventory["aab_manifest"] = {
                         "path": name,
                         "basis": "aapt2-protobuf",
-                        "resource_resolution": False,
+                        "resource_resolution": "bounded-scalar" if resource_resolver is not None else False,
                         "unresolved_attributes": bool(notes),
                     }
                 android_manifest(raw, name, inventory)
@@ -558,7 +587,7 @@ def inspect_target(
             ):
                 from .aab_manifest import decode_manifest
 
-                raw, notes = decode_manifest(raw)
+                raw, notes = decode_manifest(raw, resources=resource_resolver)
                 inventory["warnings"].extend(f"{name}: {note}" for note in notes)
                 inventory["partial"] |= bool(notes)
                 feature_manifest(raw, name, inventory)
@@ -599,7 +628,20 @@ def inspect_target(
             inventory["warnings"].append(f"Could not parse {name}: {type(error).__name__}")
             inventory["partial"] = True
         if Path(name).suffix in TEXT_SUFFIXES and not raw.startswith(b"bplist"):
-            sources.append((name, raw.decode("utf-8", errors="replace")))
+            if Path(name).suffix in {".js", ".jsx", ".jsbundle", ".ts", ".tsx", ".dart"}:
+                try:
+                    text = raw.decode("utf-8")
+                    if "\0" in text:
+                        raise ValueError("compiled hybrid input")
+                except (UnicodeError, ValueError):
+                    inventory["warnings"].append(
+                        f"Compiled/non-text hybrid member not analyzed as source: {name}"
+                    )
+                    inventory["partial"] = True
+                else:
+                    sources.append((name, text))
+            else:
+                sources.append((name, raw.decode("utf-8", errors="replace")))
 
     if target.is_dir():
 
@@ -690,6 +732,52 @@ def inspect_target(
             items = archive.infolist()
             if len(items) > MAX_FILES or sum(i.file_size for i in items) > MAX_ARCHIVE_TOTAL:
                 raise ValueError("Archive exceeds safe size/file-count limit")
+            names = [item.filename for item in items]
+            if len(set(names)) != len(names):
+                raise ValueError("Archive contains duplicate member paths")
+            if any(name.startswith("/") or ".." in Path(name).parts or "\\" in name for name in names):
+                raise ValueError("Unsafe archive member path")
+            if target.suffix.lower() == ".aab":
+                from .aab_resources import build_resources
+
+                tables = {}
+                resource_bytes = 0
+                resource_partial = False
+                for item in items:
+                    if not re.fullmatch(r"[A-Za-z0-9_.-]+/resources\.pb", item.filename):
+                        continue
+                    if (
+                        item.file_size > MAX_FILE
+                        or resource_bytes + item.file_size > 8 * 1024 * 1024
+                        or len(tables) >= 128
+                    ):
+                        resource_partial = True
+                        inventory["warnings"].append(
+                            "AAB resource input budget exceeded; scalar resolution is partial"
+                        )
+                        break
+                    try:
+                        raw = archive.read(item)
+                    except (
+                        OSError,
+                        zipfile.BadZipFile,
+                        RuntimeError,
+                        NotImplementedError,
+                        EOFError,
+                        zlib.error,
+                    ):
+                        resource_partial = True
+                        inventory["warnings"].append("AAB resource member unreadable: " + item.filename)
+                        continue
+                    if not raw:
+                        resource_partial = True
+                        continue
+                    tables[item.filename.split("/")[0]] = raw
+                    resource_bytes += len(raw)
+                    inventory["files_scanned"] += 1
+                    inventory["bytes_scanned"] += len(raw)
+                resource_resolver = build_resources(tables)
+                resource_resolver.partial |= resource_partial
             # AppleDouble files contain filesystem metadata, not app configuration.
             items = [
                 item
@@ -778,6 +866,16 @@ def inspect_target(
                     inventory["files_scanned"] += 1
                     # DEX parsing and feature discovery belong to the bounded binary pass.
             if target.suffix.lower() == ".aab":
+                if resource_resolver is not None:
+                    inventory["aab_resources"] = {
+                        "method": "bounded-aapt2-scalar",
+                        "bytes": resource_bytes,
+                        "modules": sorted(tables),
+                        "inventory_partial": resource_resolver.partial,
+                        "evidence": resource_resolver.evidence,
+                        "installed_split_verified": False,
+                    }
+                    inventory["warnings"].extend(dict.fromkeys(resource_resolver.warnings))
                 inventory["partial"] = True
                 inventory["archive_role"] = "android-app-bundle"
                 inventory["android_modules"] = sorted(
@@ -788,7 +886,7 @@ def inspect_target(
                     }
                 )
                 inventory["warnings"].append(
-                    "AAB base manifest, feature module manifests and declared module DEX are inspected; resource/device split merging and installed feature reachability are not established."
+                    "AAB module manifests, bounded agreeing scalar resources and declared module DEX are inspected; device split merging and installed feature reachability are not established."
                 )
         if target.suffix.lower() == ".ipa":
             inventory["warnings"].append(
@@ -818,6 +916,27 @@ def inspect_target(
             graph = None
             inventory["warnings"].append(f"Gradle module graph not resolved: {type(error).__name__}")
         inventory["warnings"].extend(resolve_catalog_usage(inventory["dependencies"], sources, graph))
+        from .dependency_evidence import ResolvedBuildSelection, select_dependency_evidence
+
+        selection = ResolvedBuildSelection(**dependency_selection) if dependency_selection else None
+        inventory["dependencies"], build_warnings = select_dependency_evidence(
+            inventory["dependencies"], graph, selection=selection
+        )
+        inventory["warnings"].extend(build_warnings)
+        if selection:
+            inventory.setdefault("source_selection", {})["dependency_build"] = {
+                "application_module": selection.application_module,
+                "runtime_configuration": selection.runtime_configuration,
+                "evidence_paths": list(selection.evidence_paths),
+                "freshness": "unverified",
+                "installed_build_verified": False,
+            }
+            selected = [
+                d.get("build_evidence", {})
+                for d in inventory["dependencies"]
+                if d.get("build_evidence", {}).get("selection") in {"selected", "partial"}
+            ]
+            inventory["partial"] |= not selected or any(d["selection"] == "partial" for d in selected)
         supersede(inventory["dependencies"], graph, partial=inventory["partial"])
         references, warnings = plist_references(sources)
         inventory["warnings"].extend(warnings)

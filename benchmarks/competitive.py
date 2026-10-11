@@ -25,6 +25,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from benchmarks.competitive_cases import MAPPING, MOBSF_COMMIT, SCHEMA, cases, generate, project_files
+from benchmarks.process_measure import ServiceRss, capture
 
 
 def sha(path: Path) -> str:
@@ -55,17 +56,64 @@ def command(args: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True, timeout=300, check=True, **kwargs)
 
 
-def build_apks(root: Path, sdk: Path) -> dict:
+def build_apks(
+    root: Path,
+    sdk: Path,
+    *,
+    platform_name: str = "android-35",
+    build_tools: str = "35.0.0",
+    java_home: Path | None = None,
+) -> dict:
     manifest = read_manifest(root)
-    tools = sdk / "build-tools/35.0.0"
-    android = sdk / "platforms/android-35/android.jar"
+    tools = sdk / "build-tools" / build_tools
+    android = sdk / "platforms" / platform_name / "android.jar"
     for path in [android, tools / "aapt2", tools / "d8", tools / "apksigner"]:
         if not path.is_file():
             raise ValueError(f"Required pinned Android build input is missing: {path}")
     key = root / "synthetic-benchmark.jks"
-    command(
+    if key.exists() or any(case["input_kind"] == "apk" for case in manifest["cases"]):
+        raise ValueError("Compiled benchmark output already exists; generate a fresh fixture directory")
+    environment = dict(os.environ)
+    if java_home is not None:
+        environment["JAVA_HOME"] = str(java_home.resolve(strict=True))
+
+    def java_tool(name: str) -> str:
+        return str(java_home / "bin" / name) if java_home is not None else name
+
+    proof = {
+        "platform": platform_name,
+        "build_tools": build_tools,
+        "commands": [],
+        "inputs_sha256": {
+            str(path): sha(path) for path in (android, tools / "aapt2", tools / "d8", tools / "apksigner")
+        },
+    }
+    for path in (tools / "lib/d8.jar", tools / "lib/apksigner.jar"):
+        if path.is_file():
+            proof["inputs_sha256"][str(path)] = sha(path)
+    if java_home is not None:
+        for name in ("java", "javac", "jar", "keytool"):
+            path = java_home / "bin" / name
+            proof["inputs_sha256"][str(path)] = sha(path)
+
+    def build_command(args: list[str]) -> subprocess.CompletedProcess:
+        try:
+            result = command(args, env=environment)
+        except subprocess.CalledProcessError as error:
+            proof["commands"].append(
+                {"argv": args, "status": error.returncode, "stdout": error.stdout, "stderr": error.stderr}
+            )
+            (root / "compiler-provenance.json").write_text(json.dumps(proof, indent=2) + "\n")
+            raise
+        proof["commands"].append(
+            {"argv": args, "status": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+        )
+        (root / "compiler-provenance.json").write_text(json.dumps(proof, indent=2) + "\n")
+        return result
+
+    build_command(
         [
-            "keytool",
+            java_tool("keytool"),
             "-genkeypair",
             "-keystore",
             str(key),
@@ -96,9 +144,9 @@ def build_apks(root: Path, sdk: Path) -> dict:
         classes = work / "classes"
         classes.mkdir()
         java = project / "app/src/main/java/test/synthetic/ProbeActivity.java"
-        command(
+        build_command(
             [
-                "javac",
+                java_tool("javac"),
                 "-source",
                 "8",
                 "-target",
@@ -111,12 +159,12 @@ def build_apks(root: Path, sdk: Path) -> dict:
             ]
         )
         jar = work / "classes.jar"
-        command(["jar", "cf", str(jar), "-C", str(classes), "."])
-        command(
+        build_command([java_tool("jar"), "cf", str(jar), "-C", str(classes), "."])
+        build_command(
             [str(tools / "d8"), "--lib", str(android), "--min-api", "24", "--output", str(work), str(jar)]
         )
         unsigned = work / "unsigned.apk"
-        command(
+        build_command(
             [
                 str(tools / "aapt2"),
                 "link",
@@ -135,7 +183,7 @@ def build_apks(root: Path, sdk: Path) -> dict:
         with zipfile.ZipFile(unsigned, "a", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.write(work / "classes.dex", "classes.dex")
         apk = root / (case["id"] + ".apk")
-        command(
+        build_command(
             [
                 str(tools / "apksigner"),
                 "sign",
@@ -152,7 +200,7 @@ def build_apks(root: Path, sdk: Path) -> dict:
                 str(unsigned),
             ]
         )
-        command([str(tools / "apksigner"), "verify", str(apk)])
+        build_command([str(tools / "apksigner"), "verify", str(apk)])
         additions.append(
             case
             | {
@@ -162,9 +210,9 @@ def build_apks(root: Path, sdk: Path) -> dict:
                 "source_case": case["id"],
                 "sha256": sha(apk),
                 "compiler": {
-                    "platform": "android-35",
-                    "build_tools": "35.0.0",
-                    "java": command(["javac", "-version"]).stdout.strip(),
+                    "platform": platform_name,
+                    "build_tools": build_tools,
+                    "java": build_command([java_tool("javac"), "-version"]).stdout.strip(),
                 },
             }
         )
@@ -218,12 +266,13 @@ def read_manifest(root: Path) -> dict:
 
 
 def apsa_report(python: str, target: Path, output: Path) -> tuple[dict, float]:
+    target, output = target.resolve(), output.resolve()
     output.mkdir()
     env = os.environ.copy()
     env["APSA_PARSER_LOCK_DIR"] = str(output / "parser-locks")
     env["APSA_DEVICE_LOCK_DIR"] = str(output / "device-locks")
     start = time.perf_counter()
-    process = subprocess.run(
+    process = capture(
         [
             python,
             "-I",
@@ -237,16 +286,18 @@ def apsa_report(python: str, target: Path, output: Path) -> tuple[dict, float]:
             str(output / "report.json"),
             "--json",
         ],
-        capture_output=True,
-        text=True,
+        cwd=output,
+        environment=env,
         timeout=180,
-        env=env,
     )
     elapsed = time.perf_counter() - start
     # A completed but incomplete audit remains distinguishable; it is not an error or a clean pass.
-    if process.returncode not in {0, 3, 4} or not (output / "report.json").is_file():
-        raise ValueError(f"APSA execution failed with code {process.returncode}: {process.stderr[-500:]}")
-    return json.loads((output / "report.json").read_text()), elapsed
+    (output / "invocation.json").write_text(json.dumps(process, indent=2) + "\n")
+    if process["status"] not in {0, 3, 4} or process["incomplete"] or not (output / "report.json").is_file():
+        raise ValueError(f"APSA execution failed with code {process['status']}: {process['stderr'][-500:]}")
+    report = json.loads((output / "report.json").read_text())
+    report["benchmark_rss"] = process["rss"]
+    return report, elapsed
 
 
 def apsa_observation(report: dict) -> dict:
@@ -391,6 +442,12 @@ def score(records: list[dict], tool: str, kind: str | None = None) -> dict:
         "failed_risky": 0,
         "unstable": 0,
         "unmapped_risky": 0,
+        "partial": 0,
+        "partial_risky": 0,
+        "unsupported": 0,
+        "unsupported_risky": 0,
+        "unmeasured": 0,
+        "unmeasured_risky": 0,
         "cases": 0,
     }
     timings = []
@@ -401,12 +458,16 @@ def score(records: list[dict], tool: str, kind: str | None = None) -> dict:
         if result is None:
             continue
         counts["cases"] += 1
+        timings.extend(result["seconds"])
         if result["state"] != "completed":
+            if result["state"] in {"partial", "unsupported", "unmeasured"}:
+                counts[result["state"]] += 1
+                counts[result["state"] + "_risky"] += record["risky"]
+                continue
             counts["failed"] += 1
             counts["failed_risky"] += record["risky"]
             counts["unstable"] += result["state"] == "unstable"
             continue
-        timings.extend(result["seconds"])
         detected = bool(result["matched"])
         counts["unmapped_risky"] += record["risky"] and not MAPPING[record["category"]][tool]
         counts[
@@ -414,12 +475,15 @@ def score(records: list[dict], tool: str, kind: str | None = None) -> dict:
         ] += 1
     precision_denominator = counts["tp"] + counts["fp"]
     recall_denominator = counts["tp"] + counts["fn"]
-    end_to_end_denominator = recall_denominator + counts["failed_risky"]
+    end_to_end_denominator = (
+        recall_denominator + counts["failed_risky"] + counts["partial_risky"] + counts["unmeasured_risky"]
+    )
     return counts | {
         "alert_precision": counts["tp"] / precision_denominator if precision_denominator else None,
         "completed_case_recall": counts["tp"] / recall_denominator if recall_denominator else None,
         "end_to_end_recall": counts["tp"] / end_to_end_denominator if end_to_end_denominator else None,
         "median_elapsed_seconds": statistics.median(timings) if timings else None,
+        "accuracy_scope": "completed cases only; partial/unsupported/unmeasured never count as FN/TN. End-to-end recall penalizes eligible failed/partial/unmeasured risky cases; unsupported cases abstain. Timing includes actual successful report returns independently of coverage.",
     }
 
 
@@ -428,6 +492,21 @@ def observation_signature(observation: dict) -> str:
         {key: observation[key] for key in ("rules", "coverage", "warnings", "audit_incomplete")},
         sort_keys=True,
     )
+
+
+def measurement_state(observations: list[dict], tool: str, category: str) -> str:
+    """A process/report return alone cannot establish complete category coverage."""
+    if not MAPPING[category][tool]:
+        return "unsupported"
+    if any(
+        observation.get("audit_incomplete") is not False
+        or not isinstance(observation.get("coverage"), list)
+        or observation.get("warnings")
+        or any(row.get("state") in {"partial", "not-run"} for row in observation["coverage"])
+        for observation in observations
+    ):
+        return "partial"
+    return "completed" if observations else "unmeasured"
 
 
 def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int) -> dict:
@@ -445,7 +524,7 @@ def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int
         }
         entry["tools"] = {}
         for tool in ["apsa", "mobsf"] if mobsf else ["apsa"]:
-            observations, timings, errors = [], [], []
+            observations, timings, errors, rss = [], [], [], []
             for iteration in range(repeats):
                 location = output / f"{case['id']}-{tool}-{iteration}"
                 try:
@@ -455,17 +534,29 @@ def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int
                     else:
                         location.mkdir()
                         assert mobsf is not None
-                        report, elapsed = mobsf.scan(root / case["input"])
+                        service_pid = os.environ.get("MOBSF_BENCHMARK_PID")
+                        pid = int(service_pid) if service_pid and service_pid.isdecimal() else None
+                        with ServiceRss(pid) as measured:
+                            report, elapsed = mobsf.scan(root / case["input"])
+                        report["benchmark_rss"] = measured.result()
                         (location / "report.json").write_text(json.dumps(report) + "\n")
                         observed = mobsf_observation(report, case["category"])
+                    rss.append(
+                        report.get("benchmark_rss", {"state": "unmeasured", "sampled_max_rss_bytes": None})
+                    )
                     timings.append(elapsed)
                     observations.append(observed)
                 except (ValueError, OSError, subprocess.TimeoutExpired, httpx.HTTPError) as error:
                     errors.append(f"{type(error).__name__}: {error}"[:700])
             stable = len({observation_signature(o) for o in observations}) <= 1
             result = {
-                "state": "failed" if errors else "completed" if stable else "unstable",
+                "state": "failed"
+                if errors
+                else measurement_state(observations, tool, case["category"])
+                if stable
+                else "unstable",
                 "seconds": timings,
+                "rss": rss,
                 "errors": errors,
                 "matched": sorted(set(observations[0]["rules"]) & set(MAPPING[case["category"]][tool]))
                 if observations
@@ -505,6 +596,7 @@ def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int
             "cpu_count": os.cpu_count(),
             "repetitions": repeats,
         },
+        "rss_scope": "APSA fresh CLI process tree; MobSF whole warm service container tree. 50ms sampled RSS includes shared pages. Distinct scopes, not a memory-efficiency ranking.",
         "timing_scope": "APSA fresh CLI/store/process; MobSF warm local API upload+forced rescan. Setup/pull time excluded. Not an engine-only speed ranking.",
         "limits": manifest["limits"],
         "mapping": MAPPING,
@@ -519,6 +611,7 @@ def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int
             "manifest_sha256",
             "environment",
             "timing_scope",
+            "rss_scope",
             "summary",
             "limits",
             "apsa_engine",
@@ -532,7 +625,7 @@ def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int
         {key: record[key] for key in ("id", "category", "risky", "input_kind")}
         | {
             "tools": {
-                name: {key: value[key] for key in ("state", "matched", "seconds", "errors")}
+                name: {key: value[key] for key in ("state", "matched", "seconds", "rss", "errors")}
                 for name, value in record["tools"].items()
             }
         }
@@ -551,6 +644,9 @@ def main() -> int:
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--sdk", type=Path)
+    parser.add_argument("--platform", default="android-35")
+    parser.add_argument("--build-tools", default="35.0.0")
+    parser.add_argument("--java-home", type=Path)
     parser.add_argument("--apsa-python", default=sys.executable)
     parser.add_argument("--mobsf-url")
     parser.add_argument(
@@ -568,7 +664,13 @@ def main() -> int:
     elif args.action == "build-apks":
         if args.sdk is None:
             parser.error("--sdk is required")
-        manifest = build_apks(args.fixtures, args.sdk)
+        manifest = build_apks(
+            args.fixtures,
+            args.sdk,
+            platform_name=args.platform,
+            build_tools=args.build_tools,
+            java_home=args.java_home,
+        )
         print(
             json.dumps(
                 {"cases": len(manifest["cases"]), "manifest_sha256": sha(args.fixtures / "manifest.json")}

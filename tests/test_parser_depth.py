@@ -105,7 +105,7 @@ def test_objc_dead_branch_is_not_the_kept_branch():
     assert not report["metadata"]["files"][0]["parse_errors"]
 
 
-def test_aab_feature_manifest_components_keep_module_and_delivery(tmp_path):
+def test_aab_feature_manifest_components_keep_module_and_delivery(tmp_path, compiled_apks):
     import zipfile
 
     from mobile_audit.inputs import inspect_target
@@ -142,7 +142,7 @@ def test_aab_feature_manifest_components_keep_module_and_delivery(tmp_path):
         attribute("package", "audit.synthetic") + attribute("split", "feature"),
         children=(module, xmlnode("application", children=(activity,))),
     )
-    path = bundle(tmp_path)
+    path = bundle(tmp_path, compiled_apks)
     with zipfile.ZipFile(path, "a") as archive:
         archive.writestr("checkout/manifest/AndroidManifest.xml", feature)
         archive.writestr("checkout/dex/classes.dex", b"")

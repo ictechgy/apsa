@@ -1,5 +1,48 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## Five fresh validation gates — 2026-10-11
+
+[FIVE_GATE_VALIDATION.md](docs/FIVE_GATE_VALIDATION.md) records source-only
+staging, freshly compiled/signed comparator inputs, real signature-mutation
+controls and fresh installed iOS simulator acquisition. The local non-MCP
+regression passed 1,568 tests with 4 skipped and 26 deselected. Host RSS inspection,
+actual served MCP, wheel build/clean installation, remote CI, competitor tools,
+bundletool equivalence and HTTP backend invalidation have separate unmeasured
+or unavailable gates. Source review readiness does not approve publication.
+
+## Unreleased remaining follow-up — 2026-10-11
+
+Explicit `.apks` device-spec selection and per-member scanning, IPA sparse-page
+and resource-seal checks, digest-bound supplied-anchor chain validation, a typed
+runtime recorder tested on new synthetic apps, and Swift helper metadata recovery
+are implemented locally. [Scope and fresh evidence](docs/REMAINING_FOLLOWUP.md)
+separate synthetic validation from installed-delivery and Apple signer claims.
+Publication still requires served MCP validation, package build/clean-install and
+the supported CI matrix on an allowed host. Local probes failed before SDK service
+or package building started; no publication was attempted. Independent review
+applies only to the immutable working-tree snapshot recorded in its review artifact.
+
+## Unreleased competitive follow-up — 2026-10-11
+
+Native guard/cross-file flow, selected dependency evidence and OSV batching/privacy,
+authenticated runtime observation contracts, hybrid candidates, AAB scalar resources,
+detached CMS consistency and paired verification are implemented locally. Exact scope
+and remaining device/trust/grammar limits: [COMPETITIVE_FOLLOWUP.md](docs/COMPETITIVE_FOLLOWUP.md).
+Fresh labeled regression: [COMPETITIVE_CORPUS.md](docs/COMPETITIVE_CORPUS.md).
+The changed MCP contract still requires a served `tools/list` check on an allowed host.
+This entry does not approve publication or replace historical release evidence.
+
+## Unreleased large-input follow-up — 2026-10-11
+
+The local working tree addresses the 1.5.1 deferred staging/reporting/classification
+items and reduces repeated AST/class inventory work. It uses rule version
+`2026.10.11.apsa.next`. Implementation scope, additive report fields, synthetic
+validation and the remaining analysis milestones are recorded in
+[LARGE_INPUT_FOLLOWUP.md](docs/LARGE_INPUT_FOLLOWUP.md).
+
+This entry is not a release approval. Published tags, package versions and the
+frozen blind measurements below retain their original snapshot meaning.
+
 ## Published 1.5.1 — 2026-10-11
 
 [1.5.1](https://github.com/ictechgy/apsa/releases/tag/v1.5.1) is bound to source commit `409f15e92aee9307a80161b3b2b060799ee820cf` through a lightweight tag that was not moved.

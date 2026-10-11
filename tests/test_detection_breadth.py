@@ -1135,9 +1135,9 @@ def test_optional_scope_lambdas_keep_earlier_taint():
     assert ast("W.kt", kotlin).get("AST-WEBVIEW-UNTRUSTED-URL") == [7]
 
 
-def test_text_rules_do_not_claim_binary_packages(store, monkeypatch):
+def test_text_rules_do_not_claim_binary_packages(store, monkeypatch, apk):
     monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
-    report = scan(store, Path(__file__).parent / "fixtures/Test-debug.apk")
+    report = scan(store, apk)
     states = {c["rule_id"]: c["state"] for c in report["coverage"]}
     assert states.get("WEBVIEW-SAFE-BROWSING-OFF") in {None, "not-run", "not-applicable"}
 
@@ -1275,7 +1275,8 @@ class Final : Activity() {
 
 def test_final_review_guards_and_unconditional_scopes():
     found = ast("Final.kt", FINAL_KT)
-    assert "AST-PATH-TRAVERSAL" not in found
+    # Rejecting '../' alone misses the bare '..' entry and does not prove containment.
+    assert found["AST-PATH-TRAVERSAL"] == [21]
     assert "AST-INTENT-REDIRECTION" not in found
     assert "AST-WEBVIEW-UNTRUSTED-URL" not in found
 

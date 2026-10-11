@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Capture official local artifact checks for explicitly NEW synthetic fixtures.
+
+Use only newly compiled fixtures in a fresh temporary directory. This driver does
+not enumerate devices, profiles, keychains, installed applications or user data.
+It records hashes and actual stdout/stderr; records remain caller-attested.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import selectors
+import signal
+import subprocess
+import time
+from pathlib import Path
+
+from mobile_audit.artifact_oracle import MAX_OUTPUT_BYTES, record_digest, validate_artifact_observation
+
+
+def sha(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def capture(argv: list[str], cwd: Path, *, java_home: Path | None = None) -> dict:
+    """Retain bounded raw streams and status, terminating a hung process group."""
+    streams = {"stdout": bytearray(), "stderr": bytearray()}
+    timed_out = truncated = False
+    environment = {"PATH": "/usr/bin:/bin", "TMPDIR": str(cwd)}
+    if java_home is not None:
+        environment["JAVA_HOME"] = str(java_home.resolve(strict=True))
+    process = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        env=environment,
+    )
+    assert process.stdout is not None and process.stderr is not None
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    deadline = time.monotonic() + 45
+    try:
+        while selector.get_map():
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            for key, _ in selector.select(0.05):
+                chunk = os.read(key.fd, 65536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                target = streams[key.data]
+                remaining = MAX_OUTPUT_BYTES - len(target)
+                target.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    truncated = True
+                    break
+            if truncated:
+                break
+        if not timed_out and not truncated:
+            try:
+                process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+        selector.close()
+        process.stdout.close()
+        process.stderr.close()
+    return {
+        "argv": argv,
+        "environment": environment,
+        "returncode": process.returncode,
+        "timed_out": timed_out,
+        "output_truncated": truncated,
+        **{f"{name}_base64": base64.b64encode(raw).decode() for name, raw in streams.items()},
+        **{f"{name}_sha256": hashlib.sha256(raw).hexdigest() for name, raw in streams.items()},
+    }
+
+
+def snapshot(paths: list[Path], root: Path) -> dict[str, str]:
+    result = {}
+    for path in paths:
+        resolved = path.resolve(strict=True)
+        if not resolved.is_relative_to(root) or path.is_symlink() or not resolved.is_file():
+            raise ValueError("Every fixture input must be a regular file within the NEW fixture root")
+        result[str(resolved.relative_to(root))] = sha(resolved)
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--new-root", type=Path, required=True)
+    parser.add_argument("--artifact", type=Path, required=True)
+    parser.add_argument("--source", type=Path, action="append", required=True)
+    parser.add_argument("--compiler", type=Path, action="append", required=True)
+    parser.add_argument("--oracle", choices=("codesign_integrity", "apksigner_signature"), required=True)
+    parser.add_argument("--tool", type=Path, required=True)
+    parser.add_argument("--record", type=Path, required=True)
+    parser.add_argument("--java-home", type=Path)
+    args = parser.parse_args()
+    root = args.new_root.resolve(strict=True)
+    if not root.is_relative_to(Path("/private/tmp")):
+        raise ValueError("NEW fixture root must be an explicitly created /private/tmp directory")
+    if args.artifact.is_symlink():
+        raise ValueError("NEW artifact must not be a symlink")
+    artifact = args.artifact.resolve(strict=True)
+    record_path = args.record.resolve()
+    if (
+        not artifact.is_relative_to(root)
+        or not record_path.is_relative_to(root)
+        or record_path.exists()
+        or artifact.is_symlink()
+    ):
+        raise ValueError("Artifact and new record must remain within the NEW root")
+    if args.oracle == "codesign_integrity":
+        if not artifact.is_dir() or artifact.suffix != ".app":
+            raise ValueError("codesign oracle requires a NEW app bundle")
+        files = list(artifact.rglob("*"))
+        if any(path.is_symlink() for path in files) or len(files) > 256:
+            raise ValueError("NEW bundle has unsupported links or too many files")
+        files = [path for path in files if path.is_file()]
+        argv = [str(args.tool), "--verify", "--deep", "--strict", "--verbose=4", str(artifact)]
+    else:
+        if not artifact.is_file() or artifact.suffix != ".apk":
+            raise ValueError("apksigner oracle requires a NEW APK")
+        files = [artifact]
+        argv = [str(args.tool), "verify", "--verbose", "--print-certs", str(artifact)]
+    inputs = snapshot(files, root)
+    sources = snapshot(args.source, root)
+    compilers = {str(path.resolve(strict=True)): sha(path.resolve(strict=True)) for path in args.compiler}
+    tool_hash = sha(args.tool.resolve(strict=True))
+    result = {
+        "schema_version": 1,
+        "oracle": args.oracle,
+        "tool_sha256": tool_hash,
+        "input_sha256": inputs,
+        "source_sha256": sources,
+        "compiler_sha256": compilers,
+        **capture(argv, root, java_home=args.java_home),
+    }
+    current_files = [artifact]
+    if artifact.is_dir():
+        current_files = list(artifact.rglob("*"))
+        if any(path.is_symlink() for path in current_files) or len(current_files) > 256:
+            raise ValueError("NEW bundle changed during verification")
+        current_files = [path for path in current_files if path.is_file()]
+    current_compilers = {
+        str(path.resolve(strict=True)): sha(path.resolve(strict=True)) for path in args.compiler
+    }
+    if (
+        inputs != snapshot(current_files, root)
+        or sources != snapshot(args.source, root)
+        or compilers != current_compilers
+        or tool_hash != sha(args.tool.resolve(strict=True))
+    ):
+        raise ValueError("Artifact/tool changed during verification; discard observation")
+    result["record_sha256"] = record_digest(result)
+    summary = validate_artifact_observation(
+        result,
+        expected_inputs=inputs,
+        expected_argv=argv,
+        expected_tool_sha256=tool_hash,
+        expected_environment=result["environment"],
+    )
+    with record_path.open("x") as stream:
+        json.dump({"observation": result, "summary": summary}, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    print(json.dumps({"record": str(record_path), "state": summary["state"]}, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

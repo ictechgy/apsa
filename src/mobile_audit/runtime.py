@@ -11,7 +11,7 @@ import tarfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn, overload
 
 from defusedxml import ElementTree as ET
 
@@ -33,6 +33,22 @@ from .core import (
 )
 from .intel import source_health
 from .processes import command
+from .runtime_acquisition import (
+    AcquisitionAdapter,
+    AcquisitionRecorder,
+    acquisition_plan,
+    evaluate_backend_invalidation,
+)
+from .runtime_evidence import (
+    attach_operator_captures,
+    build_binding,
+    evaluate_workflow,
+    static_runtime_links,
+    validate_build,
+    validate_operator_captures,
+    validate_workflow,
+    workflow_states,
+)
 from .store import Store
 from .tools import resolve_tool
 
@@ -335,9 +351,35 @@ def local_storage(root: Path) -> list[tuple[str, bytes]]:
 
 
 def replace_markers(text: str, markers: dict[str, str]) -> str:
-    for label, marker in markers.items():
+    for label, marker in sorted(markers.items(), key=lambda item: -len(item[1])):
         text = text.replace(marker, f"[CANARY:{label}]")
     return text
+
+
+@overload
+def scrub_runtime(value: dict, markers: dict[str, str]) -> dict: ...
+
+
+@overload
+def scrub_runtime(value: list, markers: dict[str, str]) -> list: ...
+
+
+@overload
+def scrub_runtime(value: str, markers: dict[str, str]) -> str: ...
+
+
+@overload
+def scrub_runtime(value: Any, markers: dict[str, str]) -> Any: ...
+
+
+def scrub_runtime(value: Any, markers: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        return redact(replace_markers(value, markers))
+    if isinstance(value, dict):
+        return {scrub_runtime(k, markers): scrub_runtime(v, markers) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub_runtime(v, markers) for v in value]
+    return value
 
 
 def snapshot(adapter, markers: dict[str, str]) -> dict:
@@ -379,6 +421,9 @@ def snapshot(adapter, markers: dict[str, str]) -> dict:
 def validate_scenario(value: dict) -> dict:
     if not isinstance(value, dict) or value.get("platform") not in {"android", "ios"}:
         raise ValueError("Scenario platform must be android or ios")
+    if type(value.get("schema_version", 1)) is not int or value.get("schema_version", 1) not in {1, 2}:
+        raise ValueError("Scenario schema_version must be 1 or 2")
+    validate_build(value.get("build", {}))
     package = value.get("package")
     if not isinstance(package, str) or not PACKAGE.fullmatch(package):
         raise ValueError("Scenario needs a valid app package/bundle identifier")
@@ -445,8 +490,8 @@ def validate_scenario(value: dict) -> dict:
             raise ValueError("Assertions need an existing snapshot, baseline and marker")
         if labels[assertion["baseline"]] >= labels[assertion["snapshot"]]:
             raise ValueError("Assertion baseline must precede a distinct after snapshot")
-        if assertion.get("surface", "storage") not in {"storage", "ui", "logs"}:
-            raise ValueError("Assertion surface must be storage, ui or logs")
+        if assertion.get("surface", "storage") not in {"storage", "ui", "logs", "network", "artifact"}:
+            raise ValueError("Assertion surface must be storage, ui, logs, network or artifact")
         if assertion.get("expect", "absent") not in {"absent", "present"}:
             raise ValueError("Assertion expect must be absent or present")
         if assertion.get("purpose", "residual") not in {
@@ -456,6 +501,13 @@ def validate_scenario(value: dict) -> dict:
             "authentication",
         }:
             raise ValueError("Assertion purpose must be residual, transition, delivery or authentication")
+        for key in ("finding_id", "rule_id"):
+            if key in assertion and (
+                not isinstance(assertion[key], str) or not 1 <= len(assertion[key]) <= 100
+            ):
+                raise ValueError("Assertion finding/rule linkage must be bounded string identifiers")
+    validate_workflow(value, labels)
+    validate_operator_captures(value, labels)
     return value
 
 
@@ -489,11 +541,35 @@ def plan(report: dict, platform: str | None = None, package: str | None = None) 
         steps.append({"action": "open_url", "url": links[0]})
     steps += [{"action": "wait", "seconds": 1}, {"action": "snapshot", "label": "after_logout"}]
     return {
+        "schema_version": 2,
         "platform": platform,
         "package": package,
         "device": None,
         "precondition": "EDIT: Prepare account A with the unique canary. Add your app's logout/account-switch actions between snapshots; generated links are discovery candidates.",
-        "markers": {"account_a": "mobile-audit-UNIQUE-CANARY"},
+        "markers": {
+            "account_a": "mobile-audit-UNIQUE-CANARY",
+            "signed_in_a": "mobile-audit-UNIQUE-LOGIN",
+            "logged_out": "mobile-audit-UNIQUE-LOGOUT",
+            "delivered": "mobile-audit-UNIQUE-DELIVERY",
+        },
+        "build": {},
+        "workflow": {
+            "accounts": {"a": {"canary": "account_a", "login_marker": "signed_in_a"}},
+            "transitions": [
+                {
+                    "kind": "logout",
+                    "baseline": "before_logout",
+                    "snapshot": "after_logout",
+                    "from_account": "a",
+                    "to_account": None,
+                    "state_marker": "logged_out",
+                    "delivery_marker": "delivered",
+                }
+            ],
+        },
+        "operator_captures": [],
+        "acquisition_plan": acquisition_plan(platform, package),
+        "static_links": static_runtime_links(report),
         "steps": steps,
         "assertions": [
             {
@@ -528,7 +604,15 @@ def evaluate_assertions(scenario: dict, snapshots: dict) -> list[dict]:
             ]
 
         if any(s.get("surfaces", {}).get(surface, {}).get("state") != "captured" for s in [baseline, after]):
-            state = "not-run"
+            state = (
+                "inconclusive"
+                if any(
+                    s.get("surfaces", {}).get(surface, {}).get("state")
+                    in {"operator-supplied", "inconclusive"}
+                    for s in (baseline, after)
+                )
+                else "not-run"
+            )
         elif assertion.get("expect", "absent") == "present":
             state = "inconclusive" if hits(baseline) else ("passed" if hits(after) else "failed")
         elif not hits(baseline):
@@ -573,8 +657,19 @@ def device_lease(platform: str, device: str, directory: Path | None = None):
 
 
 def run(
-    store: Store, scenario_path: Path, report_id="latest", screenshots=False, adapter=None, *, scenario=None
+    store: Store,
+    scenario_path: Path,
+    report_id="latest",
+    screenshots=False,
+    adapter=None,
+    *,
+    scenario=None,
+    acquisition_adapter: AcquisitionAdapter | None = None,
 ) -> dict:
+    if acquisition_adapter is not None and adapter is None:
+        raise ValueError(
+            "Trusted acquisition requires an explicit runtime action adapter; device discovery is disabled for this seam"
+        )
     scenario = validate_scenario(scenario if scenario is not None else read_json(scenario_path))
     if scenario["precondition"].startswith("EDIT:"):
         raise ValueError(
@@ -586,7 +681,15 @@ def run(
     prefix = getattr(resolved, "prefix", [])
     serial = getattr(resolved, "device", None) or (prefix[-1] if prefix else f"test-adapter-{id(resolved)}")
     with device_lease(scenario["platform"], serial):
-        return _run(store, scenario_path, report_id, screenshots, adapter=resolved, scenario=scenario)
+        return _run(
+            store,
+            scenario_path,
+            report_id,
+            screenshots,
+            adapter=resolved,
+            scenario=scenario,
+            acquisition_adapter=acquisition_adapter,
+        )
 
 
 def assertion_identity(assertion: dict) -> dict:
@@ -600,6 +703,8 @@ def assertion_identity(assertion: dict) -> dict:
             ("surface", "storage"),
             ("expect", "absent"),
             ("purpose", "residual"),
+            ("finding_id", ""),
+            ("rule_id", ""),
         )
     }
 
@@ -611,6 +716,7 @@ def _run(
     screenshots=False,
     adapter=None,
     scenario: dict | None = None,
+    acquisition_adapter: AcquisitionAdapter | None = None,
 ) -> dict:
     scenario = scenario or validate_scenario(read_json(scenario_path))
     if scenario["precondition"].startswith("EDIT:"):
@@ -647,6 +753,8 @@ def _run(
     snapshots = {}
     transcript = []
     environment = adapter.environment()
+    if acquisition_adapter is not None and environment.get("platform") != scenario["platform"]:
+        raise ValueError("Acquisition adapter environment platform differs from scenario")
     observed_app = environment.get("app", {})
     if observed_app.get("package") and observed_app["package"] != scenario["package"]:
         raise ValueError("Installed app identity differs from the scenario package")
@@ -660,6 +768,7 @@ def _run(
             "apk_sha256",
             "executable_sha256",
             "info_plist_sha256",
+            "runtime_model_sha256",
         } or not isinstance(expected, str):
             raise ValueError("Build expectations must be string version or hash fields")
         if observed_app.get(key) != expected:
@@ -688,12 +797,58 @@ def _run(
                 build_verification = "audited-ipa-executable-and-config-match"
         else:
             build_verification = "audited-ipa-match-unavailable"
+    binding = build_binding(scenario["platform"], scenario["package"], observed_app)
+    recorder = (
+        AcquisitionRecorder(acquisition_adapter, binding, scenario["markers"])
+        if acquisition_adapter
+        else None
+    )
+    if recorder:
+        # A model-only binding is promoted only by a valid synthetic session and
+        # revoked in place if its acquisition becomes inconclusive.
+        binding = recorder.binding
+    states = workflow_states(scenario)
+    if recorder and recorder.metadata()["mode"] == "synthetic":
+        build_verification = "synthetic-app-model-build"
     for index, step in enumerate(scenario["steps"]):
         action = step["action"]
         details = {}
         try:
             if action == "snapshot":
-                snapshots[step["label"]] = snapshot(adapter, scenario["markers"])
+                if scenario.get("workflow"):
+                    current = adapter.environment()
+                    current_app = current.get("app", {})
+                    if (
+                        (acquisition_adapter is not None and current.get("platform") != scenario["platform"])
+                        or current_app.get("package") != scenario["package"]
+                        or build_binding(
+                            scenario["platform"],
+                            scenario["package"],
+                            current_app,
+                            allow_synthetic_model=bool(
+                                recorder
+                                and recorder.metadata()["state"] == "bound"
+                                and recorder.metadata()["mode"] == "synthetic"
+                            ),
+                        )["identity"]
+                        != binding["identity"]
+                    ):
+                        raise ValueError("App/build changed or app identity unavailable before snapshot")
+                transition = next(
+                    (
+                        t["kind"]
+                        for t in scenario.get("workflow", {}).get("transitions", [])
+                        if t["snapshot"] == step["label"]
+                    ),
+                    None,
+                )
+                snapshots[step["label"]] = (
+                    recorder.capture(step["label"], states.get(step["label"]), transition)
+                    if recorder
+                    else snapshot(adapter, scenario["markers"])
+                )
+                snapshots[step["label"]]["binding"] = binding
+                snapshots[step["label"]]["declared_state"] = states.get(step["label"])
                 if screenshots:
                     path = directory / f"{step['label']}.png"
                     adapter.screenshot(path)
@@ -712,15 +867,61 @@ def _run(
                 time.sleep(float(step.get("seconds", 0)))
             transcript.append({"step": index, "action": action, "state": "completed", **details})
         except (ValueError, OSError, KeyError) as error:
-            transcript.append({"step": index, "action": action, "state": "error", "error": str(error)})
+            transcript.append(
+                {
+                    "step": index,
+                    "action": action,
+                    "state": "error",
+                    "error": redact(replace_markers(str(error), scenario["markers"])),
+                }
+            )
             break
+    if recorder:
+        binding = recorder.binding
+    if binding.get("state") != "bound" and binding.get("build", {}).get("runtime_model_sha256"):
+        build_verification = "synthetic-model-binding-unavailable"
+    attach_operator_captures(scenario, snapshots, binding)
+    workflow_results = evaluate_workflow(scenario, snapshots, binding)
     results = evaluate_assertions(scenario, snapshots)
+    for result in results:
+        if not scenario.get("workflow"):
+            continue
+        assertion = result["assertion"]
+        applicable = [
+            w
+            for w in workflow_results
+            if w["transition"]["baseline"] == assertion["baseline"]
+            and w["transition"]["snapshot"] == assertion["snapshot"]
+        ]
+        if (
+            not applicable
+            or any(w["state"] != "passed" for w in applicable)
+            or any(s["state"] == "error" for s in transcript)
+        ):
+            result["observed_state"] = result["state"]
+            result["state"] = "inconclusive"
+            result["note"] = (
+                "Required authenticated transition evidence is incomplete; the observation cannot establish exposure or removal."
+            )
     scenario_hash = digest(canonical_json(scenario).encode())
     identity_data = {key: scenario[key] for key in ("platform", "package", "steps", "assertions")}
+    acquisition_scope = (
+        {key: recorder.metadata()[key] for key in ("mode", "adapter_id")}
+        if recorder
+        else {"mode": "legacy-device", "adapter_id": "legacy-device"}
+    )
+    if recorder:
+        identity_data["acquisition_scope"] = acquisition_scope
+    if scenario.get("workflow"):
+        identity_data["workflow"] = scenario["workflow"]
     legacy_identity = digest(replace_markers(canonical_json(identity_data), scenario["markers"]).encode())
     identity_data["assertions"] = [assertion_identity(a) for a in scenario["assertions"]]
     scenario_identity = digest(replace_markers(canonical_json(identity_data), scenario["markers"]).encode())
     scope_data = {key: scenario[key] for key in ("platform", "package", "steps")}
+    if recorder:
+        scope_data["acquisition_scope"] = acquisition_scope
+    if scenario.get("workflow"):
+        scope_data["workflow"] = scenario["workflow"]
     scenario_scope = digest(replace_markers(canonical_json(scope_data), scenario["markers"]).encode())
     legacy_scopes = {}
     for prior_run in report.get("runtime", []):
@@ -753,11 +954,23 @@ def _run(
                             in {scenario_identity, legacy_identity, legacy_scopes.get(e.get("runtime_id"))}
                         )
                     )
+                    and (
+                        (not scenario.get("workflow") and e.get("app_binding", {}).get("state") != "bound")
+                        or (
+                            binding["state"] == "bound"
+                            and e.get("app_binding", {}).get("identity") == binding["identity"]
+                        )
+                    )
                     and any(
                         r["state"] in {"passed", "failed"}
                         and assertion_identity(r["assertion"]) == assertion_identity(e.get("assertion", {}))
                         for r in results
                     )
+                    and {
+                        key: e.get("acquisition", {}).get(key, "legacy-device")
+                        for key in ("mode", "adapter_id")
+                    }
+                    == acquisition_scope
                     for e in f["evidence"]
                 )
             )
@@ -773,15 +986,22 @@ def _run(
                     "Test canary remains observable at the after-transition snapshot",
                     "high" if surface in {"ui", "logs"} else "medium",
                     "runtime-confirmed",
-                    [
-                        {
-                            "runtime_id": run_id,
-                            "scenario_identity": scenario_identity,
-                            "scenario_scope": scenario_scope,
-                            "assertion": result["assertion"],
-                            "matches": result["matches"],
-                        }
-                    ],
+                    scrub_runtime(
+                        [
+                            {
+                                "runtime_id": run_id,
+                                "scenario_identity": scenario_identity,
+                                "scenario_scope": scenario_scope,
+                                "app_binding": binding,
+                                "acquisition": recorder.metadata()
+                                if recorder
+                                else {"state": "legacy-device-capture"},
+                                "assertion": result["assertion"],
+                                "matches": result["matches"],
+                            }
+                        ],
+                        scenario["markers"],
+                    ),
                     "Review the logout/account-switch transition, storage deletion policy and token invalidation. Rerun this scenario after fixing it.",
                     "MASVS-AUTH"
                     if result["assertion"].get("purpose") == "authentication"
@@ -795,28 +1015,63 @@ def _run(
     record = {
         "id": run_id,
         "scenario_hash": scenario_hash,
+        "scenario_identity": scenario_identity,
+        "scenario_scope": scenario_scope,
+        "app_binding": binding,
+        "workflow": workflow_results,
+        "acquisition": recorder.metadata()
+        if recorder
+        else {
+            "state": "unsupported",
+            "live_device_verified": False,
+            "note": "No trusted network/instrumentation adapter was injected; operator JSON remains unverified.",
+        },
+        "backend_invalidation": evaluate_backend_invalidation(scenario, snapshots),
+        "schema_version": scenario.get("schema_version", 1),
+        "static_links": [
+            {
+                **link,
+                "observations": [
+                    {"assertion": result["assertion"], "state": result["state"], "matches": result["matches"]}
+                    for result in results
+                    if result["assertion"].get("finding_id") == link["finding_id"]
+                    and result["assertion"].get("rule_id") == link["rule_id"]
+                ],
+            }
+            for link in static_runtime_links(previous)
+        ],
         "precondition": redact(replace_markers(scenario["precondition"], scenario["markers"])),
         "build_verification": build_verification,
         "delivery_verification": "marker-observed"
-        if any(r["state"] == "passed" and r["assertion"].get("purpose") == "delivery" for r in results)
+        if (workflow_results and all(w["state"] == "passed" for w in workflow_results))
+        or any(r["state"] == "passed" and r["assertion"].get("purpose") == "delivery" for r in results)
         else "requested-not-confirmed",
         "environment": environment,
         "snapshots": snapshots,
         "steps": transcript,
         "assertions": results,
-        "transition_verification": "marker-observed"
-        if any(r["state"] == "passed" and r["assertion"].get("purpose") == "transition" for r in results)
-        else "scenario-declared",
+        "transition_verification": (
+            "marker-observed"
+            if workflow_results and all(w["state"] == "passed" for w in workflow_results)
+            else "inconclusive"
+        )
+        if scenario.get("workflow")
+        else (
+            "marker-observed"
+            if any(r["state"] == "passed" and r["assertion"].get("purpose") == "transition" for r in results)
+            else "scenario-declared"
+        ),
         "partial": any(s["state"] == "error" for s in transcript)
         or not results
+        or any(w["state"] != "passed" for w in workflow_results)
         or any(
             r["state"] in {"not-run", "inconclusive"}
             or (r["state"] == "failed" and r["assertion"].get("expect", "absent") == "present")
             for r in results
         ),
     }
-    report["runtime"].append(record)
-    report["environment"] = environment
+    report["runtime"].append(scrub_runtime(record, scenario["markers"]))
+    report["environment"] = scrub_runtime(environment, scenario["markers"])
     intel_findings, report["environment_advisories"] = correlate(
         report["inventory"], store.intelligence(limit=100000), environment
     )

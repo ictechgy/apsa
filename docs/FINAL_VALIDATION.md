@@ -1,0 +1,71 @@
+# Actual execution of the remaining gates
+
+2026-10-11. Validation uses public source and newly generated synthetic inputs
+only. No existing user app, device state, media, prompts, history or raw service
+logs are inputs. Current evidence root:
+`/private/tmp/apsa-final-validation-iddl03na`.
+
+## Local measurements
+
+- Package/corpus checks: 9 passed using actual fresh Java/D8/AAPT2 controls.
+  The fresh corpus has 30 cases, 29 matched, 19 true positive labels, zero false
+  positive or false negative labels, and one known partial source case.
+  `passed` remains false; its narrowly defined regression contract passes.
+  The retained upstream APK sample is omitted, rather than represented by a
+  reused safe APK as an independent sample.
+- Competitor execution/RSS failure handling: 34 passed. Unavailable process
+  inspection never becomes a zero-memory measurement. Linux RSS samples use
+  only the explicitly owned process tree; the sampled maximum is a lower bound
+  on peak and may double-count shared pages.
+- Runtime acquisition/transport contracts: 26 passed. New Android and iOS
+  fixture executables compiled successfully; actual HTTP/OS delivery remains
+  pending isolated CI.
+- Bundle fixture: actual AAPT2 protobuf resources/manifest, javac and D8
+  compilation succeeded. The official bundletool execution is pending remote
+  CI; a compiled module alone is not selection or resource-merge evidence.
+- Real local SDK import remains blocked at `mcp.server.fastmcp.prompts` by the
+  host privacy guard. No relocated or substitute SDK is used.
+
+## Isolated CI contract
+
+The new validation branch must contain only the reviewed source-stage tree,
+public source fixture builders and declared contracts. It must not inherit
+retained binary fixtures, local artifacts, caches, logs, `.codex`, `.omx`,
+review prompts or workspace state. Validation workflows have read-only
+repository permissions and use new temporary fixtures, signing keys,
+emulators, simulator UUIDs, HTTP authorities and app storage.
+
+- `synthetic-gates.yml`: actual stdio SDK initialization and `tools/list` in
+  both scopes, repeated package hashes, clean installation and newly compiled
+  APK scan on Linux/macOS with Python 3.11/3.12.
+- `competitive-benchmark.yml`: fixed Semgrep CE and two verified upstream rule
+  blobs, fixed MobSF image/JADX, shared frozen new input hashes. Historical
+  whole-tree baseline archives have been removed. APSA CLI and warm MobSF
+  service timing/RSS scopes remain distinct; no speed, memory-efficiency or
+  whole-product ranking follows from those samples.
+  Stable process exit never promotes incomplete coverage to a scored negative.
+  Partial, unsupported and unmeasured cases abstain from TP/FP/FN/TN totals.
+  MobSF does not expose this per-rule coverage contract, so its raw alerts and
+  time/RSS observations remain visible while its accuracy cases stay partial.
+- `bundletool-validation.yml`: checksum-pinned official bundletool builds and
+  extracts real APK sets. Selection hashes are compared independently, then
+  a new dedicated emulator acquires the installed splits and looks up a
+  French resource. Unsupported selectors remain partial.
+- Runtime transport validation: new dedicated Android emulator and iOS
+  simulator, actual OS deep-link delivery, installed target hashes, nonce and
+  session binding, and an independently replayed credential against the owned
+  HTTP authority. Local app-state evidence cannot establish backend revocation.
+
+Workflow preparation and source approval do not establish successful CI runs.
+Record exact remote head, run/job conclusions and evidence hashes before
+claiming a gate passed. No publication, tag, merge or published MCP baseline
+approval is part of validation. Physical-device tests and genuine Apple
+identity/provisioning/revocation require a separately designated new test
+environment; ad-hoc simulator signing cannot prove them.
+
+## Primary tooling evidence
+
+- [Semgrep CE 1.179.0](https://github.com/semgrep/semgrep/releases/tag/v1.179.0)
+- [Official bundletool commands](https://developer.android.com/tools/bundletool)
+- [Bundletool 1.18.3 immutable asset checksums](https://github.com/google/bundletool/releases/expanded_assets/1.18.3)
+- [GitHub source-tree API](https://docs.github.com/en/rest/git/trees#create-a-tree)

@@ -55,16 +55,42 @@ def stable_input(target: Path, scratch: Path | None = None):
 
 
 def analyze(
-    target: Path, sbom: Path | None, configuration: str | None = None, specs: dict | None = None
+    target: Path,
+    sbom: Path | None,
+    configuration: str | None = None,
+    specs: dict | None = None,
+    dependency_selection: dict | None = None,
+    apk_set_device: dict | None = None,
+    ipa_trust_policy: dict | None = None,
 ) -> dict:
+    if target.suffix.lower() == ".apks":
+        if configuration or dependency_selection or ipa_trust_policy is not None:
+            raise ValueError(
+                "APK-set selection cannot use source configuration, build selection or IPA trust"
+            )
+        from .apks_analysis import analyze_apks
+
+        return analyze_apks(target, apk_set_device, analyze, sbom=sbom, specs=specs)
+    if apk_set_device is not None:
+        raise ValueError("APK-set device selection requires an .apks archive")
     from .inputs import inspect_target
     from .rules import static_checks
 
-    inventory, sources = inspect_target(target, sbom, authorized=True, configuration=configuration)
+    inventory, sources = inspect_target(
+        target,
+        sbom,
+        authorized=True,
+        configuration=configuration,
+        dependency_selection=dependency_selection,
+        ipa_trust_policy=ipa_trust_policy,
+    )
     from .platform_checks import android_levels, exposed_providers
     from .source_analysis import analyze_sources
 
     structural = analyze_sources(sources, specs, exposed_providers(inventory), android_levels(inventory))
+    from .hybrid_analysis import analyze_hybrid
+
+    hybrid = analyze_hybrid(sources)
     findings, coverage = static_checks(inventory, sources, structural.get("pattern_exclusions"))
     from .platform_checks import platform_checks
 
@@ -100,6 +126,10 @@ def analyze(
     coverage.extend(structural["coverage"])
     inventory["warnings"].extend(structural["warnings"])
     inventory["source_analysis"] = structural["metadata"]
+    findings.extend(hybrid["findings"])
+    coverage.extend(hybrid["coverage"])
+    inventory["warnings"].extend(hybrid["warnings"])
+    inventory["hybrid_analysis"] = hybrid["metadata"]
     if target.suffix.lower() in {".apk", ".ipa", ".aab"}:
         from .binary_analysis import analyze_binary
 
@@ -108,6 +138,10 @@ def analyze(
         coverage.extend(binary["coverage"])
         inventory["warnings"].extend(binary["warnings"])
         inventory["binary"] = binary["metadata"]
+        if "ipa_trust_policy" in inventory:
+            from .apple_trust import trust_policy_summary
+
+            inventory["ipa_trust_policy"] = trust_policy_summary(inventory["ipa_trust_policy"])
         inventory["features"] = sorted(
             set(inventory["features"])
             | {feature for dex in binary["metadata"].get("dex", []) for feature in dex.get("features", [])}
@@ -153,9 +187,9 @@ def main() -> None:
         target = Path(sys.argv[1])
         if not target.exists():
             raise ValueError(f"Input not found: {target}")
-        if not target.is_dir() and target.suffix.lower() not in {".apk", ".ipa", ".zip", ".aab"}:
+        if not target.is_dir() and target.suffix.lower() not in {".apk", ".apks", ".ipa", ".zip", ".aab"}:
             raise ValueError(
-                "Use a source folder, APK, AAB, IPA, simulator .app folder, or supported app ZIP"
+                "Use a source folder, APK, AAB, APKS with a device specification, IPA, simulator .app folder, or supported app ZIP"
             )
         expected = Path(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else target
         if target.resolve() != expected:
@@ -167,6 +201,9 @@ def main() -> None:
                 Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None,
                 sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None,
                 parse_specs(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else None,
+                json.loads(sys.argv[7]) if len(sys.argv) > 7 and sys.argv[7] else None,
+                json.loads(sys.argv[8]) if len(sys.argv) > 8 and sys.argv[8] else None,
+                json.loads(sys.argv[9]) if len(sys.argv) > 9 and sys.argv[9] else None,
             )
             result["inventory"]["target"] = str(target)
     except (ValueError, OSError, TypeError, KeyError) as error:

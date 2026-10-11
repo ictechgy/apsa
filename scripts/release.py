@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -52,6 +53,12 @@ STAGE_PATHS = (
     "THIRD_PARTY_NOTICES.md",
     "LICENSE",
     "examples",
+    "action.yml",
+    "server.json",
+    ".claude-plugin/marketplace.json",
+    ".claude-plugin/plugin.json",
+    "plugins/apsa/.claude-plugin/plugin.json",
+    "plugins/apsa/.mcp.json",
 )
 
 
@@ -75,32 +82,202 @@ def run(arguments: list[str], cwd: Path, environment: dict[str, str], timeout: i
     return result.stdout
 
 
-def stage_sources(destination: Path) -> dict[str, str]:
+# Prune names before stat, descent, or copy. Retained binary inputs are never
+# needed to assemble a source-only release snapshot.
+PRIVATE_DIRECTORIES = frozenset(
+    {
+        "__pycache__",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        ".git",
+        ".venv",
+        "venv",
+        "node_modules",
+        "cache",
+        "caches",
+        "uploads",
+        "upload",
+        "outputs",
+        "output",
+        "history",
+        "jobs",
+        "prompts",
+        "input",
+        "inputs",
+        "private",
+        "retained",
+        "logs",
+        "preferences",
+        ".cache",
+        "raw_logs",
+        "fixtures",
+        "corpus",
+        "corpora",
+        "artifacts",
+        "builds",
+    }
+)
+SOURCE_SUFFIXES = frozenset(
+    {
+        ".py",
+        ".pyi",
+        ".java",
+        ".kt",
+        ".kts",
+        ".swift",
+        ".m",
+        ".h",
+        ".c",
+        ".cpp",
+        ".xml",
+        ".plist",
+        ".gradle",
+        ".pbxproj",
+        ".sh",
+        ".md",
+        ".rst",
+        ".toml",
+        ".yml",
+        ".yaml",
+    }
+)
+PUBLIC_FIXTURE_SOURCES = (
+    "tests/fixtures/binary_analysis/build.py",
+    "tests/fixtures/binary_analysis/unsafe/Calls.java",
+    "tests/fixtures/binary_analysis/safe/Calls.java",
+    "tests/fixtures/runtime/build.py",
+    "tests/fixtures/runtime/build_evidence.py",
+    "tests/fixtures/runtime/acquire_compiled.py",
+    "tests/fixtures/runtime/verify.py",
+    "tests/fixtures/runtime/android/MainActivity.java",
+    "tests/fixtures/runtime/ios/Main.swift",
+    "tests/fixtures/runtime/ios/Instrumented.swift",
+    "tests/fixtures/runtime/transport/TransportActivity.java",
+    "tests/fixtures/runtime/transport/Transport.swift",
+    "tests/fixtures/runtime/README.md",
+    "tests/fixtures/runtime/COMPILED.md",
+    "tests/fixtures/mcp_tool_manifest.json",
+) + tuple(
+    f"tests/fixtures/skills/{name}-{version}.md"
+    for version in ("1.0.1", "1.0.2", "1.0.3", "1.0.6", "1.1.0")
+    for name in (
+        ("quaygate", "mobile-audit")
+        if version in {"1.0.1", "1.0.2"}
+        else ("apsa", "quaygate", "mobile-audit")
+    )
+)
+PUBLIC_DEMO_SOURCES = tuple(
+    f"src/mobile_audit/data/demo/{name}"
+    for name in ("AndroidManifest.xml", "MainActivity.kt", "build.gradle.kts", "Info.plist", "Demo.swift")
+)
+PUBLIC_RESOURCES = frozenset(
+    {
+        "src/mobile_audit/data/rules.json",
+        "src/mobile_audit/data/structural-rules.json",
+        "src/mobile_audit/data/maswe.json",
+        "action.yml",
+        "server.json",
+        ".claude-plugin/marketplace.json",
+        ".claude-plugin/plugin.json",
+        "plugins/apsa/.claude-plugin/plugin.json",
+        "plugins/apsa/.mcp.json",
+        "tests/fixtures/mcp_tool_manifest.json",
+        "benchmarks/corpus.json",
+    }
+)
+
+
+def source_file_allowed(relative: Path) -> bool:
+    """Declare source formats and specific public data/contracts, not archives."""
+    name = relative.as_posix()
+    return (
+        name in STAGE_PATHS
+        or name in PUBLIC_RESOURCES
+        or relative.suffix in SOURCE_SUFFIXES
+        or (name.startswith("tests/contracts/") and relative.suffix == ".json")
+    )
+
+
+def stage_sources(destination: Path, *, source_only: bool = True) -> dict[str, str]:
+    if destination.resolve().is_relative_to(ROOT.resolve()):
+        raise ValueError("Source staging destination must be outside the checkout")
     destination.mkdir()
-    ignored = {"__pycache__", ".DS_Store", ".pytest_cache", ".ruff_cache"}
     inputs = {}
+
+    def visit(origin: Path) -> None:
+        relative = origin.relative_to(ROOT)
+        # Do not even stat a protected directory or a disallowed input file.
+        if relative.as_posix() == "src/mobile_audit/data/demo":
+            for name in PUBLIC_DEMO_SOURCES:
+                visit(ROOT / name)
+            return
+        if relative.as_posix() == "tests/fixtures":
+            # This tree retains old binaries. Select trusted source paths without
+            # enumerating either the fixture root or binary_analysis directory.
+            for name in PUBLIC_FIXTURE_SOURCES:
+                visit(ROOT / name)
+            return
+        if any(part.casefold() in PRIVATE_DIRECTORIES for part in relative.parts):
+            if relative.as_posix() not in PUBLIC_FIXTURE_SOURCES:
+                return
+        if origin.suffix and not source_file_allowed(relative) and source_only:
+            return
+        if origin.name == ".DS_Store" or origin.suffix == ".pyc":
+            return
+        for parent in origin.parents:
+            if parent == ROOT:
+                break
+            if parent.is_symlink():
+                raise ValueError(f"Release source symlink is unsupported: {parent.relative_to(ROOT)}")
+        if origin.is_symlink():
+            raise ValueError(f"Release source symlink is unsupported: {relative}")
+        if origin.is_dir():
+            with os.scandir(origin) as entries:
+                children = sorted((entry.name for entry in entries))
+            for name in children:
+                visit(origin / name)
+            return
+        if not origin.is_file() or (source_only and not source_file_allowed(relative)):
+            return
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(origin, target)
+        target.chmod(0o755 if os.access(origin, os.X_OK) else 0o644)
+        inputs[relative.as_posix()] = digest(target)
+
     for relative in STAGE_PATHS:
-        origin = ROOT / relative
-        if not origin.exists():
-            continue
-        entries = sorted(origin.rglob("*")) if origin.is_dir() else [origin]
-        for entry in entries:
-            if any(part in ignored for part in entry.relative_to(ROOT).parts) or entry.suffix == ".pyc":
-                continue
-            if entry.is_symlink():
-                raise ValueError(f"Release source symlink is unsupported: {entry.relative_to(ROOT)}")
-            if not entry.is_file():
-                continue
-            path = entry.relative_to(ROOT)
-            target = destination / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(entry, target)
-            target.chmod(0o755 if os.access(entry, os.X_OK) else 0o644)
-            inputs[path.as_posix()] = digest(target)
+        visit(ROOT / relative)
     for required in ("pyproject.toml", "uv.lock", "requirements-release.txt", "src/mobile_audit/__init__.py"):
         if required not in inputs:
             raise ValueError(f"Release source is missing {required}")
     return inputs
+
+
+def fresh_binary_fixture(stage: Path, destination: Path, environment: dict[str, str]) -> Path:
+    """Compile trusted staged Java into a new synthetic smoke input."""
+    sdk_name = environment.get("ANDROID_SDK_ROOT") or environment.get("ANDROID_HOME")
+    if not sdk_name:
+        raise ValueError("Binary release smoke requires ANDROID_SDK_ROOT or ANDROID_HOME")
+    specification = importlib.util.spec_from_file_location(
+        "release_fixture_builder", stage / "tests/fixtures/binary_analysis/build.py"
+    )
+    if specification is None or specification.loader is None:
+        raise ValueError("Release fixture builder is unavailable")
+    builder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(builder)
+    javac = environment.get("APSA_FIXTURE_JAVAC") or shutil.which("javac", path=environment.get("PATH"))
+    result = builder.build_fixtures(
+        sdk=Path(sdk_name),
+        output_dir=destination,
+        source_dir=stage / "tests/fixtures/binary_analysis",
+        javac=javac,
+        environment=environment,
+        compile_manifest=True,
+        platform=environment.get("APSA_TEST_ANDROID_PLATFORM", "android-36"),
+        build_tools=environment.get("APSA_TEST_ANDROID_BUILD_TOOLS", "36.0.0"),
+    )
+    return Path(result["artifacts"]["unsafe"]["path"])
 
 
 def smoke(python: Path, directory: Path, environment: dict[str, str], version: str, stage: Path) -> dict:
@@ -174,8 +351,7 @@ def smoke(python: Path, directory: Path, environment: dict[str, str], version: s
     verified = json.loads(
         run([str(cli), "reports", "verify", "--home", str(home), "--json"], directory, environment)
     )
-    binary = directory / "fixture.apk"
-    shutil.copyfile(stage / "tests/fixtures/binary_analysis/unsafe.apk", binary)
+    binary = fresh_binary_fixture(stage, directory / "synthetic-binary", environment)
     binary_report = json.loads(
         run([str(cli), "scan", str(binary), "--home", str(home), "--json"], directory, environment, 180)
     )["data"]
@@ -370,6 +546,30 @@ def release(output: Path, offline: bool) -> dict:
         working = temporary / "unrelated-working-directory"
         working.mkdir()
         smoke_result = smoke(installed_python, working, environment, version, stage)
+        shutil.copyfile(
+            working / "synthetic-binary/fixture-provenance.json", bundle / "fixture-provenance.json"
+        )
+        served_hashes = json.loads(
+            run(
+                [
+                    str(installed_python),
+                    str(stage / "scripts/served_mcp_manifest.py"),
+                    "--out",
+                    str(bundle / "served-mcp"),
+                    "--contract",
+                    str(stage / "tests/contracts/mcp_tool_manifest_pending.json"),
+                ],
+                working,
+                environment,
+                120,
+            )
+        )
+        smoke_result["clean_install_served_mcp"] = {
+            "transport": "actual-sdk-stdio-initialize-and-tools/list",
+            "scope_sha256": served_hashes,
+            "responses": "served-mcp",
+            "published_baseline_approved": False,
+        }
         licenses = json.loads(
             run(
                 [
@@ -436,13 +636,29 @@ def main() -> None:
     parser.add_argument(
         "--offline", action="store_true", help="Require all uv/PyPI artifacts in the existing local cache"
     )
+    parser.add_argument(
+        "--stage-only",
+        action="store_true",
+        help="Create a source-only snapshot without building or installing",
+    )
     args = parser.parse_args()
     try:
-        print(
-            json.dumps(
-                release(args.out.expanduser().resolve(), args.offline), ensure_ascii=False, sort_keys=True
-            )
-        )
+        output = args.out.expanduser().resolve()
+        if args.stage_only:
+            inputs = stage_sources(output)
+            result = {
+                "schema_version": 1,
+                "output": str(output),
+                "source_files_sha256": inputs,
+                "source_only": True,
+                "build": "not-run",
+                "clean_install": "not-run",
+                "served_mcp": "not-run",
+                "published": False,
+            }
+        else:
+            result = release(output, args.offline)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(1) from error

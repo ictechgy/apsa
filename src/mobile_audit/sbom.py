@@ -74,7 +74,18 @@ def cyclonedx(report: dict, first_observed: dict | None = None) -> dict:
         "name": inventory.get("package") or Path(report["target"]).name,
     }
     if inventory.get("fingerprint"):
-        application["hashes"] = [{"alg": "SHA-256", "content": inventory["fingerprint"]}]
+        complete = (
+            inventory.get("fingerprint_complete") is not False
+            and not (inventory.get("input_snapshot") or {}).get("partial")
+            and (inventory.get("input_snapshot") or {}).get("app_scope_complete") is not False
+        )
+        application["properties"] = [
+            _property("input-fingerprint", inventory["fingerprint"]),
+            _property("input-fingerprint-complete", complete),
+            _property("input-fingerprint-scope", "audited-input" if complete else "partial-audited-input"),
+        ]
+        if complete:
+            application["hashes"] = [{"alg": "SHA-256", "content": inventory["fingerprint"]}]
     components, refs = [], {}
     for index, dep in enumerate(inventory.get("dependencies", [])):
         key = (dep.get("ecosystem"), dep.get("name"), dep.get("version"))

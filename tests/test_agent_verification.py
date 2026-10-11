@@ -155,7 +155,8 @@ def test_scan_records_the_specification_and_verify_cross_checks_claims(store, tm
     sql = verify_claim(report, path="FilesProvider.java", weakness="CWE-89")
     assert sql["verdict"] == "corroborated"
     not_observed = verify_claim(report, path="CallActivity.kt", weakness="MASWE-0008")
-    assert not_observed["verdict"] == "not-observed" and "not proof" in not_observed["note"]
+    # Unresolved wrapper calls leave coverage partial for a nonmatching weakness.
+    assert not_observed["verdict"] == "partial" and "not proof" in not_observed["note"]
     assert verify_claim(report, weakness="MASWE-0051")["verdict"] == "not-assessed"
     assert verify_claim(report, weakness="MASWE-0044")["verdict"] == "not-run"
     bad_claims: list[dict] = [

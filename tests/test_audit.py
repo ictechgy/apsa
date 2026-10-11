@@ -5,20 +5,18 @@ import zipfile
 import pytest
 
 from mobile_audit.audit import compare, correlate, in_cve_range, scan
+from mobile_audit.core import file_digest
 from mobile_audit.inputs import inspect_target, parse_dependencies
 from mobile_audit.output import assistant_context, sarif
 
 
 def test_real_binary_android_manifest_and_dex(store, apk):
     report = scan(store, apk)
-    assert report["inventory"]["package"] == "org.t0t0.androguard.test"
+    assert report["inventory"]["package"] == "audit.fixture"
     assert report["inventory"]["platforms"] == ["android"]
-    assert report["inventory"]["files_scanned"] == 3
+    assert report["inventory"]["files_scanned"] == 2
     assert any(c["state"] == "not-run" and c["method"] == "source-pattern" for c in report["coverage"])
-    assert (
-        report["inventory"]["fingerprint"]
-        == "e79de7f2597a64b618984cbae941f20dbdd8bc4b97a9cc39165a98daa9181b89"
-    )
+    assert report["inventory"]["fingerprint"] == file_digest(apk)
 
 
 def test_ipa_binary_plist_and_ats(store, tmp_path):

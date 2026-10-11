@@ -5,8 +5,6 @@ import subprocess
 import sys
 
 import pytest
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 from pydantic import AnyUrl
 from textual.widgets import DataTable, Input, Markdown, Static, TabbedContent, TextArea
 
@@ -70,6 +68,9 @@ def test_cli_runs_from_unrelated_working_directory(tmp_path):
 
 @pytest.mark.asyncio
 async def test_mcp_stdio_discovery_scan_report_and_path_boundaries(store, demo):
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
     outside = scan(store, demo.parent)
     params = StdioServerParameters(
         command=sys.executable,
@@ -116,6 +117,9 @@ async def test_mcp_stdio_discovery_scan_report_and_path_boundaries(store, demo):
 
 @pytest.mark.asyncio
 async def test_mcp_runtime_opt_in_preview_and_report_boundary(store, demo):
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
     report = scan(store, demo)
     path = demo / "scenario.json"
     path.write_text(json.dumps(plan(report)))
@@ -157,6 +161,9 @@ def test_cli_policy_exits_baseline_and_read_only_evaluation(store, demo, tmp_pat
 
 @pytest.mark.asyncio
 async def test_mcp_background_policy_and_job_boundaries(store, demo, tmp_path):
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
     outside = jobs.start(store, {"kind": "scan", "target": str(demo.parent)})
     policy = demo / "policy.json"
     policy.write_text(json.dumps({"schema_version": 1, "allowed_statuses": ["candidate"]}))

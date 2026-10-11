@@ -84,7 +84,7 @@ def test_wrong_installed_apk_is_refused_before_capture(store, apk, tmp_path):
     report = scan(store, apk)
     scenario = plan(report)
     scenario["precondition"] = "Prepared owned test app with a synthetic canary."
-    scenario["markers"] = {"account_a": "unique-test-account-A"}
+    scenario["markers"]["account_a"] = "unique-test-account-A"
     path = tmp_path / "scenario.json"
     path.write_text(json.dumps(scenario))
 

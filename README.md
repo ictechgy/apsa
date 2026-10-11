@@ -6,6 +6,30 @@
 
 This English README is the source of truth. The Korean README follows it.
 
+**Unreleased competitive follow-up.** The working tree adds bounded native cross-file
+flow and input-bound path guards, JS/TS/Dart candidates, recorded Gradle variant
+selection, OSV batching and transmission exclusions, authenticated runtime evidence,
+AAB scalar resources, detached CMS consistency and paired verification.
+See [scope, options and remaining limits](docs/COMPETITIVE_FOLLOWUP.md) and the
+[new labeled synthetic results](docs/COMPETITIVE_CORPUS.md).
+The [remaining follow-up](docs/REMAINING_FOLLOWUP.md) adds explicit `.apks` device
+selection, IPA sparse-page/resource seals and supplied-anchor chain checks,
+and a typed runtime recorder exercised with fresh synthetic app models.
+Installed split merging, Apple signer identity, physical-device validation and
+fresh competitor measurements remain unverified.
+The [five validation gates](docs/FIVE_GATE_VALIDATION.md) record new compiler,
+signature-mutation and installed iOS simulator evidence, along with the separate
+package, comparator, bundletool and backend measurements still required.
+
+**Unreleased large-input follow-up.** The working tree uses rule version
+`2026.10.11.apsa.next`; these changes are not in the published 1.5.1 package.
+Input staging and AST analysis share code priorities and round-robin scheduling
+within inferred module groups. Lock inventories follow app code; ambiguous
+`*Tests/` and plain `Frameworks/` directories retain production priority.
+Reports record module omissions, comparisons expose input completeness, and the
+Action summary shows staging omissions. Partial fingerprints remain SBOM
+metadata instead of application hashes. See [scope and validation](docs/LARGE_INPUT_FOLLOWUP.md).
+
 <!-- mcp-name: io.github.ictechgy/apsa -->
 
 APSA helps developers and security teams audit their own mobile apps. It inspects source code and APK/AAB/IPA builds, correlates public vulnerability information, and keeps evidence, coverage, and report history together. Use the CLI, terminal UI, or the same audit engine through MCP and reusable skills.

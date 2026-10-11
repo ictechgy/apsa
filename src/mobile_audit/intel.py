@@ -14,6 +14,7 @@ from cvss import CVSS2, CVSS3, CVSS4
 
 from . import __version__
 from .core import digest, now, redact
+from .dependency_policy import DependencyTransmissionPolicy
 from .store import Store
 
 SOURCES = {
@@ -780,7 +781,7 @@ def _normalize_osv(value: Any, dep: dict) -> dict:
     }
 
 
-def query_dependencies(
+def _query_dependencies_legacy(
     store: Store, dependencies: list[dict], client: httpx.Client | None = None
 ) -> tuple[list[dict], list[str]]:
     fetcher = Fetcher(client)
@@ -902,7 +903,7 @@ def query_dependencies(
                     content_hash=digest("".join(fetcher.hashes).encode()),
                 )
             except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
-                errors.append(f"OSV query failed for {dep['name']}: {type(error).__name__}")
+                errors.append(f"OSV query failed for package: {type(error).__name__}")
                 store.feed(
                     f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}", "error", error=errors[-1]
                 )
@@ -914,6 +915,105 @@ def query_dependencies(
             )
     finally:
         fetcher.close()
+    return found, errors
+
+
+def query_dependencies(
+    store: Store,
+    dependencies: list[dict],
+    client: httpx.Client | None = None,
+    *,
+    query_mode: str = "auto",
+    exclusion_policy: DependencyTransmissionPolicy | None = None,
+    package_states: list[dict] | None = None,
+    max_packages: int = 1000,
+    batch_size: int = 100,
+    max_requests: int = 2000,
+) -> tuple[list[dict], list[str]]:
+    """Query public coordinates with explicit transmission and completion state.
+
+    ``legacy`` preserves the historical /v1/query protocol and 100-package cap.
+    ``auto`` retains it for small inventories and batches larger inventories.
+    ``batch`` always uses the ordered querybatch protocol and record hydration.
+    """
+    from .osv_batch import query_batch
+
+    if query_mode not in {"auto", "legacy", "batch"}:
+        raise ValueError("OSV query_mode must be auto, legacy or batch")
+    policy = exclusion_policy or DependencyTransmissionPolicy()
+    if not isinstance(policy, DependencyTransmissionPolicy):
+        raise ValueError("Expected DependencyTransmissionPolicy")
+    eligible = []
+    excluded = []
+    for dep in dependencies:
+        if isinstance(dep, dict) and policy.excludes(dep):
+            state = {"state": "excluded", "checked": False, "transmitted": False}
+            dep["osv_query"] = state
+            if package_states is not None:
+                package_states.append(
+                    {**{key: dep.get(key) for key in ("ecosystem", "name", "version")}, **state}
+                )
+            excluded.append(dep)
+        else:
+            eligible.append(dep)
+    count = len(
+        {
+            (d.get("ecosystem"), d.get("name"), d.get("version"))
+            for d in eligible
+            if isinstance(d, dict)
+            and all(isinstance(d.get(k), str) for k in ("ecosystem", "name", "version"))
+            and d.get("ecosystem") in OSV_ECOSYSTEMS
+            and d.get("confidence", "unknown") != "unknown"
+            and d.get("version")
+            and (d.get("resolution") or {}).get("state") != "superseded-by-resolved-build"
+        }
+    )
+    if query_mode == "batch" or (query_mode == "auto" and count > 100):
+        found, errors = query_batch(
+            store,
+            eligible,
+            client,
+            package_states=package_states,
+            max_packages=max_packages,
+            batch_size=batch_size,
+            max_requests=max_requests,
+        )
+    else:
+        previous_attempts = {feed["source"]: feed["attempted"] for feed in store.feeds()}
+        found, errors = _query_dependencies_legacy(store, eligible, client)
+        health = {feed["source"]: feed for feed in source_health(store)}
+        for dep in eligible:
+            if not isinstance(dep, dict) or not all(
+                isinstance(dep.get(key), str) for key in ("ecosystem", "name", "version")
+            ):
+                continue
+            feed = health.get(f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}")
+            attempted = bool(feed and feed["attempted"] != previous_attempts.get(feed["source"]))
+            state = (
+                "superseded"
+                if (dep.get("resolution") or {}).get("state") == "superseded-by-resolved-build"
+                else (
+                    "unsupported"
+                    if dep["ecosystem"] not in OSV_ECOSYSTEMS
+                    or dep.get("confidence", "unknown") == "unknown"
+                    or not dep["version"]
+                    else ("complete" if attempted else "cached")
+                    if feed and feed["status"] == "ok" and not feed["stale"]
+                    else "partial"
+                    if attempted and feed and feed["status"] == "partial"
+                    else "error"
+                    if attempted and feed and feed["status"] == "error"
+                    else "not-checked"
+                )
+            )
+            result = {"state": state, "checked": state in {"complete", "cached"}, "transmitted": attempted}
+            dep["osv_query"] = result
+            if package_states is not None:
+                package_states.append(
+                    {**{key: dep[key] for key in ("ecosystem", "name", "version")}, **result}
+                )
+    if excluded:
+        errors.append(f"{len(excluded)} dependencies excluded by transmission policy; not checked")
     return found, errors
 
 

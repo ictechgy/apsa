@@ -8,6 +8,7 @@ import os
 import re
 import stat
 import time
+from collections import deque
 from pathlib import Path
 
 from .core import MAX_ARCHIVE_TOTAL, MAX_FILE, MAX_FILES, MAX_SOURCE_TOTAL, open_directory, open_file
@@ -17,6 +18,7 @@ from .core import MAX_ARCHIVE_TOTAL, MAX_FILE, MAX_FILES, MAX_SOURCE_TOTAL, open
 # Keys are stable report fields (inventory.input_snapshot.omitted); values are warning labels.
 MAX_ENTRIES = 100_000
 MAX_DEPTH = 64
+MAX_OMITTED_MODULES = 256
 STAGING_KINDS = {
     "code_and_config": "app code and configuration",
     "other_text": "other shipped text resources",
@@ -27,7 +29,7 @@ TIERS = tuple(STAGING_KINDS)
 # Omitting these kinds can hide a whole platform or module, so even not-applicable coverage is unknown.
 SCOPE_KINDS = {"code_and_config", "other_text"}
 NATIVE = {".kt", ".java", ".swift", ".m", ".mm"}
-CODE = NATIVE | {".h", ".dart", ".js", ".ts"}
+CODE = NATIVE | {".h", ".dart", ".js", ".jsx", ".jsbundle", ".ts", ".tsx"}
 CONFIG = {".gradle", ".kts", ".toml", ".lock", ".lockfile", ".resolved", ".pbxproj", ".plist", ".xcprivacy"}
 CONFIG_NAMES = {
     "AndroidManifest.xml",
@@ -47,7 +49,6 @@ VENDORED = {
     "assets",
     "carthage",
     "external",
-    "frameworks",
     "third_party",
     "thirdparty",
     "vendor",
@@ -55,28 +56,66 @@ VENDORED = {
 TEST_SOURCES = re.compile(
     r"(?:^|/)src/(?:test(?:[A-Z0-9]\w*)?|androidTest\w*|[a-z]\w*Test(?:[A-Z]\w*)?)/"
     r"|^(?:test(?:[A-Z0-9]\w*)?|androidTest\w*)/"
-    r"|(?:^|/)(?:[\w-]*Tests|__tests__)/"
+    r"|(?:^|/)(?:Tests|UITests|__tests__)/"
     r"|\.(?:test|spec)\.[jt]s$|_test\.dart$|(?:^|/)integration_test/"
 )
+LOCK_NAMES = {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "pubspec.lock"}
+LOCK_SUFFIXES = {".lock", ".lockfile", ".resolved"}
+
+
+def source_module(relative: Path) -> str:
+    """Infer a scheduling group from source-layout paths, not a resolved build graph."""
+    directories = relative.parts[:-1]
+    for index, part in enumerate(directories):
+        if part == "src":
+            return "/".join(directories[:index]) or "."
+        if part in {"Sources", "Tests"} and index + 1 < len(directories):
+            return "/".join(directories[: index + 2])
+    width = 2 if directories[:1] in (("android",), ("ios",), ("modules",), ("packages",)) else 1
+    return "/".join(directories[:width]) or "."
+
+
+def prioritized_paths(paths: list[str]) -> list[int]:
+    """Stable round-robin over inferred modules within each staging priority."""
+    groups: dict[tuple[int, int], dict[str, list[tuple[str, int]]]] = {}
+    for index, path in enumerate(paths):
+        relative = Path(path)
+        modules = groups.setdefault(staging_rank(relative), {})
+        modules.setdefault(source_module(relative), []).append((path, index))
+    ordered = []
+    for rank in sorted(groups):
+        modules = groups[rank]
+        pending = deque(deque(index for _, index in sorted(modules[module])) for module in sorted(modules))
+        while pending:
+            files = pending.popleft()
+            ordered.append(files.popleft())
+            if files:
+                pending.append(files)
+    return ordered
 
 
 def staging_rank(relative: Path) -> tuple[int, int]:
-    """(tier, rank): the index into TIERS, then configuration, native code, JS/TS/Dart, then the rest."""
+    """(tier, rank): configuration, own code, headers, locks, then vendored code."""
     path = relative.as_posix()
     if TEST_SOURCES.search(path):
         return 3, 0
     if re.search(r"(?:^|/)res/values-[^/]+/", path):
         return 2, 0
-    vendored = any(part.lower() in VENDORED for part in relative.parts[:-1])
+    vendored = any(
+        part.lower() in VENDORED or part.lower().endswith((".framework", ".xcframework"))
+        for part in relative.parts[:-1]
+    )
+    if relative.suffix in LOCK_SUFFIXES or relative.name in LOCK_NAMES:
+        return 0, 5 if vendored else 4
     if relative.suffix in CODE:
-        return 0, 3 if vendored or relative.suffix == ".h" else 1 if relative.suffix in NATIVE else 2
+        return 0, 5 if vendored else 3 if relative.suffix == ".h" else 1 if relative.suffix in NATIVE else 2
     if (
         relative.suffix in CONFIG
         or relative.name in CONFIG_NAMES
         or relative.name.endswith(".cdx.json")
         or re.search(r"(?:^|/)res/xml[^/]*/", path)
     ):
-        return 0, 3 if vendored else 0
+        return 0, 5 if vendored else 0
     return 1, 0
 
 
@@ -120,6 +159,9 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
     warnings = []
     counts = {"files": 0, "bytes": 0, "entries": 0}
     omitted_by_kind = {kind: {"files": 0, "bytes": 0} for kind in STAGING_KINDS}
+    omitted_by_module: dict[str, dict[str, dict[str, int]]] = {}
+    omitted_module_names: set[str] = set()
+    omitted_other_modules: dict[str, dict[str, int]] = {}
     too_deep: list[Path] = []
     oversized: list[Path] = []
     unreadable: list[str] = []
@@ -185,7 +227,7 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
             if (os.fstat(root).st_dev, os.fstat(root).st_ino) != original_identity:
                 raise ValueError("Authorized input moved during staging; audit refused")
             output.mkdir(parents=True)
-            candidates: list[tuple[tuple[int, int], str, int, tuple[int, int]]] = []
+            candidates: list[tuple[str, int, tuple[int, int]]] = []
 
             def visit(fd: int, relative: Path, depth: int):
                 if depth > MAX_DEPTH:
@@ -232,7 +274,6 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                         ):
                             candidates.append(
                                 (
-                                    staging_rank(child),
                                     child.as_posix(),
                                     metadata.st_size,
                                     (metadata.st_dev, metadata.st_ino),
@@ -243,22 +284,34 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                         scope["complete"] = False
                         unreadable.append(f"{child}: {type(error).__name__}")
 
-            def omit(kind: str, size: int):
+            def omit(kind: str, child: Path, size: int):
                 omitted_by_kind[kind]["files"] += 1
                 omitted_by_kind[kind]["bytes"] += size
+                name = source_module(child)
+                omitted_module_names.add(name)
+                module = (
+                    omitted_by_module.setdefault(name, {})
+                    if name in omitted_by_module or len(omitted_by_module) < MAX_OMITTED_MODULES
+                    else omitted_other_modules
+                )
+                count = module.setdefault(kind, {"files": 0, "bytes": 0})
+                count["files"] += 1
+                count["bytes"] += size
                 if kind in SCOPE_KINDS:
                     scope["complete"] = False
 
             # Collect first, then stage the most useful files within the budgets.
             visit(root, Path(), 0)
-            # Sorted candidates arrive directory by directory; reuse the last parent descriptor.
+            # Reuse only the last parent descriptor; scheduling never changes safe traversal.
             parent: dict = {"path": None, "fd": None}
             try:
-                for (tier, _), posix, listed, listed_identity in sorted(candidates):
+                for index in prioritized_paths([candidate[0] for candidate in candidates]):
+                    posix, listed, listed_identity = candidates[index]
                     deadline()
-                    kind, child = TIERS[tier], Path(posix)
+                    child = Path(posix)
+                    kind = TIERS[staging_tier(child)]
                     if counts["files"] >= MAX_FILES:
-                        omit(kind, listed)
+                        omit(kind, child, listed)
                         continue
                     try:
                         if parent["path"] != child.parent:
@@ -270,7 +323,7 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                             child.name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent["fd"]
                         )
                     except OSError as error:
-                        omit(kind, listed)
+                        omit(kind, child, listed)
                         unreadable.append(f"{child}: {type(error).__name__}")
                         continue
                     try:
@@ -278,22 +331,22 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                         # Files are reopened by name after the walk; a different file (for example
                         # an editor's save, or a swapped-in report store) is left out, never read.
                         if (metadata.st_dev, metadata.st_ino) != listed_identity:
-                            omit(kind, listed)
+                            omit(kind, child, listed)
                             unreadable.append(f"{child}: replaced during staging")
                             continue
                         size = metadata.st_size
                         if size > MAX_FILE:
                             oversized.append(child)
-                            omit(kind, size)
+                            omit(kind, child, size)
                             continue
                         if counts["bytes"] + size > MAX_SOURCE_TOTAL:
-                            omit(kind, size)
+                            omit(kind, child, size)
                             continue
                         copy_file(opened, output / child, min(MAX_FILE, MAX_SOURCE_TOTAL - counts["bytes"]))
                     except OSError as error:
                         # A failed read or destination write (for example a name too long for the
                         # staging directory) leaves this file out, as in 1.5.0, not the audit.
-                        omit(kind, listed)
+                        omit(kind, child, listed)
                         unreadable.append(f"{child}: {type(error).__name__}")
                     finally:
                         os.close(opened)
@@ -333,5 +386,9 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
         "files": counts["files"],
         "bytes": counts["bytes"],
         "omitted": {kind: omission for kind, omission in omitted_by_kind.items() if omission["files"]},
+        "omitted_by_module": {module: omitted_by_module[module] for module in sorted(omitted_by_module)},
+        "omitted_module_groups": len(omitted_module_names),
+        "omitted_by_module_truncated": bool(omitted_other_modules),
+        "omitted_other_modules": omitted_other_modules,
         "app_scope_complete": scope["complete"],
     }

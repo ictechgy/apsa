@@ -17,7 +17,6 @@ from mobile_audit.cli import integration_config, main
 from mobile_audit.core import canonical_json, digest, read_json, report_incomplete, uid
 from mobile_audit.inputs import inspect_target
 from mobile_audit.intel import _normalize_osv, query_dependencies, source_health, sync
-from mobile_audit.mcp_server import create_server
 from mobile_audit.output import assistant_context
 from mobile_audit.policy import evaluate, load_policy
 from mobile_audit.runtime import plan, replace_markers, run
@@ -257,6 +256,8 @@ def test_watch_is_offline_by_default_deduplicates_and_isolates_bad_reports(store
 
 
 def test_mcp_roots_are_explicit_and_packaged_skill_is_installable(store, tmp_path):
+    from mobile_audit.mcp_server import create_server
+
     config = integration_config(store.home, [tmp_path])
     args = config["mcpServers"]["apsa"]["args"]
     assert args[-2:] == ["--root", str(tmp_path.resolve())]

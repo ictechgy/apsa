@@ -51,6 +51,9 @@ def analyze_target(
     *,
     report_home: Path | None = None,
     specs: dict | None = None,
+    dependency_selection: dict | None = None,
+    apk_set_device: dict | None = None,
+    ipa_trust_policy: dict | None = None,
 ) -> dict:
     caller_bound = expected_target is not None
     resolved = target.expanduser().resolve()
@@ -59,6 +62,9 @@ def analyze_target(
         raise ValueError("Authorized input moved or became a symlink; audit refused")
     if not resolved.exists():
         raise ValueError(f"Input not found: {resolved}")
+    from .run_options import artifact_options
+
+    apk_set_device, ipa_trust_policy = artifact_options(resolved, apk_set_device, ipa_trust_policy)
     sbom = (sbom if caller_bound else sbom.expanduser().resolve()) if sbom else None
     with parser_lease(), tempfile.TemporaryDirectory(prefix="mobile-audit-work-") as directory:
         root = Path(directory).resolve()
@@ -94,6 +100,9 @@ def analyze_target(
             )
             if specs
             else "",
+            json.dumps(dependency_selection, sort_keys=True) if dependency_selection else "",
+            json.dumps(apk_set_device, sort_keys=True) if apk_set_device is not None else "",
+            json.dumps(ipa_trust_policy, sort_keys=True) if ipa_trust_policy is not None else "",
         ]
         from .parser_sandbox import activate, sandbox_command
 
@@ -139,6 +148,10 @@ def analyze_target(
         "partial": bool(snapshot["warnings"]),
         # Files left out when the tree exceeded the staging budgets, by kind (staged in that order).
         "omitted": snapshot.get("omitted", {}),
+        "omitted_by_module": snapshot.get("omitted_by_module", {}),
+        "omitted_module_groups": snapshot.get("omitted_module_groups", 0),
+        "omitted_by_module_truncated": snapshot.get("omitted_by_module_truncated", False),
+        "omitted_other_modules": snapshot.get("omitted_other_modules", {}),
         "app_scope_complete": snapshot.get("app_scope_complete", True),
     }
     if snapshot["warnings"]:

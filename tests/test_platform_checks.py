@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -160,9 +159,9 @@ def test_insecure_random_and_mutable_pending_intents(store, project):
     assert pending[0]["evidence"][0]["factory"] == "PendingIntent.getBroadcast"
 
 
-def test_compiled_packages_keep_the_lint_engine_checks(store, monkeypatch):
+def test_compiled_packages_keep_the_lint_engine_checks(store, monkeypatch, compiled_apks):
     monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
-    report = scan(store, Path(__file__).parent / "fixtures/binary_analysis/unsafe.apk")
+    report = scan(store, compiled_apks / "unsafe.apk")
     rules = {item["rule_id"] for item in report["coverage"]}
     assert "QG-APP-EXPORTED" in rules
     assert not rules & {"ANDROID-EXPORTED-COMPONENT", "ANDROID-ALLOW-BACKUP", "SOURCE-HARDCODED-SECRET"}

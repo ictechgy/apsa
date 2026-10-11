@@ -18,12 +18,55 @@ URL_RULE = "AST-WEBVIEW-UNTRUSTED-URL"
 HOST_RULE = "AST-WEBVIEW-HOST-ALLOWLIST"
 
 
-def test_committed_corpus_runs_actual_engines_and_is_reproducible():
+@pytest.fixture(autouse=True)
+def fresh_corpus(tmp_path, compiled_apks, monkeypatch):
+    """Freeze source labels against newly compiled fixtures before measurement."""
+    original = benchmark.DEFAULT_MANIFEST
+    manifest = json.loads(original.read_text())
+    for case in manifest["cases"]:
+        if case["kind"] == "binary":
+            variant = {"dex-unsafe": "unsafe", "dex-safe": "safe", "dex-upstream-irrelevant": "safe"}[
+                case["id"]
+            ]
+            if case["id"] == "dex-upstream-irrelevant":
+                case["id"] = "dex-generated-irrelevant"
+                case["rationale"] = (
+                    "Fresh safe compiled replacement for the retained upstream control; reused safe bytes are not an independent accuracy sample"
+                )
+            source = compiled_apks / (variant + ".apk")
+            case["origin_sha256"] = case["sha256"]
+            case["path"] = str(source)
+            case["sha256"] = benchmark._hash(source.read_bytes())
+        else:
+            source = (original.parent / case["path"]).resolve()
+            assert source.suffix in {".java", ".kt", ".swift"}
+            destination = tmp_path / case["path"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+    manifest["generation_scope"] = (
+        "Public source controls plus NEW javac/D8/AAPT2 fixtures; original label set unchanged"
+    )
+    frozen = tmp_path / "fresh-corpus.json"
+    frozen.write_text(json.dumps(manifest, indent=2) + "\n")
+    real_run = benchmark.run
+
+    def run_fresh(manifest_path=None, case_ids=None):
+        return real_run(frozen if manifest_path is None else manifest_path, case_ids)
+
+    monkeypatch.setattr(benchmark, "DEFAULT_MANIFEST", frozen)
+    monkeypatch.setattr(benchmark, "run", run_fresh)
+
+
+def test_fresh_corpus_runs_actual_engines_and_is_reproducible():
     first = benchmark.run()
     second = benchmark.run()
     assert first == second
     assert first["summary"]["cases"] == 31
-    assert first["passed"] is True, first["disagreements"]
+    # The undefined audit.record receiver keeps this source control partial.
+    # Candidate labels still match; unresolved analysis cannot become a clean pass.
+    assert first["passed"] is False
+    assert [row["case_id"] for row in first["disagreements"]] == ["java-cross-function-irrelevant"]
+    assert first["disagreements"][0]["warnings"]
     assert first["summary"]["fp"] == first["summary"]["fn"] == 0
     assert any(case["kind"] == "binary" and case["observed"] for case in first["cases"])
     assert first["parser_versions"]["tree-sitter"]

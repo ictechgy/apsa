@@ -2,6 +2,20 @@
 
 English is the source for this release plan.
 
+Unreleased working-tree progress on 2026-10-11 is recorded in
+[COMPETITIVE_FOLLOWUP.md](COMPETITIVE_FOLLOWUP.md): bounded native guard/cross-file
+flow, hybrid candidates, OSV batching, Gradle directory/variant evidence, runtime
+observation pairing, AAB scalar resolution and detached CMS consistency.
+[REMAINING_FOLLOWUP.md](REMAINING_FOLLOWUP.md) adds explicit device-spec APK-set
+selection and individual member analysis, sparse CodeDirectory/resource seals,
+supplied-anchor chain checks, and a typed recorder tested on new synthetic app
+models. Installed manifest/resource merging, Apple signer authenticity,
+physical-device validation and full interprocedural/language coverage remain
+milestones. Published stages below and historical benchmark results are unchanged.
+[FIVE_GATE_VALIDATION.md](FIVE_GATE_VALIDATION.md) records the subsequent fresh
+compiler and installed simulator measurements; package/served MCP/remote CI,
+actual competitors, bundletool equivalence and HTTP backend remain separate gates.
+
 Status on 2026-10-11: [1.0.6](https://github.com/ictechgy/apsa/releases/tag/v1.0.6) and [1.1.0](https://github.com/ictechgy/apsa/releases/tag/v1.1.0) were published in that order. [1.2.0](https://github.com/ictechgy/apsa/releases/tag/v1.2.0) was then published with bounded, partial implementations of the analysis and parser-isolation stages, confirmed by its tag-context release workflow, the PyPI release and the GitHub release downloads. [1.3.0](https://github.com/ictechgy/apsa/releases/tag/v1.3.0) was then published with bounded dependency-evidence and analysis-depth work, confirmed the same way. [1.4.0](https://github.com/ictechgy/apsa/releases/tag/v1.4.0) was then published with adoption, agent-verification and benchmark work, confirmed the same way and by post-publication checks of the GitHub Action (including a code-scanning upload), `uvx`, the Claude Code plugin and the MCP Registry. [1.5.0](https://github.com/ictechgy/apsa/releases/tag/v1.5.0) was then published with detection-breadth work and a blind MASWE-labeled pair measurement, confirmed the same way. [1.5.1](https://github.com/ictechgy/apsa/releases/tag/v1.5.1) was then published, auditing large source trees partially instead of refusing them and fixing a slowdown on Android translations, confirmed the same way.
 
 1. **1.0.6 — evidence correctness.** Isolated MCP Python fallback, incomplete mixed-language AST and truncated pattern coverage, bounded OS-advisory coverage, declared dependency candidates, and unified CI example. Release only after regression tests and independent snapshot-bound review.

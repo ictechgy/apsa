@@ -576,7 +576,10 @@ def test_osv_budget_queries_declared_packages_before_transitive_lockfile_coordin
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         _, errors = query_dependencies(
-            store, [*transitive, superseded, resolved, declared, library, *unresolved], client
+            store,
+            [*transitive, superseded, resolved, declared, library, *unresolved],
+            client,
+            query_mode="legacy",
         )
     assert len(queried) == 100
     assert queried[:2] == ["com.squareup.okhttp3:okhttp", "org.example:direct"]
@@ -628,7 +631,7 @@ def test_application_lockfile_keeps_library_declarations_within_the_osv_budget(t
         return httpx.Response(200, json={"vulns": []})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        query_dependencies(store, inventory["dependencies"], client)
+        query_dependencies(store, inventory["dependencies"], client, query_mode="legacy")
     assert {"com.squareup.okhttp3:okhttp", "org.bouncycastle:bcprov-jdk18on"} <= set(queried[:2])
 
 
@@ -646,7 +649,7 @@ def _osv_queries(store, deps):
         return httpx.Response(200, json={"vulns": []})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        _, errors = query_dependencies(store, deps, client)
+        _, errors = query_dependencies(store, deps, client, query_mode="legacy")
     return queried, errors
 
 

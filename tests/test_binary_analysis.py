@@ -4,14 +4,11 @@ import json
 import plistlib
 import struct
 import zipfile
-from pathlib import Path
 
 import pytest
 
 import mobile_audit.binary_analysis as binary
 from mobile_audit.binary_analysis import BinaryFormatError, analyze_binary, inspect_macho
-
-FIXTURES = Path(__file__).parent / "fixtures" / "binary_analysis"
 
 
 def _macho(
@@ -88,8 +85,8 @@ def _fat(*slices):
     return struct.pack(">II", 0xCAFEBABE, len(slices)) + table + payload
 
 
-def test_compiled_real_dex_call_arguments_and_local_sensitive_value_flow():
-    report = analyze_binary(FIXTURES / "unsafe.apk", {})
+def test_compiled_real_dex_call_arguments_and_local_sensitive_value_flow(compiled_apks):
+    report = analyze_binary(compiled_apks / "unsafe.apk", {})
     assert report["warnings"] == []
     assert {finding["rule_id"] for finding in report["findings"]} == set(binary.DEX_RULES)
     assert len(report["findings"]) == 7
@@ -110,8 +107,8 @@ def test_compiled_real_dex_call_arguments_and_local_sensitive_value_flow():
     assert "FixtureBridge" not in serialized
 
 
-def test_same_api_names_in_literals_disabled_arguments_and_branch_join_do_not_find():
-    report = analyze_binary(FIXTURES / "safe.apk", {})
+def test_same_api_names_in_literals_disabled_arguments_and_branch_join_do_not_find(compiled_apks):
+    report = analyze_binary(compiled_apks / "safe.apk", {})
     assert report["warnings"] == []
     assert report["findings"] == []
     calls = report["metadata"]["dex"][0]["calls"]
@@ -120,15 +117,15 @@ def test_same_api_names_in_literals_disabled_arguments_and_branch_join_do_not_fi
     assert "Landroid/webkit/SslErrorHandler;->proceed()V" not in calls
 
 
-def test_upstream_binary_apk_supported_without_security_false_positives():
-    report = analyze_binary(Path(__file__).parent / "fixtures" / "Test-debug.apk", {})
+def test_fresh_compiled_safe_apk_supported_without_security_false_positives(compiled_apks):
+    report = analyze_binary(compiled_apks / "safe.apk", {})
     assert report["warnings"] == []
     assert report["findings"] == []
     assert report["metadata"]["dex"][0]["methods"] > 0
     assert report["metadata"]["dex"][0]["instructions"] > 0
 
 
-def test_corrupted_dex_does_not_invoke_heavy_parser(tmp_path, monkeypatch):
+def test_corrupted_dex_does_not_invoke_heavy_parser(tmp_path, monkeypatch, compiled_apks):
     import androguard.core.dex
 
     invoked = False
@@ -139,7 +136,7 @@ def test_corrupted_dex_does_not_invoke_heavy_parser(tmp_path, monkeypatch):
         raise AssertionError("invalid header reached parser")
 
     monkeypatch.setattr(androguard.core.dex, "DEX", parser)
-    with zipfile.ZipFile(FIXTURES / "unsafe.apk") as source:
+    with zipfile.ZipFile(compiled_apks / "unsafe.apk") as source:
         raw = bytearray(source.read("classes.dex"))
     raw[-1] ^= 1
     path = tmp_path / "bad.apk"
@@ -152,9 +149,9 @@ def test_corrupted_dex_does_not_invoke_heavy_parser(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("budget", ["MAX_DEX_BYTES", "MAX_METHODS", "MAX_INSTRUCTIONS", "MAX_FINDINGS"])
-def test_binary_budgets_surface_incomplete_coverage(monkeypatch, budget):
+def test_binary_budgets_surface_incomplete_coverage(monkeypatch, budget, compiled_apks):
     monkeypatch.setattr(binary, budget, 1)
-    report = analyze_binary(FIXTURES / "unsafe.apk", {})
+    report = analyze_binary(compiled_apks / "unsafe.apk", {})
     assert any(row["state"] == "partial" for row in report["coverage"])
     assert report["warnings"]
 

@@ -18,12 +18,20 @@ what remains the client's or user's responsibility. It describes APSA 1.5.1.
   is each tool's name, description, annotation hints and parameter shapes
   (types, defaults, enums, items, required names), sorted by name. Schema titles
   and other details the MCP SDK generates are left out, so the value follows
-  APSA's definitions rather than SDK formatting. For 1.5.1, unchanged from 1.4.0, it is
-  `fdb8e4a2fdcf13a35df71a9a7290336b50a2e7f7fad66eff782959b6b0ba9037` by default
-  and `818ab0bab3202f364478d866d094cd035e7d7b5c60b252c256bb2ade37d79a79` with
+  APSA's definitions rather than SDK formatting. The unreleased competitive follow-up adds
+  dependency resolution/transmission options, paired verification, explicit APK-set device
+  selection and digest-bound IPA chain policies. Its source contract is
+  `38ed7e154cae808281ef52cdcb5b115fee6db7b9941060d18b2aed78ad0a3dc3` by default
+  and `12ffe656469b9158d5d3154adf103c7c0ea4397375508aad3786e2703e26ad4d` with
   `--allow-runtime`. A test pins both values and recomputes them from the
   `tools/list` response; any change to a tool's name, description, parameters or
   annotations must update them deliberately.
+- Published 1.5.1 retains default `fdb8e4a2fdcf13a35df71a9a7290336b50a2e7f7fad66eff782959b6b0ba9037`
+  and runtime `818ab0bab3202f364478d866d094cd035e7d7b5c60b252c256bb2ade37d79a79`.
+  The development hashes above were derived from AST parameter declarations and Pydantic,
+  after reproducing both published hashes from the base source. This host's privacy guard
+  denies an MCP SDK dependency directory named `prompts`; current served `tools/list`
+  validation is pending on an allowed CI host. This source check does not replace that check.
 - The value a server reports about itself proves nothing on its own. To check a
   running server independently, take its `tools/list` result and compute
   `mobile_audit.mcp_server.manifest_sha256(tools)` with a trusted APSA copy, or

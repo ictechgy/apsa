@@ -63,9 +63,9 @@ def test_staging_tiers():
         "app/src/test/java/ATest.kt",
         "app/src/androidTest/java/ATest.kt",
         "shared/src/commonTest/kotlin/ATest.kt",
-        "AppTests/AppTests.swift",
         "app/src/test/res/values-fr/strings.xml",
-        "My-AppTests/AppTests.swift",
+        "Tests/AppTests.swift",
+        "My-App/UITests/AppTests.swift",
         "test/java/ATest.kt",
         "src/__tests__/app.ts",
         "src/app.test.ts",
@@ -174,6 +174,47 @@ def test_comment_stripping_keeps_literals_and_blanks_comments():
         strip_comments('s.replace(/"/g, x) // a\ny = 1 /* b */\n')
         == 's.replace(/"/g, x)     \ny = 1        \n'
     )
+
+
+def test_js_template_literal_comments_preserve_nested_interpolation_and_offsets():
+    text = (
+        "const url = `https://api.example/${ {a: `nested // ${value /* hidden */}`} }`; // trailing\n"
+        'const markup = `/* literal */ \\` ${"}"} \\${escaped}`;\n'
+        "const tail = `line one\n// literal line\n${call( // expression comment\n value)}`;\n"
+    )
+    expected = text
+    for comment in ("/* hidden */", "// trailing", "// expression comment"):
+        expected = expected.replace(comment, " " * len(comment))
+    cleaned = strip_comments(text, templates=True)
+    assert cleaned == expected
+    assert len(cleaned) == len(text) and cleaned.count("\n") == text.count("\n")
+
+
+def test_js_pattern_checks_read_code_after_template_urls_but_ignore_comments():
+    from mobile_audit.rules import static_checks
+
+    code = 'const url = `https://api.example/`; console.log("token", secret); // logger.warn(password)\n'
+    inventory = {"platforms": ["android"], "android_config": [], "ios_config": []}
+    findings, _ = static_checks(inventory, [("app.js", code)])
+    logs = [f for f in findings if f["rule_id"] == "STORAGE-SENSITIVE-LOG"]
+    assert len(logs) == 1
+    assert logs[0]["evidence"][0]["line"] == 1
+
+
+def test_js_regex_backticks_do_not_hide_real_comments():
+    text = 'const pattern = /[`/*]/g; const url = `https://example/`; // console.log("token", secret)\n'
+    comment = '// console.log("token", secret)'
+    assert strip_comments(text, templates=True) == text.replace(comment, " " * len(comment))
+    returned = "const t = `x`; function pattern() { return /[`]/; } // hidden\n"
+    assert strip_comments(returned, templates=True) == returned.replace("// hidden", " " * 9)
+
+
+@pytest.mark.parametrize("fragment", ["`", "`${", "${ {", "/*", "\\`", '"\\'])
+def test_malformed_js_templates_are_linear(fragment):
+    text = "const x = `" + fragment * 30_000
+    started = time.monotonic()
+    assert len(strip_comments(text, templates=True)) == len(text)
+    assert time.monotonic() - started < 2
 
 
 def test_xml_rules_ignore_xml_comments(store, tmp_path, monkeypatch):
@@ -403,6 +444,113 @@ def test_ast_budget_analyzes_shipped_code_before_tests(monkeypatch):
     )
     assert any("skipped app/src/androidTest/java/ATest.kt" in warning for warning in result["warnings"])
     assert not any("skipped app/src/main/java/Main.kt" in warning for warning in result["warnings"])
+
+
+def test_lock_inventory_cannot_displace_app_code(tmp_path, monkeypatch):
+    target = tmp_path / "project"
+    target.mkdir()
+    (target / "package-lock.json").write_text("{}" * 100)
+    (target / "Main.kt").write_text("class Main {}")
+    monkeypatch.setattr(input_snapshot, "MAX_SOURCE_TOTAL", 205)
+    result = stage_input(target, tmp_path / "staged")
+    assert (tmp_path / "staged/Main.kt").exists()
+    assert not (tmp_path / "staged/package-lock.json").exists()
+    assert result["omitted_by_module"] == {".": {"code_and_config": {"files": 1, "bytes": 200}}}
+    assert result["app_scope_complete"] is False
+
+
+def test_staging_shares_budget_between_modules_and_counts_omissions(tmp_path, monkeypatch):
+    target = tmp_path / "project"
+    paths = ("a/src/main/A.kt", "a/src/main/B.kt", "a/src/main/C.kt", "b/src/main/Z.kt")
+    for path in paths:
+        (target / path).parent.mkdir(parents=True, exist_ok=True)
+        (target / path).write_text("class A {}")
+    monkeypatch.setattr(input_snapshot, "MAX_FILES", 2)
+    staged = tmp_path / "staged"
+    result = stage_input(target, staged)
+    assert sorted(p.relative_to(staged).as_posix() for p in staged.rglob("*.kt")) == [paths[0], paths[3]]
+    assert result["omitted_by_module"] == {"a": {"code_and_config": {"files": 2, "bytes": 20}}}
+    assert result["omitted"]["code_and_config"] == {"files": 2, "bytes": 20}
+
+
+def test_ambiguous_directory_names_keep_production_priority(tmp_path, monkeypatch):
+    from mobile_audit.input_snapshot import staging_rank
+
+    for path in (
+        "BusinessTests/BusinessTests.swift",
+        "BusinessTests/Checkout.swift",
+        "AppTests/Helpers.swift",
+        "Frameworks/OwnKit/Kit.swift",
+    ):
+        assert staging_rank(Path(path)) == (0, 1)
+    assert staging_rank(Path("Frameworks/ThirdParty.framework/Kit.swift")) == (0, 5)
+    assert staging_rank(Path("Vendor/Kit/Kit.swift")) == (0, 5)
+    target = tmp_path / "project"
+    (target / "BusinessTests").mkdir(parents=True)
+    (target / "BusinessTests/Checkout.swift").write_text("func checkout() {}")
+    (target / "Tests").mkdir()
+    (target / "Tests/AppTests.swift").write_text("func testCheckout() {}")
+    monkeypatch.setattr(input_snapshot, "MAX_FILES", 1)
+    result = stage_input(target, tmp_path / "staged")
+    assert (tmp_path / "staged/BusinessTests/Checkout.swift").exists()
+    assert result["omitted"] == {"tests": {"files": 1, "bytes": 22}}
+    assert result["app_scope_complete"] is True
+
+
+def test_ast_budget_keeps_app_modules_before_vendor_and_test_code(monkeypatch):
+    from mobile_audit import source_analysis
+
+    code = "class Main {\n fun run() {\n val x = 1\n }\n}\n"
+    paths = (
+        "Vendor/Kit/A.kt",
+        "a/src/main/A.kt",
+        "a/src/main/B.kt",
+        "b/src/main/Z.kt",
+        "b/src/test/T.kt",
+    )
+    monkeypatch.setattr(source_analysis, "MAX_AST_TOTAL", len(code) * 2)
+    for order in (paths, tuple(reversed(paths))):
+        result = source_analysis.analyze_sources([(path, code) for path in order])
+        checked = [f["path"] for f in result["metadata"]["files"] if f["state"] == "checked"]
+        assert checked == [paths[1], paths[3]]
+        assert result["metadata"]["functions"]["analyzed"] == 2
+        assert result["metadata"]["function_inventory_complete"] is False
+
+
+def test_module_omissions_stay_bounded_without_losing_file_counts(tmp_path, monkeypatch):
+    target = tmp_path / "project"
+    for name in ("a", "b", "c", "d"):
+        (target / name / "src/main").mkdir(parents=True)
+        (target / name / "src/main/A.kt").write_text("class A {}")
+    monkeypatch.setattr(input_snapshot, "MAX_FILES", 0)
+    monkeypatch.setattr(input_snapshot, "MAX_OMITTED_MODULES", 2)
+    result = stage_input(target, tmp_path / "staged")
+    assert sorted(result["omitted_by_module"]) == ["a", "b"]
+    assert result["omitted_module_groups"] == 4 and result["omitted_by_module_truncated"]
+    assert result["omitted_other_modules"] == {"code_and_config": {"files": 2, "bytes": 20}}
+    assert result["omitted"] == {"code_and_config": {"files": 4, "bytes": 40}}
+
+
+def test_comparison_exposes_partial_input_and_missing_findings(store, tmp_path, monkeypatch):
+    from mobile_audit.audit import compare
+
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "off")
+    target = tmp_path / "project"
+    target.mkdir()
+    (target / "Main.kt").write_text("class Main {}")
+    (target / "View.swift").write_text("let view = UIWebView()")
+    before = scan(store, target)
+    monkeypatch.setattr(input_snapshot, "MAX_FILES", 1)
+    after = scan(store, target)
+    result = compare(store, before["id"], after["id"])
+    assert result["audit_incomplete_after"] is True
+    assert result["input_after"]["fingerprint_complete"] is False
+    assert result["input_after"]["input_snapshot"]["omitted_by_module"] == {
+        ".": {"code_and_config": {"files": 1, "bytes": len("let view = UIWebView()")}}
+    }
+    assert result["input_before"]["input_snapshot"]["partial"] is False
+    assert "IOS-UIWEBVIEW" in {f["rule_id"] for f in result["no_longer_observed"]}
+    assert "not proof of remediation" in result["note"]
 
 
 def test_omitted_platform_cannot_pass_required_rules(store, tmp_path, monkeypatch):
