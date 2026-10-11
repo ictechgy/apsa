@@ -2,6 +2,48 @@
 import UIKit
 import CryptoKit
 
+// Immutable per-process identity connects separate entry/lifecycle diagnostics only.
+enum FixtureProcessIdentity {
+    static let epoch = UUID().uuidString
+    static func digest(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+@main
+@MainActor
+enum FixtureBootstrap {
+    static func main() {
+        recordEntry()
+        _ = UIApplicationMain(CommandLine.argc, CommandLine.unsafeArgv, nil, NSStringFromClass(AppDelegate.self))
+    }
+    private static func recordEntry() {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let entry = documents.appendingPathComponent("process-entry.json")
+        func pathDigest(_ url: URL) -> String {
+            FixtureProcessIdentity.digest(url.resolvingSymlinksInPath().standardizedFileURL.path)
+        }
+        var value: [String: Any] = ["schema_version": 1, "phase": "before-uiapplication-main",
+            "process_epoch_sha256": FixtureProcessIdentity.digest(FixtureProcessIdentity.epoch),
+            "pid_sha256": FixtureProcessIdentity.digest(String(ProcessInfo.processInfo.processIdentifier)),
+            "home_path_sha256": pathDigest(home), "documents_path_sha256": pathDigest(documents),
+            "entry_path_sha256": pathDigest(entry), "write_status": "attempted"]
+        // At most two capped atomic writes. Absence leaves write outcome unknown.
+        // The attempted receipt survives if the final confirmed write fails.
+        do {
+            try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+            let attempted = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+            guard attempted.count <= 4096 else { return }
+            try attempted.write(to: entry, options: [.atomic])
+            value["write_status"] = "confirmed"
+            let confirmed = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+            guard confirmed.count <= 4096 else { return }
+            try confirmed.write(to: entry, options: [.atomic])
+        } catch { /* No raw paths, identifiers or error text. */ }
+    }
+}
+
 // Every mutable result access is locked, including callback completion and timeout races.
 final class HTTPResult: @unchecked Sendable {
     private let lock = NSLock()
@@ -26,7 +68,7 @@ final class FixtureTransport: @unchecked Sendable {
     private let eventLock = NSLock()
     private var events: [[String: Any]] = []
     private var eventsComplete = true
-    private let launchEpoch = UUID().uuidString
+    private let launchEpoch = FixtureProcessIdentity.epoch
     private let queue = DispatchQueue(label: "apsa.synthetic.transport")
     var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
     func sha(_ url: URL) throws -> String { SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined() }
@@ -145,7 +187,6 @@ final class FixtureTransport: @unchecked Sendable {
     }
 }
 
-@main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     let transport = FixtureTransport()
     func application(_ application: UIApplication, willFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {

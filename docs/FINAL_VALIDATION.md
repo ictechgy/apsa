@@ -393,6 +393,62 @@ Pyright passed. The target/helper Swift sources and runtime workflow are
 unchanged, preserving the prior strict Swift 5/6 compile evidence. This change
 needs both full independent source lanes and another actual isolated execution.
 
+## Seventh isolated execution
+
+The complete v12 patch
+`399df8f5ec2fa7e44046903d42a349a7bc6b20ef54788f63a5d8031ab53c9fe3`
+received code APPROVE and architecture WATCH / source READY. Exactly 346
+manifest-bound files became commit `da7f6506504dff92e188e0b6b034068dc4c0b114`,
+tree `d7e7550a3d293dd2cf8261b089da686ad3f81235`. The remote delta changed only
+the diagnostic driver, its tests and this document; 343 entries were identical.
+
+- [CI](https://github.com/ictechgy/apsa/actions/runs/38147567667) passed all
+  11 jobs and [package gates](https://github.com/ictechgy/apsa/actions/runs/38147567713)
+  passed all four. Four Ubuntu main/package executions reported 1,766 passed /
+  26 skipped; four macOS executions reported 1,767 passed / 25 skipped. Required
+  isolation reported Ubuntu 1,767/25 and macOS 1,769/23. Actual checkout and
+  clean-wheel 23/25-tool SDK contracts, fresh APK dual-engine/input-hash checks,
+  actual MCP scans, Ruff and Pyright passed. All eight builds matched wheel
+  `76924137808148c40b267646b33b33e9864c5b24a8201e7074b7fb35de6af98d`
+  and sdist `c87fddd60309f75cad26476303e0a03edebbe5f27912020e6723db6374a21950`.
+- [Runtime](https://github.com/ictechgy/apsa/actions/runs/38147567675) passed
+  two backend and four installed Android controls. Both iOS modes remained
+  zero/inconclusive; all cleanup was confirmed and eight artifacts were
+  head-bound. The optional diagnostic correction worked: a simctl help timeout
+  remained explicitly unmeasured and did not abort the primary path.
+- The simctl mode confirmed the readiness process's owned executable identity
+  and exit, then `openurl` returned zero. The strict response deadline still
+  expired with the same readiness epoch, no URL receipt and no response. The
+  separated tail verified unchanged owned app/data containers and installed
+  hashes. Its direct launch returned a different live-verified PID at the exact
+  installed executable, while the observed readiness epoch stayed unchanged.
+  This does not establish entry into the app, its own resolved Documents path,
+  a missing registration, a crash, or a CoreSimulator bug.
+- The companion helper built and installed successfully, but the target's
+  primary readiness launch timed out after 120 seconds, before target PID/exit
+  verification or helper URL dispatch. Therefore that run did not measure
+  companion OS delivery. A primary timeout remains a failure.
+
+The new diagnostic is a separate bounded process-entry receipt written by an
+explicit bootstrap before `UIApplicationMain`. It records only process epoch,
+PID and canonical home/Documents/entry-path digests with fixed write status.
+The existing event epoch shares that immutable process epoch. Driver reads are
+restricted to the exact NEW owned container and capped receipt; absent,
+malformed, oversized or mismatched paths remain unmeasured with unknown write
+outcome. Readiness, original failure, constructor failure, separated tail and
+success snapshots compare entry/PID/path/callback-epoch relations independently.
+This receipt cannot replace the cold/warm scene receipt, authenticate a session,
+extend primary deadlines, or turn the preserved original failure into success.
+Strict callback acceptance can succeed without a diagnostic entry receipt.
+
+All 159 focused runtime tests passed, including 34 new boundary regressions.
+Ruff, formatting and Pyright passed. Actual target Swift 5 and Swift 6 complete
+concurrency compiles passed with zero actor/captured-state diagnostics; only the
+known compatible-sysroot warning remains. The helper source and runtime workflow
+are unchanged. These checks are not OS-entry or URL-delivery evidence. Fresh full
+source reviews and another actual execution are required. The physical-device/
+provisioning, revocation and AAPT2 watches remain separate.
+
 ## New Apple development signature
 
 The user-authorized local lookup found a physical iPhone, an enabled developer

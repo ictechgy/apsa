@@ -34,6 +34,7 @@ from scripts.validate_runtime_transport import (
     owned_ios_url,
     safe_ios_appinfo,
     safe_ios_dispatcher,
+    safe_ios_entry,
     safe_ios_events,
     scenario,
 )
@@ -740,6 +741,233 @@ def test_ios_pid_probe_is_unmeasured_outside_disposable_ci_and_for_nonpositive_p
         assert ios_process_identity(pid, tmp_path / "new-app") == {"state": "unmeasured"}
 
 
+def synthetic_ios_entry(data: Path, *, epoch="1" * 64, pid=321, write_status="confirmed"):
+    documents = data / "Documents"
+    return {
+        "schema_version": 1,
+        "phase": "before-uiapplication-main",
+        "process_epoch_sha256": epoch,
+        "pid_sha256": digest(str(pid).encode()),
+        "home_path_sha256": digest(str(data.resolve()).encode()),
+        "documents_path_sha256": digest(str(documents.resolve()).encode()),
+        "entry_path_sha256": digest(str((documents / "process-entry.json").resolve()).encode()),
+        "write_status": write_status,
+    }
+
+
+def new_entry_target(tmp_path):
+    target = IosTarget.__new__(IosTarget)
+    target.device = "11111111-2222-3333-4444-555555555555"
+    target.url_driver = "simctl"
+    target.device_set = tmp_path / "new-set"
+    data = target.device_set / target.device / "new-data"
+    (data / "Documents").mkdir(parents=True)
+    target.response = data / "Documents/response.json"
+    target.stage_path = target.response.with_name("stage.txt")
+    target.stage_path.write_text("scene-active")
+    target.events_path = target.response.with_name("events.json")
+    return target, data
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"schema_version": True},
+        {"phase": "new-private-phase"},
+        {"pid_sha256": 321},
+        {"home_path_sha256": "/new-synthetic-private-path"},
+        {"documents_path_sha256": None},
+        {"process_epoch_sha256": "F" * 64},
+        {"entry_path_sha256": ["1" * 64]},
+        {"write_status": "new-private-error"},
+        {"raw_path": "/new-synthetic-private-path"},
+    ],
+)
+def test_ios_entry_rejects_untrusted_fields_without_echoing_raw_metadata(tmp_path, change):
+    value = {**synthetic_ios_entry(tmp_path), **change}
+    result = safe_ios_entry(json.dumps(value).encode())
+    assert result["state"] == "unmeasured" and result["write_status"] == "unknown"
+    assert result["acquisition"] == "unsupported"
+    assert "new-private" not in json.dumps(result) and "/new-synthetic" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("raw", [b"", b"not-json", b"[]", b"\xff", b"x" * 4097])
+def test_ios_entry_absent_malformed_or_over_bound_leaves_write_outcome_unknown(raw):
+    result = safe_ios_entry(raw)
+    assert result["state"] == ("absent" if not raw else "unmeasured")
+    assert result["write_status"] == "unknown" and result["acquisition"] == "unsupported"
+
+
+@pytest.mark.parametrize(
+    ("process_state", "pid", "relation"),
+    [
+        ("live-verified", 321, "matches-live-verified"),
+        ("exited", 321, "matches-exited-owner"),
+        ("unmeasured", 321, "unmeasured"),
+        ("live-verified", 322, "differs-known-owner"),
+    ],
+)
+def test_ios_entry_new_epoch_path_binding_and_known_pid_are_independent(
+    tmp_path, process_state, pid, relation
+):
+    value = synthetic_ios_entry(tmp_path, epoch="2" * 64, pid=pid)
+    paths = {key: value[key] for key in ("home_path_sha256", "documents_path_sha256", "entry_path_sha256")}
+    result = safe_ios_entry(
+        json.dumps(value).encode(),
+        expected_paths=paths,
+        process={"state": process_state, "pid_sha256": digest(b"321")},
+        readiness_epoch="1" * 64,
+        callback_epoch="1" * 64,
+    )
+    assert result["state"] == "diagnostic-only" and result["acquisition"] == "unsupported"
+    assert result["expected_paths_match"] is True and result["pid_identity_relation"] == relation
+    assert result["process_epoch_relation"] == "new-since-readiness"
+    assert result["callback_epoch_relation"] == "differs-callback"
+    paths["documents_path_sha256"] = "3" * 64
+    mismatch = safe_ios_entry(json.dumps(value).encode(), expected_paths=paths)
+    assert mismatch["expected_paths_match"] is False and mismatch["state"] == "unmeasured"
+
+
+@pytest.mark.parametrize("write_status", ["attempted", "confirmed"])
+def test_ios_entry_reader_reads_only_exact_owned_path_and_preserves_write_status(tmp_path, write_status):
+    target, data = new_entry_target(tmp_path)
+    value = synthetic_ios_entry(data, write_status=write_status)
+    target.readiness_entry_epoch = value["process_epoch_sha256"]
+    target.process_observations = {"after_terminate": {"state": "exited", "pid_sha256": value["pid_sha256"]}}
+    events = synthetic_ios_events()
+    events["launch_epoch_sha256"] = value["process_epoch_sha256"]
+    target.events_path.write_text(json.dumps(events))
+    target.response.with_name("process-entry.json").write_text(json.dumps(value))
+    result = target.entry_observation()
+    assert result["expected_paths_match"] is True and result["write_status"] == write_status
+    assert result["pid_identity_relation"] == "matches-exited-owner"
+    assert result["process_epoch_relation"] == "same-as-readiness"
+    assert result["callback_epoch_relation"] == "same-as-callback"
+    assert str(data) not in json.dumps(result)
+
+
+@pytest.mark.parametrize("escape", ["entry-symlink", "documents-symlink", "wrong-uuid", "over-bound"])
+def test_ios_entry_reader_rejects_scope_escape_and_oversize_before_open(tmp_path, monkeypatch, escape):
+    target, data = new_entry_target(tmp_path)
+    outside = tmp_path / "new-outside"
+    outside.mkdir()
+    other = outside / "process-entry.json"
+    other.write_text(json.dumps(synthetic_ios_entry(outside)))
+    path = target.response.with_name("process-entry.json")
+    if escape == "entry-symlink":
+        path.symlink_to(other)
+    elif escape == "documents-symlink":
+        target.stage_path.unlink()
+        path.parent.rmdir()
+        path.parent.symlink_to(outside, target_is_directory=True)
+    elif escape == "wrong-uuid":
+        target.response = other.with_name("response.json")
+    else:
+        path.write_bytes(b"x" * 4097)
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.os.open", lambda *a: pytest.fail("unsafe entry read")
+    )
+    result = target.entry_observation()
+    assert result["state"] == "unmeasured" and result["write_status"] == "unknown"
+    assert result["acquisition"] == "unsupported"
+
+
+def test_ios_entry_new_process_diagnostic_never_promotes_original_cold_failure(tmp_path, monkeypatch):
+    target, data = new_entry_target(tmp_path)
+    value = synthetic_ios_entry(data)
+    path = target.response.with_name("process-entry.json")
+    path.write_text(json.dumps(value))
+    events = synthetic_ios_events()
+    events["launch_epoch_sha256"] = value["process_epoch_sha256"]
+    events["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
+    target.events_path.write_text(json.dumps(events))
+    target.readiness_epoch = target.readiness_entry_epoch = value["process_epoch_sha256"]
+    process = {"state": "exited", "pid_sha256": value["pid_sha256"]}
+    target.process_observations = {"after_terminate": process}
+    target.readiness_entry = target.entry_observation(process={**process, "state": "live-verified"})
+    target.delivery_observations = []
+    target.commands = Commands(tmp_path, env={})
+    target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(target.device_set)]
+    monkeypatch.setattr(target.commands, "run", lambda *a, **kw: b"")
+    times = iter([0, 91])
+    monkeypatch.setattr("scripts.validate_runtime_transport.time.monotonic", lambda: next(times))
+
+    def tail():
+        changed = synthetic_ios_entry(data, epoch="2" * 64, pid=322)
+        path.write_text(json.dumps(changed))
+        return {
+            "state": "diagnostic-only",
+            "process_entry_after_launch": target.entry_observation(
+                process={"state": "live-verified", "pid_sha256": changed["pid_sha256"]}
+            ),
+        }
+
+    monkeypatch.setattr(target, "cold_timeout_diagnostic", tail)
+    with pytest.raises(FixtureFailure, match="response challenge timed out") as caught:
+        target.deliver("new-synthetic-primary-url", {"action": "session", "session": "a" * 64})
+    primary = caught.value.observation
+    assert primary["process_entry"]["process_epoch_relation"] == "same-as-readiness"
+    assert primary["process_entry_readiness"]["pid_identity_relation"] == "matches-live-verified"
+    assert (
+        primary["diagnostic_tail"]["process_entry_after_launch"]["process_epoch_relation"]
+        == "new-since-readiness"
+    )
+    assert primary["callback_events"]["receipts"] == [] and target.delivery_observations == []
+    assert target.dispatch_expectation["action"] == "session"
+
+
+@pytest.mark.parametrize("failure", ["entry-read", "callback-read"])
+def test_ios_entry_diagnostic_io_failure_does_not_escape_or_echo_private_error(
+    tmp_path, monkeypatch, failure
+):
+    target, data = new_entry_target(tmp_path)
+    target.response.with_name("process-entry.json").write_text(json.dumps(synthetic_ios_entry(data)))
+
+    def unavailable(*args):
+        raise PermissionError("new-synthetic-private-path-and-error")
+
+    if failure == "entry-read":
+        monkeypatch.setattr("scripts.validate_runtime_transport.os.open", unavailable)
+    else:
+        monkeypatch.setattr(target, "events_observation", unavailable)
+    result = target.entry_observation()
+    assert result["state"] == ("unmeasured" if failure == "entry-read" else "diagnostic-only")
+    assert result["acquisition"] == "unsupported" and "new-synthetic-private" not in json.dumps(result)
+    if failure == "callback-read":
+        assert result["callback_epoch_relation"] == "unknown"
+
+
+@pytest.mark.parametrize("entry_state", ["absent", "malformed", "path-mismatch"])
+def test_ios_entry_diagnostic_is_not_required_for_otherwise_strict_callback_acceptance(tmp_path, entry_state):
+    target, data = new_entry_target(tmp_path)
+    path = target.response.with_name("process-entry.json")
+    if entry_state == "malformed":
+        path.write_bytes(b"new malformed diagnostic")
+    elif entry_state == "path-mismatch":
+        value = synthetic_ios_entry(data)
+        value["documents_path_sha256"] = "3" * 64
+        path.write_text(json.dumps(value))
+    events = synthetic_ios_events()
+    target.events_path.write_text(json.dumps(events))
+    target.readiness_epoch = digest(b"previous NEW process")
+    receipt = events["events"][1]
+    target.dispatch_expectation = {
+        key: receipt[key] for key in ("lifecycle", "action", "uri_sha256", "session_sha256", "nonce_sha256")
+    }
+    target.process_observations = {"after_terminate": {"state": "exited"}}
+    target.delivery_observations = []
+    assert target.entry_observation()["state"] == ("absent" if entry_state == "absent" else "unmeasured")
+    target.record_delivery(
+        {"delivery_lifecycle": "cold-url-context"},
+        {"action": "session", "session": "new synthetic session"},
+        raw=b"new response",
+    )
+    assert len(target.delivery_observations) == 1
+    assert (
+        target.delivery_observations[0]["callback_events"]["receipts"][0]["matches_expected_dispatch"] is True
+    )
+
+
 def test_ios_appinfo_projects_only_new_identity_and_registration_booleans():
     package = "apsa.fixture.new"
     value = {
@@ -1172,7 +1400,7 @@ def test_generated_companion_registers_no_scheme_and_verifies_installed_bytes(tm
 
 
 @pytest.mark.parametrize("diagnostic", ["help-timeout", "help-os-error", "appinfo-timeout", "plutil-timeout"])
-@pytest.mark.parametrize("primary_timeout", [False, True])
+@pytest.mark.parametrize("primary_timeout", [False, True, "launch"])
 def test_ios_constructor_proceeds_past_only_noncritical_diagnostic_failure(
     tmp_path, monkeypatch, diagnostic, primary_timeout
 ):
@@ -1223,6 +1451,8 @@ def test_ios_constructor_proceeds_past_only_noncritical_diagnostic_failure(
         elif argv[0] == "/usr/bin/plutil":
             raise subprocess.TimeoutExpired(argv, kwargs["timeout"], output=b"", stderr=b"")
         elif "launch" in argv:
+            if primary_timeout == "launch":
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"], output=b"", stderr=b"")
             value = synthetic_ios_events()
             value["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
             (data / "Documents/events.json").write_text(json.dumps(value))
@@ -1256,6 +1486,15 @@ def test_ios_constructor_proceeds_past_only_noncritical_diagnostic_failure(
 
     monkeypatch.setattr(subprocess, "run", new_public_tool)
     monkeypatch.setattr("scripts.validate_runtime_transport.ios_process_identity", process_identity)
+    if primary_timeout == "launch":
+        with pytest.raises(CommandFailure) as caught:
+            IosTarget(tmp_path / "new-build", package, commands, "new-runtime", "new-device-type")
+        assert caught.value.reason == "command-timeout"
+        assert commands.pre_cleanup_failure is not None
+        assert commands.pre_cleanup_failure["reason"] == "command-timeout"
+        assert commands.pre_cleanup_failure["process_entry"]["state"] == "absent"
+        assert not any(("openurl" in call or "terminate" in call) and "help" not in call for call in calls)
+        return
     target = IosTarget(tmp_path / "new-build", package, commands, "new-runtime", "new-device-type")
     assert target.process_observations["after_terminate"]["state"] == "exited"
     assert any("launch" in call for call in calls)

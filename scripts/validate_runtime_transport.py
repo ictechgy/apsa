@@ -33,6 +33,7 @@ SOURCES = Path(__file__).resolve().parents[1] / "tests/fixtures/runtime/transpor
 MAX_OUTPUT = 64 * 1024 * 1024
 IOS_EVENT_BYTES = 64 * 1024
 IOS_EVENT_LIMIT = 128
+IOS_ENTRY_BYTES = 4096
 IOS_PHASES = {
     "startup-app",
     "startup-scene",
@@ -149,6 +150,89 @@ def safe_ios_events(raw: bytes, expected: dict | None = None, readiness_epoch: s
         else "new-since-readiness",
         "counters": counters,
         "receipts": receipts,
+    }
+
+
+def safe_ios_entry(
+    raw: bytes,
+    *,
+    expected_paths: dict | None = None,
+    process: dict | None = None,
+    readiness_epoch: str | None = None,
+    callback_epoch: str | None = None,
+) -> dict:
+    """Digest-only process entry is diagnostic; never URL delivery/acquisition."""
+    result = {
+        "state": "unmeasured" if raw else "absent",
+        "sha256": digest(raw),
+        "bytes": len(raw),
+        "write_status": "unknown",
+        "acquisition": "unsupported",
+    }
+    if not raw or len(raw) > IOS_ENTRY_BYTES:
+        return result
+    keys = {
+        "schema_version",
+        "phase",
+        "process_epoch_sha256",
+        "pid_sha256",
+        "home_path_sha256",
+        "documents_path_sha256",
+        "entry_path_sha256",
+        "write_status",
+    }
+    try:
+        value = json.loads(raw)
+        if (
+            not isinstance(value, dict)
+            or set(value) != keys
+            or type(value["schema_version"]) is not int
+            or value["schema_version"] != 1
+            or value["phase"] != "before-uiapplication-main"
+            or value["write_status"] not in {"attempted", "confirmed"}
+            or any(
+                not isinstance(value[key], str) or re.fullmatch(r"[a-f0-9]{64}", value[key]) is None
+                for key in keys
+                if key.endswith("_sha256")
+            )
+        ):
+            return result
+    except (ValueError, TypeError, KeyError):
+        return result
+    relation = "unmeasured"
+    if process and isinstance(process.get("pid_sha256"), str):
+        if value["pid_sha256"] != process["pid_sha256"]:
+            relation = "differs-known-owner"
+        elif process.get("state") == "live-verified":
+            relation = "matches-live-verified"
+        elif process.get("state") == "exited":
+            relation = "matches-exited-owner"
+    paths_match = (
+        None
+        if expected_paths is None
+        else all(
+            value[key] == expected_paths[key]
+            for key in ("home_path_sha256", "documents_path_sha256", "entry_path_sha256")
+        )
+    )
+    if paths_match is False:
+        return {**result, "expected_paths_match": False, "reason": "entry-path-digests-differ"}
+    return {
+        **result,
+        **value,
+        "state": "diagnostic-only",
+        "expected_paths_match": paths_match,
+        "pid_identity_relation": relation,
+        "process_epoch_relation": "unknown"
+        if readiness_epoch is None
+        else "same-as-readiness"
+        if value["process_epoch_sha256"] == readiness_epoch
+        else "new-since-readiness",
+        "callback_epoch_relation": "unknown"
+        if callback_epoch is None
+        else "same-as-callback"
+        if value["process_epoch_sha256"] == callback_epoch
+        else "differs-callback",
     }
 
 
@@ -1030,6 +1114,8 @@ class IosTarget:
             else:
                 raise FixtureFailure("NEW iOS fixture launch timed out", self.lifecycle_observation())
             self.readiness_epoch = self.events_observation().get("launch_epoch_sha256")
+            self.readiness_entry = self.entry_observation(process=initial)
+            self.readiness_entry_epoch = self.readiness_entry.get("process_epoch_sha256")
             # No URL, credentials or baseline exist yet. Force the first session URL
             # through genuine cold OS scene connection; later captures/logout are warm.
             commands.run(self.simctl + ["terminate", self.device, self.package])
@@ -1048,6 +1134,7 @@ class IosTarget:
             commands.pre_cleanup_failure = failure_observation(
                 error, "ios-target-create-boot-install", commands.records
             )
+            commands.pre_cleanup_failure["process_entry"] = self.entry_observation()
             try:
                 self.close()
             except (ValueError, OSError, subprocess.SubprocessError):
@@ -1265,7 +1352,67 @@ class IosTarget:
             "stage_bytes": len(raw),
             "callback_events": self.events_observation(),
             "dispatcher": self.dispatcher_observation(),
+            "process_entry": self.entry_observation(),
+            "process_entry_readiness": getattr(self, "readiness_entry", {"state": "unmeasured"}),
         }
+
+    def entry_observation(self, *, process: dict | None = None):
+        if not hasattr(self, "response") or not hasattr(self, "device_set") or self.device is None:
+            return {"state": "unmeasured", "write_status": "unknown", "acquisition": "unsupported"}
+        data = self.response.parent.parent
+        documents, path = data / "Documents", data / "Documents/process-entry.json"
+        try:
+            owned = (self.device_set / self.device).resolve()
+            # Recheck the exact NEW path before stat/read; never follow an entry symlink.
+            if (
+                not data.resolve().is_relative_to(owned)
+                or not documents.resolve().is_relative_to(data.resolve())
+                or path.is_symlink()
+                or path.resolve() != documents.resolve() / "process-entry.json"
+            ):
+                return {
+                    "state": "unmeasured",
+                    "reason": "owned-entry-path-differs",
+                    "write_status": "unknown",
+                    "acquisition": "unsupported",
+                }
+            if path.is_file() and path.stat().st_size > IOS_ENTRY_BYTES:
+                return {
+                    "state": "unmeasured",
+                    "reason": "entry-over-bound",
+                    "bytes": path.stat().st_size,
+                    "write_status": "unknown",
+                    "acquisition": "unsupported",
+                }
+            raw = b""
+            if path.is_file():
+                with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as entry:
+                    raw = entry.read(IOS_ENTRY_BYTES + 1)
+            expected_paths = {
+                "home_path_sha256": digest(str(data.resolve()).encode()),
+                "documents_path_sha256": digest(str(documents.resolve()).encode()),
+                "entry_path_sha256": digest(str(path.resolve()).encode()),
+            }
+        except (OSError, RuntimeError, ValueError):
+            return {
+                "state": "unmeasured",
+                "reason": "entry-read-unavailable",
+                "write_status": "unknown",
+                "acquisition": "unsupported",
+            }
+        if process is None:
+            process = getattr(self, "process_observations", {}).get("after_terminate")
+        try:
+            callback_epoch = self.events_observation().get("launch_epoch_sha256")
+        except (OSError, RuntimeError, ValueError):
+            callback_epoch = None
+        return safe_ios_entry(
+            raw,
+            expected_paths=expected_paths,
+            process=process,
+            readiness_epoch=getattr(self, "readiness_entry_epoch", None),
+            callback_epoch=callback_epoch,
+        )
 
     def dispatcher_observation(self):
         path = getattr(self, "helper_receipt", None)
@@ -1345,6 +1492,7 @@ class IosTarget:
             "data_container_sha256": digest(str(data).encode()),
             "installed_build_matches": observed_build == self.build,
             "registration": self.appinfo(),
+            "process_entry_before_launch": self.entry_observation(),
         }
         if observed_build != self.build or result["registration"].get("package_matches") is False:
             return {**result, "state": "identity-mismatch"}
@@ -1352,7 +1500,11 @@ class IosTarget:
         process = ios_process_identity(ios_launch_pid(raw, self.package), app / "TransportFixture")
         result["direct_launch_process"] = process
         if process["state"] == "identity-mismatch":
-            return {**result, "state": "identity-mismatch"}
+            return {
+                **result,
+                "state": "identity-mismatch",
+                "process_entry_after_launch": self.entry_observation(process=process),
+            }
         events_path = data / "Documents/events.json"
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -1369,8 +1521,14 @@ class IosTarget:
                 break
             time.sleep(0.1)
         else:
-            return {**result, "fresh_epoch": False, "warm_receipt_bound": False}
+            return {
+                **result,
+                "fresh_epoch": False,
+                "warm_receipt_bound": False,
+                "process_entry_after_launch": self.entry_observation(process=process),
+            }
         result["fresh_epoch"] = True
+        result["process_entry_after_launch"] = self.entry_observation(process=process)
         fields = {
             "action": "capture",
             "session": uuid.uuid4().hex + uuid.uuid4().hex,
@@ -1428,6 +1586,8 @@ class IosTarget:
                 "helper_installed_build": getattr(self, "helper_build", None),
                 "helper_process": getattr(self, "helper_process", None),
                 "dispatcher": self.dispatcher_observation(),
+                "process_entry": self.entry_observation(),
+                "process_entry_readiness": getattr(self, "readiness_entry", {"state": "unmeasured"}),
             }
         )
 
