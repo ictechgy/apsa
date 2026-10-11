@@ -460,3 +460,129 @@ def test_real_staged_parser_preserves_ipa_trust_and_removes_der(chain_fixture, t
     serialized = json.dumps(result, sort_keys=True)
     assert "der_base64" not in serialized
     assert all(anchor["der_base64"] not in serialized for anchor in policy["anchors"])
+
+
+def _definite_cms_node(node):
+    body = bytes(node.body)
+    size = len(body)
+    length = (
+        bytes([size])
+        if size < 128
+        else bytes([0x80 | ((size.bit_length() + 7) // 8)])
+        + size.to_bytes((size.bit_length() + 7) // 8, "big")
+    )
+    return bytes([node.tag]) + length + body
+
+
+def _ber_cms_envelopes(cms):
+    """Change only synthetic CMS envelopes; preserve certificates and signed attributes."""
+    from mobile_audit.cms_verification import _cms_nodes
+
+    def indefinite(tag, body):
+        return bytes([tag, 0x80]) + body + b"\x00\x00"
+
+    info = _cms_nodes(cms)[0].children
+    signed = info[1].children[0].children
+    values = [_definite_cms_node(node) for node in signed]
+    values[2] = indefinite(0x30, bytes(signed[2].body))
+    return indefinite(
+        0x30,
+        _definite_cms_node(info[0]) + indefinite(0xA0, indefinite(0x30, b"".join(values))),
+    )
+
+
+def test_synthetic_ber_cms_preserves_signature_and_explicit_chain(chain_fixture):
+    directory, cms, policy, _, _ = chain_fixture
+    result = verify_cms_code_directory(_ber_cms_envelopes(cms), directory, policy)
+    assert result["state"] == "verified" and result["cryptographic_signature_verified"]
+    assert result["certificate_chain_verified"] and result["chain_trust"] == "verified-explicit-anchor"
+    assert not result["apple_root_anchor_chain_verified"]
+    assert result["apple_signer_trust"] == "unverified" and not result["app_authenticity_verified"]
+
+
+def test_ber_cms_rejects_changed_content_and_signed_attributes(chain_fixture):
+    directory, cms, _, _, _ = chain_fixture
+    ber = _ber_cms_envelopes(cms)
+    changed = bytearray(directory)
+    changed[-1] ^= 1
+    result = verify_cms_code_directory(ber, bytes(changed))
+    assert result["state"] == "invalid" and not result["cryptographic_signature_verified"]
+    digest = hashlib.sha256(directory).digest()
+    assert ber.count(digest) == 1
+    changed = bytearray(ber)
+    changed[ber.index(digest)] ^= 1
+    result = verify_cms_code_directory(bytes(changed), directory)
+    assert result["state"] == "invalid" and not result["cryptographic_signature_verified"]
+    changed = bytearray(cms)
+    changed[-1] ^= 1
+    result = verify_cms_code_directory(_ber_cms_envelopes(bytes(changed)), directory)
+    assert result["state"] == "invalid" and not result["cryptographic_signature_verified"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"\x04\x80\x00\x00",  # Primitive indefinite value.
+        b"\x30\x80\x05\x00",  # Unterminated constructed value.
+        b"\x30\x80\x00\x01\x00",  # Malformed EOC length.
+        b"\x30\x80\x00",  # Truncated EOC/header.
+        b"\x00\x00",  # EOC outside an indefinite value.
+        b"\x30\x02\x00\x00",  # EOC in definite constructed content.
+        b"\x30\x80\x00\x00\x00\x00",  # Extra EOC after root.
+        b"\x30\x02\x30\x80\x00\x00",  # Child must end within definite parent.
+        b"\x30\x80\x30\x80\x00\x00",  # Only the child has an EOC.
+        b"\x30\x80\x04\x03\x00\x00\x00",  # Primitive zero bytes are not EOC.
+        b"\x30\x81\x00",  # Noncanonical definite length stays unsupported.
+        b"\x30\x82\x00\x80" + bytes(128),
+        b"\x30\x85" + bytes(5),  # Length width exceeds supported bounds.
+        b"\x3f\x80\x00\x00",  # Unsupported high-tag encoding.
+    ],
+)
+def test_ber_malformed_encodings_fail_closed(raw):
+    from mobile_audit.cms_verification import _cms_nodes
+
+    with pytest.raises(ValueError):
+        _cms_nodes(raw)
+
+
+def test_ber_mixed_lengths_preserve_primitive_zero_bytes():
+    from mobile_audit.cms_verification import _cms_nodes
+
+    nodes = _cms_nodes(b"\x30\x08\x30\x80\x04\x02\x00\x00\x00\x00")
+    assert nodes[0].children[0].children[0].body == b"\x00\x00"
+
+
+def test_ber_shared_depth_node_and_byte_budgets():
+    from mobile_audit.cms_verification import MAX_CMS_BYTES, MAX_DER_DEPTH, MAX_DER_NODES, _cms_nodes
+
+    with pytest.raises(ValueError, match="depth budget"):
+        _cms_nodes(b"\x30\x80" * (MAX_DER_DEPTH + 1) + b"\x00\x00" * (MAX_DER_DEPTH + 1))
+    with pytest.raises(ValueError, match="node budget"):
+        _cms_nodes(b"\x30\x80" + b"\x05\x00" * MAX_DER_NODES + b"\x00\x00")
+    with pytest.raises(ValueError, match="byte budget"):
+        _cms_nodes(bytes(MAX_CMS_BYTES + 1))
+
+
+def test_ber_detached_structure_rejects_trailing_and_attached_content(chain_fixture, monkeypatch):
+    import mobile_audit.cms_verification as verification
+    from mobile_audit.cms_verification import _cms_nodes, _detached_signed_data
+
+    directory, cms, _, _, _ = chain_fixture
+    ber = _ber_cms_envelopes(cms)
+    with pytest.raises(ValueError, match="one sequence"):
+        _detached_signed_data(ber + b"\x05\x00")
+    # Inject an attached OCTET STRING into the indefinite eContentInfo envelope.
+    content = _cms_nodes(cms)[0].children[1].children[0].children[2]
+    encoded = b"\x30\x80" + bytes(content.body) + b"\x00\x00"
+    attached = ber.replace(encoded, encoded[:-2] + b"\xa0\x02\x04\x00\x00\x00", 1)
+    assert attached != ber
+    with pytest.raises(ValueError, match="Only detached"):
+        _detached_signed_data(attached)
+
+    def unexpected_command(*args, **kwargs):
+        raise AssertionError("Invalid structure must be rejected before external verification")
+
+    monkeypatch.setattr(verification, "command", unexpected_command)
+    for raw in (ber + b"\x05\x00", attached, ber[:-2]):
+        result = verify_cms_code_directory(raw, directory)
+        assert result["state"] == "unsupported" and not result["cryptographic_signature_verified"]

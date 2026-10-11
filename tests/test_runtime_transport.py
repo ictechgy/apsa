@@ -16,7 +16,17 @@ from mobile_audit.core import digest
 from mobile_audit.runtime_acquisition import AcquisitionRecorder, evaluate_backend_invalidation
 from mobile_audit.runtime_evidence import build_binding, evaluate_workflow, validate_workflow
 from mobile_audit.runtime_transport import AuthorityServer, InstalledTransportAdapter, OwnedAuthority
-from scripts.validate_runtime_transport import CommandFailure, Commands, failure_observation, scenario
+from scripts.validate_runtime_transport import (
+    CommandFailure,
+    Commands,
+    FixtureFailure,
+    IosTarget,
+    OwnedResources,
+    cleanup_owned,
+    failure_observation,
+    main,
+    scenario,
+)
 
 
 class Response(io.BytesIO):
@@ -304,3 +314,121 @@ def test_emulator_exit_observation_survives_bounded_recent_command_window():
     assert observation["reason"] == "android-emulator-exited-before-boot"
     assert len(observation["recent_commands"]) == 16
     assert observation["owned_processes"][0]["process_status"] == 3
+
+
+def test_cleanup_is_idempotent_and_scoped_to_journaled_new_resources(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_RUN_ID", "new-synthetic-run")
+    monkeypatch.setenv("GITHUB_SHA", "1" * 40)
+    journal = OwnedResources(tmp_path)
+    journal.android(avd="apsa-new-" + "a" * 32, sdk="/new-public-sdk", emulator=True, adb=True)
+    device = "11111111-2222-3333-4444-555555555555"
+    journal.ios(device)
+    owned = tmp_path / "case-0"
+    owned.mkdir()
+    (owned / "synthetic-token").write_text("new-only")
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text("synthetic-evidence-preserved")
+    unowned = tmp_path / "unowned-synthetic-sentinel"
+    unowned.mkdir()
+    commands = Commands(tmp_path, env={})
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        commands.last_status = 0
+        return b""
+
+    monkeypatch.setattr(commands, "run", run)
+    assert cleanup_owned(tmp_path, commands, journal)["state"] == "confirmed"
+    assert calls == [
+        ["/new-public-sdk/platform-tools/adb", "-P", "5049", "-s", "emulator-5580", "emu", "kill"],
+        ["/new-public-sdk/platform-tools/adb", "-P", "5049", "kill-server"],
+        ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "simulator-set"), "shutdown", device],
+        ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "simulator-set"), "delete", device],
+    ]
+    assert not owned.exists()
+    assert evidence.read_text() == "synthetic-evidence-preserved"
+    assert unowned.exists()
+    loaded = OwnedResources(tmp_path, load=True)
+    assert cleanup_owned(tmp_path, commands, loaded)["state"] == "confirmed"
+    assert len(calls) == 4
+    monkeypatch.setenv("GITHUB_RUN_ID", "different-run")
+    with pytest.raises(ValueError, match="identity"):
+        OwnedResources(tmp_path, load=True)
+
+
+def test_cleanup_failure_retains_new_evidence_and_state_for_retry(tmp_path, monkeypatch):
+    journal = OwnedResources(tmp_path)
+    journal.android(avd="apsa-new-" + "a" * 32, sdk="/new-public-sdk", emulator=True)
+    owned = tmp_path / "case-0"
+    owned.mkdir()
+    commands = Commands(tmp_path, env={})
+
+    def run(*args, **kwargs):
+        commands.last_status = 1
+        return b""
+
+    monkeypatch.setattr(commands, "run", run)
+    assert cleanup_owned(tmp_path, commands, journal)["state"] == "unconfirmed"
+    assert owned.exists()
+    assert not journal.value["android"].get("emulator_closed")
+
+
+@pytest.mark.parametrize("stage", ["startup-app", "startup-scene", "http-issue", "new-synthetic-secret"])
+def test_ios_lifecycle_diagnostics_retain_fixed_labels_only(stage, tmp_path):
+    target = IosTarget.__new__(IosTarget)
+    target.response = tmp_path / "new-response.json"
+    target.stage_path = tmp_path / "new-stage.txt"
+    target.stage_path.write_text(stage)
+    result = target.lifecycle_observation()
+    assert result["lifecycle_stage"] == (stage if stage != "new-synthetic-secret" else "not-observed")
+    assert result["stage_sha256"] == digest(stage.encode())
+    observation = failure_observation(
+        FixtureFailure("NEW iOS fixture launch timed out", result), "ios-create-install", []
+    )
+    assert observation["reason"] == "ios-fixture-launch-deadline"
+    assert "new-synthetic-secret" not in json.dumps(observation)
+
+
+def test_workflow_cleanup_writes_terminal_inconclusive_after_driver_interruption(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    root = tmp_path / "new-run"
+    root.mkdir()
+    OwnedResources(root)
+    (root / "evidence.json").write_text(json.dumps({"terminal": False, "state": "passed"}))
+    preserved = root / "commands.json"
+    preserved.write_text("new-command-digests-preserved")
+    monkeypatch.setattr(
+        "sys.argv", ["validator", "--platform", "backend", "--cleanup-only", "--work", str(root)]
+    )
+    main()
+    evidence = json.loads((root / "evidence.json").read_text())
+    assert evidence["terminal"] is True
+    assert evidence["state"] == "inconclusive"
+    assert evidence["failure_observation"]["reason"] == "driver-terminal-evidence-unavailable"
+    assert evidence["workflow_cleanup"]["state"] == "confirmed"
+    assert preserved.read_text() == "new-command-digests-preserved"
+
+
+def test_unexpected_driver_error_records_terminal_failure_without_raw_text(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    root = tmp_path / "new-run"
+    monkeypatch.setattr("sys.argv", ["validator", "--platform", "backend", "--work", str(root)])
+
+    def fail():
+        raise TypeError("new-synthetic-token-private-error-text")
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.execute_backend_cases", fail)
+    with pytest.raises(SystemExit) as stopped:
+        main()
+    assert stopped.value.code == 1
+    raw = (root / "evidence.json").read_text()
+    evidence = json.loads(raw)
+    assert evidence["terminal"] is True
+    assert evidence["state"] == "inconclusive"
+    assert evidence["failure_observation"]["exception_type"] == "other-validation-error"
+    assert "new-synthetic-token-private-error-text" not in raw + capsys.readouterr().out

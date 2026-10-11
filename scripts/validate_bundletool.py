@@ -8,7 +8,6 @@ The optional device is explicitly owned by this disposable GitHub CI job.
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import os
@@ -106,6 +105,24 @@ public final class Probe extends Instrumentation {{
     return [root / name for name in sources]
 
 
+def redact_argv(argv: list[str]) -> list[str]:
+    """Keep replayable nonsecret arguments; never persist signing passwords."""
+    result = []
+    password_next = False
+    for argument in argv:
+        if password_next:
+            result.append("[REDACTED]")
+            password_next = False
+        elif argument in {"-storepass", "-keypass", "--ks-pass", "--key-pass"}:
+            result.append(argument)
+            password_next = True
+        elif argument.startswith(("--ks-pass=", "--key-pass=")):
+            result.append(argument.split("=", 1)[0] + "=[REDACTED]")
+        else:
+            result.append(argument)
+    return result
+
+
 class Commands:
     def __init__(self, root: Path):
         self.root = root
@@ -162,13 +179,14 @@ class Commands:
         stdout, stderr = bytes(streams["stdout"]), bytes(streams["stderr"])
         self.records.append(
             {
-                "argv": argv,
+                "argv": redact_argv(argv),
                 "returncode": process.returncode,
                 "timed_out": timed_out,
                 "output_truncated": truncated,
                 "elapsed_seconds": time.monotonic() - started,
-                "stdout_base64": base64.b64encode(stdout).decode(),
-                "stderr_base64": base64.b64encode(stderr).decode(),
+                "stdout_bytes": len(stdout),
+                "stderr_bytes": len(stderr),
+                "stream_hash_scope": "captured-bytes-before-redaction",
                 "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
                 "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
             }
@@ -193,32 +211,35 @@ def failure_diagnostic(result: dict, records: list[dict]) -> dict:
                 "timed_out",
                 "output_truncated",
                 "elapsed_seconds",
+                "stdout_bytes",
+                "stderr_bytes",
+                "stream_hash_scope",
                 "stdout_sha256",
                 "stderr_sha256",
             )
         }
-        argv = []
-        password_next = False
-        for argument in record["argv"]:
-            if password_next:
-                argv.append("[REDACTED]")
-                password_next = False
-            elif argument in {"-storepass", "-keypass"}:
-                argv.append(argument)
-                password_next = True
-            elif argument.startswith(("--ks-pass=", "--key-pass=")):
-                argv.append(argument.split("=", 1)[0] + "=[REDACTED]")
-            else:
-                argv.append(argument)
-        metadata["argv"] = argv
+        metadata["argv"] = redact_argv(record["argv"])
+
+    def selection_metadata(case: dict) -> dict:
+        # Parser messages contain bounded schema labels, never APK contents.
+        return {
+            "state": case["state"],
+            "reason": case.get("reason"),
+            "message": case.get("message", "")[:256],
+            "toc_sha256": case.get("toc_sha256"),
+        }
+
     return {
         "stage": result["stage"],
         "error_type": result.get("error", {}).get("type"),
         "owned_command": metadata,
-        "case_states": [
-            {"state": case["state"], "reason": case.get("reason")} for case in result.get("cases", [])
-        ],
+        "case_states": [selection_metadata(case) for case in result.get("cases", [])],
         "installed_state": result.get("installed", {}).get("state"),
+        "installed_selection": (
+            selection_metadata(result["installed"]["selection"])
+            if "selection" in result.get("installed", {})
+            else None
+        ),
     }
 
 

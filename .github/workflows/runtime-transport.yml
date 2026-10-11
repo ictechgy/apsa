@@ -32,6 +32,20 @@ jobs:
           path: ${{ runner.temp }}/runtime-new/evidence.json
           retention-days: 14
           if-no-files-found: error
+      - name: Cleanup only journaled NEW resources after evidence preservation
+        if: always()
+        timeout-minutes: 5
+        run: .venv/bin/python scripts/validate_runtime_transport.py --platform backend --cleanup-only --work "$RUNNER_TEMP/runtime-new"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: new-backend-terminal-cleanup-digests
+          path: |
+            ${{ runner.temp }}/runtime-new/evidence.json
+            ${{ runner.temp }}/runtime-new/cleanup.json
+            ${{ runner.temp }}/runtime-new/cleanup-commands.json
+          retention-days: 14
+          if-no-files-found: error
   android:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -65,6 +79,20 @@ jobs:
             ${{ runner.temp }}/runtime-new/commands.json
           retention-days: 14
           if-no-files-found: error
+      - name: Cleanup only journaled NEW resources after evidence preservation
+        if: always()
+        timeout-minutes: 5
+        run: .venv/bin/python scripts/validate_runtime_transport.py --platform android --cleanup-only --work "$RUNNER_TEMP/runtime-new"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: new-android-terminal-cleanup-digests
+          path: |
+            ${{ runner.temp }}/runtime-new/evidence.json
+            ${{ runner.temp }}/runtime-new/cleanup.json
+            ${{ runner.temp }}/runtime-new/cleanup-commands.json
+          retention-days: 14
+          if-no-files-found: error
   ios:
     runs-on: macos-15
     timeout-minutes: 30
@@ -91,5 +119,19 @@ jobs:
           path: |
             ${{ runner.temp }}/runtime-new/evidence.json
             ${{ runner.temp }}/runtime-new/commands.json
+          retention-days: 14
+          if-no-files-found: error
+      - name: Cleanup only journaled NEW resources after evidence preservation
+        if: always()
+        timeout-minutes: 5
+        run: .venv/bin/python scripts/validate_runtime_transport.py --platform ios --cleanup-only --work "$RUNNER_TEMP/runtime-new"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: new-ios-terminal-cleanup-digests
+          path: |
+            ${{ runner.temp }}/runtime-new/evidence.json
+            ${{ runner.temp }}/runtime-new/cleanup.json
+            ${{ runner.temp }}/runtime-new/cleanup-commands.json
           retention-days: 14
           if-no-files-found: error

@@ -14,6 +14,7 @@ import platform
 import plistlib
 import re
 import shlex
+import shutil
 import subprocess
 import time
 import uuid
@@ -30,6 +31,117 @@ SOURCES = Path(__file__).resolve().parents[1] / "tests/fixtures/runtime/transpor
 MAX_OUTPUT = 64 * 1024 * 1024
 
 
+class OwnedResources:
+    """Crash-surviving journal for this NEW runner directory, never device discovery."""
+
+    def __init__(self, root: Path, *, load: bool = False):
+        self.root, self.path = root, root / "owned-resources.json"
+        identity = {
+            "root": str(root),
+            "run_id": os.environ.get("GITHUB_RUN_ID"),
+            "commit": os.environ.get("GITHUB_SHA"),
+        }
+        if load:
+            self.value = json.loads(self.path.read_text())
+            if any(self.value.get(key) != value for key, value in identity.items()):
+                raise ValueError("Owned resource journal identity differs")
+        else:
+            self.value = {**identity, "android": None, "ios": {}}
+            self.save()
+
+    def save(self):
+        temporary = self.path.with_suffix(".new")
+        temporary.write_text(json.dumps(self.value, sort_keys=True) + "\n")
+        temporary.replace(self.path)
+
+    def android(self, **changes):
+        self.value["android"] = {**(self.value["android"] or {}), **changes}
+        self.save()
+
+    def ios(self, device: str, *, deleted: bool = False):
+        device = str(uuid.UUID(device)).upper()
+        self.value["ios"][device] = {"deleted": deleted}
+        self.save()
+
+
+def cleanup_owned(root: Path, commands: "Commands", resources: OwnedResources) -> dict:
+    """Idempotent fallback, only explicitly journaled new resources and paths."""
+    results = []
+    android = resources.value["android"]
+    if android:
+        if not re.fullmatch(r"apsa-new-[a-f0-9]{32}", android.get("avd", "")):
+            raise ValueError("Owned resource journal Android name differs")
+        sdk = Path(android["sdk"])
+        commands.env.update(
+            ANDROID_AVD_HOME=str(root / "avd"),
+            ANDROID_USER_HOME=str(root / "android-user"),
+            ANDROID_EMULATOR_HOME=str(root / "emulator-home"),
+            ANDROID_ADB_SERVER_PORT="5049",
+            ADB_SERVER_SOCKET="tcp:127.0.0.1:5049",
+        )
+        if android.get("emulator") and not android.get("emulator_closed"):
+            commands.run(
+                [str(sdk / "platform-tools/adb"), "-P", "5049", "-s", "emulator-5580", "emu", "kill"],
+                optional=True,
+            )
+            results.append(
+                {
+                    "scope": "owned emulator serial on isolated adb port",
+                    "state": "confirmed" if commands.last_status == 0 else "unconfirmed",
+                }
+            )
+            if commands.last_status == 0:
+                resources.android(emulator_closed=True)
+        if android.get("adb") and not android.get("adb_closed"):
+            commands.run([str(sdk / "platform-tools/adb"), "-P", "5049", "kill-server"], optional=True)
+            results.append(
+                {
+                    "scope": "isolated adb port 5049",
+                    "state": "confirmed" if commands.last_status == 0 else "unconfirmed",
+                }
+            )
+            if commands.last_status == 0:
+                resources.android(adb_closed=True)
+    for device, record in resources.value["ios"].items():
+        if str(uuid.UUID(device)).upper() != device:
+            raise ValueError("Owned resource journal simulator UUID differs")
+        if record["deleted"]:
+            continue
+        # The simulator belongs to this fresh device set, including after driver death.
+        prefix = ["/usr/bin/xcrun", "simctl", "--set", str(root / "simulator-set")]
+        commands.run(prefix + ["shutdown", device], optional=True)
+        commands.run(prefix + ["delete", device], optional=True)
+        confirmed = commands.last_status == 0 or not (root / "simulator-set" / device).exists()
+        results.append(
+            {
+                "scope": "owned new simulator UUID",
+                "uuid": device,
+                "state": "confirmed" if confirmed else "unconfirmed",
+            }
+        )
+        if confirmed:
+            resources.ios(device, deleted=True)
+    state = "confirmed" if all(item["state"] == "confirmed" for item in results) else "unconfirmed"
+    if state == "confirmed":
+        # Exact owned names only; preserve evidence, command digests and ownership journal.
+        for name in (
+            "avd",
+            "android-user",
+            "emulator-home",
+            "simulator-set",
+            "case-0",
+            "case-1",
+            "case-2",
+            "case-3",
+        ):
+            path = root / name
+            if path.is_symlink():
+                path.unlink()
+            elif path.exists():
+                shutil.rmtree(path)
+    return {"scope": "only journaled NEW resources", "state": state, "results": results}
+
+
 FAILURE_REASONS = {
     "NEW emulator exited before boot": "android-emulator-exited-before-boot",
     "NEW emulator boot timed out": "android-boot-deadline",
@@ -42,6 +154,7 @@ FAILURE_REASONS = {
     "NEW simulator container UUID differs": "ios-container-uuid-mismatch",
     "NEW iOS fixture rejected binding or transport": "ios-fixture-binding-or-http",
     "NEW iOS OS URL response challenge timed out": "ios-app-response-deadline",
+    "NEW iOS fixture launch timed out": "ios-fixture-launch-deadline",
     "Installed fixture transition unsupported": "installed-session-or-transition-unavailable",
     "Installed fixture target/build/transport response differs": "installed-target-build-transport-mismatch",
     "Installed fixture HTTP/session initialization differs": "installed-session-or-http-initialization",
@@ -85,6 +198,7 @@ def command_kind(argv: list[str]) -> str:
             "install",
             "get_app_container",
             "openurl",
+            "launch",
             "shutdown",
             "delete",
         }
@@ -99,6 +213,12 @@ def command_kind(argv: list[str]) -> str:
 class CommandFailure(ValueError):
     def __init__(self, reason: str, observation: dict):
         self.reason, self.observation = reason, observation
+        super().__init__(reason)
+
+
+class FixtureFailure(ValueError):
+    def __init__(self, reason: str, observation: dict):
+        self.observation = observation
         super().__init__(reason)
 
 
@@ -135,6 +255,7 @@ def failure_observation(error: Exception, stage: str, records: list[dict]) -> di
     error_type = type(error).__name__
     if error_type not in {
         "CommandFailure",
+        "FixtureFailure",
         "ValueError",
         "FileNotFoundError",
         "PermissionError",
@@ -144,7 +265,7 @@ def failure_observation(error: Exception, stage: str, records: list[dict]) -> di
         "URLError",
     }:
         error_type = "other-validation-error"
-    return {
+    observation = {
         "exception_type": error_type,
         "reason": reason,
         "stage": stage,
@@ -156,14 +277,19 @@ def failure_observation(error: Exception, stage: str, records: list[dict]) -> di
             if record.get("operation") == "android-emulator-launch"
         ],
     }
+    if isinstance(error, FixtureFailure):
+        observation["fixture"] = error.observation
+    return observation
 
 
 class Commands:
-    def __init__(self, root: Path, env: dict | None = None):
+    def __init__(self, root: Path, env: dict | None = None, *, output_name: str = "commands.json"):
         self.root, self.env = root, os.environ.copy() if env is None else env
+        self.output_name = output_name
         self.records: list[dict] = []
         self.last_status: int | None = None
         self.pre_cleanup_failure: dict | None = None
+        self.resources: OwnedResources | None = None
 
     def run(
         self, argv: list[str], *, input: bytes | None = None, timeout: int = 120, optional: bool = False
@@ -189,17 +315,11 @@ class Commands:
                 "timed_out": False,
             }
             self.records.append(record)
-            (self.root / "commands.json").write_text(json.dumps(self.records, indent=2) + "\n")
+            (self.root / self.output_name).write_text(json.dumps(self.records, indent=2) + "\n")
             raise CommandFailure("command-spawn-os-error", safe_command_observation(record)) from None
         self.last_status = status
-        # URL arguments contain fresh nonce/session material. Preserve their digest only.
-        redacted = [
-            "fresh-url-argument-sha256:" + digest(arg.encode()) if "apsatransport://" in arg else arg
-            for arg in argv
-        ]
         self.records.append(
             {
-                "argv": redacted,
                 "argv_sha256": digest(json.dumps(argv).encode()),
                 "operation": command_kind(argv),
                 "status": status,
@@ -211,7 +331,7 @@ class Commands:
                 "stderr_bytes": len(stderr),
             }
         )
-        (self.root / "commands.json").write_text(json.dumps(self.records, indent=2) + "\n")
+        (self.root / self.output_name).write_text(json.dumps(self.records, indent=2) + "\n")
         if timed_out or len(stdout) > MAX_OUTPUT or len(stderr) > MAX_OUTPUT or (status and not optional):
             reason = (
                 "command-timeout"
@@ -345,6 +465,8 @@ class NewAndroidDevice:
         )
         for name in ("avd", "android-user", "emulator-home"):
             (root / name).mkdir()
+        if commands.resources:
+            commands.resources.android(avd=self.name, sdk=str(sdk))
 
     def start(self):
         sdk = self.sdk
@@ -363,6 +485,8 @@ class NewAndroidDevice:
             input=b"no\n",
         )
         self.avd_created = True
+        if self.commands.resources:
+            self.commands.resources.android(adb=True)
         self.commands.run([str(sdk / "platform-tools/adb"), "-P", "5049", "start-server"])
         self.adb_started = True
         argv = [
@@ -381,7 +505,6 @@ class NewAndroidDevice:
         ]
         self.commands.records.append(
             {
-                "argv": argv,
                 "argv_sha256": digest(json.dumps(argv).encode()),
                 "operation": "android-emulator-launch",
                 "scope": "new-owned-avd",
@@ -389,6 +512,8 @@ class NewAndroidDevice:
             }
         )
         process_record = self.commands.records[-1]
+        if self.commands.resources:
+            self.commands.resources.android(emulator=True)
         self.process = subprocess.Popen(
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=self.env
         )
@@ -407,19 +532,28 @@ class NewAndroidDevice:
 
     def close(self):
         if self.process is not None:
-            self.process.terminate()
             try:
+                # Ask only our serial on our port to stop its emulator children cleanly.
+                self.commands.run(self.adb_prefix + ["emu", "kill"], timeout=15, optional=True)
                 self.process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=15)
+            except (CommandFailure, subprocess.TimeoutExpired):
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=15)
             self.process = None
+            if self.commands.resources:
+                self.commands.resources.android(emulator_closed=True)
         statuses = []
         if self.adb_started:
             self.commands.run(
                 [str(self.sdk / "platform-tools/adb"), "-P", "5049", "kill-server"], optional=True
             )
             statuses.append(self.commands.last_status)
+            if self.commands.last_status == 0 and self.commands.resources:
+                self.commands.resources.android(adb_closed=True)
         # All AVD state lives within the NEW driver root; delete this name only.
         if self.avd_created:
             self.commands.run(
@@ -510,6 +644,9 @@ class IosTarget:
 
     def __init__(self, root: Path, package: str, commands: Commands, runtime: str, device_type: str):
         self.package, self.commands, self.device = package, commands, None
+        device_set = commands.root / "simulator-set"
+        device_set.mkdir(exist_ok=True)
+        self.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(device_set)]
         root.mkdir()
         source = root / "Transport.swift"
         source.write_bytes((SOURCES / source.name).read_bytes())
@@ -576,21 +713,31 @@ class IosTarget:
             "info_plist_sha256": digest((self.app / "Info.plist").read_bytes()),
         }
         created = (
-            commands.run(
-                ["/usr/bin/xcrun", "simctl", "create", "APSA-NEW-" + uuid.uuid4().hex, device_type, runtime]
-            )
+            commands.run(self.simctl + ["create", "APSA-NEW-" + uuid.uuid4().hex, device_type, runtime])
             .decode()
             .strip()
         )
         self.device = str(uuid.UUID(created)).upper()
+        if commands.resources:
+            commands.resources.ios(self.device)
         try:
-            commands.run(["/usr/bin/xcrun", "simctl", "boot", self.device])
-            commands.run(["/usr/bin/xcrun", "simctl", "bootstatus", self.device, "-b"], timeout=180)
-            commands.run(["/usr/bin/xcrun", "simctl", "install", self.device, str(self.app)])
+            commands.run(self.simctl + ["boot", self.device])
+            commands.run(self.simctl + ["bootstatus", self.device, "-b"], timeout=180)
+            commands.run(self.simctl + ["install", self.device, str(self.app)])
             self.installed = self.container("app")
             self.response = self.container("data") / "Documents/response.json"
+            self.stage_path = self.response.with_name("stage.txt")
             if self.installed_build() != self.build:
                 raise ValueError("NEW installed iOS executable differs")
+            # Establish a ready NEW scene before delivering the session URL through the OS.
+            commands.run(self.simctl + ["launch", self.device, self.package])
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                if self.stage_path.is_file() and self.stage_path.read_bytes() == b"startup-scene":
+                    break
+                time.sleep(0.1)
+            else:
+                raise FixtureFailure("NEW iOS fixture launch timed out", self.lifecycle_observation())
         except Exception as error:
             commands.pre_cleanup_failure = failure_observation(
                 error, "ios-target-create-boot-install", commands.records
@@ -605,9 +752,7 @@ class IosTarget:
         if self.device is None:
             raise ValueError("NEW simulator has no owned UUID")
         path = Path(
-            self.commands.run(
-                ["/usr/bin/xcrun", "simctl", "get_app_container", self.device, self.package, kind]
-            )
+            self.commands.run(self.simctl + ["get_app_container", self.device, self.package, kind])
             .decode()
             .strip()
         )
@@ -621,17 +766,42 @@ class IosTarget:
             "info_plist_sha256": digest((self.installed / "Info.plist").read_bytes()),
         }
 
+    def lifecycle_observation(self):
+        raw = (
+            self.stage_path.read_bytes()
+            if self.stage_path.is_file() and self.stage_path.stat().st_size <= 4096
+            else b""
+        )
+        allowed = {
+            "startup-app",
+            "startup-scene",
+            "url-received",
+            "http-issue",
+            "http-logout",
+            "response-written",
+            "binding-or-transport-failure",
+        }
+        stage = raw.decode("ascii", errors="replace")
+        return {
+            "response_file_present": self.response.is_file(),
+            "lifecycle_stage": stage if stage in allowed else "not-observed",
+            "stage_sha256": digest(raw),
+            "stage_bytes": len(raw),
+        }
+
     def deliver(self, url: str, expected: dict) -> dict:
         if self.device is None:
             raise ValueError("NEW simulator has no owned UUID")
-        self.commands.run(["/usr/bin/xcrun", "simctl", "openurl", self.device, url])
-        deadline = time.monotonic() + 25
+        self.commands.run(self.simctl + ["openurl", self.device, url])
+        deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             if self.response.is_file() and self.response.stat().st_size <= 1024 * 1024:
                 try:
                     response = json.loads(self.response.read_bytes())
                     if response.get("action") == "fixture-error":
-                        raise ValueError("NEW iOS fixture rejected binding or transport")
+                        raise FixtureFailure(
+                            "NEW iOS fixture rejected binding or transport", self.lifecycle_observation()
+                        )
                     if all(
                         response.get(k) == v for k, v in expected.items() if k not in {"backend", "retain"}
                     ):
@@ -639,13 +809,15 @@ class IosTarget:
                 except json.JSONDecodeError:
                     pass
             time.sleep(0.1)
-        raise ValueError("NEW iOS OS URL response challenge timed out")
+        raise FixtureFailure("NEW iOS OS URL response challenge timed out", self.lifecycle_observation())
 
     def close(self):
         if self.device:
             device, self.device = self.device, None
-            self.commands.run(["/usr/bin/xcrun", "simctl", "shutdown", device], optional=True)
-            self.commands.run(["/usr/bin/xcrun", "simctl", "delete", device], optional=True)
+            self.commands.run(self.simctl + ["shutdown", device], optional=True)
+            self.commands.run(self.simctl + ["delete", device], optional=True)
+            if self.commands.last_status == 0 and self.commands.resources:
+                self.commands.resources.ios(device, deleted=True)
             return {
                 "scope": "only NEW simulator UUID",
                 "uuid": device,
@@ -835,6 +1007,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=("android", "ios", "backend"), required=True)
     parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--cleanup-only", action="store_true")
     parser.add_argument("--sdk", type=Path)
     parser.add_argument("--jdk", type=Path)
     parser.add_argument("--ios-runtime", default="com.apple.CoreSimulator.SimRuntime.iOS-18-5")
@@ -848,13 +1021,53 @@ def main():
     ):
         parser.error("Device/HTTP execution requires a disposable GitHub Actions runner")
     root = args.work.resolve()
-    if not root.is_relative_to(Path(os.environ["RUNNER_TEMP"]).resolve()):
+    runner_temp = Path(os.environ["RUNNER_TEMP"]).resolve()
+    if root == runner_temp or not root.is_relative_to(runner_temp):
         parser.error("NEW work directory must lie within RUNNER_TEMP")
+    if args.cleanup_only:
+        if not root.exists():
+            print(json.dumps({"cleanup": "confirmed", "scope": "no NEW work directory"}))
+            return
+        commands = Commands(root, output_name="cleanup-commands.json")
+        result: dict = {"state": "unconfirmed", "scope": "only journaled NEW resources"}
+        try:
+            resources = OwnedResources(root, load=True)
+            result = cleanup_owned(root, commands, resources)
+        except Exception as error:
+            result["failure_observation"] = failure_observation(
+                error, "workflow-owned-cleanup", commands.records
+            )
+        finally:
+            # Also produce terminal evidence if the driver was killed before its finally block.
+            evidence_path = root / "evidence.json"
+            try:
+                evidence = json.loads(evidence_path.read_text()) if evidence_path.is_file() else {}
+                if not isinstance(evidence, dict):
+                    evidence = {}
+            except (OSError, ValueError):
+                evidence = {}
+            if evidence.get("terminal") is not True:
+                evidence["state"] = "inconclusive"
+                evidence["failure_observation"] = {"reason": "driver-terminal-evidence-unavailable"}
+            evidence.update(
+                terminal=True, commit=os.environ.get("GITHUB_SHA"), run_id=os.environ.get("GITHUB_RUN_ID")
+            )
+            evidence["workflow_cleanup"] = result
+            if result["state"] != "confirmed":
+                evidence["state"] = "inconclusive"
+            evidence_path.write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
+            (root / "cleanup.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
+        print(json.dumps({"workflow_cleanup": result}), flush=True)
+        if result["state"] != "confirmed":
+            raise SystemExit(1)
+        return
     root.mkdir(exist_ok=False)
     commands = Commands(root)
+    commands.resources = OwnedResources(root)
     evidence = {
         "schema_version": 1,
         "state": "inconclusive",
+        "terminal": False,
         "platform": args.platform,
         "commit": os.environ.get("GITHUB_SHA"),
         "run_id": os.environ.get("GITHUB_RUN_ID"),
@@ -874,6 +1087,7 @@ def main():
     }
     device = None
     stage = "initialization"
+    (root / "evidence.json").write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
     try:
         if args.platform == "backend":
             stage = "backend-http-controls"
@@ -911,21 +1125,27 @@ def main():
                 if args.platform == "ios":
                     result["new_simulator_uuid"] = target.device
                 evidence["cases"].append(result)
-            except (ValueError, OSError, subprocess.SubprocessError) as error:
+            except Exception as error:
                 if commands.pre_cleanup_failure is None:
                     commands.pre_cleanup_failure = failure_observation(error, stage, commands.records)
                 raise
             finally:
                 if target:
-                    evidence["cleanup_results"].append(target.close())
+                    try:
+                        evidence["cleanup_results"].append(target.close())
+                    except Exception as error:
+                        evidence["cleanup_results"].append({"scope": "NEW target", "state": "unconfirmed"})
+                        if commands.pre_cleanup_failure is None:
+                            commands.pre_cleanup_failure = failure_observation(error, stage, commands.records)
+                (root / "evidence.json").write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
         evidence["state"] = (
             "passed"
             if len(evidence["cases"]) == 4 and all(case["state"] == "passed" for case in evidence["cases"])
             else "inconclusive"
         )
-    except (ValueError, OSError, subprocess.SubprocessError) as error:
+    except Exception as error:
         evidence["error"] = {
-            "type": type(error).__name__,
+            "type": failure_observation(error, stage, commands.records)["exception_type"],
             "detail": "NEW fixture build/install/transport/capture failed; inspect digest-only command status",
         }
         evidence["failure_observation"] = commands.pre_cleanup_failure or failure_observation(
@@ -936,7 +1156,7 @@ def main():
         if device:
             try:
                 evidence["cleanup_results"].append(device.close())
-            except (OSError, ValueError, subprocess.SubprocessError):
+            except Exception:
                 evidence["cleanup_results"].append({"scope": "NEW AVD", "state": "unconfirmed"})
         evidence["cleanup"] = {
             "scope": "only NEW resources",
@@ -947,6 +1167,7 @@ def main():
         if evidence["cleanup"]["state"] != "confirmed":
             evidence["state"] = "inconclusive"
         evidence["commands_sha256"] = digest(json.dumps(commands.records, sort_keys=True).encode())
+        evidence["terminal"] = True
         (root / "evidence.json").write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
     print(json.dumps({"state": evidence["state"], "cases": len(evidence["cases"])}))
     if evidence["state"] != "passed":

@@ -10,6 +10,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
     func sha(_ url: URL) throws -> String { SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined() }
     func build() throws -> String { try sha(Bundle.main.executableURL!) }
+    func stage(_ value: String) {
+        // Fixed lifecycle labels only; never URLs, prompts, tokens or error text.
+        try? FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        try? Data(value.utf8).write(to: documents.appendingPathComponent("stage.txt"), options: [.atomic])
+    }
     func emit(_ value: [String: Any]) throws {
         var output = value
         output.merge(["package": Bundle.main.bundleIdentifier!, "executable_sha256": try build(),
@@ -18,8 +23,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                       "delivery": after ? "target-observed" : "baseline", "delivery_transport": "ios-os-url-context"]) { _, new in new }
         try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]).write(to: documents.appendingPathComponent("response.json"), options: [.atomic])
+        stage("response-written")
     }
     func http(_ route: String) throws -> [String: Any] {
+        stage(route == "/issue" ? "http-issue" : "http-logout")
         var request = URLRequest(url: URL(string: backend + route)!)
         request.httpMethod = "POST"; request.timeoutInterval = 10
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -38,6 +45,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     enum FixtureError: Error { case invalid }
     func receive(_ url: URL) {
         queue.async {
+            self.stage("url-received")
             do {
                 guard url.scheme == "apsatransport", url.host == "fixture", let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { throw FixtureError.invalid }
                 var fields: [String: String] = [:]
@@ -65,16 +73,23 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                                        "storage": try String(contentsOf: self.documents.appendingPathComponent("state.dat"), encoding: .utf8)])
                     } else { throw FixtureError.invalid }
                 }
-            } catch { try? self.emit(["action": "fixture-error", "code": "binding-or-transport"]) }
+            } catch { self.stage("binding-or-transport-failure"); try? self.emit(["action": "fixture-error", "code": "binding-or-transport"]) }
         }
     }
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool { true }
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool { stage("startup-app"); return true }
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: "Default", sessionRole: session.role)
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
+    }
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool { receive(url); return true }
 }
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
+        (UIApplication.shared.delegate as? AppDelegate)?.stage("startup-scene")
         let window = UIWindow(windowScene: scene); window.rootViewController = UIViewController(); self.window = window; window.makeKeyAndVisible()
         for context in options.urlContexts { (UIApplication.shared.delegate as? AppDelegate)?.receive(context.url) }
     }

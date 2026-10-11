@@ -505,7 +505,15 @@ def select_apks(
         if any("/".join(components[:end]) in files for end in range(1, len(components))):
             _fail("unsafe_member", "Archive member has a file as a parent directory")
     dec = _Decoder()
-    top = dec.fields(raw_toc, {1, 2, 4}, "BuildApksResult")
+    top = dec.fields(raw_toc, {1, 2, 4, 5}, "BuildApksResult")
+    if 5 in top:
+        # bundletool 1.18.3 always serializes this message, including when
+        # local testing is disabled. Disabled metadata has no delivery effect.
+        local = dec.fields(_one(top, 5), {1, 2}, "local testing metadata")
+        enabled = _boolean(local, 1)
+        local_path = _text(_one(local, 2, default=b""))
+        if enabled or local_path:
+            _fail("unsupported_toc", "Enabled local testing or a local testing path is unsupported")
     package = _text(_one(top, 4, default=b""), limit=255)
     if package and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+", package):
         _fail("malformed_toc", "Invalid TOC package name")
@@ -541,7 +549,12 @@ def select_apks(
             if not _NAME.fullmatch(name) or name in modules:
                 _fail("malformed_toc", "Missing, invalid or duplicate module name")
             dependencies = _names(_many(module, 4))
-            if _boolean(module, 2) or _boolean(module, 3) or 5 in module:
+            if 5 in module:
+                # BundleModule.getModuleMetadata always sets ModuleTargeting.
+                # Only the empty, unconditional message is supported; every
+                # populated condition (including unknown future fields) fails.
+                dec.fields(_one(module, 5), set(), "conditional module targeting")
+            if _boolean(module, 2) or _boolean(module, 3):
                 _fail("unsupported_toc", "On-demand, instant or conditional module delivery is unsupported")
             if _one(module, 6, wire=0, default=0) != 1 or _one(module, 7, wire=0, default=1) != 1:
                 _fail("unsupported_toc", "Only explicit install-time feature modules are supported")

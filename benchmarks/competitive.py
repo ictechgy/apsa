@@ -56,6 +56,32 @@ def command(args: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True, timeout=300, check=True, **kwargs)
 
 
+def compiler_record(args: list[str], status: int, stdout: str | None, stderr: str | None) -> dict:
+    """Persist public build provenance without passwords or raw compiler streams."""
+    public_args = []
+    password_next = False
+    for argument in args:
+        if password_next:
+            public_args.append("[REDACTED]")
+            password_next = False
+        elif argument in {"-storepass", "-keypass", "--ks-pass", "--key-pass"}:
+            public_args.append(argument)
+            password_next = True
+        elif argument.startswith(("--ks-pass=", "--key-pass=")):
+            public_args.append(argument.split("=", 1)[0] + "=[REDACTED]")
+        else:
+            public_args.append(argument)
+    output = {name: (raw or "").encode() for name, raw in (("stdout", stdout), ("stderr", stderr))}
+    return {
+        "argv": public_args,
+        "status": status,
+        **{name + "_sha256": hashlib.sha256(raw).hexdigest() for name, raw in output.items()},
+        **{name + "_bytes": len(raw) for name, raw in output.items()},
+        "raw_streams_persisted": False,
+        "password_arguments_redacted": True,
+    }
+
+
 def build_apks(
     root: Path,
     sdk: Path,
@@ -100,14 +126,10 @@ def build_apks(
         try:
             result = command(args, env=environment)
         except subprocess.CalledProcessError as error:
-            proof["commands"].append(
-                {"argv": args, "status": error.returncode, "stdout": error.stdout, "stderr": error.stderr}
-            )
+            proof["commands"].append(compiler_record(args, error.returncode, error.stdout, error.stderr))
             (root / "compiler-provenance.json").write_text(json.dumps(proof, indent=2) + "\n")
             raise
-        proof["commands"].append(
-            {"argv": args, "status": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
-        )
+        proof["commands"].append(compiler_record(args, result.returncode, result.stdout, result.stderr))
         (root / "compiler-provenance.json").write_text(json.dumps(proof, indent=2) + "\n")
         return result
 

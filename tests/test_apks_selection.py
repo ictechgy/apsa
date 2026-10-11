@@ -225,14 +225,60 @@ def test_unknown_or_unsupported_targeting_fails_closed(target):
     assert error.value.code == "unsupported_toc"
 
 
-@pytest.mark.parametrize("extra", [field(3, b""), field(5, b""), field(6, b""), field(7, b""), field(9, b"")])
+@pytest.mark.parametrize("extra", [field(3, b""), field(6, b""), field(7, b""), field(9, b"")])
 def test_asset_default_localtesting_device_group_top_metadata_rejected(extra):
     with pytest.raises(ApkSetSelectionError) as error:
         select(single() + extra, ["splits/base.apk"])
     assert error.value.code == "unsupported_toc"
 
 
-@pytest.mark.parametrize("extra", [field(2, 1), field(3, 1), field(5, b""), field(8, b""), field(9, b"")])
+@pytest.mark.parametrize("local", [b"", field(1, 0), field(2, ""), field(1, 0) + field(2, "")])
+def test_disabled_local_testing_and_empty_module_targeting_have_no_selection_effect(local):
+    # Synthetic encoding of the empty messages unconditionally emitted by the
+    # official 1.18.3 serializer. Remote real build/extract remains the oracle.
+    raw = toc(
+        [variant([module([description("base.apk", master=True)], metadata_extra=field(5, b""))])],
+        extra=field(5, local),
+    )
+    result = select(raw, ["base.apk"])
+    assert [apk.path for apk in result.selected_apks] == ["base.apk"]
+
+
+@pytest.mark.parametrize("local", [field(1, 1), field(2, "new-local-test"), field(3, b"")])
+def test_active_path_or_unknown_local_testing_metadata_stays_unsupported(local):
+    with pytest.raises(ApkSetSelectionError) as error:
+        select(single() + field(5, local), ["splits/base.apk"])
+    assert error.value.code == "unsupported_toc"
+
+
+@pytest.mark.parametrize("local", [field(1, 2), field(1, b""), field(1, 0) * 2, field(2, 0)])
+def test_malformed_disabled_local_testing_metadata_fails_closed(local):
+    with pytest.raises(ApkSetSelectionError) as error:
+        select(single() + field(5, local), ["splits/base.apk"])
+    assert error.value.code == "malformed_toc"
+
+
+@pytest.mark.parametrize(
+    "condition", [field(1, b""), field(2, b""), field(3, b""), field(5, b""), field(99, b"")]
+)
+def test_populated_module_targeting_is_unsupported_even_if_condition_is_empty(condition):
+    raw = toc([variant([module([description("base.apk", master=True)], metadata_extra=field(5, condition))])])
+    with pytest.raises(ApkSetSelectionError) as error:
+        select(raw, ["base.apk"])
+    assert error.value.code == "unsupported_toc"
+
+
+@pytest.mark.parametrize("extra", [field(5, b"") * 2, field(5, 0)])
+def test_duplicate_or_mistyped_empty_module_targeting_fails_closed(extra):
+    raw = toc([variant([module([description("base.apk", master=True)], metadata_extra=extra)])])
+    with pytest.raises(ApkSetSelectionError) as error:
+        select(raw, ["base.apk"])
+    assert error.value.code == "malformed_toc"
+
+
+@pytest.mark.parametrize(
+    "extra", [field(2, 1), field(3, 1), field(5, field(1, b"")), field(8, b""), field(9, b"")]
+)
 def test_unsupported_module_delivery_rejected(extra):
     raw = toc([variant([module([description("base.apk", master=True)], metadata_extra=extra)])])
     with pytest.raises(ApkSetSelectionError) as error:

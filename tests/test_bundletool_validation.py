@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import os
 import shutil
@@ -76,7 +77,9 @@ def test_oversized_owned_process_output_is_stopped_at_capture_bound(driver, tmp_
         commands.run([sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x' * 2097152)"])
     record = commands.records[0]
     assert record["output_truncated"] is True
-    assert len(driver.base64.b64decode(record["stdout_base64"])) == 1_048_576
+    assert record["stdout_bytes"] == 1_048_576
+    assert record["stdout_sha256"] == hashlib.sha256(b"x" * 1_048_576).hexdigest()
+    assert "stdout_base64" not in record
 
 
 def test_failure_diagnostic_preserves_status_without_passwords_or_raw_output(driver, tmp_path):
@@ -99,3 +102,55 @@ def test_failure_diagnostic_preserves_status_without_passwords_or_raw_output(dri
     assert "stdout_base64" not in serialized
     assert "stderr_base64" not in serialized
     assert "stdout_sha256" in serialized
+
+
+def test_public_command_records_redact_passwords_and_keep_original_stream_hashes(driver, tmp_path):
+    commands = driver.Commands(tmp_path)
+    argv = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.write(sys.argv[2]); sys.stderr.write(sys.argv[4])",
+        "--ks-pass",
+        "fresh-secret",
+        "--key-pass",
+        "fresh-key-secret",
+        "--ks-pass=pass:fresh-inline",
+        "--key-pass=pass:fresh-key-inline",
+        "-storepass",
+        "fresh-store-secret",
+        "-keypass",
+        "fresh-keytool-secret",
+        "--ordinary=value",
+    ]
+    assert commands.run(argv) == "fresh-secret"
+    record = commands.records[0]
+    assert record["stdout_sha256"] == hashlib.sha256(b"fresh-secret").hexdigest()
+    assert record["stderr_sha256"] == hashlib.sha256(b"fresh-key-secret").hexdigest()
+    assert record["stdout_bytes"] == len(b"fresh-secret")
+    assert record["stderr_bytes"] == len(b"fresh-key-secret")
+    assert record["argv"][:3] == argv[:3]
+    assert record["argv"][-1] == argv[-1]
+    serialized = driver.json.dumps({"commands": commands.records})
+    assert all(secret not in serialized for secret in argv[4:] if secret.startswith("fresh-"))
+    assert "pass:fresh-inline" not in serialized and "pass:fresh-key-inline" not in serialized
+    assert "stdout_base64" not in serialized and "stderr_base64" not in serialized
+
+
+def test_failure_diagnostic_exposes_bounded_parser_reason_for_cases_and_install(driver):
+    selection = {
+        "state": "partial",
+        "reason": "unsupported_toc",
+        "message": "m" * 1000,
+        "toc_sha256": "a" * 64,
+    }
+    observed = driver.failure_diagnostic(
+        {
+            "stage": "fresh-installed-config-resource-probe",
+            "cases": [selection],
+            "installed": {"state": "partial", "selection": selection},
+        },
+        [],
+    )
+    assert observed["case_states"][0]["message"] == "m" * 256
+    assert observed["installed_selection"] == observed["case_states"][0]
+    assert observed["case_states"][0]["toc_sha256"] == "a" * 64

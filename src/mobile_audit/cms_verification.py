@@ -6,6 +6,7 @@ import base64
 import hashlib
 import os
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -24,57 +25,95 @@ SIGNED_DATA_OID = bytes.fromhex("2a864886f70d010702")
 DATA_OID = bytes.fromhex("2a864886f70d010701")
 
 
-def _tlvs(raw: bytes, budget: list[int], depth=0) -> list[tuple[int, bytes]]:
-    if depth > MAX_DER_DEPTH:
-        raise ValueError("CMS DER depth budget exceeded")
-    result = []
-    cursor = 0
-    while cursor < len(raw):
-        budget[0] -= 1
-        if budget[0] < 0 or cursor + 2 > len(raw):
-            raise ValueError("CMS DER node budget or header failure")
-        tag = raw[cursor]
-        if tag & 31 == 31:
-            raise ValueError("Unsupported DER tag")
-        size = raw[cursor + 1]
-        cursor += 2
-        if size & 128:
-            width = size & 127
-            if not 1 <= width <= 4 or cursor + width > len(raw) or raw[cursor] == 0:
-                raise ValueError("Invalid or indefinite DER length")
-            size = int.from_bytes(raw[cursor : cursor + width], "big")
-            cursor += width
-            if size < 128:
-                raise ValueError("Noncanonical DER length")
-        if cursor + size > len(raw):
-            raise ValueError("Truncated DER value")
-        body = raw[cursor : cursor + size]
-        cursor += size
-        if tag & 32:
-            _tlvs(body, budget, depth + 1)
-        result.append((tag, body))
-    return result
+@dataclass(frozen=True)
+class _CMSNode:
+    tag: int
+    body: memoryview
+    children: tuple[_CMSNode, ...] = ()
+
+
+def _cms_nodes(raw: bytes) -> tuple[_CMSNode, ...]:
+    """Parse once under shared budgets; retain original signed bytes without conversion.
+
+    Native Apple signatures use BER constructed indefinite lengths. Only those
+    lengths are accepted: primitive indefinite values and misplaced EOCs fail
+    closed, and definite lengths retain the existing canonical-length checks.
+    Views avoid copying a large body once per nested constructed value.
+    """
+    if len(raw) > MAX_CMS_BYTES:
+        raise ValueError("CMS byte budget exceeded")
+    view = memoryview(raw)
+    remaining = MAX_DER_NODES
+
+    def parse(start: int, end: int, depth: int, indefinite: bool = False):
+        nonlocal remaining
+        if depth > MAX_DER_DEPTH:
+            raise ValueError("CMS depth budget exceeded")
+        nodes = []
+        cursor = start
+        while cursor < end:
+            if cursor + 2 > end:
+                raise ValueError("Truncated CMS header")
+            tag, size = view[cursor], view[cursor + 1]
+            if tag == 0:
+                if size == 0 and indefinite:
+                    return tuple(nodes), cursor + 2
+                raise ValueError("Unexpected or malformed CMS end-of-contents")
+            remaining -= 1
+            if remaining < 0:
+                raise ValueError("CMS node budget exceeded")
+            if tag & 31 == 31:
+                raise ValueError("Unsupported CMS tag")
+            cursor += 2
+            if size == 0x80:
+                if not tag & 32:
+                    raise ValueError("Primitive indefinite CMS length")
+                body_start = cursor
+                children, cursor = parse(cursor, end, depth + 1, True)
+                nodes.append(_CMSNode(tag, view[body_start : cursor - 2], children))
+                continue
+            if size & 128:
+                width = size & 127
+                if not 1 <= width <= 4 or cursor + width > end or view[cursor] == 0:
+                    raise ValueError("Invalid CMS definite length")
+                size = int.from_bytes(view[cursor : cursor + width], "big")
+                cursor += width
+                if size < 128:
+                    raise ValueError("Noncanonical CMS definite length")
+            value_end = cursor + size
+            if value_end > end:
+                raise ValueError("Truncated CMS value")
+            children = ()
+            if tag & 32:
+                children, _ = parse(cursor, value_end, depth + 1)
+            nodes.append(_CMSNode(tag, view[cursor:value_end], children))
+            cursor = value_end
+        if indefinite:
+            raise ValueError("Missing CMS end-of-contents")
+        return tuple(nodes), cursor
+
+    return parse(0, len(raw), 0)[0]
 
 
 def _detached_signed_data(raw: bytes) -> None:
-    outer = _tlvs(raw, [MAX_DER_NODES])
-    if len(outer) != 1 or outer[0][0] != 0x30:
-        raise ValueError("CMS ContentInfo must be one DER sequence")
-    info = _tlvs(outer[0][1], [MAX_DER_NODES])
-    if len(info) != 2 or info[0] != (6, SIGNED_DATA_OID) or info[1][0] != 0xA0:
+    outer = _cms_nodes(raw)
+    if len(outer) != 1 or outer[0].tag != 0x30:
+        raise ValueError("CMS ContentInfo must be one sequence")
+    info = outer[0].children
+    if len(info) != 2 or info[0].tag != 6 or info[0].body != SIGNED_DATA_OID or info[1].tag != 0xA0:
         raise ValueError("CMS content is not SignedData")
-    wrapped = _tlvs(info[1][1], [MAX_DER_NODES])
-    if len(wrapped) != 1 or wrapped[0][0] != 0x30:
+    wrapped = info[1].children
+    if len(wrapped) != 1 or wrapped[0].tag != 0x30:
         raise ValueError("Invalid CMS SignedData wrapper")
-    signed = _tlvs(wrapped[0][1], [MAX_DER_NODES])
-    if len(signed) < 4 or signed[0][0] != 2 or signed[1][0] != 0x31 or signed[2][0] != 0x30:
+    signed = wrapped[0].children
+    if len(signed) < 4 or signed[0].tag != 2 or signed[1].tag != 0x31 or signed[2].tag != 0x30:
         raise ValueError("Invalid CMS SignedData fields")
-    content = _tlvs(signed[2][1], [MAX_DER_NODES])
-    if content != [(6, DATA_OID)]:
+    content = signed[2].children
+    if len(content) != 1 or content[0].tag != 6 or content[0].body != DATA_OID:
         raise ValueError("Only detached CMS data content is supported")
-    if signed[-1][0] != 0x31 or not signed[-1][1]:
+    if signed[-1].tag != 0x31 or not signed[-1].body:
         raise ValueError("CMS contains no signer")
-    if any(tag not in {0xA0, 0xA1} for tag, _ in signed[3:-1]):
+    if any(node.tag not in {0xA0, 0xA1} for node in signed[3:-1]):
         raise ValueError("Unsupported CMS SignedData fields")
 
 
