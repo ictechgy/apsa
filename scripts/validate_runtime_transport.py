@@ -34,6 +34,8 @@ MAX_OUTPUT = 64 * 1024 * 1024
 IOS_EVENT_BYTES = 64 * 1024
 IOS_EVENT_LIMIT = 128
 IOS_ENTRY_BYTES = 4096
+IOS_PINNED_RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-18-5"
+IOS_PINNED_DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-16"
 IOS_PHASES = {
     "startup-app",
     "startup-scene",
@@ -361,6 +363,58 @@ def owned_ios_url(url: str, scheme: str) -> str:
     return urlunsplit((scheme, "fixture", "", parts.query, ""))
 
 
+def ios_default_set(env: dict) -> Path:
+    """Operational CI-only guard, never an acquisition/host attestation."""
+    if (
+        platform.system() != "Darwin"
+        or any(
+            env.get(key) != value
+            for key, value in {
+                "GITHUB_ACTIONS": "true",
+                "CI": "true",
+                "RUNNER_ENVIRONMENT": "github-hosted",
+                "RUNNER_OS": "macOS",
+                "HOME": "/Users/runner",
+                "DEVELOPER_DIR": "/Applications/Xcode_16.4.app/Contents/Developer",
+            }.items()
+        )
+        or any(
+            key in env
+            for key in {
+                "SIMULATOR_DEVICE_SET_PATH",
+                "SIMCTL_DEVICE_SET_PATH",
+                "CORE_SIMULATOR_DEVICE_SET_PATH",
+                "CFFIXED_USER_HOME",
+                "SIMULATOR_ROOT",
+                "SIMULATOR_HOME",
+                "SIMULATOR_UDID",
+            }
+        )
+        or any(key.startswith("SIMCTL_CHILD_") for key in env)
+    ):
+        raise ValueError("NEW default-set control requires pinned hosted macOS namespace")
+    # Literal from the disposable runner home. No parent discovery/listing/stat.
+    return Path("/Users/runner/Library/Developer/CoreSimulator/Devices")
+
+
+def ios_selector(root: Path, selector: str, env: dict) -> tuple[list[str], Path]:
+    if selector == "default":
+        return ["/usr/bin/xcrun", "simctl"], ios_default_set(env)
+    if selector == "custom":
+        device_set = (root / "simulator-set").resolve()
+        return ["/usr/bin/xcrun", "simctl", "--set", str(device_set)], device_set
+    raise ValueError("Owned resource journal simulator selector differs")
+
+
+def unique_journal_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Owned resource journal duplicate key")
+        result[key] = value
+    return result
+
+
 class OwnedResources:
     """Crash-surviving journal for this NEW runner directory, never device discovery."""
 
@@ -372,7 +426,11 @@ class OwnedResources:
             "commit": os.environ.get("GITHUB_SHA"),
         }
         if load:
-            self.value = json.loads(self.path.read_text())
+            if self.path.is_symlink() or self.path.stat().st_size > IOS_EVENT_BYTES:
+                raise ValueError("Owned resource journal shape differs")
+            self.value = json.loads(self.path.read_text(), object_pairs_hook=unique_journal_keys)
+            if not isinstance(self.value, dict) or set(self.value) != set(identity) | {"android", "ios"}:
+                raise ValueError("Owned resource journal shape differs")
             if any(self.value.get(key) != value for key, value in identity.items()):
                 raise ValueError("Owned resource journal identity differs")
         else:
@@ -388,16 +446,47 @@ class OwnedResources:
         self.value["android"] = {**(self.value["android"] or {}), **changes}
         self.save()
 
-    def ios(self, device: str, *, deleted: bool = False):
+    def ios(self, device: str, *, deleted: bool = False, selector: str | None = None):
         device = str(uuid.UUID(device)).upper()
-        self.value["ios"][device] = {"deleted": deleted}
+        previous = self.value["ios"].get(device, {})
+        selector = selector if selector is not None else previous.get("selector", "custom")
+        if selector not in {"custom", "default"}:
+            raise ValueError("Owned resource journal simulator selector differs")
+        self.value["ios"][device] = {"deleted": deleted, "selector": selector}
         self.save()
 
 
 def cleanup_owned(root: Path, commands: "Commands", resources: OwnedResources) -> dict:
     """Idempotent fallback, only explicitly journaled new resources and paths."""
     results = []
+    # Validate the entire iOS journal and all guards before ANY SDK operation.
+    if (
+        not isinstance(resources.value, dict)
+        or set(resources.value) != {"root", "run_id", "commit", "android", "ios"}
+        or resources.value["root"] != str(root)
+        or not isinstance(resources.value["ios"], dict)
+    ):
+        raise ValueError("Owned resource journal simulator shape differs")
     android = resources.value["android"]
+    if android is not None and (
+        not isinstance(android, dict)
+        or not {"avd", "sdk"}.issubset(android)
+        or not set(android).issubset({"avd", "sdk", "emulator", "adb", "emulator_closed", "adb_closed"})
+        or not isinstance(android["avd"], str)
+        or not isinstance(android["sdk"], str)
+        or any(type(android[key]) is not bool for key in set(android) - {"avd", "sdk"})
+    ):
+        raise ValueError("Owned resource journal Android shape differs")
+    selectors = {}
+    for device, record in resources.value["ios"].items():
+        if (
+            str(uuid.UUID(device)).upper() != device
+            or not isinstance(record, dict)
+            or set(record) != {"deleted", "selector"}
+            or type(record["deleted"]) is not bool
+        ):
+            raise ValueError("Owned resource journal simulator shape differs")
+        selectors[device] = ios_selector(root, record["selector"], commands.env)
     if android:
         if not re.fullmatch(r"apsa-new-[a-f0-9]{32}", android.get("avd", "")):
             raise ValueError("Owned resource journal Android name differs")
@@ -437,15 +526,18 @@ def cleanup_owned(root: Path, commands: "Commands", resources: OwnedResources) -
             raise ValueError("Owned resource journal simulator UUID differs")
         if record["deleted"]:
             continue
-        # The simulator belongs to this fresh device set, including after driver death.
-        prefix = ["/usr/bin/xcrun", "simctl", "--set", str(root / "simulator-set")]
+        # Selector persists across driver death; only the CREATE-returned UUID is targeted.
+        prefix, device_set = selectors[device]
         commands.run(prefix + ["shutdown", device], optional=True)
         commands.run(prefix + ["delete", device], optional=True)
-        confirmed = commands.last_status == 0 or not (root / "simulator-set" / device).exists()
+        confirmed = commands.last_status == 0 or (
+            record["selector"] == "custom" and not (device_set / device).exists()
+        )
         results.append(
             {
                 "scope": "owned new simulator UUID",
                 "uuid": device,
+                "selector": record["selector"],
                 "state": "confirmed" if confirmed else "unconfirmed",
             }
         )
@@ -987,21 +1079,31 @@ class IosTarget:
         root: Path,
         package: str,
         commands: Commands,
-        runtime: str,
+        runtime: str | None,
         device_type: str,
         *,
         url_driver: str = "simctl",
+        device_set_mode: str = "custom",
     ):
         if url_driver not in {"simctl", "companion"}:
             raise ValueError("NEW iOS URL driver unsupported")
         self.package, self.commands, self.device = package, commands, None
-        self.url_driver = url_driver
+        self.url_driver, self.device_set_mode = url_driver, device_set_mode
         self.scheme = "a" + uuid.uuid4().hex
         self.delivery_observations: list[dict] = []
-        device_set = commands.root / "simulator-set"
-        device_set.mkdir(exist_ok=True)
-        self.device_set = device_set.resolve()
-        self.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(self.device_set)]
+        self.simctl, self.device_set = ios_selector(commands.root, device_set_mode, commands.env)
+        if device_set_mode == "default":
+            if (
+                runtime != IOS_PINNED_RUNTIME
+                or device_type != IOS_PINNED_DEVICE_TYPE
+                or commands.resources is None
+            ):
+                raise ValueError(
+                    "NEW default-set control requires explicit pinned inputs and ownership journal"
+                )
+        else:
+            runtime = runtime or IOS_PINNED_RUNTIME
+            self.device_set.mkdir(exist_ok=True)
         root.mkdir()
         source = root / "Transport.swift"
         source.write_bytes((SOURCES / source.name).read_bytes())
@@ -1081,9 +1183,11 @@ class IosTarget:
             .strip()
         )
         self.device = str(uuid.UUID(created)).upper()
-        if commands.resources:
-            commands.resources.ios(self.device)
+        journaled = False
         try:
+            if commands.resources:
+                commands.resources.ios(self.device, selector=device_set_mode)
+                journaled = True
             commands.run(self.simctl + ["boot", self.device])
             commands.run(self.simctl + ["bootstatus", self.device, "-b"], timeout=180)
             commands.run(self.simctl + ["install", self.device, str(self.app)])
@@ -1136,8 +1240,12 @@ class IosTarget:
             )
             commands.pre_cleanup_failure["process_entry"] = self.entry_observation()
             try:
-                self.close()
-            except (ValueError, OSError, subprocess.SubprocessError):
+                cleanup = self.close(timeout=120 if journaled else 15, update_journal=journaled)
+                commands.pre_cleanup_failure["constructor_cleanup"] = {
+                    **{key: value for key, value in cleanup.items() if key != "uuid"},
+                    "uuid_sha256": digest(cleanup["uuid"].encode()) if "uuid" in cleanup else None,
+                }
+            except (ValueError, OSError, subprocess.SubprocessError, CommandFailure):
                 commands.pre_cleanup_failure["constructor_cleanup"] = "unconfirmed"
             raise
 
@@ -1236,6 +1344,9 @@ class IosTarget:
             return
         if self.helper_installed_build() != self.helper_build:
             raise ValueError("NEW installed iOS dispatcher differs")
+        # deliver() already rewrote the URI to this NEW target's registered scheme.
+        # Bind only helper diagnostics; target callback/session proof remains separate.
+        self.helper_uri_sha256 = digest(url.encode())
         self.commands.run(
             self.simctl + ["terminate", self.device, self.helper_package], optional=True, timeout=15
         )
@@ -1354,6 +1465,7 @@ class IosTarget:
             "dispatcher": self.dispatcher_observation(),
             "process_entry": self.entry_observation(),
             "process_entry_readiness": getattr(self, "readiness_entry", {"state": "unmeasured"}),
+            "device_set_selector": getattr(self, "device_set_mode", "custom"),
         }
 
     def entry_observation(self, *, process: dict | None = None):
@@ -1583,6 +1695,7 @@ class IosTarget:
                 "response_bytes": len(raw),
                 "callback_events": events,
                 "url_driver": getattr(self, "url_driver", "simctl"),
+                "device_set_selector": getattr(self, "device_set_mode", "custom"),
                 "helper_installed_build": getattr(self, "helper_build", None),
                 "helper_process": getattr(self, "helper_process", None),
                 "dispatcher": self.dispatcher_observation(),
@@ -1591,16 +1704,22 @@ class IosTarget:
             }
         )
 
-    def close(self):
+    def close(self, *, timeout: int = 120, update_journal: bool = True):
         if self.device:
             device, self.device = self.device, None
-            self.commands.run(self.simctl + ["shutdown", device], optional=True)
-            self.commands.run(self.simctl + ["delete", device], optional=True)
-            if self.commands.last_status == 0 and self.commands.resources:
+            try:
+                self.commands.run(self.simctl + ["shutdown", device], optional=True, timeout=timeout)
+            except CommandFailure:
+                # If journaling failed, still attempt deletion of only CREATE's UUID.
+                if update_journal:
+                    raise
+            self.commands.run(self.simctl + ["delete", device], optional=True, timeout=timeout)
+            if self.commands.last_status == 0 and self.commands.resources and update_journal:
                 self.commands.resources.ios(device, deleted=True)
             return {
                 "scope": "only NEW simulator UUID",
                 "uuid": device,
+                "selector": getattr(self, "device_set_mode", "custom"),
                 "state": "confirmed" if self.commands.last_status == 0 else "unconfirmed",
             }
         return {"scope": "no remaining owned UUID", "state": "confirmed"}
@@ -1827,9 +1946,12 @@ def main():
     parser.add_argument("--sdk", type=Path)
     parser.add_argument("--jdk", type=Path)
     parser.add_argument("--ios-url-driver", choices=["simctl", "companion"], default="simctl")
-    parser.add_argument("--ios-runtime", default="com.apple.CoreSimulator.SimRuntime.iOS-18-5")
-    parser.add_argument("--ios-device-type", default="com.apple.CoreSimulator.SimDeviceType.iPhone-16")
+    parser.add_argument("--ios-device-set", choices=["custom", "default"], default="custom")
+    parser.add_argument("--ios-runtime")
+    parser.add_argument("--ios-device-type", default=IOS_PINNED_DEVICE_TYPE)
     args = parser.parse_args()
+    if args.ios_device_set == "default" and args.platform != "ios":
+        parser.error("NEW default-set control requires iOS")
     # Never offer a flag that lets local workspace execution bypass this boundary.
     if (
         os.environ.get("GITHUB_ACTIONS") != "true"
@@ -1886,6 +2008,8 @@ def main():
         "state": "inconclusive",
         "terminal": False,
         "platform": args.platform,
+        "ios_device_set": args.ios_device_set if args.platform == "ios" else None,
+        "ios_url_driver": args.ios_url_driver if args.platform == "ios" else None,
         "commit": os.environ.get("GITHUB_SHA"),
         "run_id": os.environ.get("GITHUB_RUN_ID"),
         "source_sha256": {
@@ -1941,9 +2065,12 @@ def main():
                         case_root,
                         package,
                         commands,
-                        args.ios_runtime,
+                        args.ios_runtime
+                        if args.ios_device_set == "default"
+                        else args.ios_runtime or IOS_PINNED_RUNTIME,
                         args.ios_device_type,
                         url_driver=args.ios_url_driver,
+                        device_set_mode=args.ios_device_set,
                     )
                 stage = args.platform + "-case-" + str(index) + "-session-delivery-capture-http"
                 result = execute_case(target, invalidate=invalidate, retain=retain)

@@ -449,6 +449,75 @@ are unchanged. These checks are not OS-entry or URL-delivery evidence. Fresh ful
 source reviews and another actual execution are required. The physical-device/
 provisioning, revocation and AAPT2 watches remain separate.
 
+## Eighth isolated execution
+
+The complete v13 patch
+`98f2125c4d02c2ea09c72a0865e47b43ae2ea2f50a0f3b3024e16bb87e80c8a3`
+received code APPROVE and architecture WATCH / source READY. Exactly 346
+manifest-bound files became commit `56e7d6ff3f2db28f5fcd1fe196c1c4744f8ec3b5`,
+tree `57dec51f60e60b0257ea60ae793328b01e31b558`. Four remote source paths
+changed relative to v12; 342 entries were identical.
+
+- [CI](https://github.com/ictechgy/apsa/actions/runs/38149471132) passed all
+  11 jobs and [package gates](https://github.com/ictechgy/apsa/actions/runs/38149471162)
+  passed all four. Four Ubuntu main/package executions reported 1,800 passed /
+  26 skipped; four macOS executions reported 1,801 passed / 25 skipped. Required
+  isolation reported Ubuntu 1,801/25 and macOS 1,803/23. Ruff, Pyright, actual
+  checkout/clean-wheel 23/25-tool SDK contracts and fresh APK dual-engine/
+  input-hash/MCP checks passed. All eight builds matched wheel
+  `76924137808148c40b267646b33b33e9864c5b24a8201e7074b7fb35de6af98d`
+  and sdist `bde39f8eb480e2fc0a2781c8bb975687f2e3d4482a9fbd009bf56a634aa840db`.
+- [Runtime](https://github.com/ictechgy/apsa/actions/runs/38149471110) passed
+  two backend and four installed Android controls. Both iOS modes remained
+  zero/inconclusive at the strict session-response deadline. All cleanup and
+  eight artifact heads/ZIP digests were confirmed. Artifact payloads remain
+  unavailable; claims rely on the preserved synthetic console assertions and
+  structured summaries, not inspected individual artifact case records.
+- Both initial readiness entries confirmed the exact expected owned home,
+  Documents and entry-path digests and the live-verified PID. Primary failure
+  snapshots still held the exited readiness owner's epoch/PID with zero URL
+  receipts. Thus no new primary entry or required callback was observed.
+- Both separated direct-launch tails observed a NEW confirmed process entry
+  with matching owned paths and a new live-verified PID. The entry epoch matched
+  the latest valid UIKit event epoch. This establishes direct-launch bootstrap
+  entry and at least one UIKit event; scene-active readiness did not finish
+  within the original 15-second tail bound, so no warm URL probe was attempted.
+  It does not prove URL delivery or permanent UIKit failure.
+- The companion reached an `os-open-requested` helper receipt without an
+  opening completion. Its false URI match was a diagnostic bookkeeping defect:
+  the driver read an expected helper URI digest it had never assigned. It was
+  not a measured discrepancy between intended and actual URI, and correcting
+  that field does not explain absent strict target callbacks.
+
+The next source revision binds the actual rewritten companion URI digest
+before dispatch. It also retains both required custom-set jobs and adds two
+separate required CI-only controls for simctl and companion delivery in a
+hosted macOS runner's SDK default set. The controls require the pinned iOS 18.5
+runtime, iPhone 16 type and Xcode 16.4, without runtime/device enumeration or
+fallback. Every device operation targets only the UUID returned by a NEW
+`create`; container reads remain within that UUID and cleanup never removes
+the default parent set. Selector ownership persists in the bounded cleanup
+journal. Unknown or malformed selectors/journals fail before SDK operations.
+If recording a valid CREATE-returned UUID fails, constructor cleanup still
+attempts shutdown and deletion of only that UUID under separate bounded cleanup
+deadlines and preserves the original failure. Malformed CREATE output never
+selects a device for boot, shutdown or deletion.
+
+Hosted-runner, OS, home, toolchain and namespace checks are operational guards,
+not host attestation or acquisition trust. Default-set operations are forbidden
+locally. [GitHub's documented runner environment variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables)
+support the CI guard; they do not prove callback delivery. Both new controls
+keep the original strict callback/session/nonce/build/HTTP gates and deadlines.
+Diagnostic tails remain non-promoting. Current source requires fresh complete
+independent reviews and a new head-bound execution; no new runtime outcome or
+permission-profile activation is claimed.
+
+The V14 driver/test implementation passed 220 fresh synthetic mock tests with
+zero failures/skips, Ruff/format and Pyright. Workflow parsing confirmed six
+required jobs; the original four-job prefix and both Swift sources are unchanged.
+No local default-set SDK/device operations ran. These source checks do not
+establish the outcome of either new CI control.
+
 ## New Apple development signature
 
 The user-authorized local lookup found a physical iPhone, an enabled developer

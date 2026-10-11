@@ -14,12 +14,15 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
+import yaml
 
 from mobile_audit.core import digest
 from mobile_audit.runtime_acquisition import AcquisitionRecorder, evaluate_backend_invalidation
 from mobile_audit.runtime_evidence import build_binding, evaluate_workflow, validate_workflow
 from mobile_audit.runtime_transport import AuthorityServer, InstalledTransportAdapter, OwnedAuthority
 from scripts.validate_runtime_transport import (
+    IOS_PINNED_DEVICE_TYPE,
+    IOS_PINNED_RUNTIME,
     CommandFailure,
     Commands,
     FixtureFailure,
@@ -27,6 +30,7 @@ from scripts.validate_runtime_transport import (
     OwnedResources,
     cleanup_owned,
     failure_observation,
+    ios_default_set,
     ios_delivery_complete,
     ios_launch_pid,
     ios_process_identity,
@@ -325,6 +329,296 @@ def test_emulator_exit_observation_survives_bounded_recent_command_window():
     assert observation["reason"] == "android-emulator-exited-before-boot"
     assert len(observation["recent_commands"]) == 16
     assert observation["owned_processes"][0]["process_status"] == 3
+
+
+def synthetic_hosted_ios_env():
+    return {
+        "GITHUB_ACTIONS": "true",
+        "CI": "true",
+        "RUNNER_ENVIRONMENT": "github-hosted",
+        "RUNNER_OS": "macOS",
+        "HOME": "/Users/runner",
+        "DEVELOPER_DIR": "/Applications/Xcode_16.4.app/Contents/Developer",
+    }
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"GITHUB_ACTIONS": "false"},
+        {"CI": "false"},
+        {"RUNNER_ENVIRONMENT": "self-hosted"},
+        {"RUNNER_OS": "Linux"},
+        {"HOME": "/new-other-home"},
+        {"DEVELOPER_DIR": "/new-other-sdk"},
+        {"SIMULATOR_DEVICE_SET_PATH": ""},
+        {"SIMCTL_DEVICE_SET_PATH": "/new-other-set"},
+        {"CORE_SIMULATOR_DEVICE_SET_PATH": ""},
+        {"CFFIXED_USER_HOME": "/new-other-home"},
+        {"SIMULATOR_ROOT": ""},
+        {"SIMULATOR_HOME": ""},
+        {"SIMULATOR_UDID": "booted"},
+        {"SIMCTL_CHILD_HOME": "/new-other-home"},
+    ],
+)
+def test_ios_default_set_operational_guard_rejects_before_any_sdk_call(tmp_path, monkeypatch, change):
+    monkeypatch.setattr("scripts.validate_runtime_transport.platform.system", lambda: "Darwin")
+    commands = Commands(tmp_path, env={**synthetic_hosted_ios_env(), **change})
+    commands.resources = OwnedResources(tmp_path)
+    monkeypatch.setattr(commands, "run", lambda *a, **kw: pytest.fail("SDK operation before hosted guard"))
+    with pytest.raises(ValueError, match="pinned hosted macOS namespace"):
+        IosTarget(
+            tmp_path / "new-build",
+            "apsa.fixture.new",
+            commands,
+            IOS_PINNED_RUNTIME,
+            IOS_PINNED_DEVICE_TYPE,
+            device_set_mode="default",
+        )
+    assert not (tmp_path / "new-build").exists()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["platform", "missing-env", "missing-runtime", "unsupported-runtime", "wrong-device-type", "no-journal"],
+)
+def test_ios_default_set_requires_explicit_pinned_inputs_and_journal_before_sdk(
+    tmp_path, monkeypatch, failure
+):
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.platform.system",
+        lambda: "Linux" if failure == "platform" else "Darwin",
+    )
+    env = synthetic_hosted_ios_env()
+    if failure == "missing-env":
+        del env["RUNNER_ENVIRONMENT"]
+    commands = Commands(tmp_path, env=env)
+    if failure != "no-journal":
+        commands.resources = OwnedResources(tmp_path)
+    runtime = (
+        None
+        if failure == "missing-runtime"
+        else "unsupported-runtime"
+        if failure == "unsupported-runtime"
+        else IOS_PINNED_RUNTIME
+    )
+    device_type = "other-device" if failure == "wrong-device-type" else IOS_PINNED_DEVICE_TYPE
+    monkeypatch.setattr(commands, "run", lambda *a, **kw: pytest.fail("SDK operation before input guard"))
+    with pytest.raises(ValueError):
+        IosTarget(
+            tmp_path / "new-build",
+            "apsa.fixture.new",
+            commands,
+            runtime,
+            device_type,
+            device_set_mode="default",
+        )
+    assert not (tmp_path / "new-build").exists()
+
+
+@pytest.mark.parametrize("selector", ["custom", "default"])
+@pytest.mark.parametrize(
+    "failure", ["journal-save", "delete-nonzero", "shutdown-timeout", "malformed-create"]
+)
+def test_ios_journal_io_failure_cleans_only_create_returned_uuid_with_bounded_commands(
+    tmp_path, monkeypatch, selector, failure
+):
+    device = "11111111-2222-3333-4444-555555555555"
+    commands = Commands(tmp_path, env={})
+    commands.resources = OwnedResources(tmp_path)
+    calls = []
+
+    def save_unavailable():
+        raise OSError("new-synthetic-private-journal-error")
+
+    monkeypatch.setattr(commands.resources, "save", save_unavailable)
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.ios_default_set", lambda env: tmp_path / "new-default-stand-in"
+    )
+
+    def public_tools(argv, **kwargs):
+        calls.append((argv, kwargs["timeout"]))
+        if "--show-sdk-path" in argv:
+            raw = b"/new-public-sdk"
+        elif "swiftc" in argv:
+            Path(argv[argv.index("-o") + 1]).write_bytes(b"new target executable")
+            raw = b""
+        elif "create" in argv:
+            raw = b"booted" if failure == "malformed-create" else device.encode()
+        elif "shutdown" in argv:
+            assert kwargs["timeout"] == 15 and argv[-1] == device
+            if failure == "shutdown-timeout":
+                raise subprocess.TimeoutExpired(argv, 15, output=b"", stderr=b"")
+            raw = b""
+        elif "delete" in argv:
+            assert kwargs["timeout"] == 15 and argv[-1] == device
+            return SimpleNamespace(returncode=1 if failure == "delete-nonzero" else 0, stdout=b"", stderr=b"")
+        else:
+            raw = b""
+        return SimpleNamespace(returncode=0, stdout=raw, stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", public_tools)
+    with pytest.raises(ValueError if failure == "malformed-create" else OSError):
+        IosTarget(
+            tmp_path / "new-build",
+            "apsa.fixture.new",
+            commands,
+            IOS_PINNED_RUNTIME,
+            IOS_PINNED_DEVICE_TYPE,
+            device_set_mode=selector,
+        )
+    device_calls = [(argv, timeout) for argv, timeout in calls if "simctl" in argv and "create" not in argv]
+    if failure == "malformed-create":
+        assert device_calls == [] and commands.pre_cleanup_failure is None
+    else:
+        assert len(device_calls) == 2
+        assert all(argv[-1] == device and timeout == 15 for argv, timeout in device_calls)
+        assert "shutdown" in device_calls[0][0] and "delete" in device_calls[1][0]
+        assert commands.pre_cleanup_failure is not None
+        cleanup = commands.pre_cleanup_failure["constructor_cleanup"]
+        assert cleanup["state"] == ("unconfirmed" if failure == "delete-nonzero" else "confirmed")
+        assert cleanup["selector"] == selector and cleanup["uuid_sha256"] == digest(device.encode())
+        assert "new-synthetic-private-journal-error" not in json.dumps(commands.pre_cleanup_failure)
+    assert all(("--set" in argv) is (selector == "custom") for argv, _ in calls if "simctl" in argv)
+
+
+def test_ios_default_set_guard_derives_fixed_path_without_local_parent_metadata(monkeypatch):
+    monkeypatch.setattr("scripts.validate_runtime_transport.platform.system", lambda: "Darwin")
+    monkeypatch.setattr(Path, "stat", lambda *a, **kw: pytest.fail("default parent metadata forbidden"))
+    assert (
+        str(ios_default_set(synthetic_hosted_ios_env()))
+        == "/Users/runner/Library/Developer/CoreSimulator/Devices"
+    )
+
+
+def test_default_set_cleanup_persists_selector_and_never_removes_parent_or_neighbor(tmp_path, monkeypatch):
+    root = tmp_path / "new-work"
+    root.mkdir()
+    default = tmp_path / "new-host-default-stand-in"
+    default.mkdir()
+    device = "11111111-2222-3333-4444-555555555555"
+    own = default / device
+    own.mkdir()
+    neighbor = default / "22222222-3333-4444-5555-666666666666"
+    neighbor.mkdir()
+    sentinel = neighbor / "new-unowned-synthetic-sentinel"
+    sentinel.write_text("preserved")
+    journal = OwnedResources(root)
+    journal.ios(device, selector="default")
+    commands = Commands(root, env={})
+    monkeypatch.setattr("scripts.validate_runtime_transport.ios_default_set", lambda env: default)
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        commands.last_status = 0
+        assert argv == ["/usr/bin/xcrun", "simctl", argv[2], device]
+        assert argv[2] in {"shutdown", "delete"}
+        if argv[2] == "delete":
+            own.rmdir()
+        return b""
+
+    monkeypatch.setattr(commands, "run", run)
+    loaded = OwnedResources(root, load=True)
+    result = cleanup_owned(root, commands, loaded)
+    assert result["state"] == "confirmed" and result["results"][0]["selector"] == "default"
+    assert default.is_dir() and sentinel.read_text() == "preserved"
+    assert loaded.value["ios"][device] == {"selector": "default", "deleted": True}
+    assert cleanup_owned(root, commands, OwnedResources(root, load=True))["state"] == "confirmed"
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "unknown-selector",
+        "missing-selector",
+        "deleted-type",
+        "extra-record",
+        "bad-uuid",
+        "ios-shape",
+        "extra-root",
+        "duplicate-json",
+    ],
+)
+def test_unknown_or_malformed_ios_journal_fails_closed_before_any_sdk_operation(
+    tmp_path, monkeypatch, failure
+):
+    journal = OwnedResources(tmp_path)
+    journal.android(avd="apsa-new-" + "a" * 32, sdk="/new-public-sdk", emulator=True)
+    device = "11111111-2222-3333-4444-555555555555"
+    journal.ios(device)
+    record = journal.value["ios"][device]
+    if failure == "unknown-selector":
+        record["selector"] = "other"
+    elif failure == "missing-selector":
+        del record["selector"]
+    elif failure == "deleted-type":
+        record["deleted"] = "false"
+    elif failure == "extra-record":
+        record["unowned_namespace"] = "/new-other-set"
+    elif failure == "bad-uuid":
+        journal.value["ios"] = {"booted": record}
+    elif failure == "ios-shape":
+        journal.value["ios"] = []
+    elif failure == "extra-root":
+        journal.value["new_extra_root"] = "unsupported"
+    journal.save()
+    if failure == "duplicate-json":
+        raw = journal.path.read_text().replace('"ios":', '"ios": {}, "ios":', 1)
+        journal.path.write_text(raw)
+    commands = Commands(tmp_path, env={})
+    monkeypatch.setattr(commands, "run", lambda *a, **kw: pytest.fail("malformed journal SDK operation"))
+    with pytest.raises(ValueError):
+        loaded = OwnedResources(tmp_path, load=True)
+        cleanup_owned(tmp_path, commands, loaded)
+
+
+def test_default_set_cleanup_rechecks_host_guard_before_sdk(tmp_path, monkeypatch):
+    journal = OwnedResources(tmp_path)
+    journal.ios("11111111-2222-3333-4444-555555555555", selector="default")
+    commands = Commands(tmp_path, env={})
+    monkeypatch.setattr(
+        commands, "run", lambda *a, **kw: pytest.fail("unguarded default cleanup SDK operation")
+    )
+    with pytest.raises(ValueError, match="pinned hosted macOS namespace"):
+        cleanup_owned(tmp_path, commands, journal)
+
+
+def test_default_set_workflow_controls_are_explicit_separate_required_and_never_list_devices():
+    source = Path(__file__).resolve().parents[1] / ".github/workflows/runtime-transport.yml"
+    jobs = yaml.safe_load(source.read_text())["jobs"]
+    assert set(jobs) == {
+        "backend",
+        "android",
+        "ios",
+        "ios-app-to-app",
+        "ios-default-set",
+        "ios-app-to-app-default-set",
+    }
+    artifact_names = []
+    for name in ("ios-default-set", "ios-app-to-app-default-set"):
+        job = jobs[name]
+        assert job["runs-on"] == "macos-15" and job["timeout-minutes"] == 30
+        assert "continue-on-error" not in job
+        primary = next(step for step in job["steps"] if "--ios-device-set default" in step.get("run", ""))
+        assert "--ios-runtime " + IOS_PINNED_RUNTIME in primary["run"]
+        assert "--ios-device-type " + IOS_PINNED_DEVICE_TYPE in primary["run"]
+        assert ("--ios-url-driver companion" in primary["run"]) is (name == "ios-app-to-app-default-set")
+        assert "continue-on-error" not in primary
+        assert all(
+            "simctl list" not in step.get("run", "") and "booted" not in step.get("run", "")
+            for step in job["steps"]
+        )
+        uploads = [step for step in job["steps"] if "upload-artifact" in step.get("uses", "")]
+        assert len(uploads) == 2 and all(step["if"] == "always()" for step in uploads)
+        artifact_names.extend(step["with"]["name"] for step in uploads)
+        cleanup = next(step for step in job["steps"] if "--cleanup-only" in step.get("run", ""))
+        assert cleanup["if"] == "always()" and cleanup["timeout-minutes"] == 5
+        assert '--work "$RUNNER_TEMP/runtime-new-default-' in cleanup["run"]
+    assert len(set(artifact_names)) == 4
+    for name in ("ios", "ios-app-to-app"):
+        assert all("--ios-device-set default" not in step.get("run", "") for step in jobs[name]["steps"])
 
 
 def test_cleanup_is_idempotent_and_scoped_to_journaled_new_resources(tmp_path, monkeypatch):
@@ -995,12 +1289,14 @@ def test_ios_appinfo_projects_only_new_identity_and_registration_booleans():
     )
 
 
-@pytest.mark.parametrize("escape", ["outside", "wrong-uuid", "symlink"])
-def test_ios_container_resolution_stays_under_owned_new_set_uuid(escape, tmp_path, monkeypatch):
+@pytest.mark.parametrize("escape", ["outside", "wrong-uuid", "symlink", "set-root"])
+@pytest.mark.parametrize("selector", ["custom", "default"])
+def test_ios_container_resolution_stays_under_owned_new_set_uuid(escape, selector, tmp_path, monkeypatch):
     target = IosTarget.__new__(IosTarget)
     target.device = "11111111-2222-3333-4444-555555555555"
     target.package = "apsa.fixture.new"
     target.device_set = tmp_path / "new-set"
+    target.device_set_mode = selector
     target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(target.device_set)]
     target.commands = Commands(tmp_path, env={})
     owned = target.device_set / target.device
@@ -1012,6 +1308,8 @@ def test_ios_container_resolution_stays_under_owned_new_set_uuid(escape, tmp_pat
         path.symlink_to(outside, target_is_directory=True)
     elif escape == "wrong-uuid":
         path = target.device_set / "22222222-3333-4444-5555-666666666666/data"
+    elif escape == "set-root":
+        path = target.device_set
     else:
         path = outside / target.device
     monkeypatch.setattr(target.commands, "run", lambda *a, **kw: str(path).encode())
@@ -1227,11 +1525,77 @@ def test_ios_companion_launch_rejects_unverified_helper_pid_and_retains_primary_
     assert target.delivery_observations == []
 
 
+@pytest.mark.parametrize("phase", ["os-open-requested", "os-open-completed"])
+@pytest.mark.parametrize("wrong_uri", [False, True])
+def test_ios_companion_binds_rewritten_dispatch_uri_without_promoting_helper_receipt(
+    tmp_path, monkeypatch, phase, wrong_uri
+):
+    target, data = new_entry_target(tmp_path)
+    target.url_driver = "companion"
+    target.scheme = "a" + "1" * 32
+    target.helper_package = "apsa.fixture.new.dispatcher"
+    target.helper_installed = tmp_path / "new-helper-app"
+    target.helper_build = {"synthetic": "digest"}
+    target.helper_receipt = data / "Documents/dispatch.json"
+    target.delivery_observations = []
+    target.process_observations = {"after_terminate": {"state": "exited"}}
+    target.commands = Commands(tmp_path, env={})
+    target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(target.device_set)]
+    events = synthetic_ios_events()
+    events["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
+    target.events_path.write_text(json.dumps(events))
+    target.readiness_epoch = events["launch_epoch_sha256"]
+    fields = {"action": "session", "session": "b" * 64, "backend": "http://127.0.0.1:1234", "retain": "false"}
+    original = "apsatransport://fixture?" + urlencode(fields)
+    actual = owned_ios_url(original, target.scheme)
+    calls = []
+
+    def fixture_command(argv, **kwargs):
+        calls.append(argv)
+        assert target.helper_uri_sha256 == digest(actual.encode())
+        if "launch" in argv:
+            assert argv[-1] == actual
+            value = {
+                "phase": phase,
+                "uri_sha256": digest(b"new different URI") if wrong_uri else digest(actual.encode()),
+            }
+            if phase == "os-open-completed":
+                value["open_completion"] = True
+            target.helper_receipt.write_text(json.dumps(value))
+            return (target.helper_package + ": 321\n").encode()
+        return b""
+
+    monkeypatch.setattr(target, "helper_installed_build", lambda: target.helper_build)
+    monkeypatch.setattr(target.commands, "run", fixture_command)
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.ios_process_identity", lambda *a: {"state": "live-verified"}
+    )
+    monkeypatch.setattr(
+        target, "cold_timeout_diagnostic", lambda: {"state": "diagnostic-only", "warm_receipt_bound": True}
+    )
+    times = iter([0, 91])
+    monkeypatch.setattr("scripts.validate_runtime_transport.time.monotonic", lambda: next(times))
+    with pytest.raises(FixtureFailure, match="response challenge timed out") as caught:
+        target.deliver(original, fields)
+    diagnostic = caught.value.observation["dispatcher"]
+    assert diagnostic["state"] == "diagnostic-only" and diagnostic["uri_matches"] is (not wrong_uri)
+    assert target.helper_uri_sha256 == target.dispatch_expectation["uri_sha256"] == digest(actual.encode())
+    assert target.helper_uri_sha256 != digest(original.encode())
+    assert (
+        target.delivery_observations == [] and caught.value.observation["callback_events"]["receipts"] == []
+    )
+    assert target.dispatch_expectation["action"] == "session"
+    assert not any("openurl" in call for call in calls)
+    assert original not in json.dumps(caught.value.observation) and actual not in json.dumps(
+        caught.value.observation
+    )
+
+
 def test_ios_companion_and_simctl_workflow_jobs_remain_separate_strict_gates():
     source = Path(__file__).resolve().parents[1] / ".github/workflows/runtime-transport.yml"
     raw = source.read_text()
     simctl = raw.split("  ios:\n", 1)[1].split("  ios-app-to-app:\n", 1)[0]
-    companion = raw.split("  ios-app-to-app:\n", 1)[1]
+    companion = raw.split("  ios-app-to-app:\n", 1)[1].split("  ios-default-set:\n", 1)[0]
     assert "--ios-url-driver companion" not in simctl
     assert "--ios-url-driver companion" in companion
     assert "continue-on-error" not in simctl + companion
@@ -1401,13 +1765,16 @@ def test_generated_companion_registers_no_scheme_and_verifies_installed_bytes(tm
 
 @pytest.mark.parametrize("diagnostic", ["help-timeout", "help-os-error", "appinfo-timeout", "plutil-timeout"])
 @pytest.mark.parametrize("primary_timeout", [False, True, "launch"])
+@pytest.mark.parametrize("selector", ["custom", "default"])
 def test_ios_constructor_proceeds_past_only_noncritical_diagnostic_failure(
-    tmp_path, monkeypatch, diagnostic, primary_timeout
+    tmp_path, monkeypatch, diagnostic, primary_timeout, selector
 ):
     commands = Commands(tmp_path, env={})
+    commands.resources = OwnedResources(tmp_path)
     device = "11111111-2222-3333-4444-555555555555"
     package = "apsa.fixture.new.case0"
-    owned = tmp_path / "simulator-set" / device
+    device_set = tmp_path / ("simulator-set" if selector == "custom" else "new-default-set-stand-in")
+    owned = device_set / device
     app, data = owned / "new-app/TransportFixture.app", owned / "new-data"
     calls = []
     terminated = False
@@ -1418,6 +1785,13 @@ def test_ios_constructor_proceeds_past_only_noncritical_diagnostic_failure(
     def new_public_tool(argv, **kwargs):
         nonlocal terminated
         calls.append(argv)
+        if "simctl" in argv:
+            assert ("--set" in argv) is (selector == "custom")
+            assert "list" not in argv and "booted" not in argv
+            if "create" not in argv and "help" not in argv:
+                assert device in argv
+                assert commands.resources is not None
+                assert commands.resources.value["ios"][device]["selector"] == selector
         if "--show-sdk-path" in argv:
             raw = b"/new-public-sdk"
         elif "swiftc" in argv:
@@ -1486,16 +1860,23 @@ def test_ios_constructor_proceeds_past_only_noncritical_diagnostic_failure(
 
     monkeypatch.setattr(subprocess, "run", new_public_tool)
     monkeypatch.setattr("scripts.validate_runtime_transport.ios_process_identity", process_identity)
+    monkeypatch.setattr("scripts.validate_runtime_transport.ios_default_set", lambda env: device_set)
+    runtime = IOS_PINNED_RUNTIME if selector == "default" else "new-runtime"
+    device_type = IOS_PINNED_DEVICE_TYPE if selector == "default" else "new-device-type"
     if primary_timeout == "launch":
         with pytest.raises(CommandFailure) as caught:
-            IosTarget(tmp_path / "new-build", package, commands, "new-runtime", "new-device-type")
+            IosTarget(
+                tmp_path / "new-build", package, commands, runtime, device_type, device_set_mode=selector
+            )
         assert caught.value.reason == "command-timeout"
         assert commands.pre_cleanup_failure is not None
         assert commands.pre_cleanup_failure["reason"] == "command-timeout"
         assert commands.pre_cleanup_failure["process_entry"]["state"] == "absent"
         assert not any(("openurl" in call or "terminate" in call) and "help" not in call for call in calls)
         return
-    target = IosTarget(tmp_path / "new-build", package, commands, "new-runtime", "new-device-type")
+    target = IosTarget(
+        tmp_path / "new-build", package, commands, runtime, device_type, device_set_mode=selector
+    )
     assert target.process_observations["after_terminate"]["state"] == "exited"
     assert any("launch" in call for call in calls)
     if diagnostic.startswith("help"):
