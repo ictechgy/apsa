@@ -102,7 +102,9 @@ final class FixtureTransport: @unchecked Sendable {
             self.stage("url-processing")
             var failure = "failure-url-shape"
             do {
-                guard url.scheme == "apsatransport", url.host == "fixture", let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { throw FixtureError.invalid }
+                guard let scheme = Bundle.main.object(forInfoDictionaryKey: "APSAFixtureScheme") as? String,
+                      scheme.range(of: "^a[a-f0-9]{32}$", options: .regularExpression) != nil,
+                      url.scheme == scheme, url.host == "fixture", let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { throw FixtureError.invalid }
                 failure = "failure-session-fields"
                 var fields: [String: String] = [:]
                 for item in items { guard fields[item.name] == nil, let value = item.value, value.utf8.count <= 512 else { throw FixtureError.invalid }; fields[item.name] = value }

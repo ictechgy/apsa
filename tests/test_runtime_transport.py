@@ -1,9 +1,11 @@
 """New in-memory synthetic protocol tests. No sockets, devices or user files."""
 
+import ctypes
 import io
 import json
 import plistlib
 import subprocess
+import sys
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +28,12 @@ from scripts.validate_runtime_transport import (
     cleanup_owned,
     failure_observation,
     ios_delivery_complete,
+    ios_launch_pid,
+    ios_process_identity,
     main,
+    owned_ios_url,
+    safe_ios_appinfo,
+    safe_ios_dispatcher,
     safe_ios_events,
     scenario,
 )
@@ -475,9 +482,10 @@ def test_generated_ios_registration_has_required_role_and_target_identifier(tmp_
         {
             "CFBundleTypeRole": "Editor",
             "CFBundleURLName": package + ".transport",
-            "CFBundleURLSchemes": ["apsatransport"],
+            "CFBundleURLSchemes": [value["APSAFixtureScheme"]],
         }
     ]
+    assert value["APSAFixtureScheme"].startswith("a") and len(value["APSAFixtureScheme"]) == 33
     assert calls[-1][:4] == ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "simulator-set")]
     assert not any("boot" in argv or "openurl" in argv for argv in calls)
 
@@ -498,6 +506,7 @@ def test_ios_delivery_requires_observed_cold_or_warm_callback_binding(
 ):
     target = IosTarget.__new__(IosTarget)
     target.device = "11111111-2222-3333-4444-555555555555"
+    target.url_driver = "simctl"
     target.commands = Commands(tmp_path, env={})
     target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "new-set")]
     target.response = tmp_path / "new-response.json"
@@ -508,6 +517,20 @@ def test_ios_delivery_requires_observed_cold_or_warm_callback_binding(
         expected["nonce"] = "b" * 64
     raw = json.dumps({**expected, "delivery_lifecycle": lifecycle}).encode()
     target.response.write_bytes(raw)
+    value = synthetic_ios_events()
+    value["events"][1].update(
+        {
+            "action": action,
+            "lifecycle": lifecycle,
+            "uri_sha256": digest(b"synthetic-url-never-opened"),
+            "session_sha256": digest(expected["session"].encode()),
+            "nonce_sha256": digest(expected["nonce"].encode()) if "nonce" in expected else None,
+        }
+    )
+    target.events_path = tmp_path / "events.json"
+    target.events_path.write_text(json.dumps(value))
+    target.readiness_epoch = digest(b"new synthetic earlier readiness")
+    target.process_observations = {"after_terminate": {"state": "exited"}}
     monkeypatch.setattr(target.commands, "run", lambda *args, **kwargs: b"")
     if not accepted:
         with pytest.raises(FixtureFailure, match="URL lifecycle differs"):
@@ -661,3 +684,488 @@ def test_ios_driver_persists_safe_callback_diagnostics_on_deadline(tmp_path):
     assert result["callback_events"]["receipts"][0]["lifecycle"] == "cold-url-context"
     assert result["callback_events"]["receipts"][0]["matches_expected_dispatch"] is False
     assert result["lifecycle_stage"] == "scene-active"
+
+
+@pytest.mark.parametrize(
+    "raw,pid",
+    [
+        (b"apsa.fixture.new: 321\n", 321),
+        (b"apsa.fixture.other: 321\n", None),
+        (b"apsa.fixture.new: -321\n", None),
+        (b"apsa.fixture.new: 0\n", None),
+        (b"apsa.fixture.new: 2147483648\n", None),
+        (b"apsa.fixture.new: 321 extra\n", None),
+    ],
+)
+def test_ios_launch_pid_only_accepts_exact_new_package_and_positive_pid(raw, pid):
+    assert ios_launch_pid(raw, "apsa.fixture.new") == pid
+
+
+@pytest.mark.parametrize("state", ["live-verified", "identity-mismatch", "exited", "unmeasured"])
+def test_ios_known_pid_identity_never_enumerates_or_sends_a_real_signal(state, tmp_path, monkeypatch):
+    executable = tmp_path / "new-set/new-uuid/new-app/TransportFixture"
+    expected = str(executable.resolve()).encode()
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr("scripts.validate_runtime_transport.platform.system", lambda: "Darwin")
+    calls = []
+
+    def existence(pid, signal):
+        calls.append((pid, signal))
+        if state == "exited":
+            raise ProcessLookupError()
+        if state == "unmeasured":
+            raise PermissionError()
+
+    def pidpath(pid, buffer, size):
+        assert pid == 321 and size == 4096
+        buffer.value = expected if state == "live-verified" else b"/new-synthetic-reused-process"
+        return len(buffer.value)
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.os.kill", existence)
+    monkeypatch.setattr(ctypes, "CDLL", lambda *a, **kw: SimpleNamespace(proc_pidpath=pidpath))
+    result = ios_process_identity(321, executable)
+    assert result["state"] == state
+    assert calls == [(321, 0)]
+    assert "/new-synthetic-reused-process" not in json.dumps(result)
+    assert str(executable) not in json.dumps(result)
+
+
+def test_ios_pid_probe_is_unmeasured_outside_disposable_ci_and_for_nonpositive_pid(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.os.kill", lambda *a: pytest.fail("PID operation forbidden")
+    )
+    for pid in (None, -1, 0, True, 321):
+        assert ios_process_identity(pid, tmp_path / "new-app") == {"state": "unmeasured"}
+
+
+def test_ios_appinfo_projects_only_new_identity_and_registration_booleans():
+    package = "apsa.fixture.new"
+    value = {
+        "CFBundleIdentifier": package,
+        "CFBundleURLTypes": [
+            {
+                "CFBundleTypeRole": "Editor",
+                "CFBundleURLName": package + ".transport",
+                "CFBundleURLSchemes": ["apsatransport"],
+            }
+        ],
+        "EnvironmentVariables": {"NEW_SECRET": "new-synthetic-private-metadata"},
+    }
+    result = safe_ios_appinfo(json.dumps(value).encode(), package)
+    assert result["package_matches"] is True and result["url_types_match"] is True
+    assert "new-synthetic-private-metadata" not in json.dumps(result)
+    assert "EnvironmentVariables" not in result
+    assert safe_ios_appinfo(plistlib.dumps(value), package)["package_matches"] is True
+    assert safe_ios_appinfo(b"unsupported-new-format", package)["state"] == "unmeasured"
+    assert (
+        safe_ios_appinfo(json.dumps({"CFBundleIdentifier": "apsa.fixture.other"}).encode(), package)[
+            "package_matches"
+        ]
+        is False
+    )
+
+
+@pytest.mark.parametrize("escape", ["outside", "wrong-uuid", "symlink"])
+def test_ios_container_resolution_stays_under_owned_new_set_uuid(escape, tmp_path, monkeypatch):
+    target = IosTarget.__new__(IosTarget)
+    target.device = "11111111-2222-3333-4444-555555555555"
+    target.package = "apsa.fixture.new"
+    target.device_set = tmp_path / "new-set"
+    target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(target.device_set)]
+    target.commands = Commands(tmp_path, env={})
+    owned = target.device_set / target.device
+    owned.mkdir(parents=True)
+    outside = tmp_path / "new-synthetic-outside"
+    outside.mkdir()
+    if escape == "symlink":
+        path = owned / "data"
+        path.symlink_to(outside, target_is_directory=True)
+    elif escape == "wrong-uuid":
+        path = target.device_set / "22222222-3333-4444-5555-666666666666/data"
+    else:
+        path = outside / target.device
+    monkeypatch.setattr(target.commands, "run", lambda *a, **kw: str(path).encode())
+    with pytest.raises(ValueError, match="container UUID differs"):
+        target.container("data")
+
+
+@pytest.mark.parametrize("tail_failure", [False, True])
+def test_ios_cold_timeout_retains_primary_failure_even_when_tail_observes_warm_callback(
+    tmp_path, monkeypatch, tail_failure
+):
+    target = IosTarget.__new__(IosTarget)
+    target.device = "11111111-2222-3333-4444-555555555555"
+    target.url_driver = "simctl"
+    target.commands = Commands(tmp_path, env={})
+    target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "new-set")]
+    target.response = tmp_path / "new-response.json"
+    target.stage_path = tmp_path / "new-stage.txt"
+    target.stage_path.write_text("scene-active")
+    target.delivery_observations = []
+    value = synthetic_ios_events()
+    value["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
+    target.events_path = tmp_path / "events.json"
+    target.events_path.write_text(json.dumps(value))
+    target.readiness_epoch = value["launch_epoch_sha256"]
+    monkeypatch.setattr(target.commands, "run", lambda *a, **kw: b"")
+    times = iter([0, 91])
+    monkeypatch.setattr("scripts.validate_runtime_transport.time.monotonic", lambda: next(times))
+
+    def diagnostic():
+        target.stage_path.write_text("os-url-context-received")
+        target.events_path.write_text(json.dumps(synthetic_ios_events()))
+        if tail_failure:
+            raise ValueError("new-synthetic-private-error")
+        return {"state": "diagnostic-only", "warm_receipt_bound": True}
+
+    monkeypatch.setattr(target, "cold_timeout_diagnostic", diagnostic)
+    expected = {"action": "session", "session": "a" * 64}
+    with pytest.raises(FixtureFailure, match="response challenge timed out") as caught:
+        target.deliver("new-synthetic-primary-url", expected)
+    assert caught.value.observation["lifecycle_stage"] == "scene-active"
+    assert caught.value.observation["callback_events"]["receipts"] == []
+    assert target.delivery_observations == []
+    assert target.dispatch_expectation["action"] == "session"
+    assert target.dispatch_expectation["uri_sha256"] == digest(b"new-synthetic-primary-url")
+    assert "new-synthetic-private-error" not in json.dumps(caught.value.observation)
+
+
+def test_ios_diagnostic_tail_requires_fresh_ready_epoch_and_exact_warm_noncredential_receipt(
+    tmp_path, monkeypatch
+):
+    target = IosTarget.__new__(IosTarget)
+    target.device = "11111111-2222-3333-4444-555555555555"
+    target.package = "apsa.fixture.new"
+    app, data = tmp_path / "new-app", tmp_path / "new-data"
+    app.mkdir()
+    (data / "Documents").mkdir(parents=True)
+    (app / "TransportFixture").write_bytes(b"new executable")
+    (app / "Info.plist").write_bytes(b"new plist")
+    target.installed = app
+    target.response = data / "Documents/response.json"
+    target.events_path = target.response.with_name("events.json")
+    target.build = {"executable_sha256": digest(b"new executable"), "info_plist_sha256": digest(b"new plist")}
+    target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "new-set")]
+    target.commands = Commands(tmp_path, env={})
+    target.scheme = "a" + "1" * 32
+    target.dispatch_expectation = {"primary": "unchanged"}
+    target.delivery_observations = []
+    old = synthetic_ios_events()
+    old["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
+    target.events_path.write_text(json.dumps(old))
+    monkeypatch.setattr(target, "container", lambda kind: app if kind == "app" else data)
+    monkeypatch.setattr(target, "appinfo", lambda: {"state": "unmeasured"})
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.ios_process_identity", lambda *a: {"state": "unmeasured"}
+    )
+    calls = []
+
+    def control(argv, **kwargs):
+        calls.append(argv)
+        if "launch" in argv:
+            value = synthetic_ios_events()
+            value["launch_epoch_sha256"] = digest(b"new direct-launch process")
+            value["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
+            target.events_path.write_text(json.dumps(value))
+            return b"apsa.fixture.new: 321\n"
+        if "openurl" in argv:
+            fields = parse_qs(urlparse(argv[-1]).query)
+            assert set(fields) == {"action", "session", "nonce"}
+            assert fields["action"] == ["capture"]
+            assert "backend" not in fields and "retain" not in fields
+            value = json.loads(target.events_path.read_text())
+            value["events"].append(
+                {
+                    "sequence": 2,
+                    "phase": "os-dispatch",
+                    "main_thread": True,
+                    "lifecycle": "warm-url-context",
+                    "action": "capture",
+                    "uri_sha256": digest(argv[-1].encode()),
+                    "session_sha256": digest(fields["session"][0].encode()),
+                    "nonce_sha256": digest(fields["nonce"][0].encode()),
+                }
+            )
+            target.events_path.write_text(json.dumps(value))
+        return b""
+
+    monkeypatch.setattr(target.commands, "run", control)
+    result = target.cold_timeout_diagnostic()
+    assert result["fresh_epoch"] is True and result["warm_receipt_bound"] is True
+    assert result["state"] == "diagnostic-only"
+    assert target.dispatch_expectation == {"primary": "unchanged"}
+    assert target.delivery_observations == []
+    assert ["launch" in c for c in calls] == [True, False]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://fixture?x=y",
+        "apsatransport://other?x=y",
+        "apsatransport://fixture/path",
+        "apsatransport://fixture?x=y#fragment",
+        "apsatransport://user@fixture?x=y",
+        "apsatransport://fixture:123?x=y",
+        "apsatransport://fixture?x=" + "a" * 4096,
+    ],
+)
+def test_ios_registered_scheme_rewrite_rejects_arbitrary_origins(url):
+    with pytest.raises(ValueError, match="URL origin differs"):
+        owned_ios_url(url, "a" + "1" * 32)
+
+
+def test_ios_registered_scheme_rewrite_preserves_only_exact_synthetic_query():
+    query = "action=session&session=" + "1" * 64 + "&backend=http%3A%2F%2F127.0.0.1%3A1234&retain=false"
+    assert (
+        owned_ios_url("apsatransport://fixture?" + query, "a" + "2" * 32)
+        == "a" + "2" * 32 + "://fixture?" + query
+    )
+    with pytest.raises(ValueError):
+        owned_ios_url("apsatransport://fixture?" + query, "https")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing-receipt", "wrong-uri", "wrong-session", "wrong-nonce", "stale-epoch", "capped", "unterminated"],
+)
+def test_ios_companion_never_accepts_completion_without_bound_target_cold_receipt(mutation, tmp_path):
+    target = IosTarget.__new__(IosTarget)
+    target.url_driver = "companion"
+    target.response = tmp_path / "response.json"
+    target.stage_path = tmp_path / "stage.txt"
+    target.events_path = tmp_path / "events.json"
+    target.delivery_observations = []
+    expected = {"action": "session", "session": "1" * 64}
+    target.dispatch_expectation = {
+        "action": "session",
+        "lifecycle": "cold-url-context",
+        "uri_sha256": digest(b"new owned uri"),
+        "session_sha256": digest(expected["session"].encode()),
+        "nonce_sha256": None,
+    }
+    value = synthetic_ios_events()
+    value["events"][1].update(target.dispatch_expectation)
+    target.readiness_epoch = digest(b"new earlier readiness")
+    target.process_observations = {"after_terminate": {"state": "exited"}}
+    if mutation == "missing-receipt":
+        value["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
+    elif mutation == "wrong-uri":
+        value["events"][1]["uri_sha256"] = digest(b"new wrong uri")
+    elif mutation == "wrong-session":
+        value["events"][1]["session_sha256"] = digest(b"new wrong session")
+    elif mutation == "wrong-nonce":
+        value["events"][1]["nonce_sha256"] = digest(b"new unexpected nonce")
+    elif mutation == "stale-epoch":
+        target.readiness_epoch = value["launch_epoch_sha256"]
+    elif mutation == "capped":
+        value["complete"] = False
+    else:
+        target.process_observations["after_terminate"]["state"] = "unmeasured"
+    target.events_path.write_text(json.dumps(value))
+    with pytest.raises(FixtureFailure):
+        target.record_delivery({"delivery_lifecycle": "cold-url-context"}, expected, raw=b"new response")
+    assert target.delivery_observations == []
+
+
+@pytest.mark.parametrize("identity", ["identity-mismatch", "unmeasured"])
+def test_ios_companion_launch_rejects_unverified_helper_pid_and_retains_primary_acquisition(
+    tmp_path, monkeypatch, identity
+):
+    target = IosTarget.__new__(IosTarget)
+    target.device = "11111111-2222-3333-4444-555555555555"
+    target.url_driver = "companion"
+    target.helper_package = "apsa.fixture.new.dispatcher"
+    target.helper_installed = tmp_path / "new-helper"
+    target.helper_build = {"synthetic": "digest"}
+    target.delivery_observations = []
+    target.commands = Commands(tmp_path, env={})
+    target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "new-set")]
+    calls = []
+    monkeypatch.setattr(target, "helper_installed_build", lambda: target.helper_build)
+    monkeypatch.setattr(
+        target.commands, "run", lambda argv, **kw: calls.append(argv) or b"apsa.fixture.new.dispatcher: 321\n"
+    )
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.ios_process_identity", lambda *a: {"state": identity}
+    )
+    with pytest.raises(FixtureFailure, match="owned PID identity differs"):
+        target.dispatch("new-synthetic-owned-uri")
+    assert len(calls) == 2 and "terminate" in calls[0] and "launch" in calls[1]
+    assert all(target.device in call and target.helper_package in call for call in calls)
+    assert not any("openurl" in call for call in calls)
+    assert target.delivery_observations == []
+
+
+def test_ios_companion_and_simctl_workflow_jobs_remain_separate_strict_gates():
+    source = Path(__file__).resolve().parents[1] / ".github/workflows/runtime-transport.yml"
+    raw = source.read_text()
+    simctl = raw.split("  ios:\n", 1)[1].split("  ios-app-to-app:\n", 1)[0]
+    companion = raw.split("  ios-app-to-app:\n", 1)[1]
+    assert "--ios-url-driver companion" not in simctl
+    assert "--ios-url-driver companion" in companion
+    assert "continue-on-error" not in simctl + companion
+    assert "timeout-minutes: 30" in companion
+    assert companion.count("if: always()") == 3
+    assert "new-ios-app-to-app-runtime-digests" in companion
+
+
+@pytest.mark.parametrize("change", [None, "raw-uri", "wrong-uri", "nonbool-completion"])
+def test_companion_open_completion_is_allowlisted_diagnostic_only(change):
+    value = {"phase": "os-open-completed", "uri_sha256": digest(b"new-uri"), "open_completion": True}
+    if change == "raw-uri":
+        value["raw_uri"] = "new-synthetic-private-uri"
+    elif change == "wrong-uri":
+        value["uri_sha256"] = digest(b"new-other-uri")
+    elif change == "nonbool-completion":
+        value["open_completion"] = 1
+    result = safe_ios_dispatcher(json.dumps(value).encode(), digest(b"new-uri"))
+    assert result["state"] == (
+        "unmeasured" if change in {"raw-uri", "nonbool-completion"} else "diagnostic-only"
+    )
+    if result["state"] == "diagnostic-only":
+        assert result["uri_matches"] is (change is None)
+    assert "new-synthetic-private-uri" not in json.dumps(result)
+    assert "passed" not in json.dumps(result)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires public local Swift compiler; no simulator")
+def test_actual_swift_dispatcher_parser_accepts_only_bound_synthetic_uri_fields(tmp_path):
+    from urllib.parse import urlencode
+
+    source = Path(__file__).resolve().parent / "fixtures/runtime/transport/UrlDispatcher.swift"
+    function = source.read_text().split("func validatedDispatcherURL", 1)[1].split("@main", 1)[0]
+    scheme = "a" + "1" * 32
+    session = {
+        "action": "session",
+        "session": "b" * 64,
+        "backend": "http://127.0.0.1:1234",
+        "retain": "false",
+    }
+    capture = {
+        "action": "capture",
+        "session": "b" * 64,
+        "nonce": "c" * 64,
+        "snapshot": "before",
+        "account": "a",
+        "state": "authenticated",
+        "transition": "",
+    }
+    transition = {"action": "transition", "session": "b" * 64, "kind": "logout"}
+
+    def make(fields):
+        return scheme + "://fixture?" + urlencode(fields)
+
+    valid = [
+        make(session),
+        make(capture),
+        make(transition),
+        make({**capture, "snapshot": "after", "account": "", "state": "logged_out", "transition": "logout"}),
+    ]
+    invalid = [
+        make({**session, "backend": "http://example.invalid:1234"}),
+        make({**session, "backend": "https://127.0.0.1:1234"}),
+        make({**session, "session": "g" * 64}),
+        make({**session, "retain": "TRUE"}),
+        make({**session, "token": "new-synthetic-private-token"}),
+        make({**session, "unknown": "x"}),
+        make(session) + "&action=session",
+        make(session) + "#fragment",
+        make(session).replace("://fixture?", "://fixture/path?"),
+        make(session).replace("://fixture?", "://user@fixture?"),
+        make(session).replace("://fixture?", "://fixture:1234?"),
+        make(session).replace("://fixture?", "://other?"),
+        make(session).replace(scheme, "https", 1),
+        make(session).replace(scheme, "a" + "2" * 32, 1),
+        make({**capture, "nonce": ""}),
+        make({**capture, "snapshot": "unsupported"}),
+        make({**capture, "account": "other"}),
+        make({**transition, "kind": "other"}),
+        make({**session, "session": "b" * 513}),
+        make(session) + "&x=" + "x" * 4096,
+        make({key: value for key, value in capture.items() if key != "nonce"}),
+    ]
+    cases = [
+        {"url": url, "expected": expected}
+        for expected, urls in [(True, valid), (False, invalid)]
+        for url in urls
+    ]
+    fixture = tmp_path / "new-dispatcher-boundaries.json"
+    fixture.write_text(json.dumps(cases))
+    program = tmp_path / "new-parser.swift"
+    program.write_text(
+        "import Foundation\nfunc validatedDispatcherURL"
+        + function
+        + "\nlet cases = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))) as! [[String: Any]]\n"
+        + "var passed = 0\nfor value in cases {\n"
+        + 'let accepted = validatedDispatcherURL(value["url"] as! String, scheme: "'
+        + scheme
+        + '") != nil\n'
+        + 'if accepted != value["expected"] as! Bool { exit(1) }; passed += 1\n}\nprint(passed)\n'
+    )
+    binary = tmp_path / "new-parser"
+    compiled = subprocess.run(
+        [
+            "/usr/bin/xcrun",
+            "swiftc",
+            "-swift-version",
+            "6",
+            "-strict-concurrency=complete",
+            str(program),
+            "-o",
+            str(binary),
+            "-module-cache-path",
+            str(tmp_path / "new-module-cache"),
+        ],
+        capture_output=True,
+        timeout=60,
+    )
+    assert compiled.returncode == 0, compiled.stderr.decode(errors="replace")
+    result = subprocess.run([str(binary), str(fixture)], capture_output=True, timeout=10)
+    assert result.returncode == 0 and result.stdout.strip() == str(len(cases)).encode()
+
+
+def test_ios_unsupported_libproc_cannot_be_reported_as_owned_process_exit(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr("scripts.validate_runtime_transport.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("scripts.validate_runtime_transport.os.kill", lambda *a: None)
+
+    def unsupported(*a, **kw):
+        raise ProcessLookupError("new synthetic unsupported libproc")
+
+    monkeypatch.setattr(ctypes, "CDLL", unsupported)
+    assert ios_process_identity(321, tmp_path / "new-app")["state"] == "unmeasured"
+
+
+def test_generated_companion_registers_no_scheme_and_verifies_installed_bytes(tmp_path, monkeypatch):
+    target = IosTarget.__new__(IosTarget)
+    target.device = "11111111-2222-3333-4444-555555555555"
+    target.package = "apsa.fixture.new"
+    target.url_driver = "companion"
+    target.scheme = "a" + "1" * 32
+    target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "new-set")]
+    target.commands = Commands(tmp_path, env={})
+    calls = []
+
+    def fixture_build(argv, **kw):
+        calls.append(argv)
+        if "swiftc" in argv:
+            Path(argv[argv.index("-o") + 1]).write_bytes(b"new synthetic helper executable")
+        return b""
+
+    monkeypatch.setattr(target.commands, "run", fixture_build)
+    monkeypatch.setattr(target, "container", lambda kind, **kw: tmp_path / "UrlDispatcher.app")
+    target.install_dispatcher(tmp_path, "/new-public-sdk", "arm64")
+    value = plistlib.loads((tmp_path / "UrlDispatcher.app/Info.plist").read_bytes())
+    assert value["CFBundleIdentifier"] == target.package + ".dispatcher"
+    assert value["APSAFixtureScheme"] == target.scheme
+    assert "CFBundleURLTypes" not in value and "LSApplicationQueriesSchemes" not in value
+    install = next(call for call in calls if "install" in call)
+    assert target.device in install and install[:4] == target.simctl
+    assert target.helper_installed_build() == target.helper_build
+    (tmp_path / "UrlDispatcher.app/UrlDispatcher").write_bytes(b"new synthetic wrong installed bytes")
+    with pytest.raises(ValueError, match="installed iOS dispatcher differs"):
+        target.dispatch("new owned URI")

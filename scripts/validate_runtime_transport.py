@@ -8,6 +8,7 @@ Never select booted/default devices or enumerate apps, accounts, logs or state.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import platform
@@ -20,6 +21,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
 from mobile_audit.core import digest
@@ -150,6 +152,131 @@ def safe_ios_events(raw: bytes, expected: dict | None = None, readiness_epoch: s
     }
 
 
+def ios_launch_pid(raw: bytes, package: str) -> int | None:
+    if len(raw) > 4096:
+        return None
+    match = re.fullmatch(re.escape(package).encode() + rb": ([1-9][0-9]{0,9})\s*", raw)
+    return int(match[1]) if match and int(match[1]) <= 2147483647 else None
+
+
+def ios_process_identity(pid: int | None, executable: Path) -> dict:
+    """CI only: inspect one PID returned for the exact NEW launched package."""
+    if (
+        type(pid) is not int
+        or not 0 < pid <= 2147483647
+        or platform.system() != "Darwin"
+        or os.environ.get("GITHUB_ACTIONS") != "true"
+        or os.environ.get("CI") != "true"
+    ):
+        return {"state": "unmeasured"}
+    result = {"pid_sha256": digest(str(pid).encode())}
+    # Only ESRCH from signal zero establishes exit; an unsupported libproc cannot.
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return {**result, "state": "exited"}
+    except OSError:
+        return {**result, "state": "unmeasured"}
+    try:
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        library.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        library.proc_pidpath.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(4096)
+        if library.proc_pidpath(pid, buffer, len(buffer)) <= 0:
+            return {**result, "state": "unmeasured"}
+        observed = buffer.value.decode("utf-8", errors="strict")
+        # Compare strings without following a possibly reused PID's path.
+        matches = os.path.normpath(observed) == str(executable.resolve())
+        return {
+            **result,
+            "state": "live-verified" if matches else "identity-mismatch",
+            "executable_path_sha256": digest(observed.encode()),
+        }
+    except (OSError, UnicodeError, AttributeError):
+        return {**result, "state": "unmeasured"}
+
+
+def safe_ios_appinfo(raw: bytes, package: str, scheme: str = "apsatransport") -> dict:
+    """Project only matching identity and URL-type booleans from NEW app metadata."""
+    result = {"state": "unmeasured", "sha256": digest(raw), "bytes": len(raw)}
+    if not raw or len(raw) > IOS_EVENT_BYTES:
+        return result
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeError):
+        try:
+            value = plistlib.loads(raw)
+        except (ValueError, plistlib.InvalidFileException):
+            return result
+    if not isinstance(value, dict):
+        return result
+    identifier = value.get("CFBundleIdentifier")
+    types = value.get("CFBundleURLTypes")
+    return {
+        **result,
+        "state": "measured" if isinstance(identifier, str) else "unmeasured",
+        "package_matches": identifier == package if isinstance(identifier, str) else None,
+        "url_types_present": isinstance(types, list),
+        "url_types_match": types
+        == [
+            {
+                "CFBundleTypeRole": "Editor",
+                "CFBundleURLName": package + ".transport",
+                "CFBundleURLSchemes": [scheme],
+            }
+        ]
+        if isinstance(types, list)
+        else None,
+    }
+
+
+def safe_ios_dispatcher(raw: bytes, expected_uri: str | None) -> dict:
+    result = {"state": "unmeasured", "sha256": digest(raw), "bytes": len(raw)}
+    if not raw or len(raw) > 4096:
+        return result
+    try:
+        value = json.loads(raw)
+        phase = value["phase"]
+        if phase not in {
+            "rejected-owned-uri",
+            "validated-owned-uri",
+            "os-open-requested",
+            "os-open-completed",
+        }:
+            return result
+        keys = {"phase"} if phase == "rejected-owned-uri" else {"phase", "uri_sha256"}
+        if phase == "os-open-completed":
+            keys.add("open_completion")
+            if type(value.get("open_completion")) is not bool:
+                return result
+        if set(value) != keys or (
+            phase != "rejected-owned-uri" and re.fullmatch(r"[a-f0-9]{64}", value["uri_sha256"]) is None
+        ):
+            return result
+        return {
+            **result,
+            "state": "diagnostic-only",
+            **value,
+            "uri_matches": expected_uri is not None and value.get("uri_sha256") == expected_uri,
+        }
+    except (ValueError, TypeError, KeyError):
+        return result
+
+
+def owned_ios_url(url: str, scheme: str) -> str:
+    parts = urlsplit(url)
+    if (
+        len(url.encode()) > 4096
+        or re.fullmatch(r"a[a-f0-9]{32}", scheme) is None
+        or parts.scheme != "apsatransport"
+        or parts.netloc != "fixture"
+        or parts.path
+        or parts.fragment
+    ):
+        raise ValueError("NEW iOS URL origin differs")
+    return urlunsplit((scheme, "fixture", "", parts.query, ""))
+
+
 class OwnedResources:
     """Crash-surviving journal for this NEW runner directory, never device discovery."""
 
@@ -275,6 +402,11 @@ FAILURE_REASONS = {
     "NEW iOS OS URL response challenge timed out": "ios-app-response-deadline",
     "NEW iOS fixture launch timed out": "ios-fixture-launch-deadline",
     "NEW iOS URL lifecycle differs": "ios-os-url-lifecycle-mismatch",
+    "NEW iOS owned PID identity differs": "ios-owned-pid-identity-mismatch",
+    "NEW iOS registered package differs": "ios-registered-package-mismatch",
+    "NEW iOS callback receipt differs": "ios-callback-receipt-mismatch",
+    "NEW iOS cold process epoch differs": "ios-cold-process-epoch-mismatch",
+    "NEW iOS target termination unverified": "ios-target-termination-unverified",
     "Installed fixture transition unsupported": "installed-session-or-transition-unavailable",
     "Installed fixture target/build/transport response differs": "installed-target-build-transport-mismatch",
     "Installed fixture HTTP/session initialization differs": "installed-session-or-http-initialization",
@@ -311,12 +443,15 @@ def command_kind(argv: list[str]) -> str:
                 return "android-installed-package-path"
         return "android-adb-control"
     if tool == "xcrun" and "simctl" in argv:
+        if "help" in argv:
+            return "ios-simctl-help"
         operations = {
             "create",
             "boot",
             "bootstatus",
             "install",
             "get_app_container",
+            "appinfo",
             "openurl",
             "launch",
             "terminate",
@@ -763,12 +898,26 @@ class AndroidTarget:
 class IosTarget:
     platform = "ios"
 
-    def __init__(self, root: Path, package: str, commands: Commands, runtime: str, device_type: str):
+    def __init__(
+        self,
+        root: Path,
+        package: str,
+        commands: Commands,
+        runtime: str,
+        device_type: str,
+        *,
+        url_driver: str = "simctl",
+    ):
+        if url_driver not in {"simctl", "companion"}:
+            raise ValueError("NEW iOS URL driver unsupported")
         self.package, self.commands, self.device = package, commands, None
+        self.url_driver = url_driver
+        self.scheme = "a" + uuid.uuid4().hex
         self.delivery_observations: list[dict] = []
         device_set = commands.root / "simulator-set"
         device_set.mkdir(exist_ok=True)
-        self.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(device_set)]
+        self.device_set = device_set.resolve()
+        self.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(self.device_set)]
         root.mkdir()
         source = root / "Transport.swift"
         source.write_bytes((SOURCES / source.name).read_bytes())
@@ -810,11 +959,12 @@ class IosTarget:
                     "LSRequiresIPhoneOS": True,
                     "UIDeviceFamily": [1, 2],
                     "UILaunchScreen": {},
+                    "APSAFixtureScheme": self.scheme,
                     "CFBundleURLTypes": [
                         {
                             "CFBundleTypeRole": "Editor",
                             "CFBundleURLName": package + ".transport",
-                            "CFBundleURLSchemes": ["apsatransport"],
+                            "CFBundleURLSchemes": [self.scheme],
                         }
                     ],
                     "NSAppTransportSecurity": {
@@ -859,8 +1009,22 @@ class IosTarget:
             self.events_path = self.response.with_name("events.json")
             if self.installed_build() != self.build:
                 raise ValueError("NEW installed iOS executable differs")
+            self.tool_help = {}
+            for operation in ("launch", "terminate", "openurl", "appinfo", "get_app_container"):
+                raw = commands.run(self.simctl + ["help", operation], timeout=10, optional=True)
+                self.tool_help[operation] = {"status": commands.last_status, "sha256": digest(raw)}
+            self.registration = self.appinfo()
+            if self.registration.get("package_matches") is False:
+                raise FixtureFailure("NEW iOS registered package differs", self.registration)
+            if self.url_driver == "companion":
+                self.install_dispatcher(root, sdk, arch)
             # Establish a ready NEW scene before delivering the session URL through the OS.
-            commands.run(self.simctl + ["launch", self.device, self.package])
+            raw = commands.run(self.simctl + ["launch", self.device, self.package])
+            self.owned_pid = ios_launch_pid(raw, self.package)
+            initial = ios_process_identity(self.owned_pid, self.installed / "TransportFixture")
+            self.process_observations = {"initial": initial}
+            if initial["state"] == "identity-mismatch":
+                raise FixtureFailure("NEW iOS owned PID identity differs", initial)
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
                 if self.stage_path.is_file() and self.stage_path.read_bytes() == b"scene-active":
@@ -872,6 +1036,17 @@ class IosTarget:
             # No URL, credentials or baseline exist yet. Force the first session URL
             # through genuine cold OS scene connection; later captures/logout are warm.
             commands.run(self.simctl + ["terminate", self.device, self.package])
+            terminated = {"state": "unmeasured"}
+            if initial["state"] == "live-verified":
+                deadline = time.monotonic() + 5
+                while True:
+                    terminated = ios_process_identity(self.owned_pid, self.installed / "TransportFixture")
+                    if terminated["state"] != "live-verified" or time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.1)
+            self.process_observations["after_terminate"] = terminated
+            if terminated["state"] == "identity-mismatch":
+                raise FixtureFailure("NEW iOS owned PID identity differs", terminated)
         except Exception as error:
             commands.pre_cleanup_failure = failure_observation(
                 error, "ios-target-create-boot-install", commands.records
@@ -882,17 +1057,139 @@ class IosTarget:
                 commands.pre_cleanup_failure["constructor_cleanup"] = "unconfirmed"
             raise
 
-    def container(self, kind: str) -> Path:
+    def container(self, kind: str, *, package: str | None = None) -> Path:
         if self.device is None:
             raise ValueError("NEW simulator has no owned UUID")
         path = Path(
-            self.commands.run(self.simctl + ["get_app_container", self.device, self.package, kind])
+            self.commands.run(self.simctl + ["get_app_container", self.device, package or self.package, kind])
             .decode()
             .strip()
         )
-        if not path.is_absolute() or self.device not in path.parts:
+        owned = self.device_set / self.device
+        if not path.is_absolute() or not path.is_relative_to(owned):
             raise ValueError("NEW simulator container UUID differs")
-        return path
+        resolved = path.resolve()
+        if not resolved.is_relative_to(owned):
+            raise ValueError("NEW simulator container UUID differs")
+        return resolved
+
+    def install_dispatcher(self, root: Path, sdk: str, arch: str):
+        if self.device is None:
+            raise ValueError("NEW simulator has no owned UUID")
+        self.helper_package = self.package + ".dispatcher"
+        source = root / "UrlDispatcher.swift"
+        source.write_bytes((SOURCES / source.name).read_bytes())
+        app = root / "UrlDispatcher.app"
+        app.mkdir()
+        self.commands.run(
+            [
+                "/usr/bin/xcrun",
+                "swiftc",
+                "-swift-version",
+                "5",
+                "-strict-concurrency=complete",
+                "-sdk",
+                sdk,
+                "-target",
+                arch + "-apple-ios18.0-simulator",
+                "-parse-as-library",
+                "-module-name",
+                "UrlDispatcherFixture",
+                str(source),
+                "-o",
+                str(app / "UrlDispatcher"),
+                "-module-cache-path",
+                str(root / "dispatcher-module-cache"),
+            ]
+        )
+        info = {
+            "CFBundleExecutable": "UrlDispatcher",
+            "CFBundleIdentifier": self.helper_package,
+            "CFBundleName": "UrlDispatcher",
+            "CFBundlePackageType": "APPL",
+            "CFBundleVersion": "1",
+            "CFBundleShortVersionString": "1.0",
+            "MinimumOSVersion": "18.0",
+            "LSRequiresIPhoneOS": True,
+            "UIDeviceFamily": [1, 2],
+            "UILaunchScreen": {},
+            "APSAFixtureScheme": self.scheme,
+            "UIApplicationSceneManifest": {
+                "UIApplicationSupportsMultipleScenes": False,
+                "UISceneConfigurations": {
+                    "UIWindowSceneSessionRoleApplication": [
+                        {
+                            "UISceneConfigurationName": "Default",
+                            "UISceneDelegateClassName": "UrlDispatcherFixture.DispatcherScene",
+                        }
+                    ]
+                },
+            },
+        }
+        (app / "Info.plist").write_bytes(plistlib.dumps(info))
+        self.commands.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)])
+        self.commands.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)])
+        self.commands.run(self.simctl + ["install", self.device, str(app)])
+        self.helper_installed = self.container("app", package=self.helper_package)
+        self.helper_receipt = self.container("data", package=self.helper_package) / "Documents/dispatch.json"
+        self.helper_build = {
+            name: digest((app / name).read_bytes()) for name in ("UrlDispatcher", "Info.plist")
+        }
+        if self.helper_installed_build() != self.helper_build:
+            raise ValueError("NEW installed iOS dispatcher differs")
+
+    def helper_installed_build(self):
+        return {
+            name: digest((self.helper_installed / name).read_bytes())
+            for name in ("UrlDispatcher", "Info.plist")
+        }
+
+    def dispatch(self, url: str):
+        if self.device is None:
+            raise ValueError("NEW simulator has no owned UUID")
+        if self.url_driver == "simctl":
+            self.commands.run(self.simctl + ["openurl", self.device, url])
+            return
+        if self.helper_installed_build() != self.helper_build:
+            raise ValueError("NEW installed iOS dispatcher differs")
+        self.commands.run(
+            self.simctl + ["terminate", self.device, self.helper_package], optional=True, timeout=15
+        )
+        if hasattr(self, "helper_pid"):
+            deadline = time.monotonic() + 5
+            while True:
+                previous = ios_process_identity(self.helper_pid, self.helper_installed / "UrlDispatcher")
+                if previous["state"] != "live-verified" or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.1)
+            if previous["state"] != "exited":
+                raise FixtureFailure("NEW iOS target termination unverified", previous)
+        raw = self.commands.run(self.simctl + ["launch", self.device, self.helper_package, url], timeout=30)
+        self.helper_pid = ios_launch_pid(raw, self.helper_package)
+        process = ios_process_identity(self.helper_pid, self.helper_installed / "UrlDispatcher")
+        if process["state"] != "live-verified":
+            raise FixtureFailure("NEW iOS owned PID identity differs", process)
+        self.helper_process = process
+
+    def appinfo(self):
+        if self.device is None:
+            raise ValueError("NEW simulator has no owned UUID")
+        raw = self.commands.run(
+            self.simctl + ["appinfo", self.device, self.package], timeout=30, optional=True
+        )
+        if self.commands.last_status != 0 or len(raw) > IOS_EVENT_BYTES:
+            return {"state": "unmeasured", "status": self.commands.last_status, "sha256": digest(raw)}
+        result = safe_ios_appinfo(raw, self.package, self.scheme)
+        if result["state"] == "unmeasured" and raw:
+            converted = self.commands.run(
+                ["/usr/bin/plutil", "-convert", "json", "-o", "-", "--", "-"],
+                input=raw,
+                timeout=10,
+                optional=True,
+            )
+            if self.commands.last_status == 0:
+                result = safe_ios_appinfo(converted, self.package, self.scheme)
+        return result
 
     def installed_build(self):
         return {
@@ -913,7 +1210,15 @@ class IosTarget:
             "stage_sha256": digest(raw),
             "stage_bytes": len(raw),
             "callback_events": self.events_observation(),
+            "dispatcher": self.dispatcher_observation(),
         }
+
+    def dispatcher_observation(self):
+        path = getattr(self, "helper_receipt", None)
+        if path is None:
+            return {"state": "not-selected"}
+        raw = path.read_bytes() if path.is_file() and path.stat().st_size <= 4096 else b""
+        return safe_ios_dispatcher(raw, getattr(self, "helper_uri_sha256", None))
 
     def events_observation(self):
         path = getattr(self, "events_path", self.response.with_name("events.json"))
@@ -927,6 +1232,8 @@ class IosTarget:
     def deliver(self, url: str, expected: dict) -> dict:
         if self.device is None:
             raise ValueError("NEW simulator has no owned UUID")
+        if hasattr(self, "scheme"):
+            url = owned_ios_url(url, self.scheme)
         self.dispatch_expectation = {
             "action": expected["action"],
             "lifecycle": "cold-url-context" if expected["action"] == "session" else "warm-url-context",
@@ -934,7 +1241,7 @@ class IosTarget:
             "session_sha256": digest(expected["session"].encode()),
             "nonce_sha256": digest(expected["nonce"].encode()) if "nonce" in expected else None,
         }
-        self.commands.run(self.simctl + ["openurl", self.device, url])
+        self.dispatch(url)
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             if self.response.is_file() and self.response.stat().st_size <= 1024 * 1024:
@@ -952,12 +1259,108 @@ class IosTarget:
                 except json.JSONDecodeError:
                     pass
             time.sleep(0.1)
-        raise FixtureFailure("NEW iOS OS URL response challenge timed out", self.lifecycle_observation())
+        primary = self.lifecycle_observation()
+        primary["owned_process"] = getattr(self, "process_observations", {"state": "unmeasured"})
+        primary["registration"] = getattr(self, "registration", {"state": "unmeasured"})
+        primary["tool_help"] = getattr(self, "tool_help", {})
+        # Save the original cold challenge evidence before any tail command can change files.
+        if expected["action"] == "session":
+            try:
+                primary["diagnostic_tail"] = self.cold_timeout_diagnostic()
+            except (ValueError, OSError, subprocess.SubprocessError):
+                primary["diagnostic_tail"] = {"state": "unmeasured", "reason": "diagnostic-command-failure"}
+        raise FixtureFailure("NEW iOS OS URL response challenge timed out", primary)
+
+    def cold_timeout_diagnostic(self):
+        """One separated probe; never call acquisition, HTTP, or primary deliver again."""
+        if self.device is None:
+            raise ValueError("NEW simulator has no owned UUID")
+        old = self.events_observation().get("launch_epoch_sha256")
+        app, data = self.container("app"), self.container("data")
+        observed_build = {
+            "executable_sha256": digest((app / "TransportFixture").read_bytes()),
+            "info_plist_sha256": digest((app / "Info.plist").read_bytes()),
+        }
+        result = {
+            "state": "diagnostic-only",
+            "url_driver": "simctl",
+            "acquisition": "unsupported",
+            "app_container_matches": app == self.installed,
+            "data_container_matches": data == self.response.parent.parent,
+            "app_container_sha256": digest(str(app).encode()),
+            "data_container_sha256": digest(str(data).encode()),
+            "installed_build_matches": observed_build == self.build,
+            "registration": self.appinfo(),
+        }
+        if observed_build != self.build or result["registration"].get("package_matches") is False:
+            return {**result, "state": "identity-mismatch"}
+        raw = self.commands.run(self.simctl + ["launch", self.device, self.package], timeout=30)
+        process = ios_process_identity(ios_launch_pid(raw, self.package), app / "TransportFixture")
+        result["direct_launch_process"] = process
+        if process["state"] == "identity-mismatch":
+            return {**result, "state": "identity-mismatch"}
+        events_path = data / "Documents/events.json"
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            raw = (
+                events_path.read_bytes()
+                if events_path.is_file() and events_path.stat().st_size <= IOS_EVENT_BYTES
+                else b""
+            )
+            events = safe_ios_events(raw, readiness_epoch=old)
+            if (
+                events.get("process_epoch_relation") == "new-since-readiness"
+                and events.get("counters", {}).get("scene-active", 0) >= 1
+            ):
+                break
+            time.sleep(0.1)
+        else:
+            return {**result, "fresh_epoch": False, "warm_receipt_bound": False}
+        result["fresh_epoch"] = True
+        fields = {
+            "action": "capture",
+            "session": uuid.uuid4().hex + uuid.uuid4().hex,
+            "nonce": uuid.uuid4().hex + uuid.uuid4().hex,
+        }
+        url = self.scheme + "://fixture?" + urlencode(fields)
+        expected = {
+            "action": "capture",
+            "lifecycle": "warm-url-context",
+            "uri_sha256": digest(url.encode()),
+            "session_sha256": digest(fields["session"].encode()),
+            "nonce_sha256": digest(fields["nonce"].encode()),
+        }
+        # A different synthetic session cannot initialize credentials or satisfy primary acquisition.
+        deadline = time.monotonic() + 15
+        self.commands.run(self.simctl + ["openurl", self.device, url], timeout=15)
+        while True:
+            raw = (
+                events_path.read_bytes()
+                if events_path.is_file() and events_path.stat().st_size <= IOS_EVENT_BYTES
+                else b""
+            )
+            events = safe_ios_events(raw, expected, old)
+            bound = events.get("state") == "complete" and any(
+                r["matches_expected_dispatch"] for r in events.get("receipts", [])
+            )
+            if bound or time.monotonic() >= deadline:
+                return {**result, "warm_receipt_bound": bound, "callback_events": events}
+            time.sleep(0.1)
 
     def record_delivery(self, response: dict, expected: dict, *, raw: bytes):
         lifecycle = "cold-url-context" if expected["action"] == "session" else "warm-url-context"
         if response.get("delivery_lifecycle") != lifecycle:
             raise FixtureFailure("NEW iOS URL lifecycle differs", self.lifecycle_observation())
+        events = self.events_observation()
+        if events.get("state") != "complete" or not any(
+            r["matches_expected_dispatch"] for r in events.get("receipts", [])
+        ):
+            raise FixtureFailure("NEW iOS callback receipt differs", self.lifecycle_observation())
+        if expected["action"] == "session":
+            if events.get("process_epoch_relation") != "new-since-readiness":
+                raise FixtureFailure("NEW iOS cold process epoch differs", self.lifecycle_observation())
+            if self.process_observations.get("after_terminate", {}).get("state") != "exited":
+                raise FixtureFailure("NEW iOS target termination unverified", self.lifecycle_observation())
         self.delivery_observations.append(
             {
                 "action": expected["action"],
@@ -966,7 +1369,11 @@ class IosTarget:
                 "capture_nonce_sha256": digest(expected["nonce"].encode()) if "nonce" in expected else None,
                 "response_sha256": digest(raw),
                 "response_bytes": len(raw),
-                "callback_events": self.events_observation(),
+                "callback_events": events,
+                "url_driver": getattr(self, "url_driver", "simctl"),
+                "helper_installed_build": getattr(self, "helper_build", None),
+                "helper_process": getattr(self, "helper_process", None),
+                "dispatcher": self.dispatcher_observation(),
             }
         )
 
@@ -1205,6 +1612,7 @@ def main():
     parser.add_argument("--cleanup-only", action="store_true")
     parser.add_argument("--sdk", type=Path)
     parser.add_argument("--jdk", type=Path)
+    parser.add_argument("--ios-url-driver", choices=["simctl", "companion"], default="simctl")
     parser.add_argument("--ios-runtime", default="com.apple.CoreSimulator.SimRuntime.iOS-18-5")
     parser.add_argument("--ios-device-type", default="com.apple.CoreSimulator.SimDeviceType.iPhone-16")
     args = parser.parse_args()
@@ -1270,6 +1678,7 @@ def main():
             path.name: digest(path.read_bytes())
             for path in (
                 SOURCES / "Transport.swift",
+                SOURCES / "UrlDispatcher.swift",
                 SOURCES / "TransportActivity.java",
                 Path(__file__).resolve(),
                 Path(__file__).parents[1] / "src/mobile_audit/runtime_transport.py",
@@ -1314,7 +1723,14 @@ def main():
                     target = AndroidTarget(package, apk, device)
                 else:
                     stage = "ios-case-" + str(index) + "-compile-create-install"
-                    target = IosTarget(case_root, package, commands, args.ios_runtime, args.ios_device_type)
+                    target = IosTarget(
+                        case_root,
+                        package,
+                        commands,
+                        args.ios_runtime,
+                        args.ios_device_type,
+                        url_driver=args.ios_url_driver,
+                    )
                 stage = args.platform + "-case-" + str(index) + "-session-delivery-capture-http"
                 result = execute_case(target, invalidate=invalidate, retain=retain)
                 if args.platform == "ios":

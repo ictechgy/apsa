@@ -155,6 +155,7 @@ PUBLIC_FIXTURE_SOURCES = (
     "tests/fixtures/runtime/ios/Instrumented.swift",
     "tests/fixtures/runtime/transport/TransportActivity.java",
     "tests/fixtures/runtime/transport/Transport.swift",
+    "tests/fixtures/runtime/transport/UrlDispatcher.swift",
     "tests/fixtures/runtime/README.md",
     "tests/fixtures/runtime/COMPILED.md",
     "tests/fixtures/mcp_tool_manifest.json",

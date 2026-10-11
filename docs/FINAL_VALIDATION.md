@@ -270,6 +270,82 @@ diagnostics, and 73 focused runtime tests passed. These
 are confirmed source defects; they do not establish a Swift 5 runtime actor trap
 or the cause of v9's missing response. Actual isolated delivery remains required.
 
+## Fifth isolated execution
+
+The complete v10 patch
+`842d1f0262e29c47bc6fc426c09128102e54200fead0cf3448191ae307d91e49`
+received independent code APPROVE and architecture WATCH / source READY;
+synthesis was COMMENT. Exactly 345 source-manifest files became commit
+`a9f90bf55cf0fac708e0c8042084e2bdee5172e3`, tree
+`43f7126ec196d2e2df7c862163aa67e69fac2e64`. No release or baseline approval
+was implied.
+
+- [CI](https://github.com/ictechgy/apsa/actions/runs/38142555972) passed all
+  11 jobs; [package gates](https://github.com/ictechgy/apsa/actions/runs/38142556076)
+  passed all four. All eight full matrix executions reported 1,715 passed and
+  25 skipped. Checkout and clean-wheel actual SDK responses matched the pending
+  23 default / 25 runtime tool contracts; fresh dual-engine APK and actual MCP
+  binary input hashes matched. Repeated package hashes matched across the jobs:
+  wheel `76924137808148c40b267646b33b33e9864c5b24a8201e7074b7fb35de6af98d`,
+  sdist `1eee03cb66ba66931202257dba1ae32336c07c4efad26e8e5fa16b7a6d726b3b`.
+- [Runtime](https://github.com/ictechgy/apsa/actions/runs/38142556108) is terminal:
+  backend passed two HTTP controls, Android passed four installed controls,
+  and iOS remained inconclusive with zero cases. All workflow cleanup was
+  confirmed. iOS's bounded cumulative diagnostics retained the same random
+  launch-epoch digest as the readiness process, with seven startup/absent-URL
+  events and zero URL receipts after terminate/openurl returned zero. This
+  proves only that the observed file was not updated by a new process/callback;
+  it does not distinguish no relaunch from another-container writes. The actor
+  correction did not establish URL delivery, and queue/HTTP failure is not
+  inferred from the missing receipt. NEW-only termination, app registration,
+  container identity and separately labeled warm-route probes are the next
+  discriminating diagnosis. Diagnostics never promote a failed case.
+- The v9-to-v10 delta is exactly four files: this document, the iOS driver,
+  synthetic Swift fixture and runtime tests. The other 341 staged path/blob/mode
+  entries are identical. Official bundletool and competitor behavior inputs
+  are unchanged, so their successful v9 executions remain bound to v9 and are
+  not relabeled as v10 executions.
+
+Any later material diagnostic change needs both independent lanes on the full
+final diff before another source-only transfer. Physical provisioning and
+current Apple revocation remain separate from these isolated CI runs.
+
+## Independent iOS app-to-app control
+
+The next source snapshot adds an explicitly selected companion URL-driver and a
+separate strict CI job. The original simctl job remains independently visible;
+there is no automatic fallback or reinterpretation of its failed acquisitions.
+A NEW source-compiled UIKit helper calls Apple's
+[`UIApplication.open`](https://developer.apple.com/documentation/uikit/uiapplication/open(_:options:completionHandler:))
+once from its active scene with empty options. Both apps are installed only in
+the same owned NEW device set/UUID and their installed executable/plist hashes
+are checked. A freshly generated custom scheme is registered only by the target;
+the helper registers none and makes no existing-app query.
+
+The helper's opening completion is an OS result, not authenticated target
+acquisition. Cold acceptance still requires confirmed owned-target termination,
+a new random target process epoch, a bound scene `willConnect` URL receipt and
+the matching target/session response. Later captures and logout require warm
+`openURLContexts` receipts and capture nonces. Both paths retain the independent
+real-HTTP authority replay and all four invalidate/retain controls.
+
+Known-PID identity and exit checks inspect only the positive PID returned by
+launching the exact NEW package; unavailable inspection remains unmeasured.
+Exact-package registration and canonical container checks stay under the NEW
+owned set. A bounded diagnostic after a cold timeout may independently launch
+the target and try a noncredential warm challenge. This tail preserves the
+original failure before mutation, is clearly separated, and never supplies
+acquisition or a passing case. No target/container/PID enumeration, raw process
+arguments, UI inspection or service/network workaround is used.
+
+The final local source checks passed 116 runtime tests, including an extracted
+Swift URI-validator execution on 25 newly generated boundaries (four accepted,
+21 rejected). Both target and dispatcher passed Swift 5 and Swift 6 complete
+concurrency builds with zero actor/captured-state diagnostics. These four local
+builds and validator checks are not OS-delivery evidence. This design is pending
+complete independent source review and actual isolated execution; it does not
+identify a CoreSimulator bug or establish delivery yet.
+
 ## New Apple development signature
 
 The user-authorized local lookup found a physical iPhone, an enabled developer
