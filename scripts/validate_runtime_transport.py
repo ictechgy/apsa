@@ -30,11 +30,140 @@ SOURCES = Path(__file__).resolve().parents[1] / "tests/fixtures/runtime/transpor
 MAX_OUTPUT = 64 * 1024 * 1024
 
 
+FAILURE_REASONS = {
+    "NEW emulator exited before boot": "android-emulator-exited-before-boot",
+    "NEW emulator boot timed out": "android-boot-deadline",
+    "NEW installed Android APK differs": "android-installed-apk-hash-mismatch",
+    "NEW installed Android package path differs": "android-installed-package-path-shape",
+    "NEW Android OS URL routing failed": "android-os-url-resolution",
+    "NEW Android fixture rejected binding or transport": "android-fixture-binding-or-http",
+    "NEW Android response challenge timed out": "android-app-response-deadline",
+    "NEW installed iOS executable differs": "ios-installed-executable-hash-mismatch",
+    "NEW simulator container UUID differs": "ios-container-uuid-mismatch",
+    "NEW iOS fixture rejected binding or transport": "ios-fixture-binding-or-http",
+    "NEW iOS OS URL response challenge timed out": "ios-app-response-deadline",
+    "Installed fixture transition unsupported": "installed-session-or-transition-unavailable",
+    "Installed fixture target/build/transport response differs": "installed-target-build-transport-mismatch",
+    "Installed fixture HTTP/session initialization differs": "installed-session-or-http-initialization",
+    "Installed fixture logout delivery/HTTP authority differs": "installed-logout-or-http-binding",
+    "Installed fixture capture challenge/state differs": "installed-capture-challenge-or-state",
+    "Owned authority replay challenge/status differs": "http-replay-challenge-or-status",
+    "Installed fixture session acquisition inconclusive": "installed-session-acquisition-inconclusive",
+    "Installed fixture baseline acquisition inconclusive": "installed-baseline-acquisition-inconclusive",
+    "Installed fixture after acquisition inconclusive": "installed-after-acquisition-inconclusive",
+}
+
+
+def command_kind(argv: list[str]) -> str:
+    """Fixed operation labels only; arbitrary command data never enters logs."""
+    tool = Path(argv[0]).name
+    if tool == "avdmanager":
+        return "android-avd-create" if "create" in argv else "android-avd-delete"
+    if tool == "emulator":
+        return "android-emulator-launch"
+    if tool == "adb":
+        if "install" in argv:
+            return "android-app-install"
+        if "run-as" in argv:
+            return "android-app-response-read"
+        if "cat" in argv:
+            return "android-installed-apk-read"
+        if "shell" in argv:
+            tail = argv[argv.index("shell") + 1 :]
+            if tail and tail[0].startswith("am start "):
+                return "android-os-url-delivery"
+            if "getprop" in tail:
+                return "android-boot-status"
+            if "pm" in tail:
+                return "android-installed-package-path"
+        return "android-adb-control"
+    if tool == "xcrun" and "simctl" in argv:
+        operations = {
+            "create",
+            "boot",
+            "bootstatus",
+            "install",
+            "get_app_container",
+            "openurl",
+            "shutdown",
+            "delete",
+        }
+        return "ios-simctl-" + next((part for part in argv if part in operations), "unsupported")
+    if tool in {"javac", "d8", "aapt2", "keytool", "zipalign", "apksigner", "codesign"}:
+        return "build-" + tool
+    if tool == "xcrun" and "swiftc" in argv:
+        return "build-swiftc"
+    return "public-tool-command"
+
+
+class CommandFailure(ValueError):
+    def __init__(self, reason: str, observation: dict):
+        self.reason, self.observation = reason, observation
+        super().__init__(reason)
+
+
+def safe_command_observation(record: dict) -> dict:
+    allowed = {
+        "operation",
+        "status",
+        "timed_out",
+        "elapsed_seconds",
+        "stdout_sha256",
+        "stdout_bytes",
+        "stderr_sha256",
+        "stderr_bytes",
+        "argv_sha256",
+        "errno",
+        "process_status",
+        "output",
+    }
+    return {key: value for key, value in record.items() if key in allowed}
+
+
+def failure_observation(error: Exception, stage: str, records: list[dict]) -> dict:
+    command_reasons = {
+        "command-spawn-os-error",
+        "command-timeout",
+        "command-output-bound",
+        "command-nonzero-status",
+    }
+    reason = (
+        error.reason
+        if isinstance(error, CommandFailure) and error.reason in command_reasons
+        else FAILURE_REASONS.get(str(error), "fixture-validation-unclassified")
+    )
+    error_type = type(error).__name__
+    if error_type not in {
+        "CommandFailure",
+        "ValueError",
+        "FileNotFoundError",
+        "PermissionError",
+        "OSError",
+        "TimeoutExpired",
+        "HTTPError",
+        "URLError",
+    }:
+        error_type = "other-validation-error"
+    return {
+        "exception_type": error_type,
+        "reason": reason,
+        "stage": stage,
+        "errno": error.errno if isinstance(error, OSError) else None,
+        "recent_commands": [safe_command_observation(record) for record in records[-16:]],
+        "owned_processes": [
+            safe_command_observation(record)
+            for record in records
+            if record.get("operation") == "android-emulator-launch"
+        ],
+    }
+
+
 class Commands:
     def __init__(self, root: Path, env: dict | None = None):
         self.root, self.env = root, os.environ.copy() if env is None else env
         self.records: list[dict] = []
         self.last_status: int | None = None
+        self.pre_cleanup_failure: dict | None = None
 
     def run(
         self, argv: list[str], *, input: bytes | None = None, timeout: int = 120, optional: bool = False
@@ -51,6 +180,17 @@ class Commands:
             status = None
             stdout = error.stdout if isinstance(error.stdout, bytes) else b""
             stderr = error.stderr if isinstance(error.stderr, bytes) else b""
+        except OSError as error:
+            record = {
+                "operation": command_kind(argv),
+                "argv_sha256": digest(json.dumps(argv).encode()),
+                "status": None,
+                "errno": error.errno,
+                "timed_out": False,
+            }
+            self.records.append(record)
+            (self.root / "commands.json").write_text(json.dumps(self.records, indent=2) + "\n")
+            raise CommandFailure("command-spawn-os-error", safe_command_observation(record)) from None
         self.last_status = status
         # URL arguments contain fresh nonce/session material. Preserve their digest only.
         redacted = [
@@ -60,6 +200,8 @@ class Commands:
         self.records.append(
             {
                 "argv": redacted,
+                "argv_sha256": digest(json.dumps(argv).encode()),
+                "operation": command_kind(argv),
                 "status": status,
                 "timed_out": timed_out,
                 "elapsed_seconds": round(time.monotonic() - started, 3),
@@ -71,7 +213,16 @@ class Commands:
         )
         (self.root / "commands.json").write_text(json.dumps(self.records, indent=2) + "\n")
         if timed_out or len(stdout) > MAX_OUTPUT or len(stderr) > MAX_OUTPUT or (status and not optional):
-            raise ValueError("Synthetic command failed or exceeded output bound; digest evidence retained")
+            reason = (
+                "command-timeout"
+                if timed_out
+                else "command-output-bound"
+                if len(stdout) > MAX_OUTPUT or len(stderr) > MAX_OUTPUT
+                else "command-nonzero-status"
+            )
+            observation = safe_command_observation(self.records[-1])
+            print(json.dumps({"runtime_command_failure": {"reason": reason, **observation}}), flush=True)
+            raise CommandFailure(reason, observation)
         return stdout
 
 
@@ -225,18 +376,26 @@ class NewAndroidDevice:
             "-no-snapshot",
             "-wipe-data",
             "-gpu",
-            "swiftshader_indirect",
+            "software",
             "-no-boot-anim",
         ]
         self.commands.records.append(
-            {"argv": argv, "scope": "new-owned-avd", "output": "discarded-no-raw-logs"}
+            {
+                "argv": argv,
+                "argv_sha256": digest(json.dumps(argv).encode()),
+                "operation": "android-emulator-launch",
+                "scope": "new-owned-avd",
+                "output": "discarded-no-raw-logs",
+            }
         )
+        process_record = self.commands.records[-1]
         self.process = subprocess.Popen(
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=self.env
         )
         deadline = time.monotonic() + 240
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
+                process_record["process_status"] = self.process.returncode
                 raise ValueError("NEW emulator exited before boot")
             result = self.commands.run(
                 self.adb_prefix + ["shell", "getprop", "sys.boot_completed"], optional=True, timeout=10
@@ -432,8 +591,14 @@ class IosTarget:
             self.response = self.container("data") / "Documents/response.json"
             if self.installed_build() != self.build:
                 raise ValueError("NEW installed iOS executable differs")
-        except Exception:
-            self.close()
+        except Exception as error:
+            commands.pre_cleanup_failure = failure_observation(
+                error, "ios-target-create-boot-install", commands.records
+            )
+            try:
+                self.close()
+            except (ValueError, OSError, subprocess.SubprocessError):
+                commands.pre_cleanup_failure["constructor_cleanup"] = "unconfirmed"
             raise
 
     def container(self, kind: str) -> Path:
@@ -529,9 +694,19 @@ def execute_case(target, *, invalidate: bool, retain: bool) -> dict:
         adapter = InstalledTransportAdapter(target, server, retain=retain)
         binding = build_binding(target.platform, target.package, target.build)
         recorder = AcquisitionRecorder(adapter, binding, value["markers"])
+        if recorder.session is None:
+            raise adapter.acquisition_error or ValueError(
+                "Installed fixture session acquisition inconclusive"
+            )
         before = recorder.capture("before", {"account": "a", "state": "authenticated"}, None)
+        if before.get("acquisition", {}).get("capture_errors"):
+            raise adapter.acquisition_error or ValueError(
+                "Installed fixture baseline acquisition inconclusive"
+            )
         adapter.open_url("synthetic://transition")
         after = recorder.capture("after", {"account": None, "state": "logged_out"}, "logout")
+        if after.get("acquisition", {}).get("capture_errors"):
+            raise adapter.acquisition_error or ValueError("Installed fixture after acquisition inconclusive")
         snapshots = {"before": before, "after": after}
         backend = evaluate_backend_invalidation(value, snapshots)
         workflow = evaluate_workflow(value, snapshots, recorder.binding)
@@ -698,8 +873,10 @@ def main():
         "cleanup_results": [],
     }
     device = None
+    stage = "initialization"
     try:
         if args.platform == "backend":
+            stage = "backend-http-controls"
             evidence["cases"] = execute_backend_cases()
             evidence["state"] = (
                 "passed" if all(case["state"] == "passed" for case in evidence["cases"]) else "inconclusive"
@@ -711,6 +888,7 @@ def main():
                 parser.error("Android requires explicit SDK and JDK source tool paths")
             commands.env["JAVA_HOME"] = str(args.jdk.resolve())
             device = NewAndroidDevice(root, args.sdk.resolve(), commands)
+            stage = "android-avd-create-and-boot"
             device.start()
             evidence["new_device"] = {"avd": device.name, "serial": device.serial, "adb_server_port": 5049}
         for index, (invalidate, retain) in enumerate(
@@ -721,14 +899,22 @@ def main():
             try:
                 case_root = root / ("case-" + str(index))
                 if device:
+                    stage = "android-case-" + str(index) + "-compile"
                     apk = build_android(case_root, package, args.sdk.resolve(), args.jdk.resolve(), commands)
+                    stage = "android-case-" + str(index) + "-install"
                     target = AndroidTarget(package, apk, device)
                 else:
+                    stage = "ios-case-" + str(index) + "-compile-create-install"
                     target = IosTarget(case_root, package, commands, args.ios_runtime, args.ios_device_type)
+                stage = args.platform + "-case-" + str(index) + "-session-delivery-capture-http"
                 result = execute_case(target, invalidate=invalidate, retain=retain)
                 if args.platform == "ios":
                     result["new_simulator_uuid"] = target.device
                 evidence["cases"].append(result)
+            except (ValueError, OSError, subprocess.SubprocessError) as error:
+                if commands.pre_cleanup_failure is None:
+                    commands.pre_cleanup_failure = failure_observation(error, stage, commands.records)
+                raise
             finally:
                 if target:
                     evidence["cleanup_results"].append(target.close())
@@ -742,6 +928,10 @@ def main():
             "type": type(error).__name__,
             "detail": "NEW fixture build/install/transport/capture failed; inspect digest-only command status",
         }
+        evidence["failure_observation"] = commands.pre_cleanup_failure or failure_observation(
+            error, stage, commands.records
+        )
+        print(json.dumps({"runtime_failure_observation": evidence["failure_observation"]}), flush=True)
     finally:
         if device:
             try:

@@ -178,6 +178,50 @@ class Commands:
         return stdout.decode("utf-8", errors="replace")
 
 
+def failure_diagnostic(result: dict, records: list[dict]) -> dict:
+    """Expose owned terminal metadata without password arguments or raw streams."""
+    failures = [
+        item for item in records if item["returncode"] != 0 or item["timed_out"] or item["output_truncated"]
+    ]
+    record = failures[-1] if failures else records[-1] if records else None
+    metadata = None
+    if record is not None:
+        metadata = {
+            key: record[key]
+            for key in (
+                "returncode",
+                "timed_out",
+                "output_truncated",
+                "elapsed_seconds",
+                "stdout_sha256",
+                "stderr_sha256",
+            )
+        }
+        argv = []
+        password_next = False
+        for argument in record["argv"]:
+            if password_next:
+                argv.append("[REDACTED]")
+                password_next = False
+            elif argument in {"-storepass", "-keypass"}:
+                argv.append(argument)
+                password_next = True
+            elif argument.startswith(("--ks-pass=", "--key-pass=")):
+                argv.append(argument.split("=", 1)[0] + "=[REDACTED]")
+            else:
+                argv.append(argument)
+        metadata["argv"] = argv
+    return {
+        "stage": result["stage"],
+        "error_type": result.get("error", {}).get("type"),
+        "owned_command": metadata,
+        "case_states": [
+            {"state": case["state"], "reason": case.get("reason")} for case in result.get("cases", [])
+        ],
+        "installed_state": result.get("installed", {}).get("state"),
+    }
+
+
 def compile_module(args: argparse.Namespace, root: Path, commands: Commands) -> Path:
     write_sources(root)
     resources = root / "compiled-res.zip"
@@ -360,6 +404,7 @@ def main() -> None:
         "resource_merge_verified": False,
         "installed_split_set_verified": False,
         "state": "started",
+        "stage": "tool-input-hashes",
     }
     exit_code = 1
     try:
@@ -375,9 +420,11 @@ def main() -> None:
         result["tool_sha256"] = {str(path): sha(path) for path in tool_paths}
         if (args.aapt2.parent / "aapt2.jar").is_file():
             result["tool_sha256"][str(args.aapt2.parent / "aapt2.jar")] = sha(args.aapt2.parent / "aapt2.jar")
+        result["stage"] = "compiler-version-probes"
         commands.run([str(args.aapt2), "version"])
         commands.run([str(args.javac), "-version"])
         commands.run([str(args.d8), "--version"])
+        result["stage"] = "fresh-module-compilation"
         module = compile_module(args, root, commands)
         result["source_sha256"] = {
             str(path.relative_to(root)): sha(path)
@@ -394,6 +441,7 @@ def main() -> None:
             result["state"] = "compiled-only-official-bundletool-not-executed"
             exit_code = 0
         else:
+            result["stage"] = "official-bundletool-pin-check"
             if args.bundletool is None or sha(args.bundletool) != BUNDLETOOL_SHA256:
                 raise ValueError("Official bundletool artifact must match the pinned release checksum")
             bundle = [str(args.java), "-jar", str(args.bundletool)]
@@ -403,6 +451,7 @@ def main() -> None:
             result["bundletool_version"] = version
             result["tool_sha256"][str(args.bundletool)] = sha(args.bundletool)
             aab, apks = root / "fresh.aab", root / "fresh.apks"
+            result["stage"] = "official-build-bundle"
             commands.run(
                 bundle
                 + [
@@ -412,8 +461,10 @@ def main() -> None:
                     f"--config={root / 'BundleConfig.json'}",
                 ]
             )
+            result["stage"] = "official-validate-bundle"
             commands.run(bundle + ["validate", f"--bundle={aab}"])
             keystore = root / "fresh-test-key.jks"
+            result["stage"] = "fresh-synthetic-signing-key"
             commands.run(
                 [
                     str(args.keytool),
@@ -434,6 +485,7 @@ def main() -> None:
                     "1",
                 ]
             )
+            result["stage"] = "official-build-apks"
             commands.run(
                 bundle
                 + [
@@ -452,6 +504,7 @@ def main() -> None:
             for index, (density, locales) in enumerate(
                 ((240, ["en-US"]), (320, ["fr-FR"]), (213, ["en-US", "fr-FR"]))
             ):
+                result["stage"] = f"official-extract-and-compare-{index}"
                 device = {
                     "sdkVersion": 36,
                     "supportedAbis": ["x86_64", "x86"],
@@ -474,6 +527,7 @@ def main() -> None:
             if args.serial:
                 if not args.adb:
                     raise ValueError("Explicit adb required for a fresh device")
+                result["stage"] = "fresh-installed-config-resource-probe"
                 result["installed"] = install_probe(args, root, commands, bundle, apks)
                 result["resource_merge_verified"] = result["installed"].get("resource_merge_verified", False)
                 result["installed_split_set_verified"] = result["installed"].get(
@@ -493,7 +547,10 @@ def main() -> None:
         evidence = root / "evidence"
         evidence.mkdir()
         (evidence / "summary.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
-        print(json.dumps({"state": result["state"], "evidence": str(evidence / "summary.json")}))
+        output = {"state": result["state"], "evidence": str(evidence / "summary.json")}
+        if exit_code:
+            output["failure"] = failure_diagnostic(result, commands.records)
+        print(json.dumps(output))
     raise SystemExit(exit_code)
 
 

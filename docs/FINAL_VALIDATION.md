@@ -63,6 +63,45 @@ approval is part of validation. Physical-device tests and genuine Apple
 identity/provisioning/revocation require a separately designated new test
 environment; ad-hoc simulator signing cannot prove them.
 
+## First isolated execution
+
+The exact reviewed source-only tree was transferred to
+`validation/apsa-final-20261011-iddl03na`, commit
+`397a95eacab12ea2e9348ec67b7fec95ba6a0ffd`, tree
+`04942b31d34c78f0249aa8d9bb0b36e80d12ec18`. All 343 files and blob hashes
+matched the reviewed stage; no retained binaries or workspace state were
+transferred. The source review patch was
+`cc145773672df789596f897461cd938a8d23be4719b61b9ac91e649450135013`.
+
+- [Competitor run](https://github.com/ictechgy/apsa/actions/runs/38135893273)
+  completed successfully: 46 fresh cases, three repetitions, actual Semgrep
+  and pinned MobSF. Both APSA and MobSF supplied 138 measured RSS samples.
+  All APSA cases and supported MobSF cases remained partial; no accuracy
+  superiority follows. The two-rule Semgrep slice scored four cases:
+  two true positives, two true negatives, zero false positives/negatives;
+  the other 42 cases were unsupported. These are limited synthetic controls.
+- [Runtime run](https://github.com/ictechgy/apsa/actions/runs/38135893334):
+  backend-only actual HTTP invalidation passed both safe/unsafe controls.
+  Android and iOS ended inconclusive before completing a case. No installed
+  acquisition or OS-delivery success is claimed from those jobs.
+- The [main CI](https://github.com/ictechgy/apsa/actions/runs/38135893275)
+  completed GitHub Action checks on both OSes and framework-Python,
+  nested-Seatbelt and Linux bubblewrap compatibility checks. Full test jobs
+  found 29 failures, with 1584 or more passing tests. Failures were a missing
+  generated plugin alias, test consumers of excluded retained JSON inputs,
+  and an outdated dependency-check mock. These are being fixed with new
+  synthetic inputs; excluded historical data is not restored.
+- [Package gates](https://github.com/ictechgy/apsa/actions/runs/38135893306)
+  stopped at those test failures before package/served-manifest measurement.
+  The initial official bundletool workflow could not start because job-level
+  `env` referenced the unavailable `runner` context. Source fixes and a new
+  whole-diff review precede the next execution.
+
+Initial failures remain failures. New source-only reruns must supply terminal
+evidence before these gates can be marked passed. User-designated local
+device/certificate identifiers are kept only in temporary local evidence and
+are excluded from source transfer and public CI.
+
 ## Primary tooling evidence
 
 - [Semgrep CE 1.179.0](https://github.com/semgrep/semgrep/releases/tag/v1.179.0)

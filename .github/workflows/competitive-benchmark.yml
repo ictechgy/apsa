@@ -63,6 +63,19 @@ jobs:
       - name: Measure limited Semgrep component slice on the same fresh sources
         run: |
           uv run --locked python benchmarks/semgrep_compare.py run --fixtures "$RUNNER_TEMP/competitive-fixtures" --rules "$RUNNER_TEMP/semgrep-rules" --semgrep "$RUNNER_TEMP/semgrep-venv/bin/semgrep" --out "$RUNNER_TEMP/semgrep-results"
+          uv run --locked python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          raw = (Path(os.environ["RUNNER_TEMP"]) / "semgrep-results/result.json").read_bytes()
+          result = json.loads(raw)
+          observations = [
+              {"case": case["id"], **{key: value for key, value in case["tools"]["semgrep"].items() if key in {"state", "seconds", "rss", "rss_state", "rss_bytes"}}}
+              for case in result["cases"] if case["tools"]["semgrep"]["state"] != "unsupported"
+          ]
+          print("APSA_SEMGREP_MEASUREMENT_BEGIN")
+          print(json.dumps({"source_revision": os.environ["GITHUB_SHA"], "result_sha256": hashlib.sha256(raw).hexdigest(), "scope": result["scope"], "observations": observations}))
+          print("APSA_SEMGREP_MEASUREMENT_END")
+          PY
       - name: Prepare MobSF's expected public JADX release
         run: |
           curl --fail --location --proto '=https' --tlsv1.2 https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip --output "$RUNNER_TEMP/jadx-1.5.0.zip"

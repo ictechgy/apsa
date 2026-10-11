@@ -1,8 +1,6 @@
 """Regression contracts for source compatibility and bounded Apple branch decisions."""
 
 import copy
-import json
-from pathlib import Path
 
 import pytest
 
@@ -11,12 +9,11 @@ from mobile_audit.intel import normalize_cve
 from mobile_audit.ios_ranges import apple_branch_range, numeric_version, official_reference
 from mobile_audit.parser_compat import kotlin_tokens
 from mobile_audit.source_analysis import analyze_sources
-
-PRIMARY = Path(__file__).parents[1] / "benchmarks/real_world_advisories.json"
+from tests.synthetic_primary import apple_cna_document
 
 
 def apple_records(version="18.3.2", product="iOS"):
-    document = json.loads(PRIMARY.read_text())["cna"]["CVE-2025-24201"]
+    document = apple_cna_document()
     cve = normalize_cve(document)
     references = {"18.3.2": "122281", "16.7.11": "122346", "15.8.4": "122345", "17.7.6": "122372"}
     vendor = {
@@ -131,7 +128,7 @@ def test_only_exact_official_bulletin_references_confirm_custom_branches(url):
 
 @pytest.mark.parametrize("field", ["assignerOrgId", "providerMetadata"])
 def test_cna_identity_shape_is_validated(field):
-    doc = json.loads(PRIMARY.read_text())["cna"]["CVE-2025-24201"]
+    doc = apple_cna_document()
     if field == "assignerOrgId":
         doc["cveMetadata"][field] = []
     else:

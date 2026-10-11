@@ -200,13 +200,21 @@ class InstalledTransportAdapter:
     def __init__(self, target: InstalledTarget, server: AuthorityServer, *, retain: bool):
         self.target, self.server, self.retain = target, server, retain
         self.session: AcquisitionSession | None = None
+        # Recorder failures remain inconclusive; the dedicated CI driver may
+        # project this exception into its fixed, redacted failure taxonomy.
+        self.acquisition_error: Exception | None = None
         self.after = False
         self.delivery_transport = (
             "android-os-intent" if target.platform == "android" else "ios-os-url-context"
         )
 
     def _exchange(self, fields: dict[str, str]) -> dict:
-        response = self.target.deliver("apsatransport://fixture?" + urlencode(fields), fields)
+        self.acquisition_error = None
+        try:
+            response = self.target.deliver("apsatransport://fixture?" + urlencode(fields), fields)
+        except (ValueError, OSError) as error:
+            self.acquisition_error = error
+            raise
         if (
             not isinstance(response, dict)
             or response.get("package") != self.target.package
@@ -216,7 +224,8 @@ class InstalledTransportAdapter:
             or any(response.get(key) != value for key, value in self.target.build.items())
             or self.target.installed_build() != self.target.build
         ):
-            raise ValueError("Installed fixture target/build/transport response differs")
+            self.acquisition_error = ValueError("Installed fixture target/build/transport response differs")
+            raise self.acquisition_error
         return response
 
     def start_session(self, binding: dict, nonce: str) -> AcquisitionSession:

@@ -186,6 +186,11 @@ PUBLIC_RESOURCES = frozenset(
         "benchmarks/corpus.json",
     }
 )
+# Generate this alias only from the staged public package source. The checkout's
+# plugin alias may be a symlink and is never opened, inspected, or traversed.
+GENERATED_SOURCE_ALIASES = {
+    "plugins/apsa/skills/apsa/SKILL.md": "src/mobile_audit/data/skills/apsa/SKILL.md",
+}
 
 
 def source_file_allowed(relative: Path) -> bool:
@@ -248,6 +253,14 @@ def stage_sources(destination: Path, *, source_only: bool = True) -> dict[str, s
 
     for relative in STAGE_PATHS:
         visit(ROOT / relative)
+    for alias, source in GENERATED_SOURCE_ALIASES.items():
+        if source not in inputs:
+            continue
+        target = destination / alias
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(destination / source, target)
+        target.chmod(0o644)
+        inputs[alias] = digest(target)
     for required in ("pyproject.toml", "uv.lock", "requirements-release.txt", "src/mobile_audit/__init__.py"):
         if required not in inputs:
             raise ValueError(f"Release source is missing {required}")
@@ -602,6 +615,9 @@ def release(output: Path, offline: bool) -> dict:
             },
             "runtime_requirements_sha256": digest(exported),
             "source_files_sha256": inputs,
+            "generated_source_aliases": {
+                alias: source for alias, source in GENERATED_SOURCE_ALIASES.items() if alias in inputs
+            },
             "artifacts": artifacts,
             "repeated_builds_identical": True,
             "reproducibility_scope": "Two builds of one staged input with the same host/interpreter/toolchain; no cross-platform or whole-bundle byte identity claim.",
@@ -650,6 +666,9 @@ def main() -> None:
                 "schema_version": 1,
                 "output": str(output),
                 "source_files_sha256": inputs,
+                "generated_source_aliases": {
+                    alias: source for alias, source in GENERATED_SOURCE_ALIASES.items() if alias in inputs
+                },
                 "source_only": True,
                 "build": "not-run",
                 "clean_install": "not-run",

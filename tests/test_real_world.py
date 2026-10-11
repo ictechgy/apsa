@@ -20,6 +20,17 @@ from benchmarks.real_world import (
     sha,
     source_archive,
 )
+from tests.synthetic_primary import apple_cna_document, evaluation_spec
+
+
+@pytest.fixture(autouse=True)
+def new_spec_inputs(tmp_path, monkeypatch):
+    """Bind every test to new generated files, never retained upstream inputs."""
+    spec, primary = tmp_path / "synthetic-spec.json", tmp_path / "synthetic-primary.json"
+    spec.write_text(json.dumps(evaluation_spec()))
+    primary.write_text(json.dumps({"cna": {"CVE-2099-900001": apple_cna_document()}}))
+    monkeypatch.setattr(real_world, "SPEC", spec)
+    monkeypatch.setattr(real_world, "PRIMARY", primary)
 
 
 def public_archive(tmp_path, path="repo/app/Info.plist", raw=b"public synthetic source"):
@@ -222,7 +233,7 @@ def test_path_suffix_does_not_mix_different_modules():
     assert not path_matches("otherapp/Info.plist", "app/Info.plist")
 
 
-def test_frozen_spec_keeps_positive_negative_and_unknown_groups_separate():
+def test_new_spec_keeps_positive_negative_and_unknown_groups_separate():
     spec = load_spec()
     assert len(spec["apps"]) == 6
     assert sum(c["expected"] == "affected" for c in spec["dependency_cases"]) == 8

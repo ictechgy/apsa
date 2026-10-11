@@ -98,6 +98,51 @@ def test_staging_copies_only_declared_public_data_and_contracts(tmp_path, monkey
     assert all(name in inputs for name in names)
 
 
+def test_staging_generates_plugin_alias_from_public_package_source_without_reading_original(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "new-source"
+    minimal_source(root)
+    source = "src/mobile_audit/data/skills/apsa/SKILL.md"
+    packaged = root / source
+    packaged.parent.mkdir(parents=True)
+    packaged.write_text("# Newly generated public synthetic skill source\n")
+    alias = "plugins/apsa/skills/apsa/SKILL.md"
+    original = root / alias
+    original.parent.mkdir(parents=True)
+    sentinel = tmp_path / "new-private-sentinel.md"
+    sentinel.write_text("NEW SENTINEL: original alias target must remain unread\n")
+    original.symlink_to(sentinel)
+    forbidden = (root / "plugins/apsa/skills", sentinel)
+    original_stat, original_open, original_scandir = Path.stat, Path.open, release.os.scandir
+
+    def check(path):
+        assert not any(Path(path) == denied or denied in Path(path).parents for denied in forbidden)
+
+    def checked_stat(path, *args, **kwargs):
+        check(path)
+        return original_stat(path, *args, **kwargs)
+
+    def checked_open(path, *args, **kwargs):
+        check(path)
+        return original_open(path, *args, **kwargs)
+
+    def checked_scandir(path):
+        check(path)
+        return original_scandir(path)
+
+    monkeypatch.setattr(release, "ROOT", root)
+    monkeypatch.setattr(Path, "stat", checked_stat)
+    monkeypatch.setattr(Path, "open", checked_open)
+    monkeypatch.setattr(release.os, "scandir", checked_scandir)
+    destination = tmp_path / "new-stage"
+    inputs = release.stage_sources(destination)
+    staged_alias = destination / alias
+    assert staged_alias.is_file() and not staged_alias.is_symlink()
+    assert staged_alias.read_bytes() == (destination / source).read_bytes()
+    assert inputs[alias] == inputs[source] == release.digest(staged_alias)
+
+
 def test_staging_refuses_source_symlinks_and_checkout_destination(tmp_path, monkeypatch):
     root = tmp_path / "new-source"
     minimal_source(root)

@@ -311,7 +311,12 @@ def test_mcp_dependency_errors_cannot_exceed_model_budget(store, tmp_path, monke
     server = mcp_server.create_server(store.home, roots=[root])
     tool = server._tool_manager.get_tool("dependency_check")
     assert tool is not None
-    monkeypatch.setattr(mcp_server, "query_dependencies", lambda *args: ([], ["한" * 10000] * 100))
+
+    def oversized_query(database, dependencies, *, query_mode, exclusion_policy, package_states):
+        assert query_mode == "auto"
+        return [], ["한" * 10000] * 100
+
+    monkeypatch.setattr(mcp_server, "query_dependencies", oversized_query)
     result = tool.fn(report_id=report["id"])
     assert len(json.dumps(result, ensure_ascii=False).encode()) == result["response_bytes"] < 65536
     assert result["dependency_query_error_count"] == 100

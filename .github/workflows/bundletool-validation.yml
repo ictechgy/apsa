@@ -14,13 +14,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
-      ANDROID_AVD_HOME: ${{ runner.temp }}/apsa-bundletool-avd
-      ANDROID_USER_HOME: ${{ runner.temp }}/apsa-bundletool-android
       ADB_SERVER_SOCKET: tcp:localhost:5038
       ANDROID_ADB_SERVER_PORT: "5038"
-      APSA_HOME: ${{ runner.temp }}/apsa-bundletool-home
-      APSA_PARSER_LOCK_DIR: ${{ runner.temp }}/apsa-bundletool-locks
     steps:
+      - name: Assign new temporary paths after the runner starts
+        run: |
+          printf '%s\n' \
+            "ANDROID_AVD_HOME=$RUNNER_TEMP/apsa-bundletool-avd" \
+            "ANDROID_USER_HOME=$RUNNER_TEMP/apsa-bundletool-android" \
+            "APSA_HOME=$RUNNER_TEMP/apsa-bundletool-home" \
+            "APSA_PARSER_LOCK_DIR=$RUNNER_TEMP/apsa-bundletool-locks" >> "$GITHUB_ENV"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           persist-credentials: false
@@ -50,7 +53,7 @@ jobs:
           mkdir -p "$ANDROID_AVD_HOME" "$ANDROID_USER_HOME"
           printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --name apsa_bundletool_new --package "system-images;android-36;google_apis;x86_64"
           sudo chmod a+rw /dev/kvm
-          "$ANDROID_HOME/emulator/emulator" -avd apsa_bundletool_new -port 5572 -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect > "$RUNNER_TEMP/apsa-bundletool-emulator-new.log" 2>&1 &
+          "$ANDROID_HOME/emulator/emulator" -avd apsa_bundletool_new -port 5572 -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu software > "$RUNNER_TEMP/apsa-bundletool-emulator-new.log" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/apsa-bundletool-emulator.pid"
           timeout 300 "$ANDROID_HOME/platform-tools/adb" -P 5038 -s emulator-5572 wait-for-device
           for attempt in $(seq 1 120); do

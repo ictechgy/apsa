@@ -2,7 +2,11 @@
 
 import io
 import json
+import subprocess
 from email.message import Message
+from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
 
@@ -12,7 +16,7 @@ from mobile_audit.core import digest
 from mobile_audit.runtime_acquisition import AcquisitionRecorder, evaluate_backend_invalidation
 from mobile_audit.runtime_evidence import build_binding, evaluate_workflow, validate_workflow
 from mobile_audit.runtime_transport import AuthorityServer, InstalledTransportAdapter, OwnedAuthority
-from scripts.validate_runtime_transport import scenario
+from scripts.validate_runtime_transport import CommandFailure, Commands, failure_observation, scenario
 
 
 class Response(io.BytesIO):
@@ -226,3 +230,77 @@ def test_old_credential_is_not_accepted_by_new_authority():
         {"session": second.session, "package": second.package, "build": second.build, "nonce": "b" * 64}
     ).encode()
     assert second.handle("/protected", "Bearer " + first.credential, request)[0] == 403
+
+
+class MemoryOutputRoot:
+    """Output recorder only; no filesystem operation or subprocess is performed."""
+
+    def __init__(self):
+        self.value = ""
+
+    def __truediv__(self, name):
+        assert name == "commands.json"
+        return self
+
+    def write_text(self, value):
+        self.value = value
+
+
+@pytest.mark.parametrize("kind", ["nonzero", "timeout", "spawn"])
+def test_command_failure_text_contains_only_metadata_and_digests(kind, monkeypatch, capsys):
+    secret = "new-synthetic-credential-never-printed"
+    root = MemoryOutputRoot()
+    # This intentional test double records writes in memory; it never touches a path.
+    commands = Commands(cast(Path, root), env={})
+
+    def run(*args, **kwargs):
+        if kind == "timeout":
+            raise subprocess.TimeoutExpired(args[0], 10, output=secret.encode(), stderr=secret.encode())
+        if kind == "spawn":
+            raise FileNotFoundError(2, secret)
+        return SimpleNamespace(returncode=1, stdout=secret.encode(), stderr=secret.encode())
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.subprocess.run", run)
+    with pytest.raises(CommandFailure) as caught:
+        commands.run(
+            [
+                "/new-public-sdk/platform-tools/adb",
+                "shell",
+                "am start -d 'apsatransport://fixture?session=" + secret + "'",
+            ]
+        )
+    observation = failure_observation(caught.value, "android-avd-create-and-boot", commands.records)
+    emitted = json.dumps(observation) + root.value + capsys.readouterr().out
+    assert secret not in emitted
+    assert "apsatransport://" not in emitted
+    assert (
+        observation["reason"]
+        == {
+            "nonzero": "command-nonzero-status",
+            "timeout": "command-timeout",
+            "spawn": "command-spawn-os-error",
+        }[kind]
+    )
+    assert observation["recent_commands"][0]["operation"] == "android-os-url-delivery"
+    assert "argv" not in observation["recent_commands"][0]
+
+
+def test_unknown_exception_text_and_arbitrary_reason_are_withheld():
+    secret = "new-synthetic-authorization-material"
+    for error in (ValueError(secret), CommandFailure(secret, {})):
+        observation = failure_observation(error, "initialization", [])
+        assert observation["reason"] == "fixture-validation-unclassified"
+        assert secret not in json.dumps(observation)
+
+
+def test_emulator_exit_observation_survives_bounded_recent_command_window():
+    records = [
+        {"operation": "android-emulator-launch", "process_status": 3, "output": "discarded-no-raw-logs"}
+    ]
+    records += [{"operation": "android-boot-status", "status": 1} for _ in range(20)]
+    observation = failure_observation(
+        ValueError("NEW emulator exited before boot"), "android-avd-create-and-boot", records
+    )
+    assert observation["reason"] == "android-emulator-exited-before-boot"
+    assert len(observation["recent_commands"]) == 16
+    assert observation["owned_processes"][0]["process_status"] == 3

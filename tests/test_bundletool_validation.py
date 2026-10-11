@@ -77,3 +77,25 @@ def test_oversized_owned_process_output_is_stopped_at_capture_bound(driver, tmp_
     record = commands.records[0]
     assert record["output_truncated"] is True
     assert len(driver.base64.b64decode(record["stdout_base64"])) == 1_048_576
+
+
+def test_failure_diagnostic_preserves_status_without_passwords_or_raw_output(driver, tmp_path):
+    commands = driver.Commands(tmp_path)
+    with pytest.raises(RuntimeError):
+        commands.run(["/usr/bin/false"])
+    commands.records[0]["argv"] += [
+        "--ks-pass=pass:synthetic-only",
+        "--key-pass=pass:synthetic-only",
+        "-storepass",
+        "synthetic-only",
+        "-keypass",
+        "synthetic-only",
+    ]
+    observed = driver.failure_diagnostic({"stage": "new-test-failure"}, commands.records)
+    assert observed["stage"] == "new-test-failure"
+    assert observed["owned_command"]["returncode"] != 0
+    serialized = driver.json.dumps(observed)
+    assert "synthetic-only" not in serialized
+    assert "stdout_base64" not in serialized
+    assert "stderr_base64" not in serialized
+    assert "stdout_sha256" in serialized
