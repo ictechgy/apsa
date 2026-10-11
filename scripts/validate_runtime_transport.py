@@ -29,6 +29,125 @@ from mobile_audit.runtime_transport import AuthorityServer, InstalledTransportAd
 
 SOURCES = Path(__file__).resolve().parents[1] / "tests/fixtures/runtime/transport"
 MAX_OUTPUT = 64 * 1024 * 1024
+IOS_EVENT_BYTES = 64 * 1024
+IOS_EVENT_LIMIT = 128
+IOS_PHASES = {
+    "startup-app",
+    "startup-scene",
+    "scene-active",
+    "os-app-url-received",
+    "os-url-context-received",
+    "os-cold-url-context-received",
+    "url-received",
+    "url-processing",
+    "http-issue",
+    "http-logout",
+    "response-written",
+    "binding-or-transport-failure",
+    "failure-url-shape",
+    "failure-session-fields",
+    "failure-session-policy",
+    "failure-session-binding",
+    "failure-http-issue",
+    "failure-http-logout",
+    "failure-store-write",
+    "failure-transition-fields",
+    "failure-capture-fields",
+    "failure-store-read-or-response",
+    "will-launch-url-present",
+    "will-launch-url-absent",
+    "launch-options-url-present",
+    "launch-options-url-absent",
+    "configuration-url-present",
+    "configuration-url-absent",
+    "scene-connect-url-present",
+    "scene-connect-url-absent",
+    "scene-non-window",
+    "warm-context-url-present",
+    "warm-context-url-absent",
+    "os-dispatch",
+}
+
+
+def safe_ios_events(raw: bytes, expected: dict | None = None, readiness_epoch: str | None = None) -> dict:
+    """Allowlisted diagnostics only, separate from trusted acquisition verdicts."""
+    result: dict = {"state": "unavailable", "sha256": digest(raw), "bytes": len(raw)}
+    if not raw:
+        return result
+    result["state"] = "malformed-or-over-bound"
+    if len(raw) > IOS_EVENT_BYTES:
+        return result
+
+    def hash_value(value):
+        return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None
+
+    try:
+        value = json.loads(raw)
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"schema_version", "complete", "events", "launch_epoch_sha256"}
+            or type(value["schema_version"]) is not int
+            or value["schema_version"] != 1
+            or type(value["complete"]) is not bool
+            or not hash_value(value["launch_epoch_sha256"])
+            or not isinstance(value["events"], list)
+            or len(value["events"]) > IOS_EVENT_LIMIT
+        ):
+            return result
+        counters, receipts = {}, []
+        for sequence, entry in enumerate(value["events"], 1):
+            base = {"sequence", "phase", "main_thread"}
+            if (
+                not isinstance(entry, dict)
+                or type(entry.get("sequence")) is not int
+                or entry["sequence"] != sequence
+                or entry.get("phase") not in IOS_PHASES
+                or type(entry.get("main_thread")) is not bool
+            ):
+                return result
+            phase = entry["phase"]
+            counters[phase] = counters.get(phase, 0) + 1
+            if phase != "os-dispatch":
+                if set(entry) != base:
+                    return result
+                continue
+            if (
+                set(entry) != base | {"lifecycle", "action", "uri_sha256", "session_sha256", "nonce_sha256"}
+                or entry["lifecycle"]
+                not in {
+                    "cold-url-context",
+                    "warm-url-context",
+                    "application-url-callback",
+                    "launch-options-url",
+                }
+                or entry["action"] not in {"session", "capture", "transition", "unsupported"}
+                or not hash_value(entry["uri_sha256"])
+                or any(
+                    entry[key] is not None and not hash_value(entry[key])
+                    for key in ("session_sha256", "nonce_sha256")
+                )
+            ):
+                return result
+            receipt = entry.copy()
+            receipt["matches_expected_dispatch"] = expected is not None and all(
+                entry[key] == expected[key]
+                for key in ("lifecycle", "action", "uri_sha256", "session_sha256", "nonce_sha256")
+            )
+            receipts.append(receipt)
+    except (ValueError, TypeError, KeyError):
+        return result
+    return {
+        **result,
+        "state": "complete" if value["complete"] else "capped",
+        "launch_epoch_sha256": value["launch_epoch_sha256"],
+        "process_epoch_relation": "unknown"
+        if readiness_epoch is None
+        else "same-as-readiness"
+        if value["launch_epoch_sha256"] == readiness_epoch
+        else "new-since-readiness",
+        "counters": counters,
+        "receipts": receipts,
+    }
 
 
 class OwnedResources:
@@ -663,6 +782,7 @@ class IosTarget:
                 "swiftc",
                 "-swift-version",
                 "5",
+                "-strict-concurrency=complete",
                 "-sdk",
                 sdk,
                 "-target",
@@ -736,6 +856,7 @@ class IosTarget:
             self.installed = self.container("app")
             self.response = self.container("data") / "Documents/response.json"
             self.stage_path = self.response.with_name("stage.txt")
+            self.events_path = self.response.with_name("events.json")
             if self.installed_build() != self.build:
                 raise ValueError("NEW installed iOS executable differs")
             # Establish a ready NEW scene before delivering the session URL through the OS.
@@ -747,6 +868,7 @@ class IosTarget:
                 time.sleep(0.1)
             else:
                 raise FixtureFailure("NEW iOS fixture launch timed out", self.lifecycle_observation())
+            self.readiness_epoch = self.events_observation().get("launch_epoch_sha256")
             # No URL, credentials or baseline exist yet. Force the first session URL
             # through genuine cold OS scene connection; later captures/logout are warm.
             commands.run(self.simctl + ["terminate", self.device, self.package])
@@ -784,41 +906,34 @@ class IosTarget:
             if self.stage_path.is_file() and self.stage_path.stat().st_size <= 4096
             else b""
         )
-        allowed = {
-            "startup-app",
-            "startup-scene",
-            "scene-active",
-            "os-app-url-received",
-            "os-url-context-received",
-            "os-cold-url-context-received",
-            "url-received",
-            "url-processing",
-            "http-issue",
-            "http-logout",
-            "response-written",
-            "binding-or-transport-failure",
-            "failure-url-shape",
-            "failure-session-fields",
-            "failure-session-policy",
-            "failure-session-binding",
-            "failure-http-issue",
-            "failure-http-logout",
-            "failure-store-write",
-            "failure-transition-fields",
-            "failure-capture-fields",
-            "failure-store-read-or-response",
-        }
         stage = raw.decode("ascii", errors="replace")
         return {
             "response_file_present": self.response.is_file(),
-            "lifecycle_stage": stage if stage in allowed else "not-observed",
+            "lifecycle_stage": stage if stage in IOS_PHASES else "not-observed",
             "stage_sha256": digest(raw),
             "stage_bytes": len(raw),
+            "callback_events": self.events_observation(),
         }
+
+    def events_observation(self):
+        path = getattr(self, "events_path", self.response.with_name("events.json"))
+        if path.is_file() and path.stat().st_size > IOS_EVENT_BYTES:
+            return {"state": "over-bound", "bytes": path.stat().st_size}
+        raw = path.read_bytes() if path.is_file() else b""
+        return safe_ios_events(
+            raw, getattr(self, "dispatch_expectation", None), getattr(self, "readiness_epoch", None)
+        )
 
     def deliver(self, url: str, expected: dict) -> dict:
         if self.device is None:
             raise ValueError("NEW simulator has no owned UUID")
+        self.dispatch_expectation = {
+            "action": expected["action"],
+            "lifecycle": "cold-url-context" if expected["action"] == "session" else "warm-url-context",
+            "uri_sha256": digest(url.encode()),
+            "session_sha256": digest(expected["session"].encode()),
+            "nonce_sha256": digest(expected["nonce"].encode()) if "nonce" in expected else None,
+        }
         self.commands.run(self.simctl + ["openurl", self.device, url])
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
@@ -851,6 +966,7 @@ class IosTarget:
                 "capture_nonce_sha256": digest(expected["nonce"].encode()) if "nonce" in expected else None,
                 "response_sha256": digest(raw),
                 "response_bytes": len(raw),
+                "callback_events": self.events_observation(),
             }
         )
 

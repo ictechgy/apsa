@@ -214,6 +214,62 @@ iOS driver terminates only its new target before the first session and requires
 the cold scene URL context, then requires warm contexts for capture and logout.
 These source checks do not establish actual OS delivery before the next CI run.
 
+## Fourth isolated execution
+
+The full v9 patch
+`8b7abd0c82e5b878f82d7455c5f34d600ca46dc31d5d26abb59bca37c58839eb`
+received independent code APPROVE and architecture CLEAR / source READY.
+Exactly 345 manifest-bound source files were transferred as commit
+`57a8f9b5e56eea1e68d74925dec074ed6530af36`, tree
+`f3f2d1af2a958f670277c4d2ef122c822459efc4`; no extra paths or local device,
+signer, private workspace or retained binary evidence were transferred.
+
+- [CI](https://github.com/ictechgy/apsa/actions/runs/38140523955) passed all
+  11 jobs; [package gates](https://github.com/ictechgy/apsa/actions/runs/38140523919)
+  passed all four. All eight full matrix executions reported 1,699 passed and
+  25 skipped. Actual checkout and clean-wheel SDK responses matched the pending
+  23 default / 25 runtime contracts. Fresh dual-engine APK and actual MCP binary
+  scans passed with matching input hashes. Repeated wheel and sdist hashes
+  matched across the matrix:
+  `76924137808148c40b267646b33b33e9864c5b24a8201e7074b7fb35de6af98d`
+  and `74c06235895398fe69e1461c48595ad30aef551ff63e2925325c405eb1d551e2`.
+- [Official bundletool](https://github.com/ictechgy/apsa/actions/runs/38140523920)
+  succeeded. All three official/APSA selections matched by path and digest
+  (two, three and three APKs), and the installed three-APK acquisition matched
+  the official selection. Expected and observed French resource SHA256 both
+  equal `b3d530f23c1513fe35edc53add3cf0f326d88a660d40c5a46a58e853098c971e`.
+  Instrumentation, package uninstall and owned-emulator/binary/key cleanup
+  succeeded. This proves only this new fixture's selection/install/resource
+  behavior; the general static selector does not claim installation or merges.
+- [Runtime](https://github.com/ictechgy/apsa/actions/runs/38140523954): backend
+  passed two HTTP controls and Android passed four installed controls. iOS
+  remained inconclusive with zero cases and no bound app response after launch,
+  terminate and cold openurl all returned zero. Its last lifecycle label was
+  `scene-active`; that overwrite-only label cannot exclude transient earlier
+  callbacks. The required URL-role fix did not establish delivery and must not
+  be represented as the sole runtime cause. All workflow cleanup was confirmed.
+  New diagnosis will retain bounded fixed-label callback receipts and digests
+  without weakening the cold/warm scene or acquisition/session/nonce contract.
+- [Competitors](https://github.com/ictechgy/apsa/actions/runs/38140523921)
+  completed all 46 fresh cases and three repetitions. APSA and MobSF each
+  supplied 138 measured RSS samples. All APSA cases remained partial; MobSF
+  had 38 partial and eight unsupported cases. Semgrep's four eligible cases
+  scored two true positives and two true negatives with zero false positives
+  or negatives; 42 cases were unsupported. Distinct timing/RSS scopes still
+  prevent any efficiency or whole-product ranking. Artifact ZIP SHA256:
+  `3c76167f1ab28458397005045a7b407f2837a1ccef0919f60fe5f7ddaf9944a8`.
+
+These terminal results are bound to v9. Subsequent iOS diagnostic changes require
+another complete independent source review before a new diagnostic transfer.
+Strict Swift concurrency compilation also identified UIKit main-actor state and
+methods used from a background DispatchQueue, plus unsynchronized URLSession
+result captures. UI callbacks and queue-owned transport state are now separated,
+with locked response snapshots and bounded cumulative callback receipts. Swift 5
+and Swift 6 complete-concurrency compilation passed without actor/captured-state
+diagnostics, and 73 focused runtime tests passed. These
+are confirmed source defects; they do not establish a Swift 5 runtime actor trap
+or the cause of v9's missing response. Actual isolated delivery remains required.
+
 ## New Apple development signature
 
 The user-authorized local lookup found a physical iPhone, an enabled developer

@@ -27,6 +27,7 @@ from scripts.validate_runtime_transport import (
     failure_observation,
     ios_delivery_complete,
     main,
+    safe_ios_events,
     scenario,
 )
 
@@ -559,3 +560,104 @@ def test_ios_case_requires_complete_callback_sequence_bound_to_acquisition(mutat
     elif mutation == "missing-capture-binding":
         del after["acquisition"]["capture_sha256"]
     assert ios_delivery_complete(observations, before, after) is (mutation is None)
+
+
+def synthetic_ios_events(*, complete=True):
+    receipt = {
+        "sequence": 2,
+        "phase": "os-dispatch",
+        "main_thread": True,
+        "lifecycle": "cold-url-context",
+        "action": "session",
+        "uri_sha256": digest(b"new synthetic URI"),
+        "session_sha256": digest(b"new synthetic session"),
+        "nonce_sha256": None,
+    }
+    return {
+        "schema_version": 1,
+        "complete": complete,
+        "launch_epoch_sha256": digest(b"new synthetic process"),
+        "events": [
+            {"sequence": 1, "phase": "scene-connect-url-present", "main_thread": True},
+            receipt,
+            {"sequence": 3, "phase": "scene-active", "main_thread": True},
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "field", [None, "lifecycle", "action", "uri_sha256", "session_sha256", "nonce_sha256"]
+)
+def test_ios_callback_receipts_survive_later_activation_and_bind_exact_dispatch(field):
+    value = synthetic_ios_events()
+    receipt = value["events"][1]
+    expected = {
+        key: receipt[key] for key in ("lifecycle", "action", "uri_sha256", "session_sha256", "nonce_sha256")
+    }
+    if field:
+        expected[field] = "new mismatching synthetic identity"
+    result = safe_ios_events(json.dumps(value).encode(), expected, digest(b"new synthetic readiness process"))
+    assert result["state"] == "complete"
+    assert result["process_epoch_relation"] == "new-since-readiness"
+    assert result["counters"] == {"scene-connect-url-present": 1, "os-dispatch": 1, "scene-active": 1}
+    assert len(result["receipts"]) == 1
+    assert result["receipts"][0]["matches_expected_dispatch"] is (field is None)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "raw-url",
+        "raw-token",
+        "unknown-phase",
+        "bad-hash",
+        "bad-sequence",
+        "bad-thread",
+        "too-many",
+        "too-large",
+    ],
+)
+def test_ios_callback_diagnostics_reject_unbounded_or_private_fields(change):
+    value = synthetic_ios_events()
+    if change in {"raw-url", "raw-token"}:
+        value["events"][1][change] = "new-synthetic-private-value"
+    elif change == "unknown-phase":
+        value["events"][0]["phase"] = "new-synthetic-private-value"
+    elif change == "bad-hash":
+        value["events"][1]["uri_sha256"] = "new-synthetic-private-value"
+    elif change == "bad-sequence":
+        value["events"][1]["sequence"] = 1
+    elif change == "bad-thread":
+        value["events"][0]["main_thread"] = 1
+    elif change == "too-many":
+        value["events"] = [
+            {"sequence": i + 1, "phase": "scene-active", "main_thread": True} for i in range(129)
+        ]
+    else:
+        value["extra"] = "new-synthetic-private-value" * 10000
+    raw = json.dumps(value).encode()
+    result = safe_ios_events(raw)
+    assert result == {"state": "malformed-or-over-bound", "sha256": digest(raw), "bytes": len(raw)}
+    assert "new-synthetic-private-value" not in json.dumps(result)
+
+
+def test_ios_diagnostics_record_caps_and_stale_prelaunch_epoch_without_promoting_os_proof():
+    value = synthetic_ios_events(complete=False)
+    value["events"] = [{"sequence": i + 1, "phase": "scene-active", "main_thread": True} for i in range(128)]
+    result = safe_ios_events(json.dumps(value).encode(), readiness_epoch=value["launch_epoch_sha256"])
+    assert result["state"] == "capped"
+    assert result["process_epoch_relation"] == "same-as-readiness"
+    assert result["counters"] == {"scene-active": 128}
+    assert result["receipts"] == []
+
+
+def test_ios_driver_persists_safe_callback_diagnostics_on_deadline(tmp_path):
+    target = IosTarget.__new__(IosTarget)
+    target.response = tmp_path / "new-response.json"
+    target.stage_path = tmp_path / "new-stage.txt"
+    target.stage_path.write_text("scene-active")
+    (tmp_path / "events.json").write_text(json.dumps(synthetic_ios_events()))
+    result = target.lifecycle_observation()
+    assert result["callback_events"]["receipts"][0]["lifecycle"] == "cold-url-context"
+    assert result["callback_events"]["receipts"][0]["matches_expected_dispatch"] is False
+    assert result["lifecycle_stage"] == "scene-active"
