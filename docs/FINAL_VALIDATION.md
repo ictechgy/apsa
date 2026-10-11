@@ -346,6 +346,53 @@ builds and validator checks are not OS-delivery evidence. This design is pending
 complete independent source review and actual isolated execution; it does not
 identify a CoreSimulator bug or establish delivery yet.
 
+## Sixth isolated execution
+
+The full v11 patch
+`5603b431583e050c03b52a99c2a96aab26009af6ea7e59605c1a3f4d75e65b74`
+received code APPROVE and architecture WATCH / source READY. Exactly 346
+manifest-bound source files became commit
+`12e8f29047b60bc3868021cd47c881f69198e203`, tree
+`c481ebb9f1160a2bea1094faf956a45e0e42c48c`.
+
+- [CI](https://github.com/ictechgy/apsa/actions/runs/38145755571) passed all
+  11 jobs; [package gates](https://github.com/ictechgy/apsa/actions/runs/38145755633)
+  passed all four. Four Ubuntu main/package executions reported 1,757 passed /
+  26 skipped; four macOS executions reported 1,758 passed / 25 skipped. The
+  required isolation suites reported Ubuntu 1,758/25 and macOS 1,760/23.
+  Actual checkout/clean-wheel 23/25-tool SDK hashes, fresh dual-engine APK and
+  actual MCP input-hash checks passed. All eight repeated package outputs
+  matched wheel `76924137808148c40b267646b33b33e9864c5b24a8201e7074b7fb35de6af98d`
+  and sdist `80c36bf17aea4944e24d1ce5555fead1f876ebce63f822dde2b062dacd6defef`.
+- [Runtime](https://github.com/ictechgy/apsa/actions/runs/38145755701): backend
+  passed two and Android passed four controls. Both iOS jobs remained
+  inconclusive with zero cases, before first target launch or companion
+  build/install/dispatch: an optional tool-help diagnostic timed out at its
+  ten-second bound and aborted construction. This is a concrete harness
+  diagnostic failure, not measured failure of either OS URL delivery mode.
+  All workflow cleanup was confirmed and all eight artifacts were head-bound.
+- The v10-to-v11 delta has six changed existing paths plus one new helper source;
+  339 staged path/blob/mode entries are unchanged. The actual bundletool and
+  competitor source inputs remain unchanged and their v9 success is not
+  relabeled as v11 execution.
+- Architecture retains a nonblocking AAPT2 supply-chain watch: its pinned
+  Maven version is downloaded over HTTPS and hashed after download, but the
+  JAR lacks a predeclared expected checksum. Bounded primary-source lookup
+  could not retrieve an independently verified SHA256; source-tree blob IDs
+  are not substituted for artifact hashes.
+
+The source correction now makes only allowlisted non-authority tool-help,
+appinfo and plist diagnostics explicitly unmeasured and nonfatal on command
+failure or timeout. After an unmeasured help probe, remaining help probes are
+skipped; no retry or deadline extension is added. Command timeout/hash records
+remain intact. Mandatory install, launch, PID identity/exit, callback, build,
+authenticated response and HTTP authority checks still fail closed; no primary
+deadline or acquisition proof is relaxed. All 125 focused runtime tests passed,
+including nine new diagnostic/primary-failure boundaries; Ruff, formatting and
+Pyright passed. The target/helper Swift sources and runtime workflow are
+unchanged, preserving the prior strict Swift 5/6 compile evidence. This change
+needs both full independent source lanes and another actual isolated execution.
+
 ## New Apple development signature
 
 The user-authorized local lookup found a physical iPhone, an enabled developer

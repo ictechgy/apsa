@@ -1009,10 +1009,7 @@ class IosTarget:
             self.events_path = self.response.with_name("events.json")
             if self.installed_build() != self.build:
                 raise ValueError("NEW installed iOS executable differs")
-            self.tool_help = {}
-            for operation in ("launch", "terminate", "openurl", "appinfo", "get_app_container"):
-                raw = commands.run(self.simctl + ["help", operation], timeout=10, optional=True)
-                self.tool_help[operation] = {"status": commands.last_status, "sha256": digest(raw)}
+            self.tool_help = self.tool_help_observations()
             self.registration = self.appinfo()
             if self.registration.get("package_matches") is False:
                 raise FixtureFailure("NEW iOS registered package differs", self.registration)
@@ -1171,24 +1168,81 @@ class IosTarget:
             raise FixtureFailure("NEW iOS owned PID identity differs", process)
         self.helper_process = process
 
+    def diagnostic_command(self, argv: list[str], *, timeout: int, input: bytes | None = None):
+        """Only noncritical public help/NEW app metadata can be unmeasured."""
+        help_commands = [
+            self.simctl + ["help", operation]
+            for operation in ("launch", "terminate", "openurl", "appinfo", "get_app_container")
+        ]
+        metadata = self.simctl + ["appinfo", self.device, self.package]
+        conversion = ["/usr/bin/plutil", "-convert", "json", "-o", "-", "--", "-"]
+        if argv not in help_commands and argv != metadata and argv != conversion:
+            raise ValueError("NEW iOS diagnostic command scope differs")
+        if input is not None and (argv != conversion or len(input) > IOS_EVENT_BYTES):
+            raise ValueError("NEW iOS diagnostic input differs")
+        try:
+            raw = self.commands.run(argv, timeout=timeout, input=input, optional=True)
+        except CommandFailure as error:
+            # Commands already retained timed_out/status/hash evidence. Never retry.
+            reason = (
+                error.reason
+                if error.reason
+                in {
+                    "command-spawn-os-error",
+                    "command-timeout",
+                    "command-output-bound",
+                    "command-nonzero-status",
+                }
+                else "diagnostic-command-failure"
+            )
+            fields = {
+                key: value
+                for key, value in safe_command_observation(error.observation).items()
+                if key not in {"output", "process_status"}
+            }
+            return None, {"state": "unmeasured", "reason": reason, **fields}
+        return raw, {
+            "state": "measured" if self.commands.last_status == 0 else "unmeasured",
+            "status": self.commands.last_status,
+            "sha256": digest(raw),
+            "bytes": len(raw),
+        }
+
+    def tool_help_observations(self):
+        observations = {}
+        operations = ("launch", "terminate", "openurl", "appinfo", "get_app_container")
+        for index, operation in enumerate(operations):
+            _, result = self.diagnostic_command(self.simctl + ["help", operation], timeout=10)
+            observations[operation] = result
+            if result["state"] == "unmeasured":
+                for remaining in operations[index + 1 :]:
+                    observations[remaining] = {
+                        "state": "unmeasured",
+                        "reason": "not-attempted-after-diagnostic-failure",
+                    }
+                break
+        return observations
+
     def appinfo(self):
         if self.device is None:
             raise ValueError("NEW simulator has no owned UUID")
-        raw = self.commands.run(
-            self.simctl + ["appinfo", self.device, self.package], timeout=30, optional=True
+        raw, command = self.diagnostic_command(
+            self.simctl + ["appinfo", self.device, self.package], timeout=30
         )
-        if self.commands.last_status != 0 or len(raw) > IOS_EVENT_BYTES:
-            return {"state": "unmeasured", "status": self.commands.last_status, "sha256": digest(raw)}
-        result = safe_ios_appinfo(raw, self.package, self.scheme)
+        if raw is None or command["state"] == "unmeasured" or len(raw) > IOS_EVENT_BYTES:
+            return command if command["state"] == "unmeasured" else {**command, "state": "unmeasured"}
+        result = {**safe_ios_appinfo(raw, self.package, self.scheme), "command": command}
         if result["state"] == "unmeasured" and raw:
-            converted = self.commands.run(
-                ["/usr/bin/plutil", "-convert", "json", "-o", "-", "--", "-"],
-                input=raw,
-                timeout=10,
-                optional=True,
+            converted, conversion = self.diagnostic_command(
+                ["/usr/bin/plutil", "-convert", "json", "-o", "-", "--", "-"], input=raw, timeout=10
             )
-            if self.commands.last_status == 0:
-                result = safe_ios_appinfo(converted, self.package, self.scheme)
+            result["conversion"] = conversion
+            if converted is not None and conversion["state"] == "measured":
+                result = {
+                    **safe_ios_appinfo(converted, self.package, self.scheme),
+                    "command": command,
+                    "conversion": conversion,
+                }
         return result
 
     def installed_build(self):

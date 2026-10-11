@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from urllib.error import HTTPError
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 
@@ -1169,3 +1169,144 @@ def test_generated_companion_registers_no_scheme_and_verifies_installed_bytes(tm
     (tmp_path / "UrlDispatcher.app/UrlDispatcher").write_bytes(b"new synthetic wrong installed bytes")
     with pytest.raises(ValueError, match="installed iOS dispatcher differs"):
         target.dispatch("new owned URI")
+
+
+@pytest.mark.parametrize("diagnostic", ["help-timeout", "help-os-error", "appinfo-timeout", "plutil-timeout"])
+@pytest.mark.parametrize("primary_timeout", [False, True])
+def test_ios_constructor_proceeds_past_only_noncritical_diagnostic_failure(
+    tmp_path, monkeypatch, diagnostic, primary_timeout
+):
+    commands = Commands(tmp_path, env={})
+    device = "11111111-2222-3333-4444-555555555555"
+    package = "apsa.fixture.new.case0"
+    owned = tmp_path / "simulator-set" / device
+    app, data = owned / "new-app/TransportFixture.app", owned / "new-data"
+    calls = []
+    terminated = False
+
+    def process_identity(*args):
+        return {"state": "exited" if terminated else "live-verified"}
+
+    def new_public_tool(argv, **kwargs):
+        nonlocal terminated
+        calls.append(argv)
+        if "--show-sdk-path" in argv:
+            raw = b"/new-public-sdk"
+        elif "swiftc" in argv:
+            Path(argv[argv.index("-o") + 1]).write_bytes(b"new target executable")
+            raw = b""
+        elif "create" in argv:
+            raw = device.encode()
+        elif "install" in argv:
+            app.mkdir(parents=True)
+            (data / "Documents").mkdir(parents=True)
+            source = Path(argv[-1])
+            for name in ("TransportFixture", "Info.plist"):
+                (app / name).write_bytes((source / name).read_bytes())
+            raw = b""
+        elif "get_app_container" in argv:
+            raw = str(app if argv[-1] == "app" else data).encode()
+        elif "help" in argv:
+            if diagnostic == "help-timeout":
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"], output=b"", stderr=b"")
+            if diagnostic == "help-os-error":
+                raise FileNotFoundError("new synthetic public tool unavailable")
+            raw = b"new public command help"
+        elif "appinfo" in argv:
+            if diagnostic == "appinfo-timeout":
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"], output=b"", stderr=b"")
+            raw = (
+                b"new unsupported OpenStep stand-in"
+                if diagnostic == "plutil-timeout"
+                else json.dumps({"CFBundleIdentifier": package}).encode()
+            )
+        elif argv[0] == "/usr/bin/plutil":
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"], output=b"", stderr=b"")
+        elif "launch" in argv:
+            value = synthetic_ios_events()
+            value["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
+            (data / "Documents/events.json").write_text(json.dumps(value))
+            (data / "Documents/stage.txt").write_text("scene-active")
+            raw = (package + ": 321\n").encode()
+        elif "terminate" in argv:
+            terminated = True
+            raw = b""
+        elif "openurl" in argv:
+            if primary_timeout:
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"], output=b"", stderr=b"")
+            fields = {key: values[0] for key, values in parse_qs(urlparse(argv[-1]).query).items()}
+            response = {**fields, "delivery_lifecycle": "cold-url-context"}
+            (data / "Documents/response.json").write_text(json.dumps(response))
+            value = synthetic_ios_events()
+            value["launch_epoch_sha256"] = digest(b"new post-termination process")
+            value["events"][1].update(
+                {
+                    "action": "session",
+                    "lifecycle": "cold-url-context",
+                    "uri_sha256": digest(argv[-1].encode()),
+                    "session_sha256": digest(fields["session"].encode()),
+                    "nonce_sha256": None,
+                }
+            )
+            (data / "Documents/events.json").write_text(json.dumps(value))
+            raw = b""
+        else:
+            raw = b""
+        return SimpleNamespace(returncode=0, stdout=raw, stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", new_public_tool)
+    monkeypatch.setattr("scripts.validate_runtime_transport.ios_process_identity", process_identity)
+    target = IosTarget(tmp_path / "new-build", package, commands, "new-runtime", "new-device-type")
+    assert target.process_observations["after_terminate"]["state"] == "exited"
+    assert any("launch" in call for call in calls)
+    if diagnostic.startswith("help"):
+        assert sum("help" in call for call in calls) == 1
+        assert target.tool_help["launch"]["state"] == "unmeasured"
+        assert target.tool_help["terminate"]["reason"] == "not-attempted-after-diagnostic-failure"
+    elif diagnostic == "appinfo-timeout":
+        assert target.registration["state"] == "unmeasured" and target.registration["timed_out"] is True
+    else:
+        assert target.registration["conversion"]["state"] == "unmeasured"
+    if diagnostic.endswith("timeout"):
+        record = next(record for record in commands.records if record.get("timed_out"))
+        assert (
+            record["status"] is None
+            and record["stdout_sha256"] == digest(b"")
+            and record["stderr_sha256"] == digest(b"")
+        )
+    expected = {
+        "action": "session",
+        "session": "1" * 64,
+        "backend": "http://127.0.0.1:1234",
+        "retain": "false",
+    }
+    url = "apsatransport://fixture?" + urlencode(expected)
+    if primary_timeout:
+        with pytest.raises(CommandFailure) as caught:
+            target.deliver(url, expected)
+        assert caught.value.reason == "command-timeout"
+        assert target.delivery_observations == []
+        assert commands.records[-1]["operation"] == "ios-simctl-openurl"
+    else:
+        target.deliver(url, expected)
+        assert len(target.delivery_observations) == 1
+        assert (
+            target.delivery_observations[0]["callback_events"]["receipts"][0]["matches_expected_dispatch"]
+            is True
+        )
+
+
+def test_ios_diagnostic_wrapper_cannot_swallow_primary_command_or_arbitrary_metadata(tmp_path, monkeypatch):
+    target = IosTarget.__new__(IosTarget)
+    target.device = "11111111-2222-3333-4444-555555555555"
+    target.package = "apsa.fixture.new"
+    target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "new-set")]
+    target.commands = Commands(tmp_path, env={})
+    monkeypatch.setattr(target.commands, "run", lambda *a, **kw: pytest.fail("forbidden diagnostic command"))
+    for tail in [
+        ["launch", target.device, target.package],
+        ["openurl", target.device, "new-uri"],
+        ["appinfo", target.device, "other-package"],
+    ]:
+        with pytest.raises(ValueError, match="diagnostic command scope differs"):
+            target.diagnostic_command(target.simctl + tail, timeout=10)
