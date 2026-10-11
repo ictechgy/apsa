@@ -1,5 +1,43 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## Published 1.5.1 — 2026-10-11
+
+[1.5.1](https://github.com/ictechgy/apsa/releases/tag/v1.5.1) is bound to source commit `409f15e92aee9307a80161b3b2b060799ee820cf` through a lightweight tag that was not moved.
+- **Same source as the evaluated runtime:** these paths are identical to `a76fd9f`: `src`, `apsa`, `quaygate`, `pyproject.toml`, `uv.lock`, `requirements-release.txt`, `action.yml`, `server.json`, `plugins` and `.claude-plugin`.
+- **`main`:** fast-forwarded to the same commit. That push skipped the main-context publish path as intended ([38106438824](https://github.com/ictechgy/apsa/actions/runs/38106438824)).
+
+The tag-context [release workflow 38106189585](https://github.com/ictechgy/apsa/actions/runs/38106189585) passed all 17 jobs:
+
+- **CI:** the eleven CI jobs.
+- **Packaging and publication:** the verified package build, PyPI Trusted Publishing, MCP Registry publication by GitHub OIDC and the GitHub release downloads.
+
+**Published packages:**
+- **PyPI:**
+  - `apsa-1.5.1-py3-none-any.whl` (sha256 `30e3441cf7bffdf75ae28bd26591970b9b8fcf25628b2c4b62e317928bbc224f`)
+  - `apsa-1.5.1.tar.gz` (sha256 `221b8f7815b01fd5c65e4728e7c2727e07dfe3bc323bc50bab2b85f948c5fd33`)
+  - Both have provenance.
+- **MCP Registry:** `io.github.ictechgy/apsa` 1.5.1 is listed as active.
+
+Post-publication checks ran on newly generated synthetic projects:
+
+- **Action install path:** uv installed the hash-locked `requirements-release.txt` and then `apsa==1.5.1` from PyPI.
+  - The SARIF scan exited 0 with 7 results and passed `scripts/check_sarif.py`, with repository-relative URIs and a MASWE summary.
+  - The first attempt, minutes after publication, could not resolve `apsa==1.5.1` because uv's view of the PyPI index had not caught up. It resolved on the next try.
+- **Cold start:** `uvx --python 3.12 apsa@1.5.1` with an empty cache reported 1.5.1.
+  - Over MCP stdio it served 23 tools, and `audit_scan` completed.
+  - `tool_manifest_sha256` equalled both the hash recomputed from `tools/list` and the published default in [MCP_SECURITY.md](docs/MCP_SECURITY.md), unchanged from 1.4.0.
+- **Plugin:** Claude Code 2.1.296, with an isolated configuration directory, installed plugin 1.5.1 from the marketplace.
+  - The plugin's skill includes the large-input paragraph.
+  - Its MCP server runs `uvx --python 3.12 apsa@1.5.1`.
+- **Large input from the published package:** the PyPI 1.5.1 build scanned OsmAnd's app folder at the blind pair's vulnerable commit.
+  - The audit was partial (exit 3) and took 21 s.
+  - It omitted 10 localized values files (4.1 MiB), with `app_scope_complete` true.
+  - It reported 50 findings, the same as the evaluated runtime.
+- **GitHub-hosted Action:** [ictechgy/apsa-action-smoke](https://github.com/ictechgy/apsa-action-smoke) ran `uses: ictechgy/apsa@409f15e92aee9307a80161b3b2b060799ee820cf` with default inputs ([run 38106534125](https://github.com/ictechgy/apsa-action-smoke/actions/runs/38106534125)).
+  - **Retries:** attempts 1 and 2, started within four minutes of publication, failed to resolve `apsa==1.5.1` for the same index-lag reason. Attempt 3 installed `apsa==1.5.1` with no version-mismatch warning, and the audit exited 0.
+  - **Code scanning:** it recorded analysis 1930395952 for `APSA 1.5.1` with 7 results and no processing errors.
+  - **Alerts:** the seven open alerts from the 1.4.0 and 1.5.0 analyses remained the same open alerts, now seen at the new commit, so fingerprints carried over unchanged.
+
 ## APSA 1.5.1 large inputs — candidate, 2026-10-10
 
 1.5.1 is a patch on 1.5.0, developed on `dev/large-input`. Upgrade effects are listed in the README ("Upgrading from 1.5.0").
