@@ -25,6 +25,18 @@ public final class TransportActivity extends Activity {
         return out.toString();
     }
     String build() throws Exception { return hash(Files.readAllBytes(new File(getApplicationInfo().sourceDir).toPath())); }
+    /** Finite diagnostic categories only; never expose exception messages or class names. */
+    static String errorCategory(Exception error) {
+        if (error instanceof java.net.SocketTimeoutException) return "socket-timeout";
+        if (error instanceof java.net.ConnectException) return "connect";
+        if (error instanceof java.net.UnknownHostException) return "host";
+        if (error instanceof java.io.IOException) return "io";
+        if (error instanceof org.json.JSONException) return "json";
+        if (error instanceof SecurityException) return "security";
+        if (error instanceof IllegalArgumentException) return "argument";
+        if (error instanceof IllegalStateException) return "http-status";
+        return "other";
+    }
     JSONObject http(String route) throws Exception {
         HttpURLConnection conn = (HttpURLConnection)new URL(backend + route).openConnection();
         conn.setConnectTimeout(10000); conn.setReadTimeout(10000); conn.setRequestMethod("POST");
@@ -52,6 +64,7 @@ public final class TransportActivity extends Activity {
     void deliver(Intent intent) {
         final Uri uri = intent.getData();
         worker.execute(() -> {
+            String phase = "binding";
             try {
                 if (!Intent.ACTION_VIEW.equals(intent.getAction()) || uri == null || !"apsatransport".equals(uri.getScheme()) || !"fixture".equals(uri.getHost())) throw new IllegalArgumentException();
                 String challenge = uri.getQueryParameter("session"), action = uri.getQueryParameter("action");
@@ -62,28 +75,40 @@ public final class TransportActivity extends Activity {
                     session = challenge; backend = uri.getQueryParameter("backend");
                     if (backend == null || !backend.matches("http://10\\.0\\.2\\.2:[0-9]+")) throw new IllegalArgumentException();
                     retain = "true".equals(uri.getQueryParameter("retain")); account = "a";
+                    phase = "http-issue";
                     token = http("/issue").getString("credential");
                     state = "synthetic-unique-a synthetic-unique-login_a";
+                    phase = "state-write";
                     Files.write(new File(getFilesDir(), "state.dat").toPath(), state.getBytes(StandardCharsets.UTF_8));
+                    phase = "response-write";
                     emit(new JSONObject().put("action", action).put("fresh_store", true));
                 } else {
                     if (!session.equals(challenge)) throw new IllegalArgumentException();
                     if ("transition".equals(action)) {
                         if (after || !"logout".equals(uri.getQueryParameter("kind"))) throw new IllegalArgumentException();
+                        phase = "http-logout";
                         http("/logout"); account = ""; token = ""; after = true;
                         state = "synthetic-unique-state synthetic-unique-delivery" + (retain ? " synthetic-unique-a" : "");
+                        phase = "state-write";
                         Files.write(new File(getFilesDir(), "state.dat").toPath(), state.getBytes(StandardCharsets.UTF_8));
+                        phase = "response-write";
                         emit(new JSONObject().put("action", action).put("kind", "logout"));
                     } else if ("capture".equals(action)) {
                         String nonce = uri.getQueryParameter("nonce");
                         if (nonce == null || !nonce.matches("[a-f0-9]{64}") || !account.equals(uri.getQueryParameter("account")) || !(account.isEmpty() ? "logged_out" : "authenticated").equals(uri.getQueryParameter("state")) || !(after ? "logout" : "").equals(uri.getQueryParameter("transition"))) throw new IllegalArgumentException();
+                        phase = "state-read";
+                        String storage = new String(Files.readAllBytes(new File(getFilesDir(), "state.dat").toPath()), StandardCharsets.UTF_8);
+                        phase = "response-write";
                         emit(new JSONObject().put("action", action).put("nonce", nonce).put("snapshot", uri.getQueryParameter("snapshot"))
                             .put("transition", after ? "logout" : "").put("completeness", "complete")
-                            .put("storage", new String(Files.readAllBytes(new File(getFilesDir(), "state.dat").toPath()), StandardCharsets.UTF_8)));
+                            .put("storage", storage));
                     } else throw new IllegalArgumentException();
                 }
-            } catch (Exception ignored) {
-                try { emit(new JSONObject().put("action", "fixture-error").put("code", "binding-or-transport")); } catch (Exception suppressed) { }
+            } catch (Exception error) {
+                try {
+                    JSONObject diagnostic = new JSONObject().put("schema_version", 1).put("phase", phase).put("category", errorCategory(error));
+                    emit(new JSONObject().put("action", "fixture-error").put("code", "binding-or-transport").put("diagnostic", diagnostic));
+                } catch (Exception suppressed) { }
             }
         });
     }

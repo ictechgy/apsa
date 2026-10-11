@@ -518,6 +518,63 @@ required jobs; the original four-job prefix and both Swift sources are unchanged
 No local default-set SDK/device operations ran. These source checks do not
 establish the outcome of either new CI control.
 
+## Ninth isolated execution
+
+The complete 125-file V14 patch
+`525b2723ae63b311c7f9f32c15b2201af153fa352b16fda5529f26e09d33b78a`
+received independent code APPROVE / source READY after frozen-source CLI
+diagnostic closure, and architecture CLEAR. The initial code COMMENT report
+and final APPROVE report are preserved separately. Actual LSP tooling was
+unavailable; the reviewer accepted its independent project Pyright CLI checks
+over all 101 changed Python files. Exactly 346 manifest-bound files became
+commit `3caba3a22af975b1147f1162becfacc5e73497f0`, tree
+`508dfb0df0f9f54f24f46c8a84c56a5341531dee`. Workflow, docs, driver and tests
+changed relative to V13; 342 remote entries were identical.
+
+- [CI](https://github.com/ictechgy/apsa/actions/runs/38152304763) passed all
+  11 jobs and [package gates](https://github.com/ictechgy/apsa/actions/runs/38152304744)
+  passed all four. The four Ubuntu main/package executions reported 1,861
+  passed / 26 skipped and four macOS executions reported 1,862 passed / 25
+  skipped. Required isolation reported Ubuntu 1,862/25 and macOS 1,864/23.
+  Ruff, Pyright, actual checkout/clean-wheel 23/25-tool SDK contracts and fresh
+  APK dual-engine/input-hash/MCP checks passed. All eight builds matched wheel
+  `76924137808148c40b267646b33b33e9864c5b24a8201e7074b7fb35de6af98d`
+  and sdist `ee6842f18dcce89b1fcf8a85df863b0565fcf9050bd6311e1872f448d485c4e5`.
+- [Runtime](https://github.com/ictechgy/apsa/actions/runs/38152304749) passed
+  two backend controls. Android installed/build verification and OS intent
+  submission succeeded, but the first app session returned `fixture-error`
+  before any case could pass. The fixed `binding-or-transport` category does
+  not distinguish input binding from HTTP/storage/response failures. Android
+  Java and its build/device/target/case/authority paths are source-identical to
+  V13; source identity neither explains nor erases this run's failure.
+- All four iOS modes were zero/inconclusive at the strict cold session-response
+  deadline. Both custom and both default-set controls held the exited readiness
+  owner's entry/event epoch with zero required URL receipts or response.
+  Both companion request receipts now had `uri_matches=true`; this confirms
+  the diagnostic binding fix alone. Neither showed opening completion or
+  acquired callback proof. Changing the device-set selector did not change
+  this observed boundary and does not establish an OS/root cause.
+- All four separated tails verified the same installed app/data/build paths
+  and NEW direct-launch entry/live PID/event epoch. Scene-active readiness did
+  not complete within the unchanged 15-second bound, no warm probe passed and
+  no tail promoted acquisition. All six cleanups and twelve artifact heads/ZIP
+  digests were confirmed. Individual artifact payloads remain unavailable;
+  console assertions and structured summaries are the observed evidence.
+
+The next source revision adds bounded fixed Android failure-stage/category
+diagnostics to make a fresh probe discriminating. It does not add retries,
+change primary deadlines or weaken the original fixture-error refusal. Raw
+exception messages, class names, URLs, credentials and stack traces are not
+reported. V14 approval is stale for this new material source change; complete
+independent source reviews and a new exact-head run remain required.
+
+The V15 diagnostic implementation passed 313 fresh synthetic mock tests with
+zero failures/skips, scoped Ruff/format and Pyright. The NEW Android fixture
+compiled, signed and verified with the known public JDK 17/Android SDK 35 paths;
+all seven compiler/signing commands exited zero. That APK was never installed
+or used for device execution locally. Both Swift sources and the six-job runtime
+workflow are unchanged. These checks establish source/build behavior only.
+
 ## New Apple development signature
 
 The user-authorized local lookup found a physical iPhone, an enabled developer

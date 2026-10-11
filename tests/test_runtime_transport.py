@@ -21,12 +21,16 @@ from mobile_audit.runtime_acquisition import AcquisitionRecorder, evaluate_backe
 from mobile_audit.runtime_evidence import build_binding, evaluate_workflow, validate_workflow
 from mobile_audit.runtime_transport import AuthorityServer, InstalledTransportAdapter, OwnedAuthority
 from scripts.validate_runtime_transport import (
+    ANDROID_ERROR_CATEGORIES,
+    ANDROID_ERROR_PHASES,
     IOS_PINNED_DEVICE_TYPE,
     IOS_PINNED_RUNTIME,
+    AndroidTarget,
     CommandFailure,
     Commands,
     FixtureFailure,
     IosTarget,
+    NewAndroidDevice,
     OwnedResources,
     cleanup_owned,
     failure_observation,
@@ -36,12 +40,160 @@ from scripts.validate_runtime_transport import (
     ios_process_identity,
     main,
     owned_ios_url,
+    safe_android_error,
     safe_ios_appinfo,
     safe_ios_dispatcher,
     safe_ios_entry,
     safe_ios_events,
     scenario,
 )
+
+
+def synthetic_android_error(phase="binding", category="argument"):
+    return {
+        "action": "fixture-error",
+        "code": "binding-or-transport",
+        "diagnostic": {"schema_version": 1, "phase": phase, "category": category},
+        "package": "apsa.fixture.new",
+        "apk_sha256": "a" * 64,
+        "session": "synthetic-private-session",
+        "account": "synthetic-private-account",
+        "state": "authenticated",
+        "delivery": "baseline",
+        "delivery_transport": "android-os-intent",
+    }
+
+
+@pytest.mark.parametrize("phase", sorted(ANDROID_ERROR_PHASES))
+@pytest.mark.parametrize("category", sorted(ANDROID_ERROR_CATEGORIES))
+def test_android_error_diagnostics_project_only_fixed_phase_and_category(phase, category):
+    raw = json.dumps(synthetic_android_error(phase, category)).encode()
+    result = safe_android_error(raw)
+    assert result == {
+        "state": "diagnostic-only",
+        "sha256": digest(raw),
+        "bytes": len(raw),
+        "schema_version": 1,
+        "phase": phase,
+        "category": category,
+    }
+    assert "synthetic-private" not in json.dumps(result)
+
+
+def malformed_android_error(case):
+    value = synthetic_android_error()
+    diagnostic = value["diagnostic"]
+    if case == "legacy":
+        value.pop("diagnostic")
+    elif case == "top-secret":
+        value["message"] = "synthetic-private-token"
+    elif case == "nested-secret":
+        diagnostic["message"] = "synthetic-private-token"
+    elif case == "unknown-phase":
+        diagnostic["phase"] = "synthetic-private-token"
+    elif case == "escaped-phase":
+        diagnostic["phase"] = "binding\nsynthetic-private-token"
+    elif case == "unknown-category":
+        diagnostic["category"] = "java.net.synthetic-private-token"
+    elif case == "category-list":
+        diagnostic["category"] = ["io"]
+    elif case == "phase-object":
+        diagnostic["phase"] = {"binding": True}
+    elif case == "schema-bool":
+        diagnostic["schema_version"] = True
+    elif case == "schema-string":
+        diagnostic["schema_version"] = "1"
+    elif case == "diagnostic-list":
+        value["diagnostic"] = [diagnostic]
+    elif case == "wrong-code":
+        value["code"] = "synthetic-private-token"
+    raw = json.dumps(value).encode()
+    if case == "duplicate-phase":
+        raw = raw.replace(b'"phase": "binding"', b'"phase": "io", "phase": "binding"')
+    elif case == "duplicate-top":
+        raw = raw.replace(b'"code":', b'"code": "synthetic-private-token", "code":', 1)
+    elif case == "oversize":
+        raw += b" " * 4096
+    return raw
+
+
+ANDROID_ERROR_BAD_CASES = [
+    "legacy",
+    "top-secret",
+    "nested-secret",
+    "unknown-phase",
+    "escaped-phase",
+    "unknown-category",
+    "category-list",
+    "phase-object",
+    "schema-bool",
+    "schema-string",
+    "diagnostic-list",
+    "wrong-code",
+    "duplicate-phase",
+    "duplicate-top",
+    "oversize",
+]
+
+
+@pytest.mark.parametrize("case", ANDROID_ERROR_BAD_CASES)
+def test_android_error_diagnostics_fail_unmeasured_without_echoing_untrusted_fields(case):
+    raw = malformed_android_error(case)
+    assert safe_android_error(raw) == {"state": "unmeasured", "sha256": digest(raw), "bytes": len(raw)}
+
+
+@pytest.mark.parametrize("raw", [b"", b"[]", b"null", b'{"diagnostic":', b"\xff", b"x" * 4097])
+def test_android_error_diagnostics_bound_malformed_inputs(raw):
+    assert safe_android_error(raw) == {"state": "unmeasured", "sha256": digest(raw), "bytes": len(raw)}
+
+
+@pytest.mark.parametrize("case", ["valid-binding", "valid-http"] + ANDROID_ERROR_BAD_CASES)
+def test_android_fixture_error_always_refuses_primary_without_retry(case, tmp_path, monkeypatch):
+    raw = (
+        json.dumps(synthetic_android_error("binding", "argument")).encode()
+        if case == "valid-binding"
+        else json.dumps(synthetic_android_error("http-issue", "socket-timeout")).encode()
+        if case == "valid-http"
+        else malformed_android_error(case)
+    )
+    target = AndroidTarget.__new__(AndroidTarget)
+    target.package = "apsa.fixture.new"
+    target.commands = Commands(tmp_path, env={})
+    target.device = NewAndroidDevice.__new__(NewAndroidDevice)
+    target.device.adb_prefix = ["new-mocked-adb", "-s", "new-owned-device"]
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert len(calls) <= 2, "fixture errors must not trigger a second response read or dispatch"
+        return b"" if len(calls) == 1 else raw
+
+    monkeypatch.setattr(target.commands, "run", run)
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.time.sleep", lambda *_: pytest.fail("unexpected retry")
+    )
+    with pytest.raises(FixtureFailure, match="fixture rejected binding or transport") as caught:
+        target.deliver("apsatransport://fixture?new-synthetic-uri", {"action": "session"})
+    observation = failure_observation(caught.value, "android-case-0-session-delivery-capture-http", [])
+    assert observation["reason"] == "android-fixture-binding-or-http"
+    assert observation["fixture"] == safe_android_error(raw)
+    assert "synthetic-private" not in json.dumps(observation)
+    assert len(calls) == 2
+    assert calls[1][-2:] == ["cat", "files/response.json"]
+
+
+def test_android_java_error_diagnostics_have_no_raw_exception_or_retry_channel():
+    source = (Path(__file__).parent / "fixtures/runtime/transport/TransportActivity.java").read_text()
+    assert '"fixture-error"' in source and '"binding-or-transport"' in source
+    assert 'String phase = "binding";' in source
+    for phase in ANDROID_ERROR_PHASES - {"binding"}:
+        assert f'phase = "{phase}";' in source
+    for category in ANDROID_ERROR_CATEGORIES:
+        assert f'return "{category}";' in source
+    assert all(
+        forbidden not in source
+        for forbidden in ["getMessage(", "getClass(", "printStackTrace(", "System.out", "System.err"]
+    )
 
 
 class Response(io.BytesIO):

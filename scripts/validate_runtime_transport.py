@@ -36,6 +36,26 @@ IOS_EVENT_LIMIT = 128
 IOS_ENTRY_BYTES = 4096
 IOS_PINNED_RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-18-5"
 IOS_PINNED_DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-16"
+ANDROID_ERROR_BYTES = 4096
+ANDROID_ERROR_PHASES = {
+    "binding",
+    "http-issue",
+    "http-logout",
+    "state-write",
+    "state-read",
+    "response-write",
+}
+ANDROID_ERROR_CATEGORIES = {
+    "argument",
+    "http-status",
+    "socket-timeout",
+    "connect",
+    "host",
+    "io",
+    "json",
+    "security",
+    "other",
+}
 IOS_PHASES = {
     "startup-app",
     "startup-scene",
@@ -72,6 +92,47 @@ IOS_PHASES = {
     "warm-context-url-absent",
     "os-dispatch",
 }
+
+
+def safe_android_error(raw: bytes) -> dict:
+    """Bounded fixture-error diagnostics never establish delivery/acquisition."""
+    result = {"state": "unmeasured", "sha256": digest(raw), "bytes": len(raw)}
+    if not raw or len(raw) > ANDROID_ERROR_BYTES:
+        return result
+    try:
+        value = json.loads(raw, object_pairs_hook=unique_journal_keys)
+        if (
+            not isinstance(value, dict)
+            or set(value)
+            != {
+                "action",
+                "code",
+                "diagnostic",
+                "package",
+                "apk_sha256",
+                "session",
+                "account",
+                "state",
+                "delivery",
+                "delivery_transport",
+            }
+            or value["action"] != "fixture-error"
+            or value["code"] != "binding-or-transport"
+        ):
+            return result
+        diagnostic = value["diagnostic"]
+        if (
+            not isinstance(diagnostic, dict)
+            or set(diagnostic) != {"schema_version", "phase", "category"}
+            or type(diagnostic["schema_version"]) is not int
+            or diagnostic["schema_version"] != 1
+            or diagnostic["phase"] not in ANDROID_ERROR_PHASES
+            or diagnostic["category"] not in ANDROID_ERROR_CATEGORIES
+        ):
+            return result
+        return {**result, "state": "diagnostic-only", **diagnostic}
+    except (ValueError, TypeError, KeyError):
+        return result
 
 
 def safe_ios_events(raw: bytes, expected: dict | None = None, readiness_epoch: str | None = None) -> dict:
@@ -1052,7 +1113,9 @@ class AndroidTarget:
                 try:
                     response = json.loads(raw)
                     if response.get("action") == "fixture-error":
-                        raise ValueError("NEW Android fixture rejected binding or transport")
+                        raise FixtureFailure(
+                            "NEW Android fixture rejected binding or transport", safe_android_error(raw)
+                        )
                     if all(
                         response.get(k) == v for k, v in expected.items() if k not in {"backend", "retain"}
                     ):
