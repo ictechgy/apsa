@@ -644,6 +644,8 @@ FAILURE_REASONS = {
     "NEW iOS callback receipt differs": "ios-callback-receipt-mismatch",
     "NEW iOS cold process epoch differs": "ios-cold-process-epoch-mismatch",
     "NEW iOS target termination unverified": "ios-target-termination-unverified",
+    "NEW iOS diagnostic control readiness differs": "ios-control-readiness-unverified",
+    "NEW iOS diagnostic URL control timed out": "ios-control-response-deadline",
     "Installed fixture transition unsupported": "installed-session-or-transition-unavailable",
     "Installed fixture target/build/transport response differs": "installed-target-build-transport-mismatch",
     "Installed fixture HTTP/session initialization differs": "installed-session-or-http-initialization",
@@ -1147,11 +1149,13 @@ class IosTarget:
         *,
         url_driver: str = "simctl",
         device_set_mode: str = "custom",
+        readiness_only: bool = False,
     ):
         if url_driver not in {"simctl", "companion"}:
             raise ValueError("NEW iOS URL driver unsupported")
         self.package, self.commands, self.device = package, commands, None
         self.url_driver, self.device_set_mode = url_driver, device_set_mode
+        self.readiness_only = readiness_only
         self.scheme = "a" + uuid.uuid4().hex
         self.delivery_observations: list[dict] = []
         self.simctl, self.device_set = ios_selector(commands.root, device_set_mode, commands.env)
@@ -1285,6 +1289,8 @@ class IosTarget:
             self.readiness_entry_epoch = self.readiness_entry.get("process_epoch_sha256")
             # No URL, credentials or baseline exist yet. Force the first session URL
             # through genuine cold OS scene connection; later captures/logout are warm.
+            if readiness_only:
+                return
             commands.run(self.simctl + ["terminate", self.device, self.package])
             terminated = {"state": "unmeasured"}
             if initial["state"] == "live-verified":
@@ -1652,6 +1658,7 @@ class IosTarget:
         if self.device is None:
             raise ValueError("NEW simulator has no owned UUID")
         old = self.events_observation().get("launch_epoch_sha256")
+        readiness = getattr(self, "readiness_epoch", old)
         app, data = self.container("app"), self.container("data")
         observed_build = {
             "executable_sha256": digest((app / "TransportFixture").read_bytes()),
@@ -1681,6 +1688,7 @@ class IosTarget:
                 "process_entry_after_launch": self.entry_observation(process=process),
             }
         events_path = data / "Documents/events.json"
+        events = safe_ios_events(b"", readiness_epoch=readiness)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             raw = (
@@ -1688,7 +1696,7 @@ class IosTarget:
                 if events_path.is_file() and events_path.stat().st_size <= IOS_EVENT_BYTES
                 else b""
             )
-            events = safe_ios_events(raw, readiness_epoch=old)
+            events = safe_ios_events(raw, readiness_epoch=readiness)
             if (
                 events.get("process_epoch_relation") == "new-since-readiness"
                 and events.get("counters", {}).get("scene-active", 0) >= 1
@@ -1700,9 +1708,16 @@ class IosTarget:
                 **result,
                 "fresh_epoch": False,
                 "warm_receipt_bound": False,
+                "diagnostic_launch_created_fresh_epoch": None
+                if old is None or events.get("launch_epoch_sha256") is None
+                else events["launch_epoch_sha256"] != old,
+                "callback_events": events,
                 "process_entry_after_launch": self.entry_observation(process=process),
             }
         result["fresh_epoch"] = True
+        result["diagnostic_launch_created_fresh_epoch"] = (
+            None if old is None else events["launch_epoch_sha256"] != old
+        )
         result["process_entry_after_launch"] = self.entry_observation(process=process)
         fields = {
             "action": "capture",
@@ -1726,13 +1741,147 @@ class IosTarget:
                 if events_path.is_file() and events_path.stat().st_size <= IOS_EVENT_BYTES
                 else b""
             )
-            events = safe_ios_events(raw, expected, old)
+            events = safe_ios_events(raw, expected, readiness)
             bound = events.get("state") == "complete" and any(
                 r["matches_expected_dispatch"] for r in events.get("receipts", [])
             )
             if bound or time.monotonic() >= deadline:
                 return {**result, "warm_receipt_bound": bound, "callback_events": events}
             time.sleep(0.1)
+
+    def url_control(self) -> dict:
+        """Separate NEW noncredential warm/cold probe; never acquisition or HTTP proof."""
+        if not getattr(self, "readiness_only", False) or self.device is None:
+            raise ValueError("NEW iOS diagnostic control requires readiness-only target")
+        events = self.events_observation()
+        process = ios_process_identity(self.owned_pid, self.installed / "TransportFixture")
+        if (
+            process["state"] != "live-verified"
+            or self.installed_build() != self.build
+            or events.get("state") != "complete"
+            or events.get("launch_epoch_sha256") != self.readiness_epoch
+            or events.get("counters", {}).get("scene-active", 0) < 1
+            or events.get("receipts")
+        ):
+            raise FixtureFailure("NEW iOS diagnostic control readiness differs", self.lifecycle_observation())
+        self.control_observations = []
+        self.control_observations.append(self.url_control_probe("warm-url-context"))
+        self.commands.run(self.simctl + ["terminate", self.device, self.package])
+        deadline = time.monotonic() + 5
+        while True:
+            terminated = ios_process_identity(self.owned_pid, self.installed / "TransportFixture")
+            if terminated["state"] != "live-verified" or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        self.process_observations["after_terminate"] = terminated
+        if terminated["state"] != "exited":
+            raise FixtureFailure(
+                "NEW iOS target termination unverified",
+                {
+                    "owned_process": terminated,
+                    "control_observations": self.control_observations,
+                },
+            )
+        self.control_observations.append(self.url_control_probe("cold-url-context"))
+        return {
+            "state": "passed",
+            "scope": "NEW noncredential warm/cold OS callback diagnostic only",
+            "platform": "ios",
+            "installed_build": self.build,
+            "acquisition": "unsupported",
+            "backend": "unsupported",
+            "storage": "unsupported",
+            "url_driver": self.url_driver,
+            "device_set_selector": self.device_set_mode,
+            "readiness_events": events,
+            "process_entry_readiness": getattr(self, "readiness_entry", {"state": "unmeasured"}),
+            "owned_process": self.process_observations,
+            "control_observations": self.control_observations,
+        }
+
+    def url_control_probe(self, lifecycle: str) -> dict:
+        if lifecycle not in {"warm-url-context", "cold-url-context"}:
+            raise ValueError("NEW iOS diagnostic control lifecycle differs")
+        fields = {
+            "action": "capture",
+            "session": uuid.uuid4().hex + uuid.uuid4().hex,
+            "nonce": uuid.uuid4().hex + uuid.uuid4().hex,
+            "snapshot": "before",
+            "account": "",
+            "state": "logged_out",
+            "transition": "",
+        }
+        # Companion accepts this full capture shape, but no session was initialized.
+        # Target must receipt the OS callback, then reject binding before HTTP/storage.
+        url = self.scheme + "://fixture?" + urlencode(fields)
+        self.dispatch_expectation = {
+            "action": "capture",
+            "lifecycle": lifecycle,
+            "uri_sha256": digest(url.encode()),
+            "session_sha256": digest(fields["session"].encode()),
+            "nonce_sha256": digest(fields["nonce"].encode()),
+        }
+        self.dispatch(url)
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            events = self.events_observation()
+            counters = events.get("counters", {})
+            epoch_matches = events.get("process_epoch_relation") == (
+                "same-as-readiness" if lifecycle == "warm-url-context" else "new-since-readiness"
+            )
+            raw = (
+                self.response.read_bytes()
+                if self.response.is_file() and self.response.stat().st_size <= 1024 * 1024
+                else b""
+            )
+            try:
+                response = json.loads(raw)
+            except (ValueError, UnicodeError):
+                response = None
+            rejected = isinstance(response, dict) and all(
+                response.get(key) == value
+                for key, value in {
+                    "action": "fixture-error",
+                    "code": "failure-session-binding",
+                    "package": self.package,
+                    **self.build,
+                    "session": "",
+                    "account": "",
+                    "state": "logged_out",
+                    "delivery": "baseline",
+                    "delivery_transport": "ios-os-url-context",
+                    "delivery_lifecycle": lifecycle,
+                }.items()
+            )
+            if (
+                events.get("state") == "complete"
+                and epoch_matches
+                and any(receipt["matches_expected_dispatch"] for receipt in events.get("receipts", []))
+                and rejected
+                and counters.get("failure-session-binding", 0) >= 1
+                and counters.get("http-issue", 0) == 0
+                and counters.get("http-logout", 0) == 0
+            ):
+                return {
+                    "lifecycle": lifecycle,
+                    "state": "passed",
+                    "session_rejection_observed": True,
+                    "http_events_absent": True,
+                    "response_sha256": digest(raw),
+                    "response_bytes": len(raw),
+                    "callback_events": events,
+                    "dispatcher": self.dispatcher_observation(),
+                    "process_entry": self.entry_observation(),
+                }
+            time.sleep(0.1)
+        raise FixtureFailure(
+            "NEW iOS diagnostic URL control timed out",
+            {
+                **self.lifecycle_observation(),
+                "expected_lifecycle": lifecycle,
+                "control_observations": getattr(self, "control_observations", []),
+            },
+        )
 
     def record_delivery(self, response: dict, expected: dict, *, raw: bytes):
         lifecycle = "cold-url-context" if expected["action"] == "session" else "warm-url-context"
@@ -2012,9 +2161,16 @@ def main():
     parser.add_argument("--ios-device-set", choices=["custom", "default"], default="custom")
     parser.add_argument("--ios-runtime")
     parser.add_argument("--ios-device-type", default=IOS_PINNED_DEVICE_TYPE)
+    parser.add_argument(
+        "--ios-os-url-control",
+        action="store_true",
+        help="NEW noncredential warm/cold callback diagnostic; no acquisition/HTTP claim",
+    )
     args = parser.parse_args()
     if args.ios_device_set == "default" and args.platform != "ios":
         parser.error("NEW default-set control requires iOS")
+    if args.ios_os_url_control and args.platform != "ios":
+        parser.error("NEW OS URL diagnostic control requires iOS")
     # Never offer a flag that lets local workspace execution bypass this boundary.
     if (
         os.environ.get("GITHUB_ACTIONS") != "true"
@@ -2073,6 +2229,7 @@ def main():
         "platform": args.platform,
         "ios_device_set": args.ios_device_set if args.platform == "ios" else None,
         "ios_url_driver": args.ios_url_driver if args.platform == "ios" else None,
+        "measurement": "os-url-diagnostic-control" if args.ios_os_url_control else "installed-acquisition",
         "commit": os.environ.get("GITHUB_SHA"),
         "run_id": os.environ.get("GITHUB_RUN_ID"),
         "source_sha256": {
@@ -2110,9 +2267,12 @@ def main():
             stage = "android-avd-create-and-boot"
             device.start()
             evidence["new_device"] = {"avd": device.name, "serial": device.serial, "adb_server_port": 5049}
-        for index, (invalidate, retain) in enumerate(
-            ((True, False), (True, True), (False, False), (False, True))
-        ):
+        policies = (
+            ((True, False),)
+            if args.ios_os_url_control
+            else ((True, False), (True, True), (False, False), (False, True))
+        )
+        for index, (invalidate, retain) in enumerate(policies):
             package = "apsa.fixture.c" + uuid.uuid4().hex + ".case" + str(index)
             target = None
             try:
@@ -2134,9 +2294,24 @@ def main():
                         args.ios_device_type,
                         url_driver=args.ios_url_driver,
                         device_set_mode=args.ios_device_set,
+                        readiness_only=args.ios_os_url_control,
                     )
-                stage = args.platform + "-case-" + str(index) + "-session-delivery-capture-http"
-                result = execute_case(target, invalidate=invalidate, retain=retain)
+                stage = (
+                    args.platform
+                    + "-case-"
+                    + str(index)
+                    + (
+                        "-os-url-diagnostic-control"
+                        if args.ios_os_url_control
+                        else "-session-delivery-capture-http"
+                    )
+                )
+                if args.ios_os_url_control:
+                    if not isinstance(target, IosTarget):
+                        raise ValueError("NEW OS URL diagnostic control requires iOS target")
+                    result = target.url_control()
+                else:
+                    result = execute_case(target, invalidate=invalidate, retain=retain)
                 if args.platform == "ios":
                     result["new_simulator_uuid"] = target.device
                 evidence["cases"].append(result)
@@ -2155,7 +2330,8 @@ def main():
                 (root / "evidence.json").write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
         evidence["state"] = (
             "passed"
-            if len(evidence["cases"]) == 4 and all(case["state"] == "passed" for case in evidence["cases"])
+            if len(evidence["cases"]) == len(policies)
+            and all(case["state"] == "passed" for case in evidence["cases"])
             else "inconclusive"
         )
     except Exception as error:
@@ -2184,6 +2360,22 @@ def main():
         evidence["commands_sha256"] = digest(json.dumps(commands.records, sort_keys=True).encode())
         evidence["terminal"] = True
         (root / "evidence.json").write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
+        if args.ios_os_url_control:
+            # Only the bounded diagnostic structures produced above; never raw files/URLs.
+            projection = {
+                key: evidence.get(key)
+                for key in ("measurement", "state", "terminal", "cases", "failure_observation", "cleanup")
+            }
+            serialized = json.dumps(projection, sort_keys=True).encode()
+            if len(serialized) > 8 * IOS_EVENT_BYTES:
+                projection = {
+                    "measurement": "os-url-diagnostic-control",
+                    "state": "unmeasured",
+                    "reason": "control-evidence-over-bound",
+                    "sha256": digest(serialized),
+                    "bytes": len(serialized),
+                }
+            print(json.dumps({"runtime_url_control_diagnostic": projection}, sort_keys=True), flush=True)
     print(json.dumps({"state": evidence["state"], "cases": len(evidence["cases"])}))
     if evidence["state"] != "passed":
         raise SystemExit(1)

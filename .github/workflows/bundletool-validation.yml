@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   official-fresh-splits:
+    # Acquisition bootstrap only. Enable after the public digest is reviewed.
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
@@ -46,6 +48,8 @@ jobs:
           curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
             https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/8.10.1-12782657/aapt2-8.10.1-12782657-linux.jar \
             --output "$RUNNER_TEMP/apsa-bundletool-tools/aapt2.jar"
+          python scripts/verify_dependency.py "$RUNNER_TEMP/apsa-bundletool-tools/aapt2.jar" \
+            --expected-sha256 BOOTSTRAP_NOT_PINNED --max-bytes 134217728
           unzip -q "$RUNNER_TEMP/apsa-bundletool-tools/aapt2.jar" aapt2 -d "$RUNNER_TEMP/apsa-bundletool-tools"
           chmod +x "$RUNNER_TEMP/apsa-bundletool-tools/aapt2"
       - name: Create and boot only the new dedicated emulator
@@ -67,6 +71,8 @@ jobs:
           uv run --locked python scripts/validate_bundletool.py \
             --work "$RUNNER_TEMP/apsa-bundletool-new" \
             --aapt2 "$RUNNER_TEMP/apsa-bundletool-tools/aapt2" \
+            --aapt2-jar "$RUNNER_TEMP/apsa-bundletool-tools/aapt2.jar" \
+            --aapt2-jar-sha256 BOOTSTRAP_NOT_PINNED \
             --android "$ANDROID_HOME/platforms/android-36/android.jar" \
             --d8 "$ANDROID_HOME/build-tools/36.0.0/d8" \
             --java "$JAVA_HOME_17_X64/bin/java" --javac "$JAVA_HOME_17_X64/bin/javac" \

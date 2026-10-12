@@ -9,29 +9,145 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import re
 import selectors
 import signal
+import stat
 import struct
 import subprocess
 import time
 import zipfile
 import zlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import NoReturn
 
 from mobile_audit.apks_selection import ApkSetSelectionError, select_apks
 
 BUNDLETOOL_VERSION = "1.18.3"
 BUNDLETOOL_SHA256 = "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29"
 PACKAGE = "audit.fresh.bundletool"
+AAPT2_MAX_BYTES = 128 * 1024 * 1024
+
+# Load the repository sibling explicitly; do not trust an ambient module of the
+# same name when this driver is imported by tests or launched from another cwd.
+_INTEGRITY_SPEC = importlib.util.spec_from_file_location(
+    "apsa_repository_dependency_integrity", Path(__file__).with_name("verify_dependency.py")
+)
+assert _INTEGRITY_SPEC is not None and _INTEGRITY_SPEC.loader is not None
+_INTEGRITY_HELPER = importlib.util.module_from_spec(_INTEGRITY_SPEC)
+_INTEGRITY_SPEC.loader.exec_module(_INTEGRITY_HELPER)
 REFERENCES = [
     "https://github.com/google/bundletool/releases/expanded_assets/1.18.3",
     "https://developer.android.com/tools/bundletool",
     "https://developer.android.com/build/building-cmdline#bundletool-build",
     "https://github.com/google/bundletool/blob/1.18.3/src/main/proto/commands.proto",
 ]
+
+
+class Aapt2IntegrityError(ValueError):
+    def __init__(self, reason: str, evidence: dict):
+        super().__init__(reason)
+        self.evidence = evidence
+
+
+def verify_aapt2(args: argparse.Namespace) -> dict:
+    """Trust executable bytes only through the predeclared whole-JAR pin."""
+    evidence = {
+        "status": "failed",
+        "provenance": "unverified",
+        "jar": None,
+        "entry_sha256": None,
+        "executable": None,
+    }
+
+    def fail(reason: str) -> NoReturn:
+        evidence["reason"] = reason
+        raise Aapt2IntegrityError(reason, evidence)
+
+    expected = getattr(args, "aapt2_jar_sha256", None)
+    jar_path = getattr(args, "aapt2_jar", None)
+    # The helper validates the expected pin before opening any input.
+    evidence["jar"] = _INTEGRITY_HELPER.verify(jar_path, expected, max_bytes=AAPT2_MAX_BYTES)
+    if evidence["jar"]["status"] != "verified":
+        fail("aapt2_jar_integrity_failed")
+    if not isinstance(expected, str) or not isinstance(jar_path, Path):
+        fail("aapt2_jar_invalid_input")
+    try:
+        # Bind ZIP interpretation to immutable bytes that also match the pin.
+        # Reopening after verification alone would permit a replacement race.
+        descriptor = os.open(jar_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= AAPT2_MAX_BYTES:
+                fail("aapt2_jar_invalid_file")
+            data = stream.read(AAPT2_MAX_BYTES + 1)
+            after = os.fstat(stream.fileno())
+        if (
+            len(data) != before.st_size
+            or len(data) > AAPT2_MAX_BYTES
+            or _INTEGRITY_HELPER._identity(before) != _INTEGRITY_HELPER._identity(after)
+            or hashlib.sha256(data).hexdigest() != expected.lower()
+        ):
+            fail("aapt2_jar_changed")
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+            names = [entry.filename for entry in entries]
+            if len(names) != len(set(names)):
+                fail("aapt2_jar_duplicate_entry")
+            for entry in entries:
+                name = entry.filename
+                parts = PurePosixPath(name).parts
+                if (
+                    entry.orig_filename != name
+                    or "\\" in name
+                    or name.startswith("/")
+                    or ".." in parts
+                    or (PurePosixPath(name).name == "aapt2" and name != "aapt2")
+                ):
+                    fail("aapt2_jar_unsafe_entry_path")
+                if stat.S_ISLNK(entry.external_attr >> 16):
+                    fail("aapt2_jar_symlink_entry")
+            if names.count("aapt2") != 1:
+                fail("aapt2_jar_missing_entry")
+            entry = archive.getinfo("aapt2")
+            if entry.is_dir() or not 0 < entry.file_size <= AAPT2_MAX_BYTES:
+                fail("aapt2_jar_entry_size_invalid")
+            digest = hashlib.sha256()
+            total = 0
+            with archive.open(entry) as stream:
+                while chunk := stream.read(min(1_048_576, AAPT2_MAX_BYTES - total + 1)):
+                    total += len(chunk)
+                    if total > AAPT2_MAX_BYTES:
+                        fail("aapt2_jar_entry_size_invalid")
+                    digest.update(chunk)
+            if total != entry.file_size:
+                fail("aapt2_jar_entry_size_invalid")
+            evidence["entry_sha256"] = digest.hexdigest()
+        executable = getattr(args, "aapt2", None)
+        if not isinstance(executable, Path):
+            fail("aapt2_executable_invalid_file")
+        mode = os.stat(executable, follow_symlinks=False).st_mode
+        if not stat.S_ISREG(mode) or not mode & 0o111:
+            fail("aapt2_executable_invalid_file")
+        evidence["executable"] = _INTEGRITY_HELPER.verify(
+            executable, evidence["entry_sha256"], max_bytes=AAPT2_MAX_BYTES
+        )
+        if evidence["executable"]["status"] != "verified":
+            fail("aapt2_executable_integrity_failed")
+        if not os.stat(executable, follow_symlinks=False).st_mode & 0o111:
+            fail("aapt2_executable_invalid_file")
+    except Aapt2IntegrityError:
+        raise
+    except (OSError, ValueError, TypeError, RuntimeError, EOFError, zipfile.BadZipFile, zlib.error):
+        fail("aapt2_input_unreadable_or_invalid")
+    evidence["status"] = "verified"
+    evidence["reason"] = "pinned_jar_entry_matches_executable"
+    evidence["provenance"] = "predeclared-jar-sha256-and-entry-byte-match"
+    return evidence
 
 
 def sha(path: Path) -> str:
@@ -232,6 +348,7 @@ def failure_diagnostic(result: dict, records: list[dict]) -> dict:
 
     return {
         "stage": result["stage"],
+        "aapt2_integrity": result.get("aapt2_integrity"),
         "error_type": result.get("error", {}).get("type"),
         "owned_command": metadata,
         "case_states": [selection_metadata(case) for case in result.get("cases", [])],
@@ -273,6 +390,7 @@ def console_evidence(result: dict) -> dict:
     source = result.get("source", {})
     probe = installed.get("resource_probe")
     return {
+        "aapt2_integrity": result.get("aapt2_integrity"),
         "source": {
             key: source[key]
             for key in ("source_root", "head_sha", "driver_sha256", "selector_sha256")
@@ -330,6 +448,7 @@ def resource_probe_evidence(output: str, returncode: int) -> dict:
 
 
 def compile_module(args: argparse.Namespace, root: Path, commands: Commands) -> Path:
+    verify_aapt2(args)
     write_sources(root)
     resources = root / "compiled-res.zip"
     commands.run([str(args.aapt2), "compile", "--dir", str(root / "res"), "-o", str(resources)])
@@ -495,8 +614,9 @@ def install_probe(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("work", "aapt2", "android", "javac", "java", "keytool", "d8"):
+    for name in ("work", "aapt2", "aapt2-jar", "android", "javac", "java", "keytool", "d8"):
         parser.add_argument(f"--{name}", type=Path, required=True)
+    parser.add_argument("--aapt2-jar-sha256", required=True)
     parser.add_argument("--bundletool", type=Path)
     parser.add_argument("--compile-only", action="store_true")
     parser.add_argument("--serial")
@@ -519,7 +639,7 @@ def main() -> None:
         "resource_merge_verified": False,
         "installed_split_set_verified": False,
         "state": "started",
-        "stage": "tool-input-hashes",
+        "stage": "aapt2-integrity",
         "source": {
             "source_root": "repository-checkout",
             "head_sha": os.environ.get("GITHUB_SHA")
@@ -531,8 +651,11 @@ def main() -> None:
     }
     exit_code = 1
     try:
+        result["aapt2_integrity"] = verify_aapt2(args)
+        result["stage"] = "tool-input-hashes"
         tool_paths = [
             args.aapt2,
+            args.aapt2_jar,
             args.android,
             args.javac,
             args.java,
@@ -541,8 +664,6 @@ def main() -> None:
             args.d8.parent / "lib/d8.jar",
         ]
         result["tool_sha256"] = {str(path): sha(path) for path in tool_paths}
-        if (args.aapt2.parent / "aapt2.jar").is_file():
-            result["tool_sha256"][str(args.aapt2.parent / "aapt2.jar")] = sha(args.aapt2.parent / "aapt2.jar")
         result["stage"] = "compiler-version-probes"
         commands.run([str(args.aapt2), "version"])
         commands.run([str(args.javac), "-version"])
@@ -663,6 +784,9 @@ def main() -> None:
                 else 1
             )
     except Exception as error:
+        if isinstance(error, Aapt2IntegrityError):
+            result["stage"] = "aapt2-integrity"
+            result["aapt2_integrity"] = error.evidence
         result["state"] = "execution-failed"
         result["error"] = {"type": type(error).__name__, "message": str(error)}
     finally:

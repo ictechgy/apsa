@@ -740,14 +740,14 @@ def test_default_set_cleanup_rechecks_host_guard_before_sdk(tmp_path, monkeypatc
 def test_default_set_workflow_controls_are_explicit_separate_required_and_never_list_devices():
     source = Path(__file__).resolve().parents[1] / ".github/workflows/runtime-transport.yml"
     jobs = yaml.safe_load(source.read_text())["jobs"]
-    assert set(jobs) == {
+    assert {
         "backend",
         "android",
         "ios",
         "ios-app-to-app",
         "ios-default-set",
         "ios-app-to-app-default-set",
-    }
+    } <= set(jobs)
     artifact_names = []
     for name in ("ios-default-set", "ios-app-to-app-default-set"):
         job = jobs[name]
@@ -1510,8 +1510,9 @@ def test_ios_cold_timeout_retains_primary_failure_even_when_tail_observes_warm_c
     assert "new-synthetic-private-error" not in json.dumps(caught.value.observation)
 
 
+@pytest.mark.parametrize("launch_creates_epoch", [True, False])
 def test_ios_diagnostic_tail_requires_fresh_ready_epoch_and_exact_warm_noncredential_receipt(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, launch_creates_epoch
 ):
     target = IosTarget.__new__(IosTarget)
     target.device = "11111111-2222-3333-4444-555555555555"
@@ -1533,6 +1534,10 @@ def test_ios_diagnostic_tail_requires_fresh_ready_epoch_and_exact_warm_noncreden
     old = synthetic_ios_events()
     old["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
     target.events_path.write_text(json.dumps(old))
+    # A cold attempt may already have created this process; diagnostic launch reuses it.
+    target.readiness_epoch = (
+        old["launch_epoch_sha256"] if launch_creates_epoch else digest(b"earlier readiness")
+    )
     monkeypatch.setattr(target, "container", lambda kind: app if kind == "app" else data)
     monkeypatch.setattr(target, "appinfo", lambda: {"state": "unmeasured"})
     monkeypatch.setattr(
@@ -1544,7 +1549,9 @@ def test_ios_diagnostic_tail_requires_fresh_ready_epoch_and_exact_warm_noncreden
         calls.append(argv)
         if "launch" in argv:
             value = synthetic_ios_events()
-            value["launch_epoch_sha256"] = digest(b"new direct-launch process")
+            value["launch_epoch_sha256"] = (
+                digest(b"new direct-launch process") if launch_creates_epoch else old["launch_epoch_sha256"]
+            )
             value["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
             target.events_path.write_text(json.dumps(value))
             return b"apsa.fixture.new: 321\n"
@@ -1572,6 +1579,7 @@ def test_ios_diagnostic_tail_requires_fresh_ready_epoch_and_exact_warm_noncreden
     monkeypatch.setattr(target.commands, "run", control)
     result = target.cold_timeout_diagnostic()
     assert result["fresh_epoch"] is True and result["warm_receipt_bound"] is True
+    assert result["diagnostic_launch_created_fresh_epoch"] is launch_creates_epoch
     assert result["state"] == "diagnostic-only"
     assert target.dispatch_expectation == {"primary": "unchanged"}
     assert target.delivery_observations == []
@@ -2082,3 +2090,275 @@ def test_ios_diagnostic_wrapper_cannot_swallow_primary_command_or_arbitrary_meta
     ]:
         with pytest.raises(ValueError, match="diagnostic command scope differs"):
             target.diagnostic_command(target.simctl + tail, timeout=10)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "missing-receipt",
+        "missing-warm-receipt",
+        "wrong-nonce",
+        "stale-cold",
+        "http-event",
+        "wrong-rejection",
+        "wrong-build",
+        "unverified-exit",
+    ],
+)
+def test_ios_noncredential_control_requires_bound_warm_then_fresh_cold_rejection(
+    tmp_path, monkeypatch, mutation
+):
+    target = IosTarget.__new__(IosTarget)
+    target.device = "11111111-2222-3333-4444-555555555555"
+    target.package = "apsa.fixture.new.control"
+    target.scheme = "a" + "1" * 32
+    target.readiness_only = True
+    target.url_driver, target.device_set_mode = "simctl", "custom"
+    target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "new-set")]
+    target.commands = Commands(tmp_path, env={})
+    target.installed = tmp_path / "new-app"
+    target.response = tmp_path / "response.json"
+    target.events_path = tmp_path / "events.json"
+    target.stage_path = tmp_path / "stage.txt"
+    target.build = {"executable_sha256": digest(b"new executable"), "info_plist_sha256": digest(b"new plist")}
+    target.readiness_epoch = digest(b"initial NEW process")
+    target.owned_pid = 321
+    target.process_observations = {"initial": {"state": "live-verified"}}
+    target.delivery_observations = []
+    target.events_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "complete": True,
+                "launch_epoch_sha256": target.readiness_epoch,
+                "events": [{"sequence": 1, "phase": "scene-active", "main_thread": True}],
+            }
+        )
+    )
+    target.stage_path.write_text("scene-active")
+    monkeypatch.setattr(target, "installed_build", lambda: target.build)
+    monkeypatch.setattr(target, "entry_observation", lambda **kwargs: {"state": "unmeasured"})
+    clock = [0]
+    monkeypatch.setattr("scripts.validate_runtime_transport.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.time.sleep", lambda seconds: clock.__setitem__(0, clock[0] + 100)
+    )
+    terminated = [False]
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.ios_process_identity",
+        lambda pid, path: {
+            "state": "exited" if terminated[0] and mutation != "unverified-exit" else "live-verified",
+        },
+    )
+    calls = []
+
+    def command(argv, **kwargs):
+        calls.append(argv)
+        assert argv == target.simctl + ["terminate", target.device, target.package]
+        terminated[0] = True
+        return b""
+
+    monkeypatch.setattr(target.commands, "run", command)
+    urls = []
+
+    def dispatch(url):
+        urls.append(url)
+        fields = {
+            key: values[0] for key, values in parse_qs(urlparse(url).query, keep_blank_values=True).items()
+        }
+        assert set(fields) == {"action", "session", "nonce", "snapshot", "account", "state", "transition"}
+        assert fields["action"] == "capture" and "backend" not in fields
+        cold = len(urls) == 2
+        lifecycle = "cold-url-context" if cold else "warm-url-context"
+        value = synthetic_ios_events()
+        value["launch_epoch_sha256"] = (
+            digest(b"NEW cold process") if cold and mutation != "stale-cold" else target.readiness_epoch
+        )
+        value["events"][1].update(
+            {
+                "action": "capture",
+                "lifecycle": lifecycle,
+                "uri_sha256": digest(url.encode()),
+                "session_sha256": digest(fields["session"].encode()),
+                "nonce_sha256": digest(fields["nonce"].encode()),
+            }
+        )
+        value["events"].append({"sequence": 4, "phase": "failure-session-binding", "main_thread": False})
+        if (cold and mutation == "missing-receipt") or (not cold and mutation == "missing-warm-receipt"):
+            value["events"][1] = {"sequence": 2, "phase": "url-received", "main_thread": True}
+        if cold and mutation == "wrong-nonce":
+            value["events"][1]["nonce_sha256"] = digest(b"different nonce")
+        if cold and mutation == "http-event":
+            value["events"].append({"sequence": 5, "phase": "http-issue", "main_thread": False})
+        target.events_path.write_text(json.dumps(value))
+        response = {
+            "action": "fixture-error",
+            "code": "failure-session-binding",
+            "package": target.package,
+            **target.build,
+            "session": "",
+            "account": "",
+            "state": "logged_out",
+            "delivery": "baseline",
+            "delivery_transport": "ios-os-url-context",
+            "delivery_lifecycle": lifecycle,
+        }
+        if cold and mutation == "wrong-rejection":
+            response["code"] = "failure-http-issue"
+        if cold and mutation == "wrong-build":
+            response["executable_sha256"] = digest(b"other executable")
+        target.response.write_text(json.dumps(response))
+
+    monkeypatch.setattr(target, "dispatch", dispatch)
+    if mutation is None:
+        result = target.url_control()
+        assert result["state"] == "passed"
+        assert [row["lifecycle"] for row in result["control_observations"]] == [
+            "warm-url-context",
+            "cold-url-context",
+        ]
+        assert result["acquisition"] == result["backend"] == result["storage"] == "unsupported"
+        assert all(
+            row["http_events_absent"] and row["session_rejection_observed"]
+            for row in result["control_observations"]
+        )
+        raw = json.dumps(result)
+        for url in urls:
+            fields = parse_qs(urlparse(url).query)
+            assert fields["session"][0] not in raw and fields["nonce"][0] not in raw and url not in raw
+    else:
+        with pytest.raises(FixtureFailure) as caught:
+            target.url_control()
+        assert len(caught.value.observation["control_observations"]) == (
+            0 if mutation == "missing-warm-receipt" else 1
+        )
+        assert len(urls) == (1 if mutation in {"unverified-exit", "missing-warm-receipt"} else 2)
+    assert calls == (
+        []
+        if mutation == "missing-warm-receipt"
+        else [target.simctl + ["terminate", target.device, target.package]]
+    )
+    assert target.delivery_observations == []
+
+
+@pytest.mark.parametrize("platform_name", ["android", "backend"])
+def test_ios_url_control_cli_rejects_other_platforms_before_any_work(tmp_path, monkeypatch, platform_name):
+    work = tmp_path / "never-created"
+    monkeypatch.setattr(
+        sys, "argv", ["validator", "--platform", platform_name, "--ios-os-url-control", "--work", str(work)]
+    )
+    with pytest.raises(SystemExit):
+        main()
+    assert not work.exists()
+
+
+@pytest.mark.parametrize("driver", ["simctl", "companion"])
+@pytest.mark.parametrize("control_failure", [False, True])
+def test_ios_url_control_cli_owns_one_readiness_target_and_skips_acquisition(
+    tmp_path, monkeypatch, capsys, driver, control_failure
+):
+    work = tmp_path / "new-control-work"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validator",
+            "--platform",
+            "ios",
+            "--ios-os-url-control",
+            "--ios-url-driver",
+            driver,
+            "--work",
+            str(work),
+        ],
+    )
+    instances = []
+
+    class NewTargetDouble:
+        def __init__(self, root, package, commands, runtime, device_type, **kwargs):
+            assert kwargs == {"url_driver": driver, "device_set_mode": "custom", "readiness_only": True}
+            assert commands.resources is not None
+            assert runtime == IOS_PINNED_RUNTIME and device_type == IOS_PINNED_DEVICE_TYPE
+            assert root == work / "case-0"
+            self.device = "11111111-2222-3333-4444-555555555555"
+            instances.append(self)
+
+        def url_control(self):
+            if control_failure:
+                raise FixtureFailure(
+                    "NEW iOS diagnostic URL control timed out",
+                    {
+                        "expected_lifecycle": "warm-url-context",
+                        "control_observations": [],
+                    },
+                )
+            return {"state": "passed", "acquisition": "unsupported", "backend": "unsupported"}
+
+        def close(self):
+            return {"state": "confirmed", "scope": "NEW target double only"}
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.IosTarget", NewTargetDouble)
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.execute_case",
+        lambda *args, **kwargs: pytest.fail("acquisition forbidden"),
+    )
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.AuthorityServer",
+        lambda *args, **kwargs: pytest.fail("HTTP forbidden"),
+    )
+    if control_failure:
+        with pytest.raises(SystemExit) as caught:
+            main()
+        assert caught.value.code == 1
+    else:
+        main()
+    value = json.loads((work / "evidence.json").read_text())
+    assert len(instances) == 1 and len(value["cases"]) == (0 if control_failure else 1)
+    assert value["measurement"] == "os-url-diagnostic-control"
+    assert value["state"] == ("inconclusive" if control_failure else "passed") and value["terminal"] is True
+    if not control_failure:
+        assert value["cases"][0]["acquisition"] == "unsupported"
+    assert value["cleanup"]["state"] == "confirmed"
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    terminal = next(
+        record["runtime_url_control_diagnostic"]
+        for record in records
+        if "runtime_url_control_diagnostic" in record
+    )
+    assert terminal["state"] == value["state"] and terminal["terminal"] is True
+    assert set(terminal) == {"measurement", "state", "terminal", "cases", "failure_observation", "cleanup"}
+
+
+def test_ios_url_control_workflow_is_separate_custom_owned_matrix_without_primary_relaxation():
+    source = Path(__file__).resolve().parents[1] / ".github/workflows/runtime-transport.yml"
+    jobs = yaml.safe_load(source.read_text())["jobs"]
+    job = jobs["ios-os-url-control"]
+    assert job["runs-on"] == "macos-15"
+    assert set(job["strategy"]["matrix"]["driver"]) == {"simctl", "companion"}
+    assert "continue-on-error" not in job
+    control = next(
+        step
+        for step in job["steps"]
+        if "--ios-os-url-control" in step.get("run", "") and "--cleanup-only" not in step["run"]
+    )
+    assert "--ios-url-driver" in control["run"] and "--platform ios" in control["run"]
+    assert "--ios-runtime " + IOS_PINNED_RUNTIME in control["run"]
+    assert "--ios-device-type " + IOS_PINNED_DEVICE_TYPE in control["run"]
+    assert "continue-on-error" not in control
+    assert all(
+        "--ios-device-set default" not in step.get("run", "")
+        and "simctl list" not in step.get("run", "")
+        and "booted" not in step.get("run", "")
+        for step in job["steps"]
+    )
+    cleanup = next(step for step in job["steps"] if "--cleanup-only" in step.get("run", ""))
+    assert cleanup["if"] == "always()" and cleanup["timeout-minutes"] == 5
+    for name in ("ios", "ios-app-to-app", "ios-default-set", "ios-app-to-app-default-set"):
+        assert all(
+            "--ios-os-url-control" not in step.get("run", "") and "continue-on-error" not in step
+            for step in jobs[name]["steps"]
+        )

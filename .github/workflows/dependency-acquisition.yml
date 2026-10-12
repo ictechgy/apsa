@@ -1,0 +1,103 @@
+name: Public dependency digest acquisition (no execution)
+
+on:
+  push:
+    branches: ["validation/apsa-final-*"]
+    paths: [".github/workflows/dependency-acquisition.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acquire-public-aapt2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - name: Acquire twice from the exact official URL; compare available sidecars
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import tempfile
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          url = "https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/8.10.1-12782657/aapt2-8.10.1-12782657-linux.jar"
+          class FixedOrigin(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  if newurl != req.full_url:
+                      raise ValueError("unexpected public artifact redirect")
+                  return super().redirect_request(req, fp, code, msg, headers, newurl)
+          opener = urllib.request.build_opener(FixedOrigin())
+          evidence = Path(tempfile.mkdtemp(prefix="aapt2-acquisition-", dir=os.environ["RUNNER_TEMP"]))
+          record = {"schema": 1, "head_sha": os.environ["GITHUB_SHA"], "run_id": os.environ["GITHUB_RUN_ID"], "url": url, "coordinate": "com.android.tools.build:aapt2:8.10.1-12782657:linux.jar", "mode": "acquisition-only-no-extraction-no-execution", "vendor_signature_verified": False, "sidecars": {}, "acquisitions": [], "status": "started"}
+          try:
+              for algorithm, length in (("sha256", 64), ("sha512", 128), ("sha1", 40)):
+                  entry = {}
+                  try:
+                      with opener.open(url + "." + algorithm, timeout=30) as response:
+                          entry["http_status"] = response.status
+                          raw = response.read(4097)
+                      if len(raw) > 4096:
+                          raise ValueError("oversized checksum sidecar")
+                      value = raw.decode("ascii").strip()
+                      if not re.fullmatch(r"[0-9a-fA-F]{" + str(length) + r"}", value):
+                          raise ValueError("malformed checksum sidecar")
+                      entry["digest"] = value.lower()
+                  except urllib.error.HTTPError as error:
+                      entry["http_status"] = error.code
+                  except urllib.error.URLError as error:
+                      entry["transport_error"] = type(error.reason).__name__
+                  record["sidecars"][algorithm] = entry
+              for attempt in range(2):
+                  hashes = {name: hashlib.new(name) for name in ("sha256", "sha512", "sha1")}
+                  size = 0
+                  with opener.open(url, timeout=60) as response:
+                      if response.status != 200:
+                          raise ValueError("unexpected artifact HTTP status")
+                      while block := response.read(1024 * 1024):
+                          size += len(block)
+                          if size > 128 * 1024 * 1024:
+                              raise ValueError("oversized artifact")
+                          for checksum in hashes.values():
+                              checksum.update(block)
+                  if not size:
+                      raise ValueError("empty artifact")
+                  observation = {"attempt": attempt + 1, "bytes": size, **{name: value.hexdigest() for name, value in hashes.items()}}
+                  for name, sidecar in record["sidecars"].items():
+                      if "digest" in sidecar and observation[name] != sidecar["digest"]:
+                          raise ValueError("upstream checksum mismatch: " + name)
+                  record["acquisitions"].append(observation)
+              if record["acquisitions"][0]["sha256"] != record["acquisitions"][1]["sha256"]:
+                  raise ValueError("independent acquisitions disagree")
+              record["status"] = "acquired-for-review-not-yet-a-repository-pin"
+          except Exception as error:
+              record["status"] = "failed"
+              record["error_type"] = type(error).__name__
+              raise
+          finally:
+              (evidence / "acquisition.json").write_text(json.dumps(record, sort_keys=True, indent=2) + "\n")
+              print("APSA_DEPENDENCY_ACQUISITION=" + json.dumps(record, sort_keys=True))
+              with open(os.environ["GITHUB_ENV"], "a") as environment:
+                  environment.write("APSA_ACQUISITION_EVIDENCE=" + str(evidence) + "\n")
+          PY
+      - name: Preserve only public textual provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-aapt2-acquisition-provenance
+          path: ${{ env.APSA_ACQUISITION_EVIDENCE }}/acquisition.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Remove only this new evidence directory after upload
+        if: always() && env.APSA_ACQUISITION_EVIDENCE != ''
+        run: rm -rf -- "$APSA_ACQUISITION_EVIDENCE"

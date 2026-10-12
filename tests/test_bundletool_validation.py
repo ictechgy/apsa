@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import os
 import shutil
+import stat
 import sys
 import zipfile
 from pathlib import Path
@@ -30,14 +31,21 @@ def driver():
 
 def test_module_compiles_real_manifest_resources_and_dex(driver, tmp_path):
     sdk_value = os.environ.get("APSA_TEST_ANDROID_SDK")
+    aapt2_jar = os.environ.get("APSA_TEST_AAPT2_JAR")
+    aapt2_jar_sha256 = os.environ.get("APSA_TEST_AAPT2_JAR_SHA256")
     javac_value = os.environ.get("APSA_TEST_JAVAC") or shutil.which("javac")
-    if not sdk_value or not javac_value:
-        pytest.skip("Requires designated public SDK/JDK tools; no retained binary fixtures")
+    if not sdk_value or not javac_value or not aapt2_jar or not aapt2_jar_sha256:
+        pytest.skip("Requires designated public SDK/JDK and pinned AAPT2 JAR; no retained binary fixtures")
     sdk = Path(sdk_value)
     tools = sdk / "build-tools" / os.environ.get("APSA_TEST_ANDROID_BUILD_TOOLS", "36.0.0")
     android = sdk / "platforms" / os.environ.get("APSA_TEST_ANDROID_PLATFORM", "android-36") / "android.jar"
     args = argparse.Namespace(
-        aapt2=tools / "aapt2", d8=tools / "d8", android=android, javac=Path(javac_value)
+        aapt2=tools / "aapt2",
+        aapt2_jar=Path(aapt2_jar),
+        aapt2_jar_sha256=aapt2_jar_sha256,
+        d8=tools / "d8",
+        android=android,
+        javac=Path(javac_value),
     )
     root = tmp_path / "fresh-module"
     root.mkdir()
@@ -243,3 +251,148 @@ def test_resource_probe_evidence_requires_exact_french_value_package_and_code(dr
         ]
         is None
     )
+
+
+def synthetic_aapt2(tmp_path, entries=None, executable=b"synthetic executable bytes; never run\n"):
+    jar = tmp_path / "synthetic-aapt2.jar"
+    with zipfile.ZipFile(jar, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in entries or [("aapt2", executable), ("META-INF/MANIFEST.MF", b"synthetic\n")]:
+            archive.writestr(name, data)
+    binary = tmp_path / "synthetic-aapt2"
+    binary.write_bytes(executable)
+    binary.chmod(0o700)
+    return argparse.Namespace(
+        aapt2=binary,
+        aapt2_jar=jar,
+        aapt2_jar_sha256=hashlib.sha256(jar.read_bytes()).hexdigest(),
+    )
+
+
+def test_aapt2_integrity_matches_executable_to_unique_pinned_jar_entry(driver, tmp_path, monkeypatch):
+    args = synthetic_aapt2(tmp_path)
+    monkeypatch.setattr(driver.Commands, "run", lambda *_args, **_kwargs: pytest.fail("must not execute"))
+    evidence = driver.verify_aapt2(args)
+    assert evidence["status"] == "verified"
+    assert evidence["provenance"] == "predeclared-jar-sha256-and-entry-byte-match"
+    assert evidence["jar"]["sha256"] == args.aapt2_jar_sha256
+    assert evidence["entry_sha256"] == evidence["executable"]["sha256"]
+    assert str(tmp_path) not in driver.json.dumps(evidence)
+
+
+@pytest.mark.parametrize("mutate", ["jar", "executable", "truncated-jar", "truncated-executable"])
+def test_aapt2_mutation_or_truncation_fails_before_compile_execution(driver, tmp_path, monkeypatch, mutate):
+    args = synthetic_aapt2(tmp_path)
+    path = args.aapt2_jar if "jar" in mutate else args.aapt2
+    original = path.read_bytes()
+    if mutate.startswith("truncated"):
+        path.write_bytes(original[:-1])
+    else:
+        changed = bytearray(original)
+        changed[len(changed) // 2] ^= 1
+        path.write_bytes(changed)
+    monkeypatch.setattr(driver.Commands, "run", lambda *_args, **_kwargs: pytest.fail("must not execute"))
+    with pytest.raises(driver.Aapt2IntegrityError) as caught:
+        driver.compile_module(args, tmp_path, driver.Commands(tmp_path))
+    assert caught.value.evidence["status"] == "failed"
+    assert not (tmp_path / "AndroidManifest.xml").exists()
+
+
+@pytest.mark.parametrize("pin", [None, "", "a" * 63, "a" * 65, "g" * 64, "a" * 64 + "\n"])
+def test_aapt2_missing_or_bad_pin_fails_before_input_read_or_execution(driver, tmp_path, monkeypatch, pin):
+    args = synthetic_aapt2(tmp_path)
+    args.aapt2_jar_sha256 = pin
+    monkeypatch.setattr(driver.os, "open", lambda *_args, **_kwargs: pytest.fail("must not open"))
+    monkeypatch.setattr(driver.Commands, "run", lambda *_args, **_kwargs: pytest.fail("must not execute"))
+    with pytest.raises(driver.Aapt2IntegrityError) as caught:
+        driver.compile_module(args, tmp_path, driver.Commands(tmp_path))
+    assert caught.value.evidence["jar"]["reason"] == "invalid_expected_sha256"
+
+
+@pytest.mark.parametrize("name", ["../aapt2", "/aapt2", "bin/aapt2", "./aapt2", "bin\\aapt2"])
+def test_aapt2_path_entries_are_rejected_even_when_jar_is_pinned(driver, tmp_path, name):
+    args = synthetic_aapt2(
+        tmp_path, entries=[("aapt2", b"synthetic"), (name, b"synthetic")], executable=b"synthetic"
+    )
+    with pytest.raises(driver.Aapt2IntegrityError, match="aapt2_jar_unsafe_entry_path"):
+        driver.verify_aapt2(args)
+
+
+def test_aapt2_duplicate_entries_are_rejected_even_when_jar_is_pinned(driver, tmp_path):
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        args = synthetic_aapt2(tmp_path, entries=[("aapt2", b"synthetic"), ("aapt2", b"different")])
+    with pytest.raises(driver.Aapt2IntegrityError, match="aapt2_jar_duplicate_entry"):
+        driver.verify_aapt2(args)
+
+
+def test_aapt2_symlink_entry_is_rejected_even_when_jar_is_pinned(driver, tmp_path):
+    link = zipfile.ZipInfo("aapt2")
+    link.create_system = 3
+    link.external_attr = (stat.S_IFLNK | 0o777) << 16
+    args = synthetic_aapt2(tmp_path, entries=[(link, b"synthetic-link-target")])
+    with pytest.raises(driver.Aapt2IntegrityError, match="aapt2_jar_symlink_entry"):
+        driver.verify_aapt2(args)
+
+
+@pytest.mark.parametrize("kind", ["missing-entry", "empty-entry", "oversized-entry", "invalid-zip"])
+def test_aapt2_invalid_jar_structure_is_rejected(driver, tmp_path, monkeypatch, kind):
+    entries = [("other-tool", b"synthetic")] if kind == "missing-entry" else [("aapt2", b"")]
+    if kind == "oversized-entry":
+        entries = [("aapt2", b"x" * 300)]
+        monkeypatch.setattr(driver, "AAPT2_MAX_BYTES", 200)
+    args = synthetic_aapt2(tmp_path, entries=entries)
+    if kind == "invalid-zip":
+        args.aapt2_jar.write_bytes(b"new synthetic non-ZIP bytes")
+        args.aapt2_jar_sha256 = hashlib.sha256(args.aapt2_jar.read_bytes()).hexdigest()
+    with pytest.raises(driver.Aapt2IntegrityError):
+        driver.verify_aapt2(args)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "empty", "not-executable"])
+def test_aapt2_unsafe_executable_is_rejected(driver, tmp_path, kind):
+    args = synthetic_aapt2(tmp_path)
+    if kind == "symlink":
+        target = tmp_path / "synthetic-target"
+        args.aapt2.rename(target)
+        args.aapt2.symlink_to(target)
+    elif kind == "empty":
+        args.aapt2.write_bytes(b"")
+    else:
+        args.aapt2.chmod(0o600)
+    with pytest.raises(driver.Aapt2IntegrityError):
+        driver.verify_aapt2(args)
+
+
+@pytest.mark.parametrize("compile_only", [False, True])
+def test_main_aapt2_guard_precedes_all_tool_execution_and_records_failure(
+    driver, tmp_path, monkeypatch, capsys, compile_only
+):
+    args = synthetic_aapt2(tmp_path)
+    args.aapt2.write_bytes(b"new synthetic mutation")
+    work = tmp_path / "fresh-driver-work"
+    argv = [
+        "validate_bundletool.py",
+        "--work",
+        str(work),
+        "--aapt2",
+        str(args.aapt2),
+        "--aapt2-jar",
+        str(args.aapt2_jar),
+        "--aapt2-jar-sha256",
+        args.aapt2_jar_sha256,
+    ]
+    for name in ("android", "javac", "java", "keytool", "d8"):
+        argv += [f"--{name}", str(tmp_path / f"unused-{name}")]
+    if compile_only:
+        argv.append("--compile-only")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path.resolve()))
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(driver.Commands, "run", lambda *_args, **_kwargs: pytest.fail("must not execute"))
+    with pytest.raises(SystemExit) as caught:
+        driver.main()
+    assert caught.value.code == 1
+    output = driver.json.loads(capsys.readouterr().out)
+    assert output["failure"]["stage"] == "aapt2-integrity"
+    assert output["failure"]["owned_command"] is None
+    assert output["validation"]["aapt2_integrity"]["status"] == "failed"
+    summary = driver.json.loads((work / "evidence/summary.json").read_text())
+    assert summary["commands"] == []
