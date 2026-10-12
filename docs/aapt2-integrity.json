@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "coordinate": "com.android.tools.build:aapt2:jar:linux:8.10.1-12782657",
+  "artifact_url": "https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/8.10.1-12782657/aapt2-8.10.1-12782657-linux.jar",
+  "final_url": "https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/8.10.1-12782657/aapt2-8.10.1-12782657-linux.jar",
+  "acquired_at_utc": "2026-10-12T11:16:50.3929917Z",
+  "acquisition_run_url": "https://github.com/ictechgy/apsa/actions/runs/38241617038",
+  "acquisition_head_sha": "c096982da54000a4d6c0cb4aa96f8bc77b2d962a",
+  "acquisition_job_id": 114785350796,
+  "http_status": 200,
+  "filesize": 2315715,
+  "observed_sha256": "52f864b7fd20a9ff09fc3db96162537a63c5b38ecc1c2549db4b491c6a517ff0",
+  "pin_basis": "upstream-published-sha256",
+  "vendor_signature_verified": false,
+  "upstream_checksums": [
+    {
+      "algorithm": "sha1",
+      "source_url": "https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/8.10.1-12782657/aapt2-8.10.1-12782657-linux.jar.sha1",
+      "digest": "226487577a2993b0d68b1be6c8bb6d6729418745",
+      "http_status": 200,
+      "matches_both_acquisitions": true
+    },
+    {
+      "algorithm": "sha256",
+      "source_url": "https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/8.10.1-12782657/aapt2-8.10.1-12782657-linux.jar.sha256",
+      "digest": "52f864b7fd20a9ff09fc3db96162537a63c5b38ecc1c2549db4b491c6a517ff0",
+      "http_status": 200,
+      "matches_both_acquisitions": true
+    },
+    {
+      "algorithm": "sha512",
+      "source_url": "https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/8.10.1-12782657/aapt2-8.10.1-12782657-linux.jar.sha512",
+      "digest": "538cb7107516a083ecaf11621d548d651153bbe20c1c5043624fa43e7a89973019883e5984a4fb485e5927add3fb58abde78dcb3d34367f50f88923d1fe37511",
+      "http_status": 200,
+      "matches_both_acquisitions": true
+    }
+  ],
+  "independent_downloads": [
+    {
+      "attempt": 1,
+      "bytes": 2315715,
+      "sha1": "226487577a2993b0d68b1be6c8bb6d6729418745",
+      "sha256": "52f864b7fd20a9ff09fc3db96162537a63c5b38ecc1c2549db4b491c6a517ff0",
+      "sha512": "538cb7107516a083ecaf11621d548d651153bbe20c1c5043624fa43e7a89973019883e5984a4fb485e5927add3fb58abde78dcb3d34367f50f88923d1fe37511"
+    },
+    {
+      "attempt": 2,
+      "bytes": 2315715,
+      "sha1": "226487577a2993b0d68b1be6c8bb6d6729418745",
+      "sha256": "52f864b7fd20a9ff09fc3db96162537a63c5b38ecc1c2549db4b491c6a517ff0",
+      "sha512": "538cb7107516a083ecaf11621d548d651153bbe20c1c5043624fa43e7a89973019883e5984a4fb485e5927add3fb58abde78dcb3d34367f50f88923d1fe37511"
+    }
+  ],
+  "review_reference": "work/reviews/2026-10-12-verification-checksum/benchmark-bootstrap-v1",
+  "origin_limit": "HTTPS artifact and checksums share an origin; no independent vendor signature or compromise protection is claimed."
+}

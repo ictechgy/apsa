@@ -56,10 +56,25 @@ automatically after a mismatch.
 The intended AAPT2 coordinate is
 `com.android.tools.build:aapt2:jar:linux:8.10.1-12782657`, using Google's documented
 [AAPT2 Maven download pattern](https://developer.android.com/tools/aapt2). No
-upstream digest for this exact JAR has been established by the hosted-web research.
-Unavailable web-tool responses do not establish HTTP 404 or prove that only SHA1
-is published. Acquisition must record the real statuses and results before a pin
-is accepted. This document contains no invented checksum.
+digest was obtained during the initial hosted-web research; unavailable tool
+responses did not establish HTTP status. The subsequent
+[controlled acquisition](https://github.com/ictechgy/apsa/actions/runs/38241617038)
+received HTTP 200 from Google's `.sha256`, `.sha512`, and `.sha1` endpoints.
+Two downloads matched all three official sidecars and each contained 2,315,715 bytes.
+The Google-published SHA256 now pinned in the workflow is:
+
+```text
+52f864b7fd20a9ff09fc3db96162537a63c5b38ecc1c2549db4b491c6a517ff0
+```
+
+[aapt2-integrity.json](aapt2-integrity.json) records the exact origin, sidecar
+values/statuses, acquisition head/run, and pin basis. This establishes a published
+checksum comparison, not an independent vendor signature. The origin and its
+sidecars share a trust boundary. The routine workflow checks the predeclared hash
+before unzip/chmod, rejects a mutated copy before extraction, then the driver
+independently verifies the whole JAR and binds executable bytes to its unique
+root `aapt2` entry before any tool command. SHA256 pin acceptance and job reenabling
+receive a fresh complete review separate from the acquisition bootstrap.
 
 Tests use synthetic ZIP-shaped dependencies and mutations, truncation, malformed
 pins, oversized/growing files, changes during hashing, and unsafe file types.

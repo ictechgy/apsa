@@ -12,8 +12,11 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+import yaml
+
 _HELPER = Path(__file__).resolve().parents[1] / "scripts" / "verify_dependency.py"
 _SPEC = importlib.util.spec_from_file_location("verify_dependency", _HELPER)
+assert _SPEC is not None and _SPEC.loader is not None
 integrity = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(integrity)
 
@@ -166,6 +169,44 @@ class DependencyIntegrityTests(unittest.TestCase):
                 self.assertEqual(integrity.main(args), 1)
             self.assertEqual(json.loads(output.getvalue())["reason"], "invalid_arguments")
             self.assertNotIn(str(self.artifact), output.getvalue())
+
+
+def test_workflow_pin_matches_published_checksums_and_guards_execution():
+    root = Path(__file__).resolve().parents[1]
+    provenance = json.loads((root / "docs/aapt2-integrity.json").read_text())
+    workflow = yaml.load(
+        (root / ".github/workflows/bundletool-validation.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    job = workflow["jobs"]["official-fresh-splits"]
+    expected = job["env"]["APSA_AAPT2_JAR_SHA256"]
+    assert expected == provenance["observed_sha256"]
+    assert provenance["pin_basis"] == "upstream-published-sha256"
+    assert provenance["vendor_signature_verified"] is False
+    assert len(provenance["independent_downloads"]) == 2
+    for sidecar in provenance["upstream_checksums"]:
+        assert sidecar["http_status"] == 200
+        assert sidecar["source_url"] == provenance["artifact_url"] + "." + sidecar["algorithm"]
+        assert all(
+            observation[sidecar["algorithm"]] == sidecar["digest"]
+            for observation in provenance["independent_downloads"]
+        )
+    assert "if" not in job
+    download = next(step["run"] for step in job["steps"] if "Download pinned" in step.get("name", ""))
+    assert download.index("scripts/verify_dependency.py") < download.index("unzip -q")
+    assert download.index("APSA_DEPENDENCY_MUTATION=") < download.index("unzip -q")
+    assert download.index("unzip -q") < download.index("chmod +x")
+    assert '--expected-sha256 "$APSA_AAPT2_JAR_SHA256"' in download
+    assert 'observation["reason"] != "sha256_mismatch"' in download
+    execute = next(step["run"] for step in job["steps"] if "Execute real build" in step.get("name", ""))
+    assert '--aapt2-jar "$RUNNER_TEMP/apsa-bundletool-tools/aapt2.jar"' in execute
+    assert '--aapt2-jar-sha256 "$APSA_AAPT2_JAR_SHA256"' in execute
+    watched = set(workflow["on"]["push"]["paths"])
+    assert {
+        "scripts/verify_dependency.py",
+        "tests/test_dependency_integrity.py",
+        "docs/DEPENDENCY_INTEGRITY.md",
+        "docs/aapt2-integrity.json",
+    } <= watched
 
 
 if __name__ == "__main__":

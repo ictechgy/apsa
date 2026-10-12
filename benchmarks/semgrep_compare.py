@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -89,7 +90,37 @@ def summarize(records: list[dict], tool: str) -> dict:
     }
 
 
-def run(fixtures: Path, output: Path, rules: Path | None, executable: str | None) -> dict:
+def container_observation(process: dict) -> dict:
+    """The host sampler observes the wrapper/client, never the OCI target boundary."""
+    return process | {
+        "rss": {
+            "state": "unmeasured-container-boundary",
+            "sampled_max_rss_bytes": None,
+            "client_rss_excluded": True,
+        }
+    }
+
+
+def run(
+    fixtures: Path,
+    output: Path,
+    rules: Path | None,
+    executable: str | None,
+    *,
+    runtime: str = "cli",
+    image: str | None = None,
+) -> dict:
+    if runtime not in {"cli", "container"}:
+        raise ValueError("Semgrep runtime must be cli or container")
+    if runtime == "container":
+        if image is None or re.fullmatch(r"semgrep/semgrep@sha256:[a-f0-9]{64}", image) is None:
+            raise ValueError("Container runtime requires immutable semgrep/semgrep@sha256:<64hex> image")
+        if executable is None or not Path(executable).is_absolute() or rules is None:
+            raise ValueError(
+                "Container runtime requires explicit absolute wrapper path and pinned local rules"
+            )
+    elif image is not None:
+        raise ValueError("Container image provenance requires explicit container runtime")
     manifest = read_manifest(fixtures)
     output.mkdir(parents=True, exist_ok=False)
     version = None
@@ -102,6 +133,8 @@ def run(fixtures: Path, output: Path, rules: Path | None, executable: str | None
     environment.pop("SEMGREP_APP_TOKEN", None)
     if executable is not None:
         version_call = capture([executable, "--version"], output, environment, timeout=30)
+        if runtime == "container":
+            version_call = container_observation(version_call)
         (output / "semgrep-version.json").write_text(json.dumps(version_call, indent=2) + "\n")
         version = version_call["stdout"].strip()
         if version_call["status"] or version_call["incomplete"] or version != VERSION:
@@ -172,6 +205,8 @@ def run(fixtures: Path, output: Path, rules: Path | None, executable: str | None
             started = time.perf_counter()
             try:
                 process = capture(argv, location, environment)
+                if runtime == "container":
+                    process = container_observation(process)
                 elapsed = process["seconds"]
                 (location / "invocation.json").write_text(json.dumps(process, indent=2) + "\n")
                 if process["status"] != 0 or process["incomplete"]:
@@ -184,16 +219,40 @@ def run(fixtures: Path, output: Path, rules: Path | None, executable: str | None
                 result["rss_state"] = process["rss"]["state"]
             except (OSError, subprocess.TimeoutExpired, ValueError) as error:
                 result = {"state": "failed", "matched": False, "error_type": type(error).__name__}
+            if runtime == "container":
+                result.update(
+                    rss_bytes=None,
+                    rss_state="unmeasured-container-boundary",
+                    rss=None,
+                    client_rss_excluded=True,
+                    latency_scope="container-start-and-scan",
+                )
             record["tools"]["semgrep"] = result
         records.append(record)
     result = {
         "schema": "apsa-semgrep-component-v1",
         "semgrep_version": version,
+        "semgrep_runtime": runtime,
+        "semgrep_image": image,
+        "semgrep_image_digest": image.split("@", 1)[1] if image is not None else None,
+        "semgrep_execution_provenance": {
+            "state": "declared-immutable-wrapper-contract" if runtime == "container" else "local-cli",
+            "container_execution_verified": False,
+            "verification_scope": "Image execution requires independent CI pull/inspect/run evidence"
+            if runtime == "container"
+            else "Local CLI version measured by benchmark",
+        },
         "manifest_sha256": hashlib.sha256((fixtures / "manifest.json").read_bytes()).hexdigest(),
         "rules": rule_evidence,
         "cases": records,
         "summary": {tool: summarize(records, tool) for tool in ("apsa", "semgrep")},
-        "scope": "Two upstream Semgrep CE Java crypto rules; unsupported categories abstain. APSA source component versus Semgrep CLI. Semgrep CLI process-tree RSS sampled separately; APSA in-process component RSS unmeasured. No speed/RSS or whole-product ranking.",
+        "scope": "Two upstream Semgrep CE Java crypto rules; unsupported categories abstain. APSA source component versus Semgrep CLI. "
+        + (
+            "Semgrep container target RSS unmeasured; Docker-client RSS excluded; wrapper latency includes container start-and-scan. "
+            if runtime == "container"
+            else "Semgrep CLI process-tree RSS sampled separately; "
+        )
+        + "APSA in-process component RSS unmeasured. No speed/RSS or whole-product ranking.",
     }
     (output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
@@ -206,7 +265,9 @@ def main() -> None:
     parser.add_argument("--fixtures", type=Path)
     parser.add_argument("--blobs", type=Path)
     parser.add_argument("--rules", type=Path)
-    parser.add_argument("--semgrep", default=shutil.which("semgrep"))
+    parser.add_argument("--semgrep")
+    parser.add_argument("--semgrep-runtime", choices=("cli", "container"), default="cli")
+    parser.add_argument("--semgrep-image")
     args = parser.parse_args()
     if args.action == "prepare-rules":
         if args.blobs is None:
@@ -215,7 +276,17 @@ def main() -> None:
     else:
         if args.fixtures is None:
             parser.error("--fixtures is required")
-        result = run(args.fixtures, args.out, args.rules, args.semgrep)
+        executable = args.semgrep
+        if executable is None and args.semgrep_runtime == "cli":
+            executable = shutil.which("semgrep")
+        result = run(
+            args.fixtures,
+            args.out,
+            args.rules,
+            executable,
+            runtime=args.semgrep_runtime,
+            image=args.semgrep_image,
+        )
     print(json.dumps(result.get("summary", result), indent=2))
 
 

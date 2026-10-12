@@ -3,7 +3,7 @@ name: Official bundletool fresh split oracle
 on:
   push:
     branches: ["validation/apsa-final-*"]
-    paths: ["src/mobile_audit/**", "scripts/validate_bundletool.py", "tests/test_bundletool_validation.py", ".github/workflows/bundletool-validation.yml"]
+    paths: ["src/mobile_audit/**", "scripts/validate_bundletool.py", "scripts/verify_dependency.py", "tests/test_bundletool_validation.py", "tests/test_dependency_integrity.py", "docs/DEPENDENCY_INTEGRITY.md", "docs/aapt2-integrity.json", ".github/workflows/bundletool-validation.yml"]
   workflow_dispatch:
 
 permissions:
@@ -11,13 +11,13 @@ permissions:
 
 jobs:
   official-fresh-splits:
-    # Acquisition bootstrap only. Enable after the public digest is reviewed.
-    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
       ADB_SERVER_SOCKET: tcp:localhost:5038
       ANDROID_ADB_SERVER_PORT: "5038"
+      # Google-published SHA256; exact acquisition record: docs/aapt2-integrity.json.
+      APSA_AAPT2_JAR_SHA256: "52f864b7fd20a9ff09fc3db96162537a63c5b38ecc1c2549db4b491c6a517ff0"
     steps:
       - name: Assign new temporary paths after the runner starts
         run: |
@@ -34,6 +34,10 @@ jobs:
           version: "0.12.1"
           python-version: "3.12.13"
           enable-cache: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Install exact dependencies and SDK packages into disposable CI
         run: |
           uv sync --locked --extra dev
@@ -49,7 +53,25 @@ jobs:
             https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/8.10.1-12782657/aapt2-8.10.1-12782657-linux.jar \
             --output "$RUNNER_TEMP/apsa-bundletool-tools/aapt2.jar"
           python scripts/verify_dependency.py "$RUNNER_TEMP/apsa-bundletool-tools/aapt2.jar" \
-            --expected-sha256 BOOTSTRAP_NOT_PINNED --max-bytes 134217728
+            --expected-sha256 "$APSA_AAPT2_JAR_SHA256" --max-bytes 134217728
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "apsa-bundletool-tools"
+          mutated = root / "aapt2-mutated.jar"
+          content = bytearray((root / "aapt2.jar").read_bytes())
+          content[len(content) // 2] ^= 1
+          mutated.write_bytes(content)
+          result = subprocess.run([sys.executable, "scripts/verify_dependency.py", str(mutated), "--expected-sha256", os.environ["APSA_AAPT2_JAR_SHA256"]], capture_output=True, text=True, check=False, timeout=30)
+          observation = json.loads(result.stdout)
+          if result.returncode != 1 or observation["status"] != "failed" or observation["reason"] != "sha256_mismatch":
+              raise ValueError("mutated AAPT2 was not rejected before extraction")
+          print("APSA_DEPENDENCY_MUTATION=" + json.dumps({"returncode": result.returncode, **observation}, sort_keys=True))
+          mutated.unlink()
+          PY
           unzip -q "$RUNNER_TEMP/apsa-bundletool-tools/aapt2.jar" aapt2 -d "$RUNNER_TEMP/apsa-bundletool-tools"
           chmod +x "$RUNNER_TEMP/apsa-bundletool-tools/aapt2"
       - name: Create and boot only the new dedicated emulator
@@ -67,16 +89,15 @@ jobs:
           exit 1
       - name: Execute real build, extraction, installed split acquisition and resource merge
         run: |
-          export JAVA_HOME="$JAVA_HOME_17_X64"
           uv run --locked python scripts/validate_bundletool.py \
             --work "$RUNNER_TEMP/apsa-bundletool-new" \
             --aapt2 "$RUNNER_TEMP/apsa-bundletool-tools/aapt2" \
             --aapt2-jar "$RUNNER_TEMP/apsa-bundletool-tools/aapt2.jar" \
-            --aapt2-jar-sha256 BOOTSTRAP_NOT_PINNED \
+            --aapt2-jar-sha256 "$APSA_AAPT2_JAR_SHA256" \
             --android "$ANDROID_HOME/platforms/android-36/android.jar" \
             --d8 "$ANDROID_HOME/build-tools/36.0.0/d8" \
-            --java "$JAVA_HOME_17_X64/bin/java" --javac "$JAVA_HOME_17_X64/bin/javac" \
-            --keytool "$JAVA_HOME_17_X64/bin/keytool" \
+            --java "$JAVA_HOME/bin/java" --javac "$JAVA_HOME/bin/javac" \
+            --keytool "$JAVA_HOME/bin/keytool" \
             --bundletool "$RUNNER_TEMP/apsa-bundletool-tools/bundletool.jar" \
             --serial emulator-5572 --adb "$ANDROID_HOME/platform-tools/adb" --adb-port 5038
       - name: Preserve new textual evidence only

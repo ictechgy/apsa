@@ -193,6 +193,7 @@ PUBLIC_RESOURCES = frozenset(
         "plugins/apsa/.mcp.json",
         "tests/fixtures/mcp_tool_manifest.json",
         "benchmarks/corpus.json",
+        "docs/aapt2-integrity.json",
     }
 )
 # Generate this alias only from the staged public package source. The checkout's

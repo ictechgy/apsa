@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath, PureWindowsPath
 
+from .completeness import analysis_incomplete
 from .core import canonical_json, digest
 from .maswe import RULE_WEAKNESSES, UNMAPPED, finding_weaknesses, weakness_index, weaknesses_for
 from .rules import rules
@@ -63,15 +64,8 @@ def _portable_source_pairing(before: dict, after: dict) -> str:
             return "omitted source input cannot be normalized"
         if any(check.get("state") == "partial" for check in report.get("coverage", [])):
             return "partial analysis coverage cannot be normalized"
-        for key in ("source_analysis", "hybrid_analysis"):
-            analysis = inventory.get(key) or {}
-            if (
-                not isinstance(analysis, dict)
-                or analysis.get("partial")
-                or analysis.get("state") == "partial"
-                or any(item.get("state") == "partial" for item in analysis.get("files", []))
-            ):
-                return "partial source analysis cannot be normalized"
+        if analysis_incomplete(inventory):
+            return "partial source analysis cannot be normalized"
     if before["inventory"]["fingerprint"] != after["inventory"]["fingerprint"]:
         return "source fingerprints differ; relocation pairing requires identical input"
     # Preserve every declared spec representation, not only scope()'s effective
