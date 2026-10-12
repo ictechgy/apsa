@@ -2,7 +2,10 @@
 
 import hashlib
 import json
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -426,3 +429,195 @@ def test_version_failure_diagnostic_does_not_accept_pins_versions_or_extend_dead
     assert 'version_call = capture([executable, "--version"], output, environment, timeout=30)' in source
     assert 'if version_call["status"] or version_call["incomplete"] or version != VERSION:' in source
     assert 'raise ValueError("Semgrep executable must report the pinned version " + VERSION)' in source
+
+
+@pytest.fixture
+def synthetic_wrapper(benchmark_job, tmp_path):
+    """Run only a source wrapper and newly written fake CLI; never real Docker."""
+    prepare = _step(benchmark_job, "Prepare pinned Semgrep")
+    match = re.search(r"(?ms)^cat > \"\$RUNNER_TEMP/semgrep-wrapper\" <<'SH'\n(.*?)^SH$", prepare)
+    assert match is not None, "Extract the actual workflow shell wrapper"
+    wrapper = tmp_path / "synthetic-semgrep-wrapper"
+    wrapper.write_text(match.group(1))
+    fake_bin = tmp_path / "synthetic-bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        f"#!{sys.executable}\n"
+        + """# Unit fixture only: records arguments and synthesizes Docker replies.
+import json
+import os
+import sys
+from pathlib import Path
+argv = sys.argv[1:]
+calls = Path(os.environ["APSA_SYNTHETIC_DOCKER_CALLS"])
+state_path = Path(os.environ["APSA_SYNTHETIC_DOCKER_STATE"])
+with calls.open("a") as stream:
+    stream.write(json.dumps(argv) + "\\n")
+container_id = os.environ["APSA_SYNTHETIC_CONTAINER_ID"]
+if argv[0] == "create":
+    labels = dict(argv[index + 1].split("=", 1) for index, value in enumerate(argv) if value == "--label")
+    image = argv[argv.index("--entrypoint") + 2]
+    state = {"container_id": container_id, "image_id": "sha256:" + "b" * 64,
+             "declared": image, "run_id": labels["apsa.run-id"], "head_sha": labels["apsa.head-sha"],
+             "running": False, "exit_code": 0}
+    state_path.write_text(json.dumps(state))
+    print(container_id)
+elif argv[0] == "inspect":
+    assert argv[1] == container_id and argv[2] == "--format"
+    state = json.loads(state_path.read_text())
+    format_string = argv[3]
+    if format_string == "{{.State.Running}}":
+        print("true" if state["running"] else "false")
+    elif format_string == "{{.State.ExitCode}}":
+        print(state["exit_code"])
+    else:
+        assert format_string.startswith('{"container_id":')
+        print(json.dumps(state))
+elif argv[0] == "start":
+    assert argv == ["start", "--attach", container_id]
+    state = json.loads(state_path.read_text())
+    state["exit_code"] = int(os.environ["APSA_SYNTHETIC_EXIT_CODE"])
+    state_path.write_text(json.dumps(state))
+    print("1.179.0")
+    raise SystemExit(state["exit_code"])
+elif argv[0] == "rm":
+    assert argv == ["rm", container_id]
+    print(container_id)
+else:
+    raise AssertionError("Unexpected fake Docker command")
+"""
+    )
+    fake_docker.chmod(0o700)
+    for name in ("semgrep-container-provenance", "competitive-fixtures", "semgrep-rules", "semgrep-results"):
+        (tmp_path / name).mkdir()
+    image = "semgrep/semgrep@sha256:" + "f" * 64
+    calls = tmp_path / "synthetic-docker-calls.jsonl"
+    state = tmp_path / "synthetic-docker-state.json"
+    environment = {
+        "PATH": os.pathsep.join((str(fake_bin), str(Path(sys.executable).parent), "/usr/bin", "/bin")),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_RUN_ID": "synthetic-run",
+        "GITHUB_SHA": "a" * 40,
+        "SEMGREP_BENCHMARK_IMAGE": image,
+        "APSA_SYNTHETIC_DOCKER_CALLS": str(calls),
+        "APSA_SYNTHETIC_DOCKER_STATE": str(state),
+    }
+
+    def run(*, container_id="c" * 64, exit_code=0):
+        result = subprocess.run(
+            ["/bin/sh", str(wrapper), "--version"],
+            cwd=tmp_path,
+            env={
+                **environment,
+                "APSA_SYNTHETIC_CONTAINER_ID": container_id,
+                "APSA_SYNTHETIC_EXIT_CODE": str(exit_code),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        actual_calls = [json.loads(line) for line in calls.read_text().splitlines()]
+        return result, actual_calls
+
+    return tmp_path, image, run
+
+
+def test_actual_wrapper_forwards_bounded_tmp_runtime_paths_and_owned_terminal_provenance(synthetic_wrapper):
+    root, image, run = synthetic_wrapper
+    result, calls = run()
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1.179.0\n" and result.stderr == ""
+    create = calls[0]
+    assert create[0] == "create"
+    flags = {
+        name: create[create.index(name) + 1]
+        for name in (
+            "--platform",
+            "--network",
+            "--security-opt",
+            "--cap-drop",
+            "--memory",
+            "--cpus",
+            "--workdir",
+            "--tmpfs",
+            "--entrypoint",
+        )
+    }
+    assert flags == {
+        "--platform": "linux/amd64",
+        "--network": "none",
+        "--security-opt": "no-new-privileges",
+        "--cap-drop": "ALL",
+        "--memory": "2g",
+        "--cpus": "2",
+        "--workdir": "/tmp",
+        "--tmpfs": "/tmp:rw,nosuid,size=536870912",
+        "--entrypoint": "semgrep",
+    }
+    assert "--read-only" in create
+    forwarded = dict(
+        create[index + 1].split("=", 1) for index, value in enumerate(create) if value == "--env"
+    )
+    assert forwarded["SEMGREP_LOG_FILE"] == "/tmp/semgrep.log"
+    assert forwarded["SEMGREP_VERSION_CACHE_PATH"] == "/tmp/semgrep-version"
+    assert forwarded["SEMGREP_SETTINGS_FILE"] == "/tmp/semgrep-settings.yml"
+    assert forwarded["SEMGREP_CACHE_DIR"] == "/tmp/semgrep-cache"
+    assert forwarded["SEMGREP_ENABLE_VERSION_CHECK"] == "0" and forwarded["SEMGREP_SEND_METRICS"] == "off"
+    assert "HOME" not in forwarded
+    assert all(
+        Path(forwarded[key]).is_relative_to("/tmp")
+        for key in (
+            "SEMGREP_LOG_FILE",
+            "SEMGREP_VERSION_CACHE_PATH",
+            "SEMGREP_SETTINGS_FILE",
+            "SEMGREP_CACHE_DIR",
+        )
+    )
+    mounts = [create[index + 1] for index, value in enumerate(create) if value == "--mount"]
+    assert set(mounts) == {
+        f"type=bind,source={root / name},target={root / name},readonly"
+        for name in ("competitive-fixtures", "semgrep-rules", "semgrep-results")
+    }
+    assert create[-2:] == [image, "--version"]
+    container_id = "c" * 64
+    assert (root / "semgrep-owned-container-ids.txt").read_text().splitlines() == [container_id]
+    terminal = json.loads((root / "semgrep-container-provenance" / (container_id + ".json")).read_text())
+    assert terminal == {
+        "container_id": container_id,
+        "image_id": "sha256:" + "b" * 64,
+        "declared": image,
+        "run_id": "synthetic-run",
+        "head_sha": "a" * 40,
+        "running": False,
+        "exit_code": 0,
+    }
+    assert type(terminal["running"]) is bool and type(terminal["exit_code"]) is int
+    assert calls[-1] == ["rm", container_id]
+
+
+def test_actual_wrapper_propagates_nonzero_owned_exit_code_after_terminal_record_and_removal(
+    synthetic_wrapper,
+):
+    root, _, run = synthetic_wrapper
+    result, calls = run(exit_code=7)
+    assert result.returncode == 7
+    assert result.stdout == "1.179.0\n" and result.stderr == ""
+    container_id = "c" * 64
+    terminal = json.loads((root / "semgrep-container-provenance" / (container_id + ".json")).read_text())
+    assert terminal["exit_code"] == 7 and terminal["running"] is False
+    assert calls[-1] == ["rm", container_id]
+
+
+@pytest.mark.parametrize("container_id", ["", "c" * 63, "g" * 64, "c" * 64 + "\nmalformed", "-" + "c" * 63])
+def test_actual_wrapper_rejects_malformed_created_id_before_journal_start_or_removal(
+    synthetic_wrapper, container_id
+):
+    root, _, run = synthetic_wrapper
+    result, calls = run(container_id=container_id)
+    assert result.returncode != 0
+    assert len(calls) == 1 and calls[0][0] == "create"
+    assert not (root / "semgrep-owned-container-ids.txt").exists()
+    assert list((root / "semgrep-container-provenance").iterdir()) == []

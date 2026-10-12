@@ -96,6 +96,7 @@ jobs:
             --label "apsa.run-id=$GITHUB_RUN_ID" --label "apsa.head-sha=$GITHUB_SHA" \
             --workdir /tmp --env SEMGREP_CACHE_DIR=/tmp/semgrep-cache \
             --env SEMGREP_SETTINGS_FILE=/tmp/semgrep-settings.yml --env SEMGREP_ENABLE_VERSION_CHECK=0 \
+            --env SEMGREP_LOG_FILE=/tmp/semgrep.log --env SEMGREP_VERSION_CACHE_PATH=/tmp/semgrep-version \
             --env SEMGREP_SEND_METRICS=off --entrypoint semgrep \
             "$SEMGREP_BENCHMARK_IMAGE" "$@")"
           case "$container_id" in *[!0-9a-f]*|'') exit 2 ;; esac

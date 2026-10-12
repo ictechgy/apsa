@@ -43,6 +43,18 @@ the workflow verifies each journaled container's actual image ID, declared diges
 run/head labels, terminated state, and zero exit code, and preserves that evidence.
 An arbitrary caller's wrapper declaration alone cannot prove execution.
 
+The first pinned execution reached the correct image but failed before its version
+output because Semgrep attempted to write `/root/.semgrep/semgrep.log` on the
+read-only root filesystem. The bounded diagnostic run
+[38263779826](https://github.com/ictechgy/apsa/actions/runs/38263779826) recorded
+status 1, no timeout or truncated error, and that exact read-only-file error.
+The wrapper now sets `SEMGREP_LOG_FILE` and `SEMGREP_VERSION_CACHE_PATH` to its
+bounded `/tmp` mount, alongside its explicit settings file. Semgrep's
+[version-pinned environment definitions](https://raw.githubusercontent.com/semgrep/semgrep/v1.179.0/cli/src/semgrep/env.py)
+provide those dedicated settings. The digest, read-only root, network restriction,
+version predicate, and deadlines stay intact; actual successful execution still
+requires its own current-source CI evidence.
+
 Container execution changes measurement scope. Docker-client process-tree RSS is
 excluded: Semgrep target `rss` and `rss_bytes` are null with
 `rss_state=unmeasured-container-boundary`. Wall time covers container start and scan
