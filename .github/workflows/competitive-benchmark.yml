@@ -27,13 +27,11 @@ permissions:
 
 jobs:
   compare:
-    # Acquisition bootstrap only; enable after both public pins are reviewed.
-    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      SEMGREP_BENCHMARK_IMAGE: semgrep/semgrep@sha256:BOOTSTRAP_NOT_PINNED
-      JADX_BENCHMARK_SHA256: BOOTSTRAP_NOT_PINNED
+      SEMGREP_BENCHMARK_IMAGE: semgrep/semgrep@sha256:93963d9295a366f59e4850127b1550400ee7b388f04fe144e4a1f6325d96e01b
+      JADX_BENCHMARK_SHA256: c5a713fa4800cbb9e6df85ced1bef95ba329040c95cb87d54465f108483e4ef9
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -67,15 +65,24 @@ jobs:
           PY
           docker pull --platform linux/amd64 "$SEMGREP_BENCHMARK_IMAGE"
           docker image inspect "$SEMGREP_BENCHMARK_IMAGE" --format '{{json .RepoDigests}}' > "$RUNNER_TEMP/semgrep-image-digests.json"
+          docker image inspect "$SEMGREP_BENCHMARK_IMAGE" --format '{{json .Id}}' > "$RUNNER_TEMP/semgrep-image-id.json"
           python - <<'PY'
-          import json, os
+          import json, os, re
           from pathlib import Path
           observed = json.loads((Path(os.environ["RUNNER_TEMP"]) / "semgrep-image-digests.json").read_text())
           expected = os.environ["SEMGREP_BENCHMARK_IMAGE"]
-          if expected not in observed:
+          def canonical(reference):
+              if not isinstance(reference, str) or not re.fullmatch(r"(?:docker\.io/)?semgrep/semgrep@sha256:[0-9a-f]{64}", reference):
+                  return None
+              return reference.removeprefix("docker.io/")
+          if not isinstance(observed, list) or not 1 <= len(observed) <= 16 or any(canonical(item) is None for item in observed) or canonical(expected) is None or canonical(expected) not in [canonical(item) for item in observed]:
               raise ValueError("Semgrep image identity does not match the declared pin")
-          print("APSA_SEMGREP_IMAGE=" + json.dumps({"declared": expected, "repo_digests": observed, "platform": "linux/amd64"}, sort_keys=True))
+          image_id = json.loads((Path(os.environ["RUNNER_TEMP"]) / "semgrep-image-id.json").read_text())
+          if not isinstance(image_id, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+              raise ValueError("Semgrep image ID is malformed")
+          print("APSA_SEMGREP_IMAGE=" + json.dumps({"declared": expected, "canonical_declared": canonical(expected), "repo_digests": observed, "image_id": image_id, "platform": "linux/amd64"}, sort_keys=True))
           PY
+          mkdir "$RUNNER_TEMP/semgrep-container-provenance"
           cat > "$RUNNER_TEMP/semgrep-wrapper" <<'SH'
           #!/bin/sh
           set -eu
@@ -85,17 +92,21 @@ jobs:
             --tmpfs /tmp:rw,nosuid,size=536870912 \
             --mount "type=bind,source=$RUNNER_TEMP/competitive-fixtures,target=$RUNNER_TEMP/competitive-fixtures,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/semgrep-rules,target=$RUNNER_TEMP/semgrep-rules,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/semgrep-results,target=$RUNNER_TEMP/semgrep-results,readonly" \
             --label "apsa.run-id=$GITHUB_RUN_ID" --label "apsa.head-sha=$GITHUB_SHA" \
             --workdir /tmp --env SEMGREP_CACHE_DIR=/tmp/semgrep-cache \
+            --env SEMGREP_SETTINGS_FILE=/tmp/semgrep-settings.yml --env SEMGREP_ENABLE_VERSION_CHECK=0 \
             --env SEMGREP_SEND_METRICS=off --entrypoint semgrep \
             "$SEMGREP_BENCHMARK_IMAGE" "$@")"
           case "$container_id" in *[!0-9a-f]*|'') exit 2 ;; esac
           test "${#container_id}" = 64
           printf '%s\n' "$container_id" >> "$RUNNER_TEMP/semgrep-owned-container-ids.txt"
+          docker inspect "$container_id" --format '{"container_id":{{json .Id}},"image_id":{{json .Image}},"declared":{{json .Config.Image}},"run_id":{{json (index .Config.Labels "apsa.run-id")}},"head_sha":{{json (index .Config.Labels "apsa.head-sha")}},"running":{{json .State.Running}},"exit_code":{{json .State.ExitCode}}}' > "$RUNNER_TEMP/semgrep-container-provenance/$container_id.json"
           docker start --attach "$container_id" || true
           running="$(docker inspect "$container_id" --format '{{.State.Running}}')"
           test "$running" = false
           status="$(docker inspect "$container_id" --format '{{.State.ExitCode}}')"
+          docker inspect "$container_id" --format '{"container_id":{{json .Id}},"image_id":{{json .Image}},"declared":{{json .Config.Image}},"run_id":{{json (index .Config.Labels "apsa.run-id")}},"head_sha":{{json (index .Config.Labels "apsa.head-sha")}},"running":{{json .State.Running}},"exit_code":{{json .State.ExitCode}}}' > "$RUNNER_TEMP/semgrep-container-provenance/$container_id.json"
           docker rm "$container_id" > /dev/null
           exit "$status"
           SH
@@ -109,9 +120,24 @@ jobs:
         run: |
           uv run --locked python benchmarks/semgrep_compare.py run --fixtures "$RUNNER_TEMP/competitive-fixtures" --rules "$RUNNER_TEMP/semgrep-rules" --semgrep "$RUNNER_TEMP/semgrep-wrapper" --semgrep-runtime container --semgrep-image "$SEMGREP_BENCHMARK_IMAGE" --out "$RUNNER_TEMP/semgrep-results"
           uv run --locked python - <<'PY'
-          import hashlib, json, os
+          import hashlib, json, os, re
           from pathlib import Path
-          raw = (Path(os.environ["RUNNER_TEMP"]) / "semgrep-results/result.json").read_bytes()
+          root = Path(os.environ["RUNNER_TEMP"])
+          expected_image_id = json.loads((root / "semgrep-image-id.json").read_text())
+          owned = (root / "semgrep-owned-container-ids.txt").read_text().splitlines()
+          if not 1 <= len(owned) <= 16 or len(set(owned)) != len(owned):
+              raise ValueError("Semgrep container journal is empty or ambiguous")
+          container_records = []
+          for container_id in owned:
+              if not re.fullmatch(r"[0-9a-f]{64}", container_id):
+                  raise ValueError("Semgrep journal ID is malformed")
+              record = json.loads((root / "semgrep-container-provenance" / (container_id + ".json")).read_text())
+              expected = {"container_id": container_id, "image_id": expected_image_id, "declared": os.environ["SEMGREP_BENCHMARK_IMAGE"], "run_id": os.environ["GITHUB_RUN_ID"], "head_sha": os.environ["GITHUB_SHA"], "running": False}
+              if not isinstance(record, dict) or any(record.get(key) != value for key, value in expected.items()) or type(record.get("running")) is not bool or type(record.get("exit_code")) is not int or record["exit_code"] != 0:
+                  raise ValueError("Semgrep actual container identity or successful completion was not verified")
+              container_records.append(record)
+          print("APSA_SEMGREP_CONTAINER_EXECUTION=" + json.dumps({"source_revision": os.environ["GITHUB_SHA"], "containers": container_records, "container_execution_verified": True}, sort_keys=True))
+          raw = (root / "semgrep-results/result.json").read_bytes()
           result = json.loads(raw)
           observations = [
               {"case": case["id"], **{key: value for key, value in case["tools"]["semgrep"].items() if key in {"state", "seconds", "rss", "rss_state", "rss_bytes"}}}
@@ -184,6 +210,9 @@ jobs:
             ${{ runner.temp }}/mobsf-synthetic-state.json
             ${{ runner.temp }}/mobsf-synthetic-startup.txt
             ${{ runner.temp }}/semgrep-image-digests.json
+            ${{ runner.temp }}/semgrep-image-id.json
+            ${{ runner.temp }}/semgrep-container-provenance
+            ${{ runner.temp }}/semgrep-owned-container-ids.txt
             ${{ runner.temp }}/semgrep-rules
             ${{ runner.temp }}/semgrep-results
           retention-days: 30

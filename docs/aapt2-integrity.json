@@ -51,6 +51,6 @@
       "sha512": "538cb7107516a083ecaf11621d548d651153bbe20c1c5043624fa43e7a89973019883e5984a4fb485e5927add3fb58abde78dcb3d34367f50f88923d1fe37511"
     }
   ],
-  "review_reference": "work/reviews/2026-10-12-verification-checksum/benchmark-bootstrap-v1",
+  "review_reference": "work/reviews/2026-10-12-verification-checksum/checksum-final-v1",
   "origin_limit": "HTTPS artifact and checksums share an origin; no independent vendor signature or compromise protection is claimed."
 }

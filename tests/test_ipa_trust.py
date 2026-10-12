@@ -6,6 +6,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import plistlib
 import struct
 import zipfile
@@ -446,7 +447,14 @@ def test_real_staged_parser_preserves_ipa_trust_and_removes_der(chain_fixture, t
     from mobile_audit.engine import analyze_target
 
     target, policy = signed_archive_fixture(chain_fixture, tmp_path)
-    result = analyze_target(target, ipa_trust_policy=policy, report_home=tmp_path / "fresh-report-home")
+    try:
+        result = analyze_target(target, ipa_trust_policy=policy, report_home=tmp_path / "fresh-report-home")
+    except ValueError as error:
+        if str(error) != "RSS inspection unavailable; resource-limited execution refused":
+            raise
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            pytest.fail("Disposable CI must measure actual IPA parser staging and RSS")
+        pytest.skip("Host privacy guard denies child RSS; actual IPA parser staging remains unmeasured here")
     inventory = result["inventory"]
     assert inventory["target"] == str(target.resolve())
     assert inventory["input_snapshot"]["files"] == 1

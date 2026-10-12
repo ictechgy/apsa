@@ -1,0 +1,88 @@
+{
+  "accepted_pins": {
+    "jadx_zip_sha256": "c5a713fa4800cbb9e6df85ced1bef95ba329040c95cb87d54465f108483e4ef9",
+    "semgrep_acquired_repo_digest": "docker.io/semgrep/semgrep@sha256:93963d9295a366f59e4850127b1550400ee7b388f04fe144e4a1f6325d96e01b",
+    "semgrep_execution_reference": "semgrep/semgrep@sha256:93963d9295a366f59e4850127b1550400ee7b388f04fe144e4a1f6325d96e01b",
+    "semgrep_normalization": "Remove only official docker.io/ prefix; same repository and identical sha256 content address; preserve acquisition original."
+  },
+  "acquisition": {
+    "acquired_at_utc": "2026-10-12T12:25:37.225015+00:00",
+    "artifact": {
+      "digest": "sha256:6ae3f872af3abd9f9aa18b05ba94145098ba02947605882d99e8a88bdd63ea9c",
+      "head_sha": "837324c484616323ad065fea5957ed3ea308f3ad",
+      "id": 11747001121
+    },
+    "head_sha": "837324c484616323ad065fea5957ed3ea308f3ad",
+    "jadx": {
+      "acquisitions": [
+        {
+          "attempt": 1,
+          "bytes": 104967983,
+          "final_host": "release-assets.githubusercontent.com",
+          "sha1": "67699d408cd1b4bef6cef1366557415b06c7cc5f",
+          "sha256": "c5a713fa4800cbb9e6df85ced1bef95ba329040c95cb87d54465f108483e4ef9",
+          "sha512": "e990381efdb6d98e92368fd022c2875da7f8ab39fc962e728cf540de29742737bafe6ed2b978487e512a63f9bd11e66e0cf025a7379a559c9e157c54b7b3873d"
+        },
+        {
+          "attempt": 2,
+          "bytes": 104967983,
+          "final_host": "release-assets.githubusercontent.com",
+          "sha1": "67699d408cd1b4bef6cef1366557415b06c7cc5f",
+          "sha256": "c5a713fa4800cbb9e6df85ced1bef95ba329040c95cb87d54465f108483e4ef9",
+          "sha512": "e990381efdb6d98e92368fd022c2875da7f8ab39fc962e728cf540de29742737bafe6ed2b978487e512a63f9bd11e66e0cf025a7379a559c9e157c54b7b3873d"
+        }
+      ],
+      "expected_bytes": 104967983,
+      "pin_basis": "reviewed-HTTPS-acquisition-TOFU-candidate",
+      "published_checksums": {},
+      "release_metadata": {
+        "asset_bytes": 104967983,
+        "digest_status": "not_published",
+        "http_status": 200,
+        "source_url": "https://api.github.com/repos/skylot/jadx/releases/tags/v1.5.0"
+      },
+      "sidecars": {
+        "sha1": {
+          "http_status": 404,
+          "source_url": "https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip.sha1"
+        },
+        "sha256": {
+          "http_status": 404,
+          "source_url": "https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip.sha256"
+        },
+        "sha512": {
+          "http_status": 404,
+          "source_url": "https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip.sha512"
+        }
+      },
+      "source_url": "https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip",
+      "version": "1.5.0"
+    },
+    "job_id": 114809861446,
+    "mode": "acquisition-only-no-extraction-no-container-or-tool-execution",
+    "run_id": "38248931033",
+    "run_url": "https://github.com/ictechgy/apsa/actions/runs/38248931033",
+    "schema": 1,
+    "semgrep": {
+      "digest_scope": "registry-OCI-manifest-or-index-content-address-not-ZIP-file-SHA256",
+      "observed_platform": "linux/amd64",
+      "repo_digest": "docker.io/semgrep/semgrep@sha256:93963d9295a366f59e4850127b1550400ee7b388f04fe144e4a1f6325d96e01b",
+      "requested_platform": "linux/amd64",
+      "source_image": "docker.io/semgrep/semgrep:1.179.0",
+      "source_url": "https://hub.docker.com/r/semgrep/semgrep",
+      "tool_execution": false,
+      "vendor_signature_verified": false
+    },
+    "status": "acquired-for-review-not-yet-repository-pins",
+    "vendor_signature_verified": false
+  },
+  "limitations": [
+    "JADX SHA256 is reviewed controlled HTTPS acquisition TOFU; upstream release metadata digest absent and SHA1/SHA256/SHA512 sidecars HTTP404.",
+    "Two same-origin downloads are consistency evidence, not independent vendor authenticity.",
+    "Semgrep OCI manifest/index digest is not ZIP file SHA256 or vendor signature.",
+    "Vendor signature verification is false; actual pinned tool execution pending current final CI."
+  ],
+  "review_reference": "work/reviews/2026-10-12-verification-checksum/checksum-final-v1",
+  "schema": 1,
+  "status": "source-predeclared-pins-pending-final-review"
+}
