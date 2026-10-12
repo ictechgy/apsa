@@ -147,6 +147,32 @@ jobs:
           print(json.dumps({"source_revision": os.environ["GITHUB_SHA"], "result_sha256": hashlib.sha256(raw).hexdigest(), "scope": result["scope"], "observations": observations}))
           print("APSA_SEMGREP_MEASUREMENT_END")
           PY
+      - name: Report bounded public Semgrep version failure provenance
+        if: failure()
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          path = root / "semgrep-results/semgrep-version.json"
+          report = {"source_revision": os.environ["GITHUB_SHA"], "run_id": os.environ["GITHUB_RUN_ID"], "state": "unmeasured", "reason": "version-probe-not-created", "target_rss_bytes": None, "client_rss_excluded": True}
+          if path.is_file():
+              if path.is_symlink() or path.stat().st_size > 3 * 1024 * 1024:
+                  raise ValueError("Semgrep version evidence is unsafe or oversized")
+              raw = path.read_bytes()
+              observation = json.loads(raw)
+              report.update(state="observed", reason="version-contract-failure", evidence_sha256=hashlib.sha256(raw).hexdigest())
+              for key in ("status", "incomplete", "seconds"):
+                  report[key] = observation[key]
+              for key, limit in (("stdout", 2048), ("stderr", 4096)):
+                  value = observation[key]
+                  if not isinstance(value, str):
+                      raise ValueError("Semgrep version stream is malformed")
+                  report[key] = value[:limit]
+                  report[key + "_truncated"] = len(value) > limit
+          (root / "semgrep-failure-probe.json").write_text(json.dumps(report, sort_keys=True) + "\n")
+          print("APSA_SEMGREP_VERSION_FAILURE=" + json.dumps(report, sort_keys=True))
+          PY
       - name: Prepare MobSF's expected public JADX release
         run: |
           curl --fail --location --proto '=https' --tlsv1.2 https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip --output "$RUNNER_TEMP/jadx-1.5.0.zip"
@@ -211,6 +237,7 @@ jobs:
             ${{ runner.temp }}/mobsf-synthetic-startup.txt
             ${{ runner.temp }}/semgrep-image-digests.json
             ${{ runner.temp }}/semgrep-image-id.json
+            ${{ runner.temp }}/semgrep-failure-probe.json
             ${{ runner.temp }}/semgrep-container-provenance
             ${{ runner.temp }}/semgrep-owned-container-ids.txt
             ${{ runner.temp }}/semgrep-rules

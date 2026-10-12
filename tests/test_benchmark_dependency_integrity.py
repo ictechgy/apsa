@@ -1,5 +1,6 @@
 """Workflow guards prevent unpinned benchmark execution and accidental broad mounts."""
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -304,3 +305,124 @@ def test_actual_terminal_gate_rejects_ambiguous_or_unsafe_owned_journal(terminal
     }[kind]
     with pytest.raises(ValueError, match="journal"):
         verify(journal=journal)
+
+
+@pytest.fixture
+def version_failure_diagnostic(benchmark_job, tmp_path, monkeypatch):
+    block = _python_blocks(_step(benchmark_job, "Report bounded public Semgrep version failure provenance"))
+    assert len(block) == 1
+    run_id, head_sha = "123456", "e" * 40
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", run_id)
+    monkeypatch.setenv("GITHUB_SHA", head_sha)
+    input_path = tmp_path / "semgrep-results/semgrep-version.json"
+    input_path.parent.mkdir()
+
+    def diagnose():
+        _execute(block[0])
+        return json.loads((tmp_path / "semgrep-failure-probe.json").read_text())
+
+    return input_path, diagnose, run_id, head_sha
+
+
+def test_actual_version_diagnostic_missing_file_stays_unmeasured(version_failure_diagnostic, capsys):
+    path, diagnose, run_id, head_sha = version_failure_diagnostic
+    assert not path.exists()
+    report = diagnose()
+    emitted = json.loads(capsys.readouterr().out.removeprefix("APSA_SEMGREP_VERSION_FAILURE="))
+    assert emitted == report
+    assert report == {
+        "source_revision": head_sha,
+        "run_id": run_id,
+        "state": "unmeasured",
+        "reason": "version-probe-not-created",
+        "target_rss_bytes": None,
+        "client_rss_excluded": True,
+    }
+
+
+@pytest.mark.parametrize("stdout_size,stderr_size", [(0, 0), (2048, 4096), (2049, 4097)])
+def test_actual_version_diagnostic_preserves_failure_hash_and_bounded_streams(
+    version_failure_diagnostic, capsys, stdout_size, stderr_size
+):
+    path, diagnose, run_id, head_sha = version_failure_diagnostic
+    observation = {
+        "status": 124,
+        "incomplete": True,
+        "seconds": 30.125,
+        "stdout": "é" * stdout_size,
+        "stderr": "z" * stderr_size,
+        "rss": 12345678,
+        "rss_bytes": 12345678,
+        "target_rss_bytes": 12345678,
+        "client_rss_excluded": False,
+        "rss_state": "measured-client-only",
+    }
+    raw = (json.dumps(observation, ensure_ascii=False) + "\n").encode("utf-8")
+    path.write_bytes(raw)
+    report = diagnose()
+    emitted = json.loads(capsys.readouterr().out.removeprefix("APSA_SEMGREP_VERSION_FAILURE="))
+    assert emitted == report
+    assert report["source_revision"] == head_sha and report["run_id"] == run_id
+    assert report["state"] == "observed" and report["reason"] == "version-contract-failure"
+    assert report["status"] == 124 and report["incomplete"] is True and report["seconds"] == 30.125
+    assert report["evidence_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert report["stdout"] == observation["stdout"][:2048]
+    assert report["stderr"] == observation["stderr"][:4096]
+    assert report["stdout_truncated"] is (stdout_size > 2048)
+    assert report["stderr_truncated"] is (stderr_size > 4096)
+    assert report["target_rss_bytes"] is None and report["client_rss_excluded"] is True
+    assert "rss" not in report and "rss_bytes" not in report and "rss_state" not in report
+
+
+@pytest.mark.parametrize("kind", ["oversized", "symlink"])
+def test_actual_version_diagnostic_rejects_oversized_or_symlink_input(
+    version_failure_diagnostic, tmp_path, kind, capsys
+):
+    path, diagnose, _, _ = version_failure_diagnostic
+    if kind == "oversized":
+        with path.open("wb") as stream:
+            stream.seek(3 * 1024 * 1024)
+            stream.write(b"x")
+        assert path.stat().st_size == 3 * 1024 * 1024 + 1
+    else:
+        target = tmp_path / "new-synthetic-version-record.json"
+        target.write_text(
+            json.dumps({"status": 1, "incomplete": False, "seconds": 1, "stdout": "", "stderr": ""})
+        )
+        path.symlink_to(target)
+    with pytest.raises(ValueError, match="unsafe or oversized"):
+        diagnose()
+    assert not (tmp_path / "semgrep-failure-probe.json").exists()
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("field", ["stdout", "stderr"])
+def test_actual_version_diagnostic_rejects_malformed_stream(version_failure_diagnostic, field):
+    path, diagnose, _, _ = version_failure_diagnostic
+    observation = {"status": 1, "incomplete": False, "seconds": 1, "stdout": "", "stderr": ""}
+    observation[field] = None
+    path.write_text(json.dumps(observation))
+    with pytest.raises(ValueError, match="stream is malformed"):
+        diagnose()
+
+
+def test_version_failure_diagnostic_does_not_accept_pins_versions_or_extend_deadline(benchmark_job):
+    step = next(
+        step
+        for step in benchmark_job["steps"]
+        if step.get("name") == "Report bounded public Semgrep version failure provenance"
+    )
+    assert step["if"] == "failure()"
+    block = _python_blocks(step["run"])[0]
+    assert "subprocess" not in block and "docker" not in block
+    assert "SEMGREP_BENCHMARK_IMAGE" not in block and "JADX_BENCHMARK_SHA256" not in block
+    measure = next(
+        step for step in benchmark_job["steps"] if "Measure limited Semgrep" in step.get("name", "")
+    )
+    assert "continue-on-error" not in measure
+    source = (Path(__file__).resolve().parents[1] / "benchmarks/semgrep_compare.py").read_text()
+    assert 'VERSION = "1.179.0"' in source
+    assert 'version_call = capture([executable, "--version"], output, environment, timeout=30)' in source
+    assert 'if version_call["status"] or version_call["incomplete"] or version != VERSION:' in source
+    assert 'raise ValueError("Semgrep executable must report the pinned version " + VERSION)' in source
