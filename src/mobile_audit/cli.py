@@ -49,7 +49,10 @@ def parser() -> Parser:
     scan_parser = commands.add_parser("scan", help="Audit source folder, APK or IPA")
     scan_parser.add_argument("target", type=Path)
     scan_parser.add_argument(
-        "--apk-set-device", type=Path, help="Explicit bundletool device-spec JSON for an .apks archive"
+        "--apk-set-device",
+        type=Path,
+        help="Bounded bundletool 1.18.3 device-spec JSON; four selection dimensions plus validated metadata "
+        "(see docs/DEVICE_SPEC.md)",
     )
     scan_parser.add_argument(
         "--ipa-trust-policy", type=Path, help="Pinned public trust-anchor policy JSON for an IPA"
@@ -221,6 +224,11 @@ def parser() -> Parser:
     comparison.add_argument("after")
     comparison.add_argument(
         "--verification", action="store_true", help="Include paired static/runtime observation evidence"
+    )
+    comparison.add_argument(
+        "--portable-inputs",
+        action="store_true",
+        help="With --verification, pair relocated complete source inputs with identical canonical SHA256; binary/runtime scopes stay strict",
     )
     refresh = reports.add_parser("reassess")
     refresh.add_argument("id", nargs="?", default="latest")
@@ -491,9 +499,10 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
         result = jobs.cancel(store, args.id) if args.action == "cancel" else jobs.get(store, args.id)
         return result, 3 if result["state"] in {"failed", "interrupted"} else 0
     if cmd == "scan":
+        from .apks_selection import read_device_spec
         from .run_options import artifact_options, build_selection, transmission_policy
 
-        apk_set_device = read_json(args.apk_set_device) if args.apk_set_device else None
+        apk_set_device = read_device_spec(args.apk_set_device) if args.apk_set_device else None
         ipa_trust_policy = read_json(args.ipa_trust_policy) if args.ipa_trust_policy else None
         apk_set_device, ipa_trust_policy = artifact_options(args.target, apk_set_device, ipa_trust_policy)
 
@@ -688,11 +697,15 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 return item, 0
             return report, 0
         if args.action == "compare":
+            if args.portable_inputs and not args.verification:
+                raise UsageError("--portable-inputs requires --verification")
             result = compare(store, args.before, args.after)
             if args.verification:
                 from .verify import compare_reports
 
-                result["verification"] = compare_reports(store.report(args.before), store.report(args.after))
+                result["verification"] = compare_reports(
+                    store.report(args.before), store.report(args.after), portable_inputs=args.portable_inputs
+                )
             return result, 0
         if args.action == "reassess":
             return refresh_report(store, args.id), 0

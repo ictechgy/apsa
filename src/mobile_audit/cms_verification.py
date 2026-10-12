@@ -125,6 +125,14 @@ def verify_cms_code_directory(
         "cryptographic_signature_verified": False,
         "chain_trust": "unverified",
         "certificate_chain_verified": False,
+        "explicit_anchor_chain_verified": False,
+        "certificate_chain_verified_alias": "explicit_anchor_chain_verified",
+        "chain_scope": "explicit-anchor-cryptographic-chain-only",
+        "chain_anchor_origin": "none",
+        "verification_time_basis": "not-run",
+        "apple_critical_extensions_verified": False,
+        "signer_purpose_policy_verified": False,
+        "revocation_checked": False,
         "apple_signer_trust": "unverified",
         "apple_root_anchor_trust": "unverified",
         "apple_root_anchor_chain_verified": False,
@@ -136,8 +144,12 @@ def verify_cms_code_directory(
         try:
             policy = validate_trust_policy(trust_policy)
             result["trust_policy"] = trust_policy_summary(policy)
+            result["chain_anchor_origin"] = "explicit-policy-anchors"
+            result["verification_time_basis"] = result["trust_policy"]["verification_time_basis"]
+            result["verification_time"] = result["trust_policy"]["verification_time"]
         except ValueError:
             result["chain_trust"] = "unsupported-policy"
+            result["chain_anchor_origin"] = "unsupported-policy"
     if not cms_der or not primary_directory:
         return {**result, "reason": "CMS signature or primary CodeDirectory absent"}
     if len(cms_der) > MAX_CMS_BYTES or len(primary_directory) > MAX_CMS_BYTES:
@@ -217,6 +229,7 @@ def verify_cms_code_directory(
                 result.update(
                     _verify_chain(policy, signature, directory, primary_directory, scratch, verifier_env)
                 )
+                result["explicit_anchor_chain_verified"] = result["certificate_chain_verified"]
                 apple_anchors = pinned_apple_anchors(policy)
                 if apple_anchors:
                     apple_chain = _verify_chain(

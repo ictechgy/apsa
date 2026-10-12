@@ -19,7 +19,6 @@ import yaml
 from mobile_audit.core import digest
 from mobile_audit.runtime_acquisition import AcquisitionRecorder, evaluate_backend_invalidation
 from mobile_audit.runtime_evidence import build_binding, evaluate_workflow, validate_workflow
-from mobile_audit.runtime_transport import AuthorityServer, InstalledTransportAdapter, OwnedAuthority
 from scripts.validate_runtime_transport import (
     ANDROID_ERROR_CATEGORIES,
     ANDROID_ERROR_PHASES,
@@ -47,6 +46,7 @@ from scripts.validate_runtime_transport import (
     safe_ios_events,
     scenario,
 )
+from tests.support.runtime_transport import AuthorityServer, InstalledTransportAdapter, OwnedAuthority
 
 
 def synthetic_android_error(phase="binding", category="argument"):
@@ -219,7 +219,7 @@ def server_without_socket(authority, monkeypatch, *, alter=None):
                 raise HTTPError(request.full_url, status, "synthetic", Message(), io.BytesIO(raw))
             return Response(raw, status)
 
-    monkeypatch.setattr("mobile_audit.runtime_transport.build_opener", lambda *_args: Opener())
+    monkeypatch.setattr("tests.support.runtime_transport.build_opener", lambda *_args: Opener())
     return server
 
 

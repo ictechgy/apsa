@@ -4,7 +4,7 @@
   "approval": "not-a-published-baseline",
   "provenance": "Source AST/Pydantic expectation only; served SDK validation required",
   "default": {
-    "sha256": "38ed7e154cae808281ef52cdcb5b115fee6db7b9941060d18b2aed78ad0a3dc3",
+    "sha256": "60374d3e5418f366c2bd8e3833ea33bbae89610bfa81b699661f8a268a2f1382",
     "published_sha256": "fdb8e4a2fdcf13a35df71a9a7290336b50a2e7f7fad66eff782959b6b0ba9037",
     "tools": [
       [
@@ -205,7 +205,7 @@
     ]
   },
   "runtime": {
-    "sha256": "12ffe656469b9158d5d3154adf103c7c0ea4397375508aad3786e2703e26ad4d",
+    "sha256": "a9d1a2eb461eb48e497ecfc78957eac4f43091145ae01a6c7d9b54a675bb8692",
     "published_sha256": "818ab0bab3202f364478d866d094cd035e7d7b5c60b252c256bb2ade37d79a79",
     "tools": [
       [

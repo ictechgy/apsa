@@ -21,8 +21,8 @@ what remains the client's or user's responsibility. It describes APSA 1.5.1.
   APSA's definitions rather than SDK formatting. The unreleased competitive follow-up adds
   dependency resolution/transmission options, paired verification, explicit APK-set device
   selection and digest-bound IPA chain policies. Its source contract is
-  `38ed7e154cae808281ef52cdcb5b115fee6db7b9941060d18b2aed78ad0a3dc3` by default
-  and `12ffe656469b9158d5d3154adf103c7c0ea4397375508aad3786e2703e26ad4d` with
+  `60374d3e5418f366c2bd8e3833ea33bbae89610bfa81b699661f8a268a2f1382` by default
+  and `a9d1a2eb461eb48e497ecfc78957eac4f43091145ae01a6c7d9b54a675bb8692` with
   `--allow-runtime`. A test pins both values and recomputes them from the
   `tools/list` response; any change to a tool's name, description, parameters or
   annotations must update them deliberately.
@@ -32,6 +32,9 @@ what remains the client's or user's responsibility. It describes APSA 1.5.1.
   after reproducing both published hashes from the base source. This host's privacy guard
   denies an MCP SDK dependency directory named `prompts`; current served `tools/list`
   validation is pending on an allowed CI host. This source check does not replace that check.
+  The strengthening candidate adds an explicit `portable_inputs` option to
+  `reports_compare`; it requires verification and identical complete source
+  fingerprints. It does not weaken runtime pairing. See [comparison scope](REPORT_COMPARISON.md).
 - The value a server reports about itself proves nothing on its own. To check a
   running server independently, take its `tools/list` result and compute
   `mobile_audit.mcp_server.manifest_sha256(tools)` with a trusted APSA copy, or

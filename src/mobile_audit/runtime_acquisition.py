@@ -96,7 +96,8 @@ def acquisition_plan(platform: str, package: str) -> dict:
         "package": package,
         "live_acquisition": "unsupported",
         "injection": "constructor-only",
-        "synthetic_adapter": "mobile_audit.runtime_synthetic.SyntheticTestAppAdapter",
+        "synthetic_adapter": "tests.support.runtime_synthetic.SyntheticTestAppAdapter",
+        "synthetic_adapter_scope": "source-test-only; not included in the installed wheel",
         "required_binding": [
             "platform",
             "package",

@@ -17,8 +17,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import ProxyHandler, Request, build_opener
 
-from .core import canonical_json, digest
-from .runtime_acquisition import (
+from mobile_audit.core import canonical_json, digest
+from mobile_audit.runtime_acquisition import (
     AcquiredCapture,
     AcquisitionSession,
     BackendProbe,

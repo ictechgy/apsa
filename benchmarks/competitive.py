@@ -26,6 +26,7 @@ if __package__ in {None, ""}:
 
 from benchmarks.competitive_cases import MAPPING, MOBSF_COMMIT, SCHEMA, cases, generate, project_files
 from benchmarks.process_measure import ServiceRss, capture
+from mobile_audit.completeness import report_incomplete
 
 
 def sha(path: Path) -> str:
@@ -339,7 +340,9 @@ def apsa_observation(report: dict) -> dict:
         ],
         "coverage": [{"rule": c["rule_id"], "state": c["state"]} for c in report["coverage"]],
         "warnings": report.get("inventory", {}).get("warnings", []) + report.get("warnings", []),
-        "audit_incomplete": report.get("summary", {}).get("incomplete"),
+        "audit_incomplete": True
+        if report_incomplete(report)
+        else report.get("summary", {}).get("incomplete"),
     }
 
 
@@ -455,57 +458,126 @@ class MobSF:
 
 
 def score(records: list[dict], tool: str, kind: str | None = None) -> dict:
-    counts = {
-        "tp": 0,
-        "fp": 0,
-        "fn": 0,
-        "tn": 0,
-        "failed": 0,
-        "failed_risky": 0,
-        "unstable": 0,
-        "unmapped_risky": 0,
-        "partial": 0,
-        "partial_risky": 0,
-        "unsupported": 0,
-        "unsupported_risky": 0,
-        "unmeasured": 0,
-        "unmeasured_risky": 0,
-        "cases": 0,
-    }
+    """Score completed cases; separately expose abstentions and observed alerts.
+
+    End-to-end recall retains the eligible risky completion penalty. A detection
+    in a partial/unmeasured report is an observation, never a scored true positive.
+    """
+    counts: dict[str, int] = dict.fromkeys(
+        (
+            "tp",
+            "fp",
+            "fn",
+            "tn",
+            "failed",
+            "failed_risky",
+            "unstable",
+            "unmapped_risky",
+            "partial",
+            "partial_risky",
+            "unsupported",
+            "unsupported_risky",
+            "unmeasured",
+            "unmeasured_risky",
+            "cases",
+            "completed",
+            "missing_state",
+            "selected_cases",
+            "missing_tool_cases",
+        ),
+        0,
+    )
+    for state in ("partial", "unmeasured"):
+        counts.update(
+            dict.fromkeys(
+                (
+                    state + suffix
+                    for suffix in ("_detected_risk", "_silent_risk", "_safe_alert", "_safe_silent")
+                ),
+                0,
+            )
+        )
     timings = []
     for record in records:
         if kind is not None and record["input_kind"] != kind:
             continue
+        counts["selected_cases"] += 1
         result = record["tools"].get(tool)
         if result is None:
+            counts["missing_tool_cases"] += 1
             continue
         counts["cases"] += 1
-        timings.extend(result["seconds"])
-        if result["state"] != "completed":
-            if result["state"] in {"partial", "unsupported", "unmeasured"}:
-                counts[result["state"]] += 1
-                counts[result["state"] + "_risky"] += record["risky"]
+        timings.extend(result.get("seconds", []))
+        state = result.get("state")
+        detected = bool(result.get("matched"))
+        risky = bool(record["risky"])
+        if state != "completed":
+            if state in {"partial", "unsupported", "unmeasured"}:
+                counts[state] += 1
+                counts[state + "_risky"] += risky
+                if state != "unsupported":
+                    suffix = (
+                        "_detected_risk"
+                        if detected and risky
+                        else "_safe_alert"
+                        if detected
+                        else "_silent_risk"
+                        if risky
+                        else "_safe_silent"
+                    )
+                    counts[state + suffix] += 1
                 continue
             counts["failed"] += 1
-            counts["failed_risky"] += record["risky"]
-            counts["unstable"] += result["state"] == "unstable"
+            counts["failed_risky"] += risky
+            counts["unstable"] += state == "unstable"
+            counts["missing_state"] += state is None
             continue
-        detected = bool(result["matched"])
-        counts["unmapped_risky"] += record["risky"] and not MAPPING[record["category"]][tool]
-        counts[
-            "tp" if detected and record["risky"] else "fp" if detected else "fn" if record["risky"] else "tn"
-        ] += 1
+        counts["completed"] += 1
+        counts["unmapped_risky"] += risky and not MAPPING[record["category"]][tool]
+        counts["tp" if detected and risky else "fp" if detected else "fn" if risky else "tn"] += 1
     precision_denominator = counts["tp"] + counts["fp"]
     recall_denominator = counts["tp"] + counts["fn"]
     end_to_end_denominator = (
         recall_denominator + counts["failed_risky"] + counts["partial_risky"] + counts["unmeasured_risky"]
     )
+    eligible = counts["cases"] - counts["unsupported"]
+    coverage_measured = counts["completed"] + counts["partial"]
+    precision = counts["tp"] / precision_denominator if precision_denominator else None
+    recall = counts["tp"] / recall_denominator if recall_denominator else None
+    end_to_end = counts["tp"] / end_to_end_denominator if end_to_end_denominator else None
     return counts | {
-        "alert_precision": counts["tp"] / precision_denominator if precision_denominator else None,
-        "completed_case_recall": counts["tp"] / recall_denominator if recall_denominator else None,
-        "end_to_end_recall": counts["tp"] / end_to_end_denominator if end_to_end_denominator else None,
+        "scored_cases": counts["completed"],
+        "eligible_cases": eligible,
+        "coverage_measured_cases": coverage_measured,
+        "coverage_unmeasured_cases": counts["unmeasured"],
+        "completion_rate": counts["completed"] / counts["cases"] if counts["cases"] else None,
+        "eligible_completion_rate": counts["completed"] / eligible if eligible else None,
+        "coverage_measurement_rate": coverage_measured / eligible if eligible else None,
+        "alert_precision": precision,
+        "completed_alert_precision": precision,
+        "completed_case_recall": recall,
+        "end_to_end_recall": end_to_end,
+        "eligible_risky_completed_detection_rate": end_to_end,
+        "denominators": {
+            "completion_rate": counts["cases"],
+            "eligible_completion_rate": eligible,
+            "coverage_measurement_rate": eligible,
+            "alert_precision": precision_denominator,
+            "completed_alert_precision": precision_denominator,
+            "completed_case_recall": recall_denominator,
+            "end_to_end_recall": end_to_end_denominator,
+            "eligible_risky_completed_detection_rate": end_to_end_denominator,
+        },
         "median_elapsed_seconds": statistics.median(timings) if timings else None,
-        "accuracy_scope": "completed cases only; partial/unsupported/unmeasured never count as FN/TN. End-to-end recall penalizes eligible failed/partial/unmeasured risky cases; unsupported cases abstain. Timing includes actual successful report returns independently of coverage.",
+        "accuracy_scope": "Completed cases only contribute TP/FP/FN/TN and completed precision/recall. Eligible failed/partial/unmeasured risky cases remain in the end-to-end denominator; unsupported cases abstain. Partial/unmeasured detections are observational counters only.",
+        "completion_scope": "cases counts selected records with a tool result; missing tool results are reported separately. completion_rate includes unsupported results; eligible_completion_rate excludes unsupported results. Missing/unknown states count as failed.",
+        "coverage_scope": "coverage_measurement_rate counts completed and explicit partial states among eligible results. unmeasured means absent coverage evidence, not analyzer failure. This contract is not a cross-tool coverage or accuracy ranking; MobSF does not expose this coverage contract.",
+        "timing_scope": "Actual report-return timings are included independently of coverage, including partial and unmeasured returns; timing is not a completion or success rate.",
+        "metric_aliases": {
+            "alert_precision": "completed_alert_precision",
+            "end_to_end_recall": "eligible_risky_completed_detection_rate",
+            "unmeasured": "coverage_unmeasured_cases",
+        },
     }
 
 
@@ -521,14 +593,29 @@ def measurement_state(observations: list[dict], tool: str, category: str) -> str
     if not MAPPING[category][tool]:
         return "unsupported"
     if any(
-        observation.get("audit_incomplete") is not False
-        or not isinstance(observation.get("coverage"), list)
+        observation.get("audit_incomplete") is True
         or observation.get("warnings")
-        or any(row.get("state") in {"partial", "not-run"} for row in observation["coverage"])
+        or (
+            isinstance(observation.get("coverage"), list)
+            and any(
+                isinstance(row, dict) and row.get("state") in {"partial", "not-run"}
+                for row in observation["coverage"]
+            )
+        )
         for observation in observations
     ):
         return "partial"
-    return "completed" if observations else "unmeasured"
+    if not observations or any(
+        observation.get("audit_incomplete") is not False
+        or not isinstance(observation.get("coverage"), list)
+        or any(
+            not isinstance(row, dict) or row.get("state") not in {"checked", "not-applicable"}
+            for row in observation["coverage"]
+        )
+        for observation in observations
+    ):
+        return "unmeasured"
+    return "completed"
 
 
 def run(root: Path, output: Path, python: str, mobsf: MobSF | None, repeats: int) -> dict:

@@ -29,7 +29,7 @@ TIERS = tuple(STAGING_KINDS)
 # Omitting these kinds can hide a whole platform or module, so even not-applicable coverage is unknown.
 SCOPE_KINDS = {"code_and_config", "other_text"}
 NATIVE = {".kt", ".java", ".swift", ".m", ".mm"}
-CODE = NATIVE | {".h", ".dart", ".js", ".jsx", ".jsbundle", ".ts", ".tsx"}
+CODE = NATIVE | {".h", ".dart", ".js", ".jsx", ".jsbundle", ".bundle", ".ts", ".tsx"}
 CONFIG = {".gradle", ".kts", ".toml", ".lock", ".lockfile", ".resolved", ".pbxproj", ".plist", ".xcprivacy"}
 CONFIG_NAMES = {
     "AndroidManifest.xml",
@@ -56,7 +56,10 @@ VENDORED = {
 TEST_SOURCES = re.compile(
     r"(?:^|/)src/(?:test(?:[A-Z0-9]\w*)?|androidTest\w*|[a-z]\w*Test(?:[A-Z]\w*)?)/"
     r"|^(?:test(?:[A-Z0-9]\w*)?|androidTest\w*)/"
-    r"|(?:^|/)(?:Tests|UITests|__tests__)/"
+    # One-word prefixes such as BusinessTests/AppTests remain ambiguous without a build graph.
+    r"|(?:^|/)(?:Tests|UITests|[A-Z][A-Za-z0-9_-]*UITests|"
+    r"(?:[A-Z][a-z0-9]+){2,}Tests|"
+    r"[A-Z][a-z0-9]+(?:[-_][A-Z][a-z0-9]+)+Tests|__tests__)/"
     r"|\.(?:test|spec)\.[jt]s$|_test\.dart$|(?:^|/)integration_test/"
 )
 LOCK_NAMES = {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "pubspec.lock"}
@@ -150,6 +153,7 @@ def identity(path: Path) -> tuple[int, int]:
 
 
 def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tuple[Path, ...] = ()) -> dict:
+    from .hybrid_analysis import MAX_INPUT_DETAILS, compiled_hybrid_input
     from .inputs import SKIP_DIRS, TEXT_SUFFIXES
 
     started = time.monotonic()
@@ -165,6 +169,8 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
     too_deep: list[Path] = []
     oversized: list[Path] = []
     unreadable: list[str] = []
+    hybrid_inputs: list[dict] = []
+    presence = {"truncated": False}
     # False once a file that could change which rules apply (code, configuration, shipped text) is
     # left out, or directories were not read at all.
     scope = {"complete": True}
@@ -258,6 +264,14 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                         continue
                     try:
                         metadata = entry.stat(follow_symlinks=False)
+                        compiled = compiled_hybrid_input(child.as_posix())
+                        if stat.S_ISREG(metadata.st_mode) and compiled is not None:
+                            # Preserve name-only presence through staging; never copy/read AOT bytes.
+                            hybrid_inputs.append(compiled)
+                            hybrid_inputs.sort(key=lambda item: item["path"])
+                            if len(hybrid_inputs) > MAX_INPUT_DETAILS:
+                                hybrid_inputs.pop()
+                                presence["truncated"] = True
                         if stat.S_ISDIR(metadata.st_mode):
                             if entry.name in SKIP_DIRS:
                                 continue
@@ -391,4 +405,7 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
         "omitted_by_module_truncated": bool(omitted_other_modules),
         "omitted_other_modules": omitted_other_modules,
         "app_scope_complete": scope["complete"],
+        "hybrid_inputs": hybrid_inputs,
+        "hybrid_inputs_truncated": presence["truncated"],
+        "hybrid_input_inventory_complete": scope["complete"] and not presence["truncated"],
     }

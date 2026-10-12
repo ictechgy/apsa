@@ -13,7 +13,7 @@ import zipfile
 import pytest
 
 from mobile_audit.apple_trust import pinned_apple_anchors, trust_policy_summary, validate_trust_policy
-from mobile_audit.binary_analysis import _code_directory, analyze_binary
+from mobile_audit.binary_analysis import _code_directory, _code_signature, analyze_binary, inspect_macho
 from mobile_audit.cms_verification import verify_cms_code_directory
 from mobile_audit.code_directory_sparse import scatter_pages
 from mobile_audit.ipa_resource_seal import verify_resource_seal
@@ -586,3 +586,219 @@ def test_ber_detached_structure_rejects_trailing_and_attached_content(chain_fixt
     for raw in (ber + b"\x05\x00", attached, ber[:-2]):
         result = verify_cms_code_directory(raw, directory)
         assert result["state"] == "unsupported" and not result["cryptographic_signature_verified"]
+
+
+@pytest.mark.parametrize(
+    "when,basis", [(None, "verifier-current-time"), (4102444800, "explicit-policy-epoch")]
+)
+def test_chain_evidence_alias_origin_and_time_basis_are_explicit(chain_fixture, when, basis):
+    directory, cms, policy, _, _ = chain_fixture
+    policy = {**policy, **({"verification_time": when} if when is not None else {})}
+    result = verify_cms_code_directory(cms, directory, policy)
+    assert result["explicit_anchor_chain_verified"] is result["certificate_chain_verified"]
+    assert result["certificate_chain_verified_alias"] == "explicit_anchor_chain_verified"
+    assert result["chain_anchor_origin"] == "explicit-policy-anchors"
+    assert result["chain_scope"] == "explicit-anchor-cryptographic-chain-only"
+    assert result["verification_time_basis"] == basis
+    assert result["verification_time"] == (when if when is not None else "current-time")
+    assert result["trust_policy"]["verification_time_basis"] == basis
+    assert result["trust_policy"]["anchor_origin"] == "explicit-policy-anchors"
+    assert result["trust_policy"]["openssl_purpose"] == "any"
+    assert result["trust_policy"]["apple_critical_extensions"] == "not-validated"
+    assert not result["apple_critical_extensions_verified"]
+    assert not result["signer_purpose_policy_verified"] and not result["revocation_checked"]
+    assert result["cryptographic_signature_verified"]
+    assert result["apple_signer_trust"] == "unverified" and not result["app_authenticity_verified"]
+
+
+@pytest.mark.parametrize(
+    "policy,origin,trust",
+    [
+        (None, "none", "unverified"),
+        ({"schema_version": 99}, "unsupported-policy", "unsupported-policy"),
+    ],
+)
+def test_absent_and_invalid_anchor_policy_never_promote_chain_evidence(chain_fixture, policy, origin, trust):
+    directory, cms, _, _, _ = chain_fixture
+    result = verify_cms_code_directory(cms, directory, policy)
+    assert result["cryptographic_signature_verified"]
+    assert not result["explicit_anchor_chain_verified"] and not result["certificate_chain_verified"]
+    assert result["chain_anchor_origin"] == origin and result["chain_trust"] == trust
+    assert result["verification_time_basis"] == "not-run"
+    assert not result["apple_critical_extensions_verified"] and not result["revocation_checked"]
+    assert not result["app_authenticity_verified"]
+
+
+def _signature_superblob(entries):
+    header_size = 12 + 8 * len(entries)
+    table, payload = [], bytearray()
+    for slot, blob in entries:
+        table.append(struct.pack(">II", slot, header_size + len(payload)))
+        payload += blob
+    return (
+        struct.pack(">III", 0xFADE0CC0, header_size + len(payload), len(entries)) + b"".join(table) + payload
+    )
+
+
+def _synthetic_cms_wrapper(cms):
+    return struct.pack(">II", 0xFADE0B01, len(cms) + 8) + cms
+
+
+def _directory_with_identifier(directory, identifier):
+    # Page hashes stay identical; only unsigned alternate metadata is changed.
+    blob = bytearray(directory)
+    struct.pack_into(">I", blob, 20, len(blob))
+    blob += identifier.encode("ascii") + b"\0"
+    struct.pack_into(">I", blob, 4, len(blob))
+    return bytes(blob)
+
+
+@pytest.mark.parametrize("mutation", ["identifier", "ad-hoc-flag"])
+def test_alternate_metadata_mutation_keeps_primary_cms_but_never_binds_alternate(chain_fixture, mutation):
+    directory, cms, policy, _, _ = chain_fixture
+    alternate = _directory_with_identifier(directory, "synthetic.one")
+    changed = bytearray(alternate)
+    if mutation == "identifier":
+        changed = changed.replace(b"synthetic.one", b"synthetic.two")
+    else:
+        struct.pack_into(">I", changed, 12, 2)
+    changed = bytes(changed)
+    cms_digest = hashlib.sha256(cms).hexdigest()
+    outputs = []
+    for value in (alternate, changed):
+        raw = _signature_superblob([(0, directory), (0x1000, value), (0x10000, _synthetic_cms_wrapper(cms))])
+        result = _code_signature(raw, b"x" * 8192, policy)
+        outputs.append(result)
+        assert result["cryptographic_signature_verified"] and result["explicit_anchor_chain_verified"]
+        assert result["integrity"] == "consistent" and result["signature_integrity"] == "partial"
+        assert not result["cms_binding_complete"] and result["cms_binding_state"] == "partial"
+        primary, alt = result["code_directories"]
+        assert primary["slot"] == 0 and primary["cms_bound"]
+        assert primary["cms_binding_state"] == "verified-exact-primary"
+        assert alt["slot"] == 0x1000 and alt["directory_role"] == "alternate"
+        assert not alt["cms_bound"] and alt["cms_binding_state"] == "unverified-signed-cdhashes-attributes"
+        assert not result["apple_signer_trust_verified"] and not result["app_authenticity_verified"]
+        assert result["cms_verification"]["signed_content_sha256"] == hashlib.sha256(directory).hexdigest()
+    assert hashlib.sha256(cms).hexdigest() == cms_digest
+    assert outputs[0]["code_directories"][0] == outputs[1]["code_directories"][0]
+    assert (
+        outputs[0]["code_directories"][1]["directory_sha256"]
+        != outputs[1]["code_directories"][1]["directory_sha256"]
+    )
+    key = "identifier" if mutation == "identifier" else "ad_hoc"
+    assert outputs[0]["code_directories"][1][key] != outputs[1]["code_directories"][1][key]
+
+
+def test_primary_only_exact_binding_is_complete_but_not_app_authenticity(chain_fixture):
+    directory, cms, policy, _, _ = chain_fixture
+    raw = _signature_superblob([(0, directory), (0x10000, _synthetic_cms_wrapper(cms))])
+    result = _code_signature(raw, b"x" * 8192, policy)
+    assert result["cryptographic_signature_verified"] and result["cms_binding_complete"]
+    assert (
+        result["cms_binding_state"] == "complete"
+        and result["signature_integrity"] == "cms-and-code-consistent"
+    )
+    assert result["code_directories"][0]["cms_bound"]
+    assert result["explicit_anchor_chain_verified"] is result["certificate_chain_verified"]
+    assert result["chain_anchor_origin"] == "explicit-policy-anchors"
+    assert not result["apple_signer_trust_verified"] and not result["app_authenticity_verified"]
+
+
+@pytest.mark.parametrize("slot", [0x1004, 0x1005, 0x2000])
+def test_extra_directory_slots_are_visible_and_never_promoted(chain_fixture, slot):
+    directory, cms, policy, _, _ = chain_fixture
+    raw = _signature_superblob([(0, directory), (slot, directory), (0x10000, _synthetic_cms_wrapper(cms))])
+    result = _code_signature(raw, b"x" * 8192, policy)
+    assert result["cryptographic_signature_verified"]
+    assert len(result["code_directories"]) == 2
+    primary, extra = result["code_directories"]
+    assert primary["cms_bound"] and not extra["cms_bound"]
+    assert extra["slot"] == slot
+    assert not result["cms_binding_complete"] and result["signature_integrity"] == "partial"
+    if slot >= 0x1005:
+        assert extra["directory_role"] == "unsupported-slot" and extra["integrity"] == "unverifiable"
+
+
+def test_alternate_without_primary_is_never_promoted_even_if_cms_content_matches(chain_fixture):
+    directory, cms, policy, _, _ = chain_fixture
+    raw = _signature_superblob([(0x1000, directory), (0x10000, _synthetic_cms_wrapper(cms))])
+    result = _code_signature(raw, b"x" * 8192, policy)
+    assert not result["cryptographic_signature_verified"]
+    assert not result["code_directories"][0]["cms_bound"] and not result["cms_binding_complete"]
+    assert result["signature_integrity"] == "partial"
+
+
+def test_malformed_declared_alternate_slot_cannot_be_ignored(chain_fixture):
+    directory, cms, policy, _, _ = chain_fixture
+    wrong_magic = struct.pack(">II", 0xFADE0C01, 8)
+    raw = _signature_superblob(
+        [(0, directory), (0x1000, wrong_magic), (0x10000, _synthetic_cms_wrapper(cms))]
+    )
+    result = _code_signature(raw, b"x" * 8192, policy)
+    assert result["cryptographic_signature_verified"]
+    assert result["code_directories"][1]["integrity"] == "unverifiable"
+    assert not result["code_directories"][1]["cms_bound"]
+    assert not result["cms_binding_complete"] and result["signature_integrity"] == "partial"
+
+
+def test_primary_metadata_mutation_invalidates_unchanged_cms(chain_fixture):
+    directory, cms, policy, _, _ = chain_fixture
+    changed = bytearray(directory)
+    struct.pack_into(">I", changed, 12, 2)
+    raw = _signature_superblob([(0, bytes(changed)), (0x10000, _synthetic_cms_wrapper(cms))])
+    result = _code_signature(raw, b"x" * 8192, policy)
+    assert result["integrity"] == "consistent"
+    assert not result["cryptographic_signature_verified"] and not result["cms_binding_complete"]
+    assert not result["code_directories"][0]["cms_bound"]
+    assert result["signature_integrity"] == "invalid-cms"
+
+
+def test_macho_postprocessing_does_not_promote_alternate_binding(chain_fixture, tmp_path):
+    target, policy = signed_archive_fixture(chain_fixture, tmp_path)
+    with zipfile.ZipFile(target) as archive:
+        macho = archive.read("Payload/App.app/App")
+        info = archive.read("Payload/App.app/Info.plist")
+        envelope = archive.read("Payload/App.app/_CodeSignature/CodeResources")
+    signature_region = macho[4096:]
+    _, _, count = struct.unpack_from(">III", signature_region)
+    assert count == 2
+    primary_offset = struct.unpack_from(">I", signature_region, 16)[0]
+    cms_offset = struct.unpack_from(">I", signature_region, 24)[0]
+    primary_size = struct.unpack_from(">I", signature_region, primary_offset + 4)[0]
+    cms_size = struct.unpack_from(">I", signature_region, cms_offset + 4)[0]
+    directory = signature_region[primary_offset : primary_offset + primary_size]
+    wrapper = signature_region[cms_offset : cms_offset + cms_size]
+    raw = _signature_superblob([(0, directory), (0x1000, directory), (0x10000, wrapper)])
+    changed_macho = macho[:4096] + raw + bytes(16384 - len(raw))
+    signature = inspect_macho(changed_macho, policy, {1: info, 3: envelope})[0]["code_signature"]
+    assert signature["integrity"] == "consistent" and signature["cryptographic_signature_verified"]
+    assert not signature["cms_binding_complete"] and signature["signature_integrity"] == "partial"
+    assert signature["code_directories"][0]["cms_bound"] and not signature["code_directories"][1]["cms_bound"]
+
+
+def test_all_directory_rows_remain_visible_under_superblob_entry_budget(chain_fixture):
+    directory, cms, policy, _, _ = chain_fixture
+    entries = [(0, directory)]
+    entries += [(0x1000 + index, directory) for index in range(5)]
+    entries += [(0x2000 + index, directory) for index in range(121)]
+    entries += [(0x10000, _synthetic_cms_wrapper(cms))]
+    result = _code_signature(_signature_superblob(entries), b"x" * 8192, policy)
+    assert len(result["code_directories"]) == 127
+    assert sum(row["cms_bound"] for row in result["code_directories"]) == 1
+    assert result["code_directories"][-1]["slot"] == 0x2000 + 120
+    assert not result["cms_binding_complete"] and result["signature_integrity"] == "partial"
+    # Exceeding the entry budget still fails before CMS verification.
+    from mobile_audit.binary_analysis import BinaryFormatError
+
+    entries.insert(-1, (0x3000, directory))
+    with pytest.raises(BinaryFormatError, match="index table"):
+        _code_signature(_signature_superblob(entries), b"x" * 8192, policy)
+
+
+def test_duplicate_directory_slots_remain_fail_closed(chain_fixture):
+    from mobile_audit.binary_analysis import BinaryFormatError
+
+    directory, cms, policy, _, _ = chain_fixture
+    raw = _signature_superblob([(0, directory), (0, directory), (0x10000, _synthetic_cms_wrapper(cms))])
+    with pytest.raises(BinaryFormatError, match="duplicate code signature slot"):
+        _code_signature(raw, b"x" * 8192, policy)

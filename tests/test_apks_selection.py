@@ -169,7 +169,7 @@ def test_install_time_feature_dependencies_preserved():
         {"supportedLocales": ["en_US"]},
         {"supportedLocales": ["en-US", "EN-us"]},
         {"supportedLocales": "en-US"},
-        {"codename": "REL"},
+        {"codename": "Preview"},
         {"sdkVersion": "34"},
     ],
 )

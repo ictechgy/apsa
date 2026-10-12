@@ -6,19 +6,23 @@ from dataclasses import replace
 import pytest
 
 from mobile_audit.runtime_acquisition import AcquisitionRecorder
-from mobile_audit.runtime_compiled import JDK, CompiledSyntheticAdapter
 from mobile_audit.runtime_evidence import build_binding, evaluate_workflow
+from tests.support.runtime_compiled import CompiledSyntheticAdapter, resolve_jdk
 from tests.test_runtime_evidence import scenario
 
 
 @pytest.fixture
 def owned_adapter(tmp_path):
-    if not (JDK / "javac").is_file():
+    try:
+        jdk = resolve_jdk()
+    except ValueError:
         pytest.skip("Explicit local JDK unavailable")
     adapters = []
 
     def create(value, **options):
-        adapter = CompiledSyntheticAdapter(value, tmp_path / ("compiled-" + str(len(adapters))), **options)
+        adapter = CompiledSyntheticAdapter(
+            value, tmp_path / ("compiled-" + str(len(adapters))), jdk=jdk, **options
+        )
         adapters.append(adapter)
         return adapter
 
@@ -71,6 +75,13 @@ def test_fresh_compiled_bound_storage_workflows(owned_adapter, platform, kind, t
     assert after["surfaces"]["network"]["completeness"] == "partial"
     assert after["surfaces"]["ui"]["completeness"] == "unsupported"
     assert adapter.manifest["source_sha256"] != adapter.manifest["model_sha256"]
+    command_journal = json.dumps(adapter.manifest["commands"])
+    assert str(adapter.root) not in command_journal
+    assert (
+        '"argv"' not in command_journal
+        and '"stdout"' not in command_journal
+        and '"stderr"' not in command_journal
+    )
     encoded = json.dumps(snapshots)
     assert all(marker not in encoded for marker in value["markers"].values())
     assert "IPC replay credential=" not in encoded

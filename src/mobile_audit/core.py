@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .completeness import report_incomplete as report_incomplete
+
 MAX_FILE = 8 * 1024 * 1024
 MAX_ARCHIVE_TOTAL = 512 * 1024 * 1024
 MAX_FILES = 12000
@@ -232,27 +234,3 @@ def finding(
 
 def severity_rank(value: str) -> int:
     return {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}.get(value, 0)
-
-
-def report_incomplete(report: dict) -> bool:
-    """Explicitly partial work is incomplete; optional not-run checks remain visible."""
-    runtime = report.get("runtime", [])
-    online = report.get("online_query", {})
-    inventory = report.get("inventory", {})
-    snapshot = inventory.get("input_snapshot") if isinstance(inventory, dict) else None
-    snapshot = snapshot if isinstance(snapshot, dict) else {}
-    return bool(
-        report.get("partial") is True
-        or (isinstance(inventory, dict) and inventory.get("partial") is True)
-        or (isinstance(inventory, dict) and inventory.get("fingerprint_complete") is False)
-        or snapshot.get("partial") is True
-        or snapshot.get("app_scope_complete") is False
-        or any(check.get("state") == "partial" for check in report.get("coverage", []))
-        or (
-            isinstance(runtime, list)
-            and runtime
-            and isinstance(runtime[-1], dict)
-            and runtime[-1].get("partial") is True
-        )
-        or (isinstance(online, dict) and online.get("requested") and online.get("errors"))
-    )

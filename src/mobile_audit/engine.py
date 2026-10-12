@@ -78,6 +78,10 @@ def analyze_target(
         staged_sbom = root / "sbom" / "sbom.json" if sbom else None
         if sbom and staged_sbom:
             stage_input(sbom, staged_sbom, source=False)
+        from .hybrid_observations import PROTOCOL
+        from .hybrid_observations import write as write_hybrid_observations
+
+        write_hybrid_observations(scratch, snapshot)
         args = [
             sys.executable,
             "-I",
@@ -103,6 +107,7 @@ def analyze_target(
             json.dumps(dependency_selection, sort_keys=True) if dependency_selection else "",
             json.dumps(apk_set_device, sort_keys=True) if apk_set_device is not None else "",
             json.dumps(ipa_trust_policy, sort_keys=True) if ipa_trust_policy is not None else "",
+            PROTOCOL,
         ]
         from .parser_sandbox import activate, sandbox_command
 
@@ -153,6 +158,8 @@ def analyze_target(
         "omitted_by_module_truncated": snapshot.get("omitted_by_module_truncated", False),
         "omitted_other_modules": snapshot.get("omitted_other_modules", {}),
         "app_scope_complete": snapshot.get("app_scope_complete", True),
+        "hybrid_input_inventory_complete": snapshot.get("hybrid_input_inventory_complete", True),
+        "hybrid_inputs_truncated": snapshot.get("hybrid_inputs_truncated", False),
     }
     if snapshot["warnings"]:
         result["inventory"]["warnings"].extend(snapshot["warnings"])

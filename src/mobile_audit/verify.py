@@ -8,7 +8,7 @@ did not run there. Absence of an APSA finding is not evidence of absence.
 from __future__ import annotations
 
 import re
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 
 from .core import canonical_json, digest
 from .maswe import RULE_WEAKNESSES, UNMAPPED, finding_weaknesses, weakness_index, weaknesses_for
@@ -25,13 +25,82 @@ AST_SUFFIXES = (".java", ".kt", ".kts", ".swift", ".m")
 SOURCE_SUFFIXES = AST_SUFFIXES + (".js", ".jsx", ".jsbundle", ".ts", ".tsx", ".dart")
 
 
-def compare_reports(before: dict, after: dict) -> dict:
+def _portable_source_pairing(before: dict, after: dict) -> str:
+    """Authorize target-only normalization from report evidence; never touch input paths."""
+    for report in (before, after):
+        inventory = report.get("inventory", {})
+        if inventory.get("input_kind") != "source" or inventory.get("binary"):
+            return "complete source inputs required; binary pairing remains strict"
+        target = report.get("target")
+        if (
+            not isinstance(target, str)
+            or not (PurePosixPath(target).is_absolute() or PureWindowsPath(target).is_absolute())
+            or PurePosixPath(target.replace("\\", "/").rstrip("/")).suffix.lower() == ".app"
+        ):
+            return "absolute source targets required"
+        fingerprint = inventory.get("fingerprint")
+        if not isinstance(fingerprint, str) or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None:
+            return "canonical SHA256 source fingerprints required"
+        if inventory.get("fingerprint_complete") is not True:
+            return "explicitly complete source fingerprints required"
+        snapshot = inventory.get("input_snapshot") or {}
+        if (
+            not isinstance(snapshot, dict)
+            or report.get("partial")
+            or inventory.get("partial")
+            or snapshot.get("partial")
+            or ("app_scope_complete" in snapshot and snapshot["app_scope_complete"] is not True)
+        ):
+            return "partial source or input scope cannot be normalized"
+        omitted = snapshot.get("omitted", {})
+        if omitted and (
+            not isinstance(omitted, dict)
+            or any(
+                not isinstance(counts, dict) or counts.get("files") or counts.get("bytes")
+                for counts in omitted.values()
+            )
+        ):
+            return "omitted source input cannot be normalized"
+        if any(check.get("state") == "partial" for check in report.get("coverage", [])):
+            return "partial analysis coverage cannot be normalized"
+        for key in ("source_analysis", "hybrid_analysis"):
+            analysis = inventory.get(key) or {}
+            if (
+                not isinstance(analysis, dict)
+                or analysis.get("partial")
+                or analysis.get("state") == "partial"
+                or any(item.get("state") == "partial" for item in analysis.get("files", []))
+            ):
+                return "partial source analysis cannot be normalized"
+    if before["inventory"]["fingerprint"] != after["inventory"]["fingerprint"]:
+        return "source fingerprints differ; relocation pairing requires identical input"
+    # Preserve every declared spec representation, not only scope()'s effective
+    # fallback. No additional analysis field is normalized away with the path.
+    for key in ("spec_hash", "specs", "analysis_specs"):
+        if (key in before) != (key in after) or before.get(key) != after.get(key):
+            return "analysis specification differs"
+    for key in ("project_specification", "analysis_specs"):
+        left, right = before["inventory"], after["inventory"]
+        if (key in left) != (key in right) or left.get(key) != right.get(key):
+            return "analysis specification differs"
+    if sorted(canonical_json(app) for app in before["inventory"].get("apps", [])) != sorted(
+        canonical_json(app) for app in after["inventory"].get("apps", [])
+    ):
+        return "app scope differs"
+    return "eligible"
+
+
+def compare_reports(before: dict, after: dict, *, portable_inputs: bool = False) -> dict:
     """Compare evidence snapshots without converting disappearance into remediation.
 
     Audit fingerprints are retained as an explicit before/after build pair.
     Runtime comparisons require the identical executable scenario scope and
     observed installed build. Legacy records without those bindings are unknown.
+    portable_inputs only pairs relocated complete source snapshots with identical
+    canonical SHA256 fingerprints; original paths and scope hashes remain visible.
     """
+    if type(portable_inputs) is not bool:
+        raise ValueError("portable_inputs must be a boolean")
 
     def scope(report):
         inventory = report.get("inventory", {})
@@ -52,11 +121,34 @@ def compare_reports(before: dict, after: dict) -> dict:
 
     before_scope, after_scope = scope(before), scope(after)
     complete_scope = bool(before_scope["target"] and before_scope["input_kind"] and before_scope["platforms"])
-    scope_state = (
+    original_scope_state = (
         "unchanged"
         if complete_scope and before_scope == after_scope
         else ("changed" if complete_scope else "unavailable")
     )
+    normalized_before, normalized_after = dict(before_scope), dict(after_scope)
+    path_normalized = False
+    normalization_reason = "portable pairing not requested"
+    if portable_inputs and before_scope["target"] != after_scope["target"]:
+        normalization_reason = _portable_source_pairing(before, after)
+        if normalization_reason == "eligible" and complete_scope:
+            normalized_before["target"] = normalized_after["target"] = "<portable-source-input>"
+            if normalized_before == normalized_after:
+                path_normalized = True
+                normalization_reason = (
+                    "identical complete canonical source input and unchanged analysis scope"
+                )
+            else:
+                normalization_reason = "analysis scope differs beyond target"
+        elif normalization_reason == "eligible":
+            normalization_reason = "analysis scope unavailable"
+    elif portable_inputs:
+        normalization_reason = "target unchanged; normalization unnecessary"
+    # Failed eligibility never normalizes any field, including hash evidence.
+    if not path_normalized:
+        normalized_before, normalized_after = before_scope, after_scope
+    scope_state = "unchanged" if path_normalized else original_scope_state
+    normalization_basis = "identical-complete-canonical-source-sha256" if path_normalized else "none"
     fingerprints = {
         "before": before.get("inventory", {}).get("fingerprint"),
         "after": after.get("inventory", {}).get("fingerprint"),
@@ -110,7 +202,8 @@ def compare_reports(before: dict, after: dict) -> dict:
             prior is not None
             and binding.get("state") == "bound"
             and prior.get("app_binding", {}).get("state") == "bound"
-            and binding.get("identity") == prior.get("app_binding", {}).get("identity")
+            and bool(binding.get("identity"))
+            and binding["identity"] == prior.get("app_binding", {}).get("identity")
         )
         runtime_pairs.append(
             {
@@ -128,7 +221,7 @@ def compare_reports(before: dict, after: dict) -> dict:
                 and current["scenario_identity"] == prior.get("scenario_identity")
                 else "unavailable-or-changed",
                 "verification": "comparable-observation"
-                if scope_state == "unchanged"
+                if original_scope_state == "unchanged"
                 and prior is not None
                 and exact_build
                 and current.get("scenario_identity")
@@ -176,11 +269,31 @@ def compare_reports(before: dict, after: dict) -> dict:
         "after_report_id": after.get("id"),
         "scope_pairing": {
             "state": scope_state,
+            "original_state": original_scope_state,
+            "normalization_basis": normalization_basis,
+            "normalized_fields": ["target"] if path_normalized else [],
             "before": before_scope,
             "after": after_scope,
             "before_sha256": digest(canonical_json(before_scope).encode()),
             "after_sha256": digest(canonical_json(after_scope).encode()),
+            "comparison_before_sha256": digest(canonical_json(normalized_before).encode()),
+            "comparison_after_sha256": digest(canonical_json(normalized_after).encode()),
         },
+        "path_pairing": {
+            "state": "portable-source-target"
+            if path_normalized
+            else "exact-target"
+            if before_scope["target"] and before_scope["target"] == after_scope["target"]
+            else "changed-target"
+            if before_scope["target"] and after_scope["target"]
+            else "unavailable",
+            "portable_inputs_requested": portable_inputs,
+            "normalized": path_normalized,
+            "before_target": before_scope["target"],
+            "after_target": after_scope["target"],
+            "reason": normalization_reason,
+        },
+        "normalization_basis": normalization_basis,
         "build_pairing": {"state": build_state, **fingerprints},
         "finding_transitions": changes,
         "runtime_pairs": runtime_pairs,

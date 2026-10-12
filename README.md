@@ -30,6 +30,13 @@ Reports record module omissions, comparisons expose input completeness, and the
 Action summary shows staging omissions. Partial fingerprints remain SBOM
 metadata instead of application hashes. See [scope and validation](docs/LARGE_INPUT_FOLLOWUP.md).
 
+**Unreleased external-review strengthening.** Bounded device-spec metadata,
+per-file partial reasons, text/compiled hybrid coverage, explicit signature
+binding scope, portable source comparisons and exact package-content checks
+are documented in [strengthening scope and evidence limits](docs/STRENGTHENING.md).
+Synthetic acquisition adapters are source-test helpers and are excluded from
+the installed wheel.
+
 <!-- mcp-name: io.github.ictechgy/apsa -->
 
 APSA helps developers and security teams audit their own mobile apps. It inspects source code and APK/AAB/IPA builds, correlates public vulnerability information, and keeps evidence, coverage, and report history together. Use the CLI, terminal UI, or the same audit engine through MCP and reusable skills.

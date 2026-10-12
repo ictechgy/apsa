@@ -581,6 +581,9 @@ def _code_signature(
         if any(offset < end and offset + blob_length > start for start, end in regions):
             raise BinaryFormatError("overlapping code signature sub-blobs")
         regions.append((offset, offset + blob_length))
+        declared_directory_slot = slot_type == 0 or 0x1000 <= slot_type < 0x1005
+        if declared_directory_slot and blob_magic != 0xFADE0C02:
+            directories.append((slot_type, raw[offset : offset + blob_length], False))
         if blob_magic == 0xFADE7171:
             if "entitlements" in result:
                 raise BinaryFormatError("duplicate XML entitlement blobs")
@@ -588,9 +591,14 @@ def _code_signature(
             result["source"] = "embedded-xml"
         elif blob_magic == 0xFADE7172:
             result["der_entitlements_present"] = True
-        elif blob_magic == 0xFADE0C02 and (slot_type == 0 or 0x1000 <= slot_type < 0x1005):
-            directories.append(raw[offset : offset + blob_length])
-            if slot_type == 0:
+        elif blob_magic == 0xFADE0C02:
+            # Keep every declared/observed directory visible. Unknown slots must
+            # not be ignored or promoted to the exact primary CMS content.
+            supported_slot = slot_type == 0 or 0x1000 <= slot_type < 0x1005
+            directories.append(
+                (slot_type, raw[offset : offset + blob_length], supported_slot and blob_magic == 0xFADE0C02)
+            )
+            if slot_type == 0 and blob_magic == 0xFADE0C02:
                 primary_directory = raw[offset : offset + blob_length]
         elif blob_magic == 0xFADE0B01 and slot_type == 0x10000:
             result["cms_signature_present"] = blob_length > 8
@@ -601,14 +609,34 @@ def _code_signature(
     if directories:
         result["code_directories"] = []
         primary_valid = primary_directory is not None
-        for blob in directories[:6]:
+        # The superblob's 128-entry budget also bounds this complete metadata
+        # list. Recognized slots are unique; none are dropped by a slice limit.
+        for slot_type, blob, supported in directories:
+            directory_metadata = {
+                "slot": slot_type,
+                "directory_sha256": hashlib.sha256(blob).hexdigest(),
+                "directory_role": "primary"
+                if slot_type == 0
+                else "alternate"
+                if 0x1000 <= slot_type < 0x1005
+                else "unsupported-slot",
+                "cms_bound": False,
+                "cms_binding_state": "unverified-primary"
+                if slot_type == 0
+                else "unverified-signed-cdhashes-attributes"
+                if supported
+                else "unsupported-directory-slot-or-format",
+            }
             try:
-                result["code_directories"].append(_code_directory(blob, code, entitlement_blobs))
+                if not supported:
+                    raise BinaryFormatError("unsupported CodeDirectory slot or blob format")
+                directory_metadata.update(_code_directory(blob, code, entitlement_blobs))
             except BinaryFormatError as error:
-                if blob == primary_directory:
+                if slot_type == 0:
                     primary_valid = False
                 # A malformed directory leaves integrity unverified; it does not fail the binary.
-                result["code_directories"].append({"integrity": "unverifiable", "reason": str(error)[:120]})
+                directory_metadata.update({"integrity": "unverifiable", "reason": str(error)[:120]})
+            result["code_directories"].append(directory_metadata)
         states = {d.get("integrity") for d in result["code_directories"]}
         result["integrity"] = (
             "modified"
@@ -626,6 +654,26 @@ def _code_signature(
         "cryptographic_signature_verified"
     ]
     result["certificate_chain_verified"] = result["cms_verification"].get("certificate_chain_verified", False)
+    result["explicit_anchor_chain_verified"] = result["cms_verification"].get(
+        "explicit_anchor_chain_verified", False
+    )
+    result["certificate_chain_verified_alias"] = "explicit_anchor_chain_verified"
+    result["chain_scope"] = result["cms_verification"]["chain_scope"]
+    result["chain_anchor_origin"] = result["cms_verification"]["chain_anchor_origin"]
+    result["verification_time_basis"] = result["cms_verification"]["verification_time_basis"]
+    for directory_metadata in result.get("code_directories", []):
+        if directory_metadata["slot"] == 0 and primary_valid:
+            directory_metadata["cms_bound"] = result["cryptographic_signature_verified"]
+            directory_metadata["cms_binding_state"] = (
+                "verified-exact-primary" if directory_metadata["cms_bound"] else "unverified-primary"
+            )
+    result["cms_binding_complete"] = bool(result.get("code_directories")) and all(
+        item["cms_bound"] for item in result["code_directories"]
+    )
+    result["cms_binding_state"] = "complete" if result["cms_binding_complete"] else "partial"
+    result["cms_binding_scope"] = (
+        "Exact primary CodeDirectory bytes only; signed CDHashes attributes for alternate CodeDirectories are not verified."
+    )
     result["apple_signer_trust_verified"] = False
     result["app_authenticity_verified"] = False
     result["signature_integrity"] = (
@@ -634,7 +682,9 @@ def _code_signature(
         else "modified-code"
         if result.get("integrity") == "modified"
         else "cms-and-code-consistent"
-        if result["cryptographic_signature_verified"] and result.get("integrity") == "consistent"
+        if result["cryptographic_signature_verified"]
+        and result.get("integrity") == "consistent"
+        and result["cms_binding_complete"]
         else "partial"
     )
     return result
@@ -772,6 +822,7 @@ def _macho_slice(
                 else "cms-and-code-consistent"
                 if signature.get("cryptographic_signature_verified")
                 and signature["integrity"] == "consistent"
+                and signature.get("cms_binding_complete")
                 else "partial"
             )
     if cursor != commands_end:

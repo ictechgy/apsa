@@ -24,6 +24,16 @@ MAX_ROUNDS = 6
 MAX_OPERATIONS = 300_000
 MAX_ORIGINS = 64
 SUFFIXES = {".js", ".jsx", ".jsbundle", ".ts", ".tsx", ".dart"}
+MAX_INPUT_DETAILS = 256
+TEXT_BUNDLE_NAMES = {"index.android.bundle", "index.ios.bundle", "main.bundle"}
+# Presence signatures only: no bytecode version, instruction or string-table analysis.
+# https://github.com/facebook/hermes/blob/main/include/hermes/BCGen/HBC/BytecodeFileFormat.h
+HERMES_MAGIC = 0x1F1903C103BC1FC6
+HERMES_HEADERS = tuple(
+    magic.to_bytes(8, order)
+    for magic in (HERMES_MAGIC, HERMES_MAGIC ^ 0xFFFFFFFFFFFFFFFF)
+    for order in ("little", "big")
+)
 RULES = {
     "HYBRID-UNTRUSTED-URL": ("External input reaches a hybrid WebView load", "MASVS-PLATFORM"),
     "HYBRID-JS-EVAL": ("External input reaches JavaScript execution", "MASVS-PLATFORM"),
@@ -38,6 +48,86 @@ TOKEN = re.compile(
     r"|(?P<unknown>\S)",
     re.DOTALL,
 )
+
+
+def compiled_hybrid_input(path: str) -> dict | None:
+    """Name-based compiled-artifact presence; never open an artifact here."""
+    name = PurePosixPath(path)
+    if name.suffix.lower() in {".hbc", ".hermes"}:
+        framework, representation = "react-native", "hermes-bytecode-candidate"
+    elif name.name == "libapp.so" or (name.name == "App" and "App.framework" in name.parts[:-1]):
+        framework, representation = "flutter", "aot-candidate"
+    elif name.name in {"vm_snapshot_data", "isolate_snapshot_data", "kernel_blob.bin"}:
+        framework, representation = "flutter", "compiled-snapshot-candidate"
+    else:
+        return None
+    return {
+        "path": path,
+        "framework": framework,
+        "representation": representation,
+        "basis": "recognized-artifact-name",
+        "state": "skipped",
+        "reason": "compiled artifact presence only; bytecode/AOT analysis unavailable",
+    }
+
+
+def hybrid_source_input(path: str, raw: bytes) -> tuple[dict | None, str | None]:
+    """Classify an already bounded source blob before admitting it to token flow."""
+    suffix = PurePosixPath(path).suffix.lower()
+    if suffix not in SUFFIXES | {".bundle"}:
+        return None, None
+    record = {
+        "path": path,
+        "framework": "flutter"
+        if suffix == ".dart"
+        else "react-native"
+        if suffix == ".jsbundle" or PurePosixPath(path).name in TEXT_BUNDLE_NAMES
+        else "unknown"
+        if suffix == ".bundle"
+        else "javascript",
+        "representation": "text-source",
+        "basis": "source-extension",
+        "state": "source-available",
+    }
+    if raw.startswith(HERMES_HEADERS):
+        record.update(
+            framework="react-native",
+            representation="hermes-bytecode",
+            basis="hermes-header-signature",
+            state="skipped",
+            reason="Hermes bytecode presence only; bytecode analysis unavailable",
+        )
+        return record, None
+    try:
+        text = raw.decode("utf-8")
+        if any(ord(char) < 32 and char not in "\t\n\r" for char in text):
+            raise ValueError("non-text control bytes")
+    except (UnicodeError, ValueError):
+        record.update(state="skipped", representation="non-text", reason="non-text hybrid input")
+        return record, None
+    if suffix == ".bundle":
+        if PurePosixPath(path).name in TEXT_BUNDLE_NAMES:
+            record["basis"] = "recognized-text-bundle-name"
+        else:
+            try:
+                tokens = _tokens(text)
+            except ValueError as error:
+                record.update(state="skipped", reason=str(error))
+                return record, None
+            if any(
+                token.kind == "identifier" and token.text in {"__d", "__r"} and tokens[index + 1].text == "("
+                for index, token in enumerate(tokens[:-1])
+            ):
+                record["basis"] = "metro-bundle-marker"
+                record["framework"] = "react-native"
+            else:
+                record.update(
+                    state="skipped",
+                    representation="unrecognized-bundle",
+                    reason="bundle name/Metro marker not recognized",
+                )
+                return record, None
+    return record, text
 
 
 @dataclass(frozen=True)
@@ -420,28 +510,46 @@ class Flow:
         return self.bound(returned)
 
 
-def analyze_hybrid(sources: list[tuple[str, str]]) -> dict:
+def analyze_hybrid(
+    sources: list[tuple[str, str]],
+    observed_inputs: list[dict] | None = None,
+    *,
+    observations_truncated: bool = False,
+) -> dict:
     functions, texts, imports, files, warnings = [], {}, {}, [], []
     total = 0
     for index in prioritized_paths([path for path, _ in sources]):
         path, text = sources[index]
-        if PurePosixPath(path).suffix not in SUFFIXES:
+        if PurePosixPath(path).suffix.lower() not in SUFFIXES | {".bundle"}:
             continue
         size = len(text.encode("utf-8"))
         record: dict = {
             "path": path,
+            "framework": "flutter"
+            if path.endswith(".dart")
+            else "react-native"
+            if PurePosixPath(path).suffix == ".jsbundle" or PurePosixPath(path).name in TEXT_BUNDLE_NAMES
+            else "unknown"
+            if PurePosixPath(path).suffix == ".bundle"
+            else "javascript",
             "language": "dart"
             if path.endswith(".dart")
             else "typescript"
             if PurePosixPath(path).suffix in {".ts", ".tsx"}
             else "javascript",
             "state": "partial",
+            "analysis_state": "skipped",
         }
         files.append(record)
         try:
             if size > MAX_BYTES or total + size > MAX_TOTAL:
                 raise ValueError("hybrid byte budget reached")
             total += size
+            observed, recognized_text = hybrid_source_input(path, text.encode("utf-8"))
+            if observed is not None:
+                record.update({key: value for key, value in observed.items() if key != "state"})
+            if recognized_text is None:
+                raise ValueError(record.get("reason", "unrecognized hybrid source"))
             tokens = _tokens(text)
             parsed = _functions(path, tokens)
             if len(functions) + len(parsed) > MAX_FUNCTIONS:
@@ -449,10 +557,23 @@ def analyze_hybrid(sources: list[tuple[str, str]]) -> dict:
             functions.extend(parsed)
             texts[path] = text
             imports[path] = _imports(path, tokens)
-            record.update({"tokens": len(tokens), "functions": len(parsed) - 1})
+            record.update({"tokens": len(tokens), "functions": len(parsed) - 1, "analysis_state": "analyzed"})
         except ValueError as error:
             record["error"] = str(error)
+            record["reason"] = str(error)
             warnings.append(f"Hybrid analysis incomplete for {path}: {error}")
+    source_paths = {record["path"] for record in files}
+    observations = sorted(observed_inputs or [], key=lambda item: item["path"])
+    for observed in observations[:MAX_INPUT_DETAILS]:
+        if observed["path"] in source_paths:
+            continue
+        files.append({**observed, "state": "partial", "analysis_state": "skipped"})
+        warnings.append(
+            f"Hybrid source not analyzed for {observed['path']}: {observed.get('reason', 'source unavailable')}"
+        )
+    observations_truncated |= len(observations) > MAX_INPUT_DETAILS
+    if observations_truncated:
+        warnings.append("Hybrid input observation budget reached; additional framework content is unknown")
     flow = Flow(functions, imports, texts)
     try:
         for _ in range(MAX_ROUNDS):
@@ -468,13 +589,31 @@ def analyze_hybrid(sources: list[tuple[str, str]]) -> dict:
         warnings.append(f"Hybrid modeled flow incomplete: {error}")
     if flow.truncated:
         warnings.append("Hybrid finding/origin/call-depth budget reached")
+    for record in files:
+        if record["analysis_state"] == "analyzed":
+            record["flow_state"] = "incomplete" if warnings else "bounded-modeled"
+    frameworks = []
+    for framework in sorted({record.get("framework", "javascript") for record in files}):
+        members = [record for record in files if record.get("framework", "javascript") == framework]
+        frameworks.append(
+            {
+                "framework": framework,
+                "observed_files": len(members),
+                "analyzed_text_files": sum(record["analysis_state"] == "analyzed" for record in members),
+                "skipped_files": sum(record["analysis_state"] == "skipped" for record in members),
+                "representations": sorted(
+                    {record.get("representation", "text-source") for record in members}
+                ),
+                "compiled_analysis": "not-supported",
+            }
+        )
     note = "Bounded token/block argument-return flow only; no full JS/TS/Dart grammar, sanitizer proof, callback/lifecycle/native dispatch or exploitability proof."
     return {
         "findings": list(flow.findings.values()),
         "coverage": [
             {
                 "rule_id": rule,
-                "state": "partial" if files else "not-applicable",
+                "state": "partial" if files or observations_truncated else "not-applicable",
                 "method": "hybrid-structural-flow",
                 "note": note,
             }
@@ -484,12 +623,14 @@ def analyze_hybrid(sources: list[tuple[str, str]]) -> dict:
         "metadata": {
             "engine": "bounded-hybrid-v1",
             "files": files,
+            "frameworks": frameworks,
+            "input_observations_truncated": observations_truncated,
             "bytes": total,
             "call_edges": [
                 {"path": path, "line": line, "callee_path": callee_path, "callee": name}
                 for path, line, callee_path, name in sorted(flow.edges)
             ],
-            "complete": False if files else True,
+            "complete": not (files or observations_truncated),
             "limits": note,
         },
     }

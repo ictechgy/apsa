@@ -62,6 +62,7 @@ def analyze(
     dependency_selection: dict | None = None,
     apk_set_device: dict | None = None,
     ipa_trust_policy: dict | None = None,
+    hybrid_observations: dict | None = None,
 ) -> dict:
     if target.suffix.lower() == ".apks":
         if configuration or dependency_selection or ipa_trust_policy is not None:
@@ -89,8 +90,14 @@ def analyze(
 
     structural = analyze_sources(sources, specs, exposed_providers(inventory), android_levels(inventory))
     from .hybrid_analysis import analyze_hybrid
+    from .hybrid_observations import merge as merge_hybrid_observations
 
-    hybrid = analyze_hybrid(sources)
+    merge_hybrid_observations(inventory, hybrid_observations)
+    hybrid = analyze_hybrid(
+        sources,
+        inventory.get("hybrid_inputs", []),
+        observations_truncated=inventory.get("hybrid_inputs_truncated", False),
+    )
     findings, coverage = static_checks(inventory, sources, structural.get("pattern_exclusions"))
     from .platform_checks import platform_checks
 
@@ -195,6 +202,14 @@ def main() -> None:
         if target.resolve() != expected:
             raise ValueError("Authorized input moved or became a symlink; audit refused")
         scratch = Path(sys.argv[4]) if len(sys.argv) > 4 else None
+        hybrid_observations = None
+        if len(sys.argv) > 10:
+            from .hybrid_observations import PROTOCOL
+            from .hybrid_observations import read as read_hybrid_observations
+
+            if sys.argv[10] != PROTOCOL or scratch is None or len(sys.argv) != 11:
+                raise ValueError("Invalid staged hybrid observation protocol")
+            hybrid_observations = read_hybrid_observations(scratch)
         with stable_input(target, scratch) as snapshot:
             result = analyze(
                 snapshot,
@@ -204,6 +219,7 @@ def main() -> None:
                 json.loads(sys.argv[7]) if len(sys.argv) > 7 and sys.argv[7] else None,
                 json.loads(sys.argv[8]) if len(sys.argv) > 8 and sys.argv[8] else None,
                 json.loads(sys.argv[9]) if len(sys.argv) > 9 and sys.argv[9] else None,
+                hybrid_observations,
             )
             result["inventory"]["target"] = str(target)
     except (ValueError, OSError, TypeError, KeyError) as error:

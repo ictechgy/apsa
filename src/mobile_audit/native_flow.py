@@ -23,6 +23,7 @@ MAX_CALL_DEPTH = 8
 MAX_CALL_EVALUATIONS = 1024
 MAX_CALLABLES = 4096
 MAX_FIELD_ROUNDS = 4
+MAX_PARTIAL_DETAILS = 256
 CONTEXT = (
     "scope",
     "function",
@@ -68,6 +69,8 @@ class NativeFlow:
         self.call_sites: list[str] = []
         self.evaluations = 0
         self.reasons: set[str] = set()
+        self.partial_details: set[tuple] = set()
+        self.partial_details_truncated = False
         self.fields: dict[str, dict[str, Value]] = {}
         self.owner_cache: dict[tuple[int, int], str] = {}
         self.active_guards: dict[int | tuple[int, str], set[str]] = {}
@@ -94,7 +97,7 @@ class NativeFlow:
                     continue
                 count += 1
                 if count > MAX_CALLABLES:
-                    self.partial("callable inventory budget")
+                    self.partial("callable inventory budget", analyzer, node=node)
                     continue
                 owner = self.owner(analyzer, node)
                 if owner:
@@ -134,10 +137,43 @@ class NativeFlow:
         self.owner_cache[key] = owner
         return owner
 
-    def partial(self, reason: str, analyzer: Analyzer | None = None) -> None:
+    def partial(
+        self,
+        reason: str,
+        analyzer: Analyzer | None = None,
+        *,
+        node: Any = None,
+        call: Call | None = None,
+    ) -> None:
+        """Record diagnostic scope without narrowing conservative rule coverage."""
         self.reasons.add(reason)
         if analyzer is not None:
             analyzer.truncated_rules.update(RULES)
+        node = call.node if call is not None else node
+        if node is None and analyzer is not None:
+            node = analyzer.function
+        category = (
+            "budget"
+            if "budget" in reason
+            else "dispatch"
+            if "dispatch" in reason or "ambiguous" in reason or "signature" in reason
+            else "inventory"
+            if "inventory" in reason
+            else "unavailable-flow"
+        )
+        detail = (
+            reason,
+            analyzer.path if analyzer is not None else "",
+            node.start_point[0] + 1 if node is not None else 0,
+            node.start_point[1] + 1 if node is not None else 0,
+            call.name if call is not None else "",
+            category,
+        )
+        self.partial_details.add(detail)
+        if len(self.partial_details) > MAX_PARTIAL_DETAILS:
+            # Keep the same lexicographically first records regardless of visit order.
+            self.partial_details.remove(max(self.partial_details))
+            self.partial_details_truncated = True
 
     def receiver_identity(self, analyzer: Analyzer, receiver: Any, frame: Frame) -> str:
         if receiver is None or analyzer.key(receiver) in {"this", "self"}:
@@ -269,24 +305,24 @@ class NativeFlow:
         self, analyzer: Analyzer, call: Call, frame: Frame, receiver: Value, args: list[Value]
     ) -> Value | None:
         if any(TRACE_PARTIAL in trace.description for value in [receiver, *args] for trace in value.traces):
-            self.partial("source trace budget", analyzer)
+            self.partial("source trace budget", analyzer, call=call)
         targets, relevant = self.resolve(analyzer, call, receiver)
         if not relevant:
             # A known source-local constructor supplies receiver type and allocation identity.
             if call.receiver is None and call.name in self.classes:
                 identity = f"{analyzer.path}:{call.node.start_byte}"
                 if args:
-                    self.partial("constructor field mapping unavailable", analyzer)
+                    self.partial("constructor field mapping unavailable", analyzer, call=call)
                     unknown = self.incomplete(analyzer.changed(call.node, _union(args)))
                     frame.object_fields[identity] = {"__unknown_fields__": unknown}
                     return Value(unknown.traces, type_name=call.name, identity=identity)
                 return Value(type_name=call.name, identity=identity)
             return None
         if not targets:
-            self.partial("unresolved receiver or argument signature", analyzer)
+            self.partial("unresolved receiver or argument signature", analyzer, call=call)
             return analyzer.changed(call.node, _union([receiver, *args]))
         if len(targets) > 1:
-            self.partial("ambiguous direct call", analyzer)
+            self.partial("ambiguous direct call", analyzer, call=call)
         dynamic = bool(
             call.receiver is not None
             and not receiver.identity
@@ -298,7 +334,7 @@ class NativeFlow:
             for target in targets
         )
         if dynamic:
-            self.partial("receiver runtime dispatch unresolved", analyzer)
+            self.partial("receiver runtime dispatch unresolved", analyzer, call=call)
         constructor = all(target.node.type == "constructor_declaration" for target in targets)
         identity = (
             f"{analyzer.path}:{call.node.start_byte}"
@@ -332,11 +368,11 @@ class NativeFlow:
                 or len(self.stack) >= MAX_CALL_DEPTH
                 or self.evaluations >= MAX_CALL_EVALUATIONS
             ):
-                self.partial("recursion or call evaluation budget", analyzer)
+                self.partial("recursion or call evaluation budget", analyzer, call=call)
                 results.append(analyzer.changed(call.node, _union([receiver, *args])))
                 continue
             if target.body is None:
-                self.partial("callable body unavailable", analyzer)
+                self.partial("callable body unavailable", analyzer, call=call)
                 results.append(analyzer.changed(call.node, _union([receiver, *args])))
                 continue
             callee = target.analyzer
@@ -407,7 +443,7 @@ class NativeFlow:
                         and not re.search(r"\)\s*(?::[^=\n]+)?=", callee.text(target.node))
                         and re.search(r"\)\s*:\s*(?!Unit\b)", callee.text(target.node).split("{", 1)[0])
                     ):
-                        self.partial("return flow unavailable", analyzer)
+                        self.partial("return flow unavailable", analyzer, call=call)
                         returned = analyzer.changed(call.node, _union([receiver, *args]))
                 results.append(returned.bind(analyzer.point(call.node)))
                 if returned.category in {"path", "canonical-path"} and len(targets) == 1 and not dynamic:
@@ -441,7 +477,7 @@ class NativeFlow:
                 for name, value in saved.items():
                     setattr(callee, name, value)
         if len(targets) > 8:
-            self.partial("ambiguous target budget", analyzer)
+            self.partial("ambiguous target budget", analyzer, call=call)
             results.append(analyzer.changed(call.node, _union([receiver, *args])))
         merged = {
             name: self.merge([write.get(name, Value()) for write in writes])
@@ -479,6 +515,22 @@ class NativeFlow:
             "method": "bounded-direct-native-calls",
             "state": "partial" if self.reasons else "checked",
             "reasons": sorted(self.reasons),
+            "partial_details": [
+                {
+                    "reason": reason,
+                    "path": path or None,
+                    "line": line or None,
+                    "column": column or None,
+                    "call": call or None,
+                    "category": category,
+                    "scope": "file-call" if call else "file" if path else "analysis",
+                    "rule_ids": sorted(RULES),
+                    "rule_scope": "conservative-all-native-rules",
+                }
+                for reason, path, line, column, call, category in sorted(self.partial_details)
+            ],
+            "partial_details_truncated": self.partial_details_truncated,
+            "max_partial_details": MAX_PARTIAL_DETAILS,
             "evaluations": self.evaluations,
             "max_depth": MAX_CALL_DEPTH,
             "max_evaluations": MAX_CALL_EVALUATIONS,

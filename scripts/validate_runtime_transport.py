@@ -27,7 +27,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 from mobile_audit.core import digest
 from mobile_audit.runtime_acquisition import AcquisitionRecorder, evaluate_backend_invalidation
 from mobile_audit.runtime_evidence import build_binding, evaluate_workflow
-from mobile_audit.runtime_transport import AuthorityServer, InstalledTransportAdapter, OwnedAuthority
+from tests.support.runtime_transport import AuthorityServer, InstalledTransportAdapter, OwnedAuthority
 
 SOURCES = Path(__file__).resolve().parents[1] / "tests/fixtures/runtime/transport"
 MAX_OUTPUT = 64 * 1024 * 1024
@@ -2082,7 +2082,7 @@ def main():
                 SOURCES / "UrlDispatcher.swift",
                 SOURCES / "TransportActivity.java",
                 Path(__file__).resolve(),
-                Path(__file__).parents[1] / "src/mobile_audit/runtime_transport.py",
+                Path(__file__).parents[1] / "tests/support/runtime_transport.py",
             )
         },
         "scope": "NEW synthetic apps/devices only; no physical device or real backend claim",

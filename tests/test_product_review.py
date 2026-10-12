@@ -739,3 +739,24 @@ def test_corrupt_auxiliary_archive_member_preserves_partial_report_inventory(tmp
     inventory, _ = inspect_target(path)
     assert inventory["partial"] and not inventory["fingerprint_complete"]
     assert any("BadZipFile" in warning for warning in inventory["warnings"])
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"runtime": [{"partial": True}]},
+        {"online_query": {"requested": True, "errors": ["synthetic failure"]}},
+        {"inventory": {"fingerprint_complete": False}},
+        {"inventory": {"input_snapshot": {"app_scope_complete": False}}},
+    ],
+)
+def test_core_completeness_recomputes_evidence_even_with_stale_complete_summary(extra):
+    report = {"findings": [], "coverage": [], "summary": {"incomplete": False}, **extra}
+    assert report_incomplete(report)
+    assert evaluate(report, {"schema_version": 1})["state"] == "incomplete"
+
+
+def test_core_completeness_allows_refreshed_evidence_to_clear_stale_summary():
+    assert not report_incomplete(
+        {"summary": {"incomplete": True}, "runtime": [{"partial": True}, {"partial": False}]}
+    )

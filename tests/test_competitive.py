@@ -88,7 +88,7 @@ def test_report_completion_requires_explicit_coverage_not_only_successful_proces
     )
     assert measurement_state([partial], "apsa", "md5") == "partial"
     unknown = mobsf_observation({"file_name": "new.zip", "code_analysis": {"findings": {}}})
-    assert measurement_state([unknown], "mobsf", "md5") == "partial"
+    assert measurement_state([unknown], "mobsf", "md5") == "unmeasured"
     assert measurement_state([unknown], "mobsf", "url") == "unsupported"
     complete = apsa_observation({"findings": [], "coverage": [], "summary": {"incomplete": False}})
     assert measurement_state([complete], "apsa", "md5") == "completed"
@@ -188,3 +188,90 @@ def test_successful_dex_fallback_after_an_apk_warning_is_not_treated_as_failure(
         "logs": [{"status": "Decompiling with JADX failed, attempting on all DEX files", "exception": None}],
     }
     assert mobsf_observation(report, "ssl")["rules"] == []
+
+
+def _synthetic_metric_record(state, risky=True, detected=False, tool="apsa"):
+    result = {"matched": ["synthetic-alert"] if detected else [], "seconds": [0.1]}
+    if state is not None:
+        result["state"] = state
+    return {"input_kind": "source-zip", "category": "ssl", "risky": risky, "tools": {tool: result}}
+
+
+def test_metric_denominators_keep_completion_penalty_and_observations_separate():
+    records = [
+        _synthetic_metric_record("completed", True, True),
+        _synthetic_metric_record("completed", True, False),
+        _synthetic_metric_record("completed", False, True),
+        _synthetic_metric_record("completed", False, False),
+        *[
+            _synthetic_metric_record(state, risky, detected)
+            for state in ("partial", "unmeasured")
+            for risky in (True, False)
+            for detected in (True, False)
+        ],
+        _synthetic_metric_record("unsupported"),
+        _synthetic_metric_record("failed"),
+        _synthetic_metric_record(None),
+    ]
+    observed = score(records, "apsa")
+    assert observed["completed"] == observed["scored_cases"] == 4
+    assert [observed[key] for key in ("tp", "fp", "fn", "tn")] == [1, 1, 1, 1]
+    assert observed["cases"] == 15 and observed["eligible_cases"] == 14
+    assert observed["completion_rate"] == 4 / 15
+    assert observed["eligible_completion_rate"] == 4 / 14
+    assert observed["coverage_measurement_rate"] == 8 / 14
+    assert observed["end_to_end_recall"] == observed["eligible_risky_completed_detection_rate"] == 1 / 8
+    assert observed["denominators"]["end_to_end_recall"] == 8
+    assert observed["completed_case_recall"] == observed["completed_alert_precision"] == 0.5
+    assert observed["missing_state"] == 1 and observed["failed_risky"] == 2
+    for state in ("partial", "unmeasured"):
+        for suffix in ("detected_risk", "silent_risk", "safe_alert", "safe_silent"):
+            assert observed[f"{state}_{suffix}"] == 1
+    assert observed["coverage_unmeasured_cases"] == observed["unmeasured"] == 4
+
+
+def test_metric_no_eligible_cases_and_absent_tool_results_have_explicit_denominators():
+    record = _synthetic_metric_record("unsupported")
+    absent = {**record, "tools": {}}
+    observed = score([record, absent], "apsa")
+    assert observed["selected_cases"] == 2 and observed["missing_tool_cases"] == 1
+    assert observed["eligible_cases"] == observed["completed"] == 0
+    assert observed["eligible_completion_rate"] is observed["coverage_measurement_rate"] is None
+    assert observed["completed_case_recall"] is observed["end_to_end_recall"] is None
+    assert observed["completion_rate"] == 0
+    assert score([], "apsa")["completion_rate"] is None
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        {"coverage": None, "audit_incomplete": None},
+        {"coverage": [], "audit_incomplete": None},
+        {"coverage": [{}], "audit_incomplete": False},
+        {"coverage": [{"state": "unknown"}], "audit_incomplete": False},
+    ],
+)
+def test_absent_or_missing_coverage_state_is_unmeasured_not_analyzer_failure(observation):
+    assert measurement_state([observation], "apsa", "ssl") == "unmeasured"
+    assert measurement_state([], "apsa", "ssl") == "unmeasured"
+
+
+def test_explicit_partial_evidence_survives_other_unmeasured_observations():
+    unknown = {"coverage": None, "audit_incomplete": None}
+    partial = {"coverage": [{"state": "partial"}], "audit_incomplete": False}
+    assert measurement_state([unknown, partial], "apsa", "ssl") == "partial"
+    assert measurement_state([unknown], "mobsf", "url") == "unsupported"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"runtime": [{"partial": True}]},
+        {"online_query": {"requested": True, "errors": ["synthetic failure"]}},
+        {"inventory": {"input_snapshot": {"app_scope_complete": False}}},
+    ],
+)
+def test_benchmark_observation_cannot_hide_explicit_partial_work_behind_summary(extra):
+    observed = apsa_observation({"findings": [], "coverage": [], "summary": {"incomplete": False}, **extra})
+    assert observed["audit_incomplete"] is True
+    assert measurement_state([observed], "apsa", "ssl") == "partial"

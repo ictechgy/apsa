@@ -1413,7 +1413,7 @@ class Analyzer:
                 else:
                     self.truncated_rules.add(rule)
                     if self.native_flow is not None:
-                        self.native_flow.partial("path route evidence budget", self)
+                        self.native_flow.partial("path route evidence budget", self, node=node)
                     sentinel = (0, "unmodeled-path-route-budget")
                     if sentinel not in previous_routes:
                         existing["evidence"][-1].setdefault("modeled_routes", []).append(sentinel)
@@ -2774,6 +2774,14 @@ def analyze_sources(
         flow_metadata = flow.metadata()
         for analyzer, metric in native_metrics:
             metric["functions"] = analyzer.function_counts
+            metric["native_flow_reasons"] = sorted(
+                {
+                    detail["reason"]
+                    for detail in flow_metadata["partial_details"]
+                    if detail["path"] in {None, analyzer.path}
+                }
+            )
+            metric["native_flow_diagnostics_complete"] = not flow_metadata["partial_details_truncated"]
             for name, value in analyzer.function_counts.items():
                 function_totals[name] += value
             for item in analyzer.findings:

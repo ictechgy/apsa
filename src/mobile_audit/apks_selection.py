@@ -8,11 +8,15 @@ The caller must independently bound ZIP sizes, compression, encryption and reads
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import stat
 import unicodedata
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cmp_to_key
+from pathlib import Path
 from typing import Any, Generic, Literal, NoReturn, TypeVar, overload
 
 MAX_TOC_BYTES = 2 * 1024 * 1024
@@ -22,11 +26,13 @@ MAX_VARIANTS = 128
 MAX_APKS = 2_048
 MAX_MODULES = 256
 MAX_TARGET_VALUES = 128
+MAX_DEVICE_SPEC_BYTES = 1024 * 1024
 REFERENCE_URLS = (
     "https://developer.android.com/tools/bundletool",
     "https://github.com/google/bundletool/blob/master/src/main/proto/commands.proto",
     "https://github.com/google/bundletool/blob/master/src/main/proto/targeting.proto",
-    "https://github.com/google/bundletool/blob/master/src/main/proto/devices.proto",
+    "https://github.com/google/bundletool/blob/1.18.3/src/main/proto/devices.proto",
+    "https://github.com/google/bundletool/blob/1.18.3/src/main/java/com/android/tools/build/bundletool/device/DeviceAnalyzer.java",
     "https://github.com/google/bundletool/blob/master/src/main/java/com/android/tools/build/bundletool/device/AbiMatcher.java",
     "https://github.com/google/bundletool/blob/master/src/main/java/com/android/tools/build/bundletool/device/SdkVersionMatcher.java",
     "https://github.com/google/bundletool/blob/master/src/main/java/com/android/tools/build/bundletool/device/LanguageMatcher.java",
@@ -46,6 +52,26 @@ ABI_NAMES = {
 DENSITIES = {2: 120, 3: 160, 4: 213, 5: 240, 6: 320, 7: 480, 8: 640}
 _LOCALE = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?\Z")
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,127}\Z")
+DEVICE_SPEC_SCHEMA = "bundletool-1.18.3"
+DEVICE_SPEC_DIMENSIONS = ("sdkVersion", "supportedAbis", "screenDensity", "supportedLocales")
+_DEVICE_SUPPLEMENTARY = frozenset(
+    {
+        "deviceFeatures",
+        "glExtensions",
+        "codename",
+        "deviceTier",
+        "deviceGroups",
+        "sdkRuntime",
+        "countrySet",
+        "ramBytes",
+        "buildBrand",
+        "buildDevice",
+        "socManufacturer",
+        "socModel",
+    }
+)
+_DEVICE_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:=+-]{0,255}\Z")
+_DECIMAL_INT64 = re.compile(r"(?:0|[1-9][0-9]{0,18})\Z")
 
 
 class ApkSetSelectionError(ValueError):
@@ -60,12 +86,59 @@ def _fail(code: str, message: str) -> NoReturn:
     raise ApkSetSelectionError(code, message)
 
 
+def _device_supplementary(name: str, value: Any) -> str | int | bool | tuple[str, ...]:
+    """Validate the pinned proto-JSON subset without using it for selection."""
+    if name in {"deviceFeatures", "glExtensions", "deviceGroups"}:
+        limit = 128 if name == "deviceGroups" else 1024
+        if not isinstance(value, (list, tuple)) or len(value) > limit:
+            _fail("invalid_device_spec", f"Device {name} must be a bounded array")
+        if any(not isinstance(item, str) or not _DEVICE_TOKEN.fullmatch(item) for item in value):
+            _fail("invalid_device_spec", f"Device {name} contains an invalid token")
+        if len(set(value)) != len(value):
+            _fail("invalid_device_spec", f"Device {name} contains duplicate values")
+        return tuple(sorted(value))
+    if name == "codename":
+        # SDK 10000/preview matching is deliberately outside this selector.
+        if not isinstance(value, str) or value not in {"", "REL"}:
+            _fail("invalid_device_spec", "Device preview codenames are unsupported")
+        return value
+    if name == "sdkRuntime":
+        # Proto JSON omits supported=false, so the default empty message is valid.
+        if not isinstance(value, Mapping) or set(value) - {"supported"}:
+            _fail("invalid_device_spec", "Device sdkRuntime supports only a boolean supported field")
+        supported = value.get("supported", False)
+        if type(supported) is not bool:
+            _fail("invalid_device_spec", "Device sdkRuntime supported must be boolean")
+        return supported
+    if name in {"deviceTier", "ramBytes"}:
+        if name == "ramBytes" and isinstance(value, str) and _DECIMAL_INT64.fullmatch(value):
+            # Protobuf JSON serializes int64 as a decimal string.
+            value = int(value)
+        maximum = (1 << (31 if name == "deviceTier" else 63)) - 1
+        if type(value) is not int or not 0 <= value <= maximum:
+            _fail("invalid_device_spec", f"Device {name} must be a bounded nonnegative integer")
+        return value
+    if name in {"countrySet", "buildBrand", "buildDevice", "socManufacturer", "socModel"}:
+        # Empty proto3 build-property strings are legal. Values are never reported.
+        if (
+            not isinstance(value, str)
+            or len(value) > 256
+            or any(unicodedata.category(char).startswith("C") for char in value)
+        ):
+            _fail("invalid_device_spec", f"Device {name} must be a bounded printable string")
+        return value
+    _fail("invalid_device_spec", "Unknown supplementary device-spec field")
+
+
 @dataclass(frozen=True)
 class DeviceSpec:
     sdk_version: int
     supported_abis: tuple[str, ...]
     screen_density: int
     supported_locales: tuple[str, ...]
+    # Canonical, immutable metadata is retained for validation/provenance only.
+    # Hardware descriptors and capabilities are omitted from report values/repr.
+    _supplementary: tuple[tuple[str, str | int | bool | tuple[str, ...]], ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
         if type(self.sdk_version) is not int or not 1 <= self.sdk_version < 10_000:
@@ -86,14 +159,36 @@ class DeviceSpec:
             _fail("invalid_device_spec", "Device locale is outside the supported language/script/region form")
         if len({value.lower() for value in self.supported_locales}) != len(self.supported_locales):
             _fail("invalid_device_spec", "Device locales are duplicated after case normalization")
+        if not isinstance(self._supplementary, tuple) or len(self._supplementary) > len(
+            _DEVICE_SUPPLEMENTARY
+        ):
+            _fail("invalid_device_spec", "Device supplementary metadata must be a bounded tuple")
+        names: list[str] = []
+        for item in self._supplementary:
+            if not isinstance(item, tuple) or len(item) != 2:
+                _fail("invalid_device_spec", "Device supplementary metadata has an invalid entry")
+            name, value = item
+            if not isinstance(name, str) or name not in _DEVICE_SUPPLEMENTARY:
+                _fail("invalid_device_spec", "Unknown supplementary device-spec field")
+            original = {"supported": value} if name == "sdkRuntime" else value
+            if _device_supplementary(name, original) != value:
+                _fail("invalid_device_spec", "Device supplementary metadata is not canonical")
+            names.append(name)
+        if names != sorted(set(names)):
+            _fail("invalid_device_spec", "Device supplementary metadata is duplicated or unordered")
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> DeviceSpec:
-        expected = {"sdkVersion", "supportedAbis", "screenDensity", "supportedLocales"}
-        if not isinstance(value, Mapping) or set(value) != expected:
+        expected = set(DEVICE_SPEC_DIMENSIONS)
+        if (
+            not isinstance(value, Mapping)
+            or not expected <= set(value)
+            or set(value) - expected - _DEVICE_SUPPLEMENTARY
+        ):
             _fail(
                 "invalid_device_spec",
-                "Device spec requires exactly sdkVersion/supportedAbis/screenDensity/supportedLocales",
+                "Device spec requires sdkVersion/supportedAbis/screenDensity/supportedLocales "
+                "and only supported bundletool 1.18.3 supplementary fields",
             )
         if not isinstance(value["supportedAbis"], (list, tuple)) or not isinstance(
             value["supportedLocales"], (list, tuple)
@@ -104,6 +199,7 @@ class DeviceSpec:
             tuple(value["supportedAbis"]),
             value["screenDensity"],
             tuple(value["supportedLocales"]),
+            tuple((name, _device_supplementary(name, value[name])) for name in sorted(set(value) - expected)),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -114,6 +210,20 @@ class DeviceSpec:
             "supportedLocales": list(self.supported_locales),
         }
 
+    def as_input_dict(self) -> dict[str, Any]:
+        """Canonical validated input for process/job transport, never report output."""
+        result = self.as_dict()
+        for name, value in self._supplementary:
+            if name == "sdkRuntime":
+                result[name] = {"supported": value}
+            elif name == "ramBytes":
+                result[name] = str(value)
+            elif isinstance(value, tuple):
+                result[name] = list(value)
+            else:
+                result[name] = value
+        return result
+
     @property
     def languages(self) -> frozenset[str]:
         # bundletool's ResourcesUtils preserves pre-JDK25 Android language names.
@@ -122,6 +232,63 @@ class DeviceSpec:
             legacy.get(value.split("-")[0].lower(), value.split("-")[0].lower())
             for value in self.supported_locales
         )
+
+    def normalization_provenance(self) -> dict[str, Any]:
+        return {
+            "schema": DEVICE_SPEC_SCHEMA,
+            "selection_dimensions": list(DEVICE_SPEC_DIMENSIONS),
+            "validated_supplementary_fields_not_used_for_selection": [
+                name for name, _ in self._supplementary
+            ],
+            "unsupported_toc_targeting": "rejected",
+        }
+
+
+def parse_device_spec_json(raw: bytes) -> dict[str, Any]:
+    """Parse bounded proto JSON with duplicate-object-key rejection at every level."""
+    if not isinstance(raw, bytes) or len(raw) > MAX_DEVICE_SPEC_BYTES:
+        _fail("invalid_device_spec", "Device-spec JSON exceeds the byte budget")
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                _fail("invalid_device_spec", "Device-spec JSON contains a duplicate object key")
+            result[key] = value
+        return result
+
+    def invalid_constant(value: str) -> NoReturn:
+        _fail("invalid_device_spec", "Device-spec JSON contains a non-JSON number")
+
+    try:
+        value = json.loads(
+            raw.decode("utf-8", errors="strict"),
+            object_pairs_hook=unique_object,
+            parse_constant=invalid_constant,
+        )
+    except (UnicodeError, ValueError, RecursionError):
+        _fail("invalid_device_spec", "Device-spec JSON is malformed, duplicated, or exceeds nesting limits")
+    DeviceSpec.from_dict(value)
+    return value
+
+
+def read_device_spec(path: Path) -> dict[str, Any]:
+    """Read only a caller-supplied regular file through the secure bounded reader."""
+    from .core import open_file
+
+    source = path.expanduser().parent.resolve() / path.name
+    try:
+        fd = open_file(source)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                _fail("invalid_device_spec", "Device-spec input must be a regular file")
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                raw = stream.read(MAX_DEVICE_SPEC_BYTES + 1)
+        finally:
+            os.close(fd)
+    except (OSError, ValueError):
+        _fail("invalid_device_spec", "Device-spec input must be a bounded regular file")
+    return parse_device_spec_json(raw)
 
 
 TargetValue = TypeVar("TargetValue", bound=str | int, covariant=True)
@@ -197,6 +364,7 @@ class ApkSetSelection:
             "variant_number": self.variant_number,
             "variant_targeting": self.variant_targeting.as_dict(),
             "device_spec": self.device_spec.as_dict(),
+            "device_spec_normalization": self.device_spec.normalization_provenance(),
             "package_name": self.package_name,
             "bundletool_version": self.bundletool_version,
             "total_apks": self.total_apks,

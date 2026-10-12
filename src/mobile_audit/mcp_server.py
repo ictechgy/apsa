@@ -420,15 +420,19 @@ def create_server(
             )
 
     @server.tool(annotations=READ)
-    def reports_compare(before: str, after: str, verification: bool = False) -> dict[str, Any]:
-        """Compare exact report IDs, retaining coverage differences and unproven remediation states. verification=true adds source traces and scope/build/assertion pairing for runtime observations; disappearance never proves remediation."""
+    def reports_compare(
+        before: str, after: str, verification: bool = False, portable_inputs: bool = False
+    ) -> dict[str, Any]:
+        """Compare exact report IDs, retaining coverage differences and unproven remediation states. verification=true adds source traces and scope/build/assertion pairing; portable_inputs=true requires verification and only normalizes absolute targets for identical, complete canonical SHA256 source inputs with unchanged analysis scope. Binary and runtime bindings remain strict; disappearance never proves remediation."""
+        if portable_inputs and not verification:
+            raise ValueError("portable_inputs requires verification=true")
         with database() as store:
             a, b = load_report(store, before), load_report(store, after)
             result = compare(store, a["id"], b["id"])
             if verification:
                 from .verify import compare_reports
 
-                result["verification"] = compare_reports(a, b)
+                result["verification"] = compare_reports(a, b, portable_inputs=portable_inputs)
             return result
 
     @server.tool(annotations=LOCAL)

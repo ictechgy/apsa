@@ -59,6 +59,7 @@ TEXT_SUFFIXES = {
     ".js",
     ".jsx",
     ".jsbundle",
+    ".bundle",
     ".ts",
     ".tsx",
     ".dart",
@@ -503,6 +504,18 @@ def inspect_target(
         "partial": False,
     }
     sources = []
+    from .hybrid_analysis import MAX_INPUT_DETAILS, compiled_hybrid_input, hybrid_source_input
+
+    inventory["hybrid_inputs"] = []
+    inventory["hybrid_inputs_truncated"] = False
+
+    def record_hybrid(record: dict) -> None:
+        inventory["hybrid_inputs"].append(record)
+        inventory["hybrid_inputs"].sort(key=lambda item: item["path"])
+        if len(inventory["hybrid_inputs"]) > MAX_INPUT_DETAILS:
+            inventory["hybrid_inputs"].pop()
+            inventory["hybrid_inputs_truncated"] = True
+
     if ipa_trust_policy is not None:
         from .apple_trust import validate_trust_policy
 
@@ -628,12 +641,11 @@ def inspect_target(
             inventory["warnings"].append(f"Could not parse {name}: {type(error).__name__}")
             inventory["partial"] = True
         if Path(name).suffix in TEXT_SUFFIXES and not raw.startswith(b"bplist"):
-            if Path(name).suffix in {".js", ".jsx", ".jsbundle", ".ts", ".tsx", ".dart"}:
-                try:
-                    text = raw.decode("utf-8")
-                    if "\0" in text:
-                        raise ValueError("compiled hybrid input")
-                except (UnicodeError, ValueError):
+            if Path(name).suffix in {".js", ".jsx", ".jsbundle", ".bundle", ".ts", ".tsx", ".dart"}:
+                record, text = hybrid_source_input(name, raw)
+                if record is not None:
+                    record_hybrid(record)
+                if text is None:
                     inventory["warnings"].append(
                         f"Compiled/non-text hybrid member not analyzed as source: {name}"
                     )
@@ -674,6 +686,14 @@ def inspect_target(
             dirs[:] = kept
             for name in sorted(names):
                 path = Path(directory) / name
+                compiled = compiled_hybrid_input(path.relative_to(target).as_posix())
+                if compiled is not None:
+                    try:
+                        if stat.S_ISREG(path.lstat().st_mode):
+                            record_hybrid(compiled)
+                            inventory["partial"] = True
+                    except OSError as error:
+                        source_error(error, "inspect compiled hybrid entry", path.relative_to(target))
                 if path.suffix in TEXT_SUFFIXES or path.name in {"Podfile.lock", "Package.resolved"}:
                     source_paths.append(path)
                 if len(source_paths) > MAX_FILES:
@@ -829,6 +849,11 @@ def inspect_target(
             for item in items:
                 name = item.filename
                 if item.is_dir():
+                    continue
+                compiled = compiled_hybrid_input(name)
+                if compiled is not None:
+                    record_hybrid(compiled)
+                    inventory["partial"] = True
                     continue
                 # Read in place. Never extract untrusted archive paths.
                 if name.startswith("/") or ".." in Path(name).parts:

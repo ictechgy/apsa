@@ -7,18 +7,33 @@ import json
 from pathlib import Path
 
 from mobile_audit.runtime_acquisition import AcquisitionRecorder, evaluate_backend_invalidation
-from mobile_audit.runtime_compiled import CompiledSyntheticAdapter, FreshIosSimulatorAdapter
 from mobile_audit.runtime_evidence import build_binding, evaluate_workflow
+from tests.support.runtime_compiled import CompiledSyntheticAdapter, FreshIosSimulatorAdapter
 from tests.test_runtime_evidence import scenario
 
 
-def execute(root: Path, platform: str, kind: str, simulator: bool) -> dict:
+def execute(
+    root: Path,
+    platform: str,
+    kind: str,
+    simulator: bool,
+    *,
+    device_type: str | None = None,
+    runtime: str | None = None,
+    architecture: str | None = None,
+    jdk: Path | None = None,
+) -> dict:
     value = scenario(platform, kind)
     for account in value["workflow"]["accounts"].values():
         account.update(canary_surface="storage", login_surface="storage")
     value["workflow"]["transitions"][0]["surface"] = "storage"
-    adapter_type = FreshIosSimulatorAdapter if simulator else CompiledSyntheticAdapter
-    adapter = adapter_type(value, root)
+    adapter = (
+        FreshIosSimulatorAdapter(
+            value, root, device_type=device_type, runtime=runtime, architecture=architecture
+        )
+        if simulator
+        else CompiledSyntheticAdapter(value, root, jdk=jdk)
+    )
     try:
         binding = build_binding(platform, value["package"], adapter.environment()["app"])
         start_session = adapter.start_session
@@ -71,17 +86,45 @@ def execute(root: Path, platform: str, kind: str, simulator: bool) -> dict:
         (root / "cleanup.json").write_text(json.dumps(cleanup, indent=2) + "\n")
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--simulator", action="store_true")
-    arguments = parser.parse_args()
+    parser.add_argument("--simulator-device-type")
+    parser.add_argument("--simulator-runtime")
+    parser.add_argument("--simulator-architecture", choices=("arm64", "x86_64"))
+    parser.add_argument("--jdk-bin", type=Path)
+    arguments = parser.parse_args(argv)
+    simulator_options = (
+        arguments.simulator_device_type,
+        arguments.simulator_runtime,
+        arguments.simulator_architecture,
+    )
+    if arguments.simulator and not all(simulator_options):
+        parser.error(
+            "--simulator requires --simulator-device-type, --simulator-runtime and --simulator-architecture"
+        )
+    if not arguments.simulator and any(simulator_options):
+        parser.error("simulator configuration requires --simulator")
     arguments.out.mkdir(parents=True, exist_ok=False)
     platforms = ("ios",) if arguments.simulator else ("android", "ios")
     summary = []
     for platform in platforms:
         for kind in ("login", "account_switch", "logout"):
-            outcome = execute(arguments.out / (platform + "-" + kind), platform, kind, arguments.simulator)
+            outcome = execute(
+                arguments.out / (platform + "-" + kind),
+                platform,
+                kind,
+                arguments.simulator,
+                device_type=arguments.simulator_device_type,
+                runtime=arguments.simulator_runtime,
+                architecture=arguments.simulator_architecture,
+                jdk=arguments.jdk_bin,
+            )
             summary.append(outcome)
             print(json.dumps(outcome), flush=True)
     (arguments.out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    main()

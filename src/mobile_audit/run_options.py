@@ -16,7 +16,9 @@ def artifact_options(
 
         if apk_set_device is None:
             raise ValueError("An .apks audit requires an explicit APK-set device specification")
-        apk_set_device = DeviceSpec.from_dict(apk_set_device).as_dict()
+        # Keep validated supplementary metadata across job/process boundaries so
+        # final selection can report its field-name-only normalization provenance.
+        apk_set_device = DeviceSpec.from_dict(apk_set_device).as_input_dict()
     elif apk_set_device is not None:
         raise ValueError("APK-set device selection requires an .apks archive")
     if ipa_trust_policy is not None:

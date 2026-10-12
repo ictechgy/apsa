@@ -522,3 +522,203 @@ def test_mcp_security_document_publishes_the_pinned_manifest_hashes():
     document = (ROOT / "docs/MCP_SECURITY.md").read_text()
     assert snapshot["default"]["sha256"] in document and snapshot["runtime"]["sha256"] in document
     assert f"APSA {VERSION}" in document
+
+
+@pytest.mark.parametrize(
+    "partial",
+    [
+        {"runtime": [{"partial": True}]},
+        {"online_query": {"requested": True, "errors": ["synthetic unavailable"]}},
+        {"inventory": {"fingerprint_complete": False}},
+        {"coverage": [{"state": "partial"}]},
+        {"inventory": {"input_snapshot": {"app_scope_complete": False}}},
+    ],
+)
+@pytest.mark.parametrize("shape", ["report", "envelope", "policy-envelope"])
+def test_action_standalone_recomputes_all_explicit_incompleteness(tmp_path, partial, shape):
+    from mobile_audit.core import report_incomplete
+
+    report = {"id": "synthetic", "findings": [], "coverage": [], "summary": {"incomplete": False}, **partial}
+    assert report_incomplete(report)
+    value = report if shape == "report" else {"ok": True, "data": report}
+    if shape == "policy-envelope":
+        value["data"] = {
+            "report": report,
+            "gate": {"state": "incomplete", "reasons": [{"code": "partial-audit"}]},
+        }
+    fixture = tmp_path / "new-synthetic-result.json"
+    fixture.write_text(json.dumps(value))
+    result = subprocess.run(
+        [sys.executable, "-I", str(SCRIPTS / "action_summary.py"), "--summary", str(fixture), "0"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "Audit execution: **incomplete**" in result.stdout
+    assert "complete for the stated scope" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"runtime": [{"partial": True}, {"partial": False}]},
+        {"online_query": {"requested": False, "errors": ["not requested"]}},
+        {"coverage": [{"state": "not-run"}]},
+    ],
+)
+def test_action_standalone_optional_and_superseded_work_remains_complete(tmp_path, extra):
+    from mobile_audit.core import report_incomplete
+
+    report = {"id": "synthetic", "findings": [], "summary": {"incomplete": False}, **extra}
+    assert not report_incomplete(report)
+    fixture = tmp_path / "new-complete-result.json"
+    fixture.write_text(json.dumps({"data": {"report": report, "gate": {"state": "pass"}}}))
+    result = subprocess.run(
+        [sys.executable, "-I", str(SCRIPTS / "action_summary.py"), "--summary", str(fixture), "0"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "Audit execution: **complete for the stated scope**" in result.stdout
+
+
+def test_action_standalone_report_threshold_and_execution_errors(tmp_path):
+    report = {
+        "id": "synthetic",
+        "coverage": [],
+        "runtime": [{"partial": True}],
+        "findings": [
+            {"status": "confirmed", "severity": "high"},
+            {"status": "candidate", "severity": "critical"},
+        ],
+    }
+    fixture = tmp_path / "new-threshold-result.json"
+    fixture.write_text(json.dumps(report))
+    result = subprocess.run(
+        [sys.executable, "-I", str(SCRIPTS / "action_summary.py"), "--threshold", str(fixture), "high"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "threshold-exceeded=true" in result.stdout
+    assert not threshold_exceeded(str(fixture), "critical")
+    fixture.write_text(
+        json.dumps({"ok": False, "data": {"report": report}, "error": {"message": "synthetic error"}})
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", str(SCRIPTS / "action_summary.py"), "--summary", str(fixture), "2"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "Audit execution: **failed**" in result.stdout and "synthetic error" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "reason", ["baseline-mismatch", "required-rule-incomplete", "expired-waiver", "severity-threshold"]
+)
+def test_action_standalone_gate_failures_are_independent_of_partial_audit(tmp_path, reason):
+    fixture = tmp_path / "new-gate-result.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "report": {
+                        "id": "synthetic",
+                        "runtime": [{"partial": True}],
+                        "findings": [],
+                        "coverage": [],
+                    },
+                    "gate": {"state": "fail", "reasons": [{"code": "partial-audit"}, {"code": reason}]},
+                },
+            }
+        )
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", str(SCRIPTS / "action_summary.py"), "--threshold", str(fixture), ""],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.splitlines() == ["threshold-exceeded=true", f"gate-reasons={reason}"]
+    assert "Policy: **fail**" in summary(str(fixture), "3")
+
+
+@pytest.mark.parametrize("code", ["0", "4"])
+def test_action_policy_failure_exit_does_not_imply_partial_execution(tmp_path, code):
+    fixture = tmp_path / "new-complete-policy-result.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "report": {
+                        "id": "synthetic",
+                        "coverage": [],
+                        "findings": [],
+                        "summary": {"incomplete": False},
+                    },
+                    "gate": {"state": "failed", "reasons": [{"code": "baseline-mismatch"}]},
+                },
+            }
+        )
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", str(SCRIPTS / "action_summary.py"), "--summary", str(fixture), code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "Audit execution: **complete for the stated scope**" in result.stdout
+    assert "Policy: **failed**" in result.stdout
+    assert threshold_exceeded(str(fixture), "")
+
+
+def test_action_gate_only_and_error_envelopes_do_not_claim_report_completion(tmp_path):
+    fixture = tmp_path / "new-no-report-result.json"
+    fixture.write_text(
+        json.dumps(
+            {"ok": False, "data": {"gate": {"state": "failed"}}, "error": {"message": "synthetic no report"}}
+        )
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", str(SCRIPTS / "action_summary.py"), "--summary", str(fixture), "2"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "APSA did not complete: synthetic no report" in result.stdout
+    assert "complete for the stated scope" not in result.stdout
+
+
+def test_action_bootstrap_needs_only_stdlib_and_the_shared_source_helper(tmp_path):
+    # Disable site-packages and stage only the two public helper sources.
+    isolated = tmp_path / "new-stdlib-action"
+    script = isolated / "scripts/action_summary.py"
+    contract = isolated / "src/mobile_audit/completeness.py"
+    script.parent.mkdir(parents=True)
+    contract.parent.mkdir(parents=True)
+    script.write_text((SCRIPTS / "action_summary.py").read_text())
+    contract.write_text((ROOT / "src/mobile_audit/completeness.py").read_text())
+    fixture = isolated / "new-online-result.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "data": {
+                    "id": "synthetic",
+                    "findings": [],
+                    "coverage": [],
+                    "summary": {"incomplete": False},
+                    "online_query": {"requested": True, "errors": ["synthetic unavailable"]},
+                }
+            }
+        )
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", str(script), "--summary", str(fixture), "0"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "Audit execution: **incomplete**" in result.stdout

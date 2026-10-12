@@ -11,8 +11,11 @@ import base64
 import copy
 import hashlib
 import json
+import os
 import plistlib
+import re
 import select
+import shutil
 import subprocess
 import time
 import uuid
@@ -20,8 +23,8 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlencode
 
-from .core import digest
-from .runtime_acquisition import (
+from mobile_audit.core import digest
+from mobile_audit.runtime_acquisition import (
     AcquiredCapture,
     AcquisitionSession,
     BackendProbe,
@@ -30,8 +33,52 @@ from .runtime_acquisition import (
     SurfaceCapture,
 )
 
-JDK = Path("/Users/coden/.local/jdks/jdk-17.0.20+8/Contents/Home/bin")
 MAX_LINE = 1024 * 1024
+
+
+def resolve_jdk(jdk: Path | None = None) -> Path:
+    """Use explicit test configuration or PATH; never search a developer home."""
+    if jdk is None:
+        configured_home = os.environ.get("APSA_TEST_JAVA_HOME") or os.environ.get("JAVA_HOME")
+        executable = shutil.which("javac") if not configured_home else None
+        if configured_home:
+            jdk = Path(configured_home) / "bin"
+        elif executable:
+            jdk = Path(executable).parent
+        else:
+            raise ValueError("Fresh compiled fixture requires an explicit JDK or javac on PATH")
+    if not all((jdk / name).is_file() for name in ("java", "javac")):
+        raise ValueError("Fresh compiled fixture JDK must contain java and javac")
+    return jdk
+
+
+def command_evidence(argv: list[str], result: subprocess.CompletedProcess) -> dict:
+    return {
+        "argv_sha256": digest(json.dumps(argv, separators=(",", ":")).encode()),
+        "status": result.returncode,
+        "stdout_sha256": digest(result.stdout),
+        "stdout_bytes": len(result.stdout),
+        "stderr_sha256": digest(result.stderr),
+        "stderr_bytes": len(result.stderr),
+    }
+
+
+def failed_command_evidence(argv: list[str], error: OSError | subprocess.SubprocessError) -> dict:
+    """Keep bounded failure evidence without serializing exception commands or text."""
+    result = subprocess.CompletedProcess(
+        argv,
+        -1,
+        error.stdout
+        if isinstance(error, subprocess.TimeoutExpired) and isinstance(error.stdout, bytes)
+        else b"",
+        error.stderr
+        if isinstance(error, subprocess.TimeoutExpired) and isinstance(error.stderr, bytes)
+        else b"",
+    )
+    evidence = command_evidence(argv, result)
+    evidence["status"] = "timeout" if isinstance(error, subprocess.TimeoutExpired) else "unavailable"
+    return evidence
+
 
 # No marker, credential or operator-selected path is embedded in this source.
 SOURCE = r"""import java.io.*;
@@ -95,8 +142,9 @@ public final class CompiledAuthFixture {
 """
 
 
-def compile_model(root: Path, *, jdk: Path = JDK) -> dict:
+def compile_model(root: Path, *, jdk: Path | None = None) -> dict:
     """Create a new owned directory, compile generic source and record commands."""
+    jdk = resolve_jdk(jdk)
     root.mkdir(parents=True, exist_ok=False)
     source = root / "CompiledAuthFixture.java"
     source.write_text(SOURCE)
@@ -107,14 +155,7 @@ def compile_model(root: Path, *, jdk: Path = JDK) -> dict:
         [str(jdk / "javac"), "-d", str(root), str(source)],
     ):
         result = subprocess.run(argv, capture_output=True, timeout=90, check=False)
-        commands.append(
-            {
-                "argv": argv,
-                "status": result.returncode,
-                "stdout": result.stdout.decode(errors="replace"),
-                "stderr": result.stderr.decode(errors="replace"),
-            }
-        )
+        commands.append(command_evidence(argv, result))
         (root / "commands.json").write_text(json.dumps(commands, indent=2) + "\n")
         if result.returncode:
             raise ValueError("Fresh compiled fixture build failed")
@@ -143,7 +184,7 @@ class CompiledSyntheticAdapter:
         scenario: dict,
         root: Path,
         *,
-        jdk: Path = JDK,
+        jdk: Path | None = None,
         invalidate_backend: bool = True,
         local_residual: bool = False,
     ):
@@ -153,6 +194,7 @@ class CompiledSyntheticAdapter:
             raise ValueError("Compiled fixture requires one transition per fresh store")
         self.transition = transitions[0]
         self.root = root
+        jdk = resolve_jdk(jdk)
         self.manifest = compile_model(root, jdk=jdk)
         self.build_hash = self.manifest["model_sha256"]
         self.build_key = "runtime_model_sha256"
@@ -380,9 +422,8 @@ class CompiledSyntheticAdapter:
                 self.process.wait(timeout=5)
         stderr = self.process.stderr.read(MAX_LINE) if self.process.stderr else b""
         return {
-            "argv": self.argv,
+            "argv_sha256": digest(json.dumps(self.argv, separators=(",", ":")).encode()),
             "status": self.process.returncode,
-            "stdout": "IPC observations withheld; recorder stores digests only",
             "stdout_sha256": self.stdout_hash.hexdigest(),
             "stdout_bytes": self.stdout_bytes,
             "stdin_sha256": self.stdin_hash.hexdigest(),
@@ -403,7 +444,24 @@ class FreshIosSimulatorAdapter:
     never enumerates or selects a booted/default/user device.
     """
 
-    def __init__(self, scenario: dict, root: Path, *, local_residual: bool = False):
+    def __init__(
+        self,
+        scenario: dict,
+        root: Path,
+        *,
+        device_type: str | None = None,
+        runtime: str | None = None,
+        architecture: str | None = None,
+        local_residual: bool = False,
+    ):
+        if (
+            not isinstance(device_type, str)
+            or not re.fullmatch(r"com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+", device_type)
+            or not isinstance(runtime, str)
+            or not re.fullmatch(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-[0-9-]+", runtime)
+            or architecture not in {"arm64", "x86_64"}
+        ):
+            raise ValueError("Fresh simulator requires explicit device type, iOS runtime and architecture")
         if (
             scenario["platform"] != "ios"
             or scenario["package"] != "com.synthetic.app"
@@ -419,8 +477,11 @@ class FreshIosSimulatorAdapter:
             raise ValueError("Fresh simulator accepts only owned fixture markers")
         root.mkdir(parents=True, exist_ok=False)
         self.root = root
+        self.device_set = root / "device-set"
+        self.device_set.mkdir()
         self.commands: list[dict] = []
         self.device: str | None = None
+        self.device_creation_attempted = False
         self.package = scenario["package"]
         self.local_residual = local_residual
         self.session: AcquisitionSession | None = None
@@ -439,7 +500,7 @@ class FreshIosSimulatorAdapter:
                 "-sdk",
                 sdk,
                 "-target",
-                "arm64-apple-ios18.0-simulator",
+                architecture + "-apple-ios18.0-simulator",
                 "-parse-as-library",
                 "-module-name",
                 "InstrumentedFixture",
@@ -485,7 +546,7 @@ class FreshIosSimulatorAdapter:
         }
         self.manifest = {
             "mode": "instrumented",
-            "target": "dedicated-iOS-27.0-simulator",
+            "target": "explicit-owned-isolated-simulator",
             "compiled": True,
             "installed": False,
             "capture_state": "not-measured",
@@ -498,18 +559,12 @@ class FreshIosSimulatorAdapter:
             "storage_scope": "only fresh fixture session state.dat",
         }
         (root / "manifest.json").write_text(json.dumps(self.manifest, indent=2) + "\n")
-        created = self._command(
-            [
-                "/usr/bin/xcrun",
-                "simctl",
-                "create",
-                "APSA-Fresh-" + uuid.uuid4().hex,
-                "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
-                "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
-            ]
-        ).strip()
-        self.device = str(uuid.UUID(created)).upper()
         try:
+            self.device_creation_attempted = True
+            created = self._command(
+                ["/usr/bin/xcrun", "simctl", "create", "APSA-Fresh-" + uuid.uuid4().hex, device_type, runtime]
+            ).strip()
+            self.device = str(uuid.UUID(created)).upper()
             self._command(["/usr/bin/xcrun", "simctl", "boot", self.device])
             self._command(["/usr/bin/xcrun", "simctl", "bootstatus", self.device, "-b"], timeout=120)
             self._command(["/usr/bin/xcrun", "simctl", "install", self.device, str(app)])
@@ -524,7 +579,8 @@ class FreshIosSimulatorAdapter:
                 ).strip()
             )
             # Both paths are returned for exactly this new device and own package.
-            if self.device not in str(installed) or self.device not in str(data):
+            owned = (self.device_set / self.device).resolve()
+            if not all(path.resolve().is_relative_to(owned) for path in (installed, data)):
                 raise ValueError("Fresh simulator container identity differs")
             self.installed = installed
             self.response_path = data / "Documents/response.json"
@@ -537,7 +593,7 @@ class FreshIosSimulatorAdapter:
                 raise ValueError("Fresh simulator launched build differs")
             self.manifest = {
                 "mode": "instrumented",
-                "target": "dedicated-iOS-27.0-simulator",
+                "target": "explicit-owned-isolated-simulator",
                 "compiled": True,
                 "installed": True,
                 "physical_device_verified": False,
@@ -555,20 +611,34 @@ class FreshIosSimulatorAdapter:
             (root / "manifest.json").write_text(json.dumps(self.manifest, indent=2) + "\n")
         except (ValueError, OSError, subprocess.SubprocessError):
             self.manifest["capture_state"] = "inconclusive"
-            (root / "manifest.json").write_text(json.dumps(self.manifest, indent=2) + "\n")
-            self.close()
+            # Cleanup/journal failures must never replace the construction failure.
+            try:
+                cleanup = self.close()
+            except Exception:
+                cleanup = {"state": "inconclusive", "scope": "fresh-owned-simulator-only"}
+            self.manifest["cleanup_state"] = cleanup["state"]
+            try:
+                (root / "cleanup.json").write_text(json.dumps(cleanup, indent=2) + "\n")
+                (root / "manifest.json").write_text(json.dumps(self.manifest, indent=2) + "\n")
+            except OSError:
+                pass
             raise
 
     def _command(self, argv: list[str], timeout: int = 90) -> str:
-        result = subprocess.run(argv, capture_output=True, timeout=timeout, check=False)
-        self.commands.append(
-            {
-                "argv": argv,
-                "status": result.returncode,
-                "stdout": result.stdout.decode(errors="replace"),
-                "stderr": result.stderr.decode(errors="replace"),
-            }
-        )
+        if argv[:2] == ["/usr/bin/xcrun", "simctl"]:
+            if "--set" in argv:
+                raise ValueError("Fresh simulator cannot override the owned device set")
+            argv = argv[:2] + ["--set", str(self.device_set)] + argv[2:]
+        try:
+            result = subprocess.run(argv, capture_output=True, timeout=timeout, check=False)
+        except (OSError, subprocess.SubprocessError) as error:
+            self.commands.append(failed_command_evidence(argv, error))
+            try:
+                (self.root / "commands.json").write_text(json.dumps(self.commands, indent=2) + "\n")
+            except OSError:
+                pass
+            raise
+        self.commands.append(command_evidence(argv, result))
         (self.root / "commands.json").write_text(json.dumps(self.commands, indent=2) + "\n")
         if result.returncode:
             raise ValueError("Fresh simulator command failed; generated bounded command evidence retained")
@@ -721,8 +791,37 @@ class FreshIosSimulatorAdapter:
         )
 
     def close(self) -> dict:
-        if self.device:
-            device, self.device = self.device, None
-            self._command(["/usr/bin/xcrun", "simctl", "shutdown", device])
-            self._command(["/usr/bin/xcrun", "simctl", "delete", device])
-        return {"commands": self.commands, "scope": "fresh-owned-simulator-only"}
+        if not self.device:
+            return getattr(
+                self,
+                "cleanup",
+                {
+                    "commands": self.commands,
+                    "scope": "fresh-owned-simulator-only",
+                    "state": "inconclusive" if self.device_creation_attempted else "not-needed",
+                    "identity": "unavailable" if self.device_creation_attempted else "not-created",
+                    "operations": [],
+                },
+            )
+        device = self.device
+        operations = []
+        for operation in ("shutdown", "delete"):
+            try:
+                self._command(["/usr/bin/xcrun", "simctl", operation, device], timeout=15)
+            except (ValueError, OSError, subprocess.SubprocessError) as error:
+                operations.append(
+                    {"operation": operation, "state": "inconclusive", "error_type": type(error).__name__}
+                )
+            else:
+                operations.append({"operation": operation, "state": "completed"})
+                if operation == "delete":
+                    self.device = None
+        self.cleanup = {
+            "commands": self.commands,
+            "scope": "fresh-owned-simulator-only",
+            "state": "completed"
+            if all(item["state"] == "completed" for item in operations)
+            else "inconclusive",
+            "operations": operations,
+        }
+        return self.cleanup

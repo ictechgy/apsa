@@ -17,8 +17,8 @@ from mobile_audit.runtime_acquisition import (
     acquisition_plan,
 )
 from mobile_audit.runtime_evidence import build_binding
-from mobile_audit.runtime_synthetic import SyntheticTestAppAdapter, generate_synthetic_sources
 from mobile_audit.store import Store
+from tests.support.runtime_synthetic import SyntheticTestAppAdapter, generate_synthetic_sources
 from tests.test_runtime_evidence import SyntheticAdapter, SyntheticStore, capture, report, scenario
 
 

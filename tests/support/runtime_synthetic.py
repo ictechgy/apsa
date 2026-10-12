@@ -6,8 +6,8 @@ import copy
 import json
 from pathlib import Path
 
-from .core import digest
-from .runtime_acquisition import (
+from mobile_audit.core import digest
+from mobile_audit.runtime_acquisition import (
     AcquiredCapture,
     AcquisitionSession,
     BackendProbe,

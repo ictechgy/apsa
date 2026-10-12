@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import csv
+import fnmatch
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
-from pathlib import Path
+import zipfile
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 UV_VERSION = "0.12.1"
@@ -151,6 +158,7 @@ PUBLIC_FIXTURE_SOURCES = (
     "tests/fixtures/runtime/acquire_compiled.py",
     "tests/fixtures/runtime/verify.py",
     "tests/fixtures/runtime/android/MainActivity.java",
+    "tests/fixtures/runtime/android/AndroidManifest.xml",
     "tests/fixtures/runtime/ios/Main.swift",
     "tests/fixtures/runtime/ios/Instrumented.swift",
     "tests/fixtures/runtime/transport/TransportActivity.java",
@@ -266,6 +274,231 @@ def stage_sources(destination: Path, *, source_only: bool = True) -> dict[str, s
         if required not in inputs:
             raise ValueError(f"Release source is missing {required}")
     return inputs
+
+
+MAX_PACKAGE_MEMBERS = 20_000
+MAX_PACKAGE_MEMBER_BYTES = 16 * 1024 * 1024
+MAX_PACKAGE_TOTAL_BYTES = 256 * 1024 * 1024
+TEST_HARNESS_MODULES = frozenset({"runtime_compiled.py", "runtime_synthetic.py", "runtime_transport.py"})
+_DEVELOPER_HOME = re.compile(
+    rb"/(?:Users|home)/[^/\s\"'\\]+(?:/|(?=[\s\"']|$))"
+    rb"|[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s\"']+(?:[\\/]+|(?=[\s\"']|$))"
+)
+
+
+def _package_path(name: str) -> PurePosixPath:
+    path = PurePosixPath(name)
+    if (
+        not name
+        or "\\" in name
+        or path.is_absolute()
+        or path.as_posix() != name
+        or ".." in path.parts
+        or re.match(r"^[A-Za-z]:", name)
+        or any(ord(char) < 32 or ord(char) == 127 for char in name)
+    ):
+        raise ValueError("Package archive contains an unsafe or noncanonical member path")
+    return path
+
+
+def _package_manifest(stage: Path, inputs: dict[str, str]) -> tuple[dict, dict[str, str], dict[str, str]]:
+    """Derive expectations only from declared roots and the already clean stage manifest."""
+    if "pyproject.toml" not in inputs:
+        raise ValueError("Package verification requires a staged pyproject manifest entry")
+    for name, checksum in inputs.items():
+        path = _package_path(name)
+        if (
+            any(part.casefold() in PRIVATE_DIRECTORIES for part in path.parts)
+            and name not in PUBLIC_FIXTURE_SOURCES
+        ):
+            raise ValueError(
+                "Source manifest contains a protected directory outside explicit public fixture sources"
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", checksum):
+            raise ValueError("Package verification requires SHA-256 stage manifest entries")
+    if digest(stage / "pyproject.toml") != inputs["pyproject.toml"]:
+        raise ValueError("Staged pyproject changed after the source manifest was created")
+    project = tomllib.loads((stage / "pyproject.toml").read_text())
+    targets = project["tool"]["hatch"]["build"]["targets"]
+    packages = targets["wheel"]["packages"]
+    if not isinstance(packages, list) or not packages or any(not isinstance(p, str) for p in packages):
+        raise ValueError("Wheel verification requires explicit package root declarations")
+    wheel: dict[str, str] = {}
+    public_roots = [_package_path(package) for package in packages]
+    for package in public_roots:
+        if (package / "__init__.py").as_posix() not in inputs:
+            raise ValueError("Declared public package entry point is absent from the clean stage")
+        for name in sorted(inputs):
+            path = PurePosixPath(name)
+            if path.is_relative_to(package):
+                member = (PurePosixPath(package.name) / path.relative_to(package)).as_posix()
+                if member in wheel:
+                    raise ValueError("Declared wheel package roots produce colliding member paths")
+                if path.name in TEST_HARNESS_MODULES or "tests" in path.relative_to(package).parts:
+                    raise ValueError(
+                        "Test acquisition harness modules must not be packaged as public runtime code"
+                    )
+                wheel[member] = name
+    # A staged whitelist must not silently drop declared package data formats.
+    for name in sorted(PUBLIC_RESOURCES | frozenset(PUBLIC_DEMO_SOURCES)):
+        if (
+            any(PurePosixPath(name).is_relative_to(package) for package in public_roots)
+            and name not in inputs
+        ):
+            raise ValueError(f"Declared public package resource is absent from the clean stage: {name}")
+    sdist_config = targets["sdist"]
+    included = sdist_config.get("include")
+    excluded = sdist_config.get("exclude", [])
+    if not isinstance(included, list) or not included or not all(isinstance(p, str) for p in included):
+        raise ValueError("Sdist verification requires explicit include declarations")
+    if not isinstance(excluded, list) or not all(isinstance(p, str) for p in excluded):
+        raise ValueError("Sdist exclude declarations must be arrays of strings")
+
+    def matches(name: str, pattern: str) -> bool:
+        normalized = pattern.lstrip("/").rstrip("/")
+        return (
+            name == normalized or name.startswith(normalized + "/") or fnmatch.fnmatchcase(name, normalized)
+        )
+
+    sdist = {
+        name: name
+        for name in sorted(inputs)
+        if any(matches(name, pattern) for pattern in included)
+        and not any(matches(name, pattern) for pattern in excluded)
+    }
+    if not set(wheel.values()) <= set(sdist):
+        raise ValueError("Sdist declarations omit expected public wheel package sources")
+    return project, wheel, sdist
+
+
+def _archive_payload(artifact: Path, *, wheel: bool, prefix: str) -> dict[str, bytes]:
+    """Inspect a newly built archive in memory; never extract or follow archive links."""
+    contents: dict[str, bytes] = {}
+    total = 0
+
+    def put(name: str, size: int, stream) -> None:
+        nonlocal total
+        _package_path(name)
+        if name in contents or len(contents) >= MAX_PACKAGE_MEMBERS:
+            raise ValueError("Package archive has duplicate members or exceeds its member budget")
+        total += size
+        if not 0 <= size <= MAX_PACKAGE_MEMBER_BYTES or total > MAX_PACKAGE_TOTAL_BYTES:
+            raise ValueError("Package archive exceeds its expanded-byte budget")
+        raw = stream.read(MAX_PACKAGE_MEMBER_BYTES + 1)
+        if len(raw) != size:
+            raise ValueError("Package archive member size is inconsistent")
+        contents[name] = raw
+
+    if artifact.stat().st_size > MAX_PACKAGE_TOTAL_BYTES:
+        raise ValueError("Package artifact exceeds its byte budget")
+    if wheel:
+        with zipfile.ZipFile(artifact) as archive:
+            if len(archive.infolist()) > MAX_PACKAGE_MEMBERS:
+                raise ValueError("Package archive exceeds its member budget")
+            for item in archive.infolist():
+                if item.is_dir():
+                    _package_path(item.filename.rstrip("/"))
+                    continue
+                if item.flag_bits & 1 or (item.external_attr >> 16) & 0o170000 == 0o120000:
+                    raise ValueError("Package archive encrypted entries and symlinks are unsupported")
+                with archive.open(item) as stream:
+                    put(item.filename, item.file_size, stream)
+    else:
+        with tarfile.open(artifact, "r:gz") as archive:
+            count = 0
+            for item in archive:
+                count += 1
+                if count > MAX_PACKAGE_MEMBERS:
+                    raise ValueError("Package archive exceeds its member budget")
+                path = _package_path(item.name.rstrip("/") if item.isdir() else item.name)
+                if not path.is_relative_to(prefix):
+                    raise ValueError("Sdist member is outside its declared distribution prefix")
+                if item.isdir():
+                    continue
+                if not item.isfile():
+                    raise ValueError("Sdist links and special files are unsupported")
+                stream = archive.extractfile(item)
+                if stream is None:
+                    raise ValueError("Sdist member cannot be read")
+                with stream:
+                    put(path.relative_to(prefix).as_posix(), item.size, stream)
+    return contents
+
+
+def _wheel_record(contents: dict[str, bytes], record: str) -> None:
+    try:
+        rows = list(csv.reader(io.StringIO(contents[record].decode("utf-8", errors="strict"))))
+    except (UnicodeError, csv.Error):
+        raise ValueError("Wheel RECORD is malformed") from None
+    observed: set[str] = set()
+    for row in rows:
+        if len(row) != 3 or row[0] in observed or row[0] not in contents:
+            raise ValueError("Wheel RECORD has invalid, duplicate, or absent member entries")
+        name, checksum, size = row
+        observed.add(name)
+        if name == record:
+            if checksum or size:
+                raise ValueError("Wheel RECORD must omit its own digest and size")
+            continue
+        raw = contents[name]
+        expected = "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
+        if checksum != expected or size != str(len(raw)):
+            raise ValueError("Wheel RECORD member digest or size disagrees with archive content")
+    if observed != set(contents):
+        raise ValueError("Wheel RECORD membership disagrees with archive content")
+
+
+def verify_package_contents(artifact: Path, stage: Path, inputs: dict[str, str]) -> dict:
+    """Verify only NEW wheel/sdist artifacts against the explicit clean source manifest."""
+    project, wheel_expected, sdist_expected = _package_manifest(stage, inputs)
+    distribution = re.sub(r"[-_.]+", "_", project["project"]["name"]).lower()
+    version = project["project"]["version"]
+    if not re.fullmatch(r"[a-z0-9_]+", distribution) or not re.fullmatch(r"[A-Za-z0-9.!+_-]+", version):
+        raise ValueError("Package metadata has an unsupported distribution name or version")
+    wheel = artifact.suffix == ".whl"
+    if not wheel and not artifact.name.endswith(".tar.gz"):
+        raise ValueError("Package verifier accepts only wheel and sdist artifacts")
+    namespace = f"{distribution}-{version}"
+    contents = _archive_payload(artifact, wheel=wheel, prefix=namespace)
+    expected = wheel_expected if wheel else sdist_expected
+    generated = {"PKG-INFO"}
+    if wheel:
+        metadata = namespace + ".dist-info/"
+        generated = {metadata + name for name in ("METADATA", "WHEEL", "RECORD")}
+        if project["project"].get("scripts"):
+            generated.add(metadata + "entry_points.txt")
+        # Hatch's generated license destination remains bound to staged bytes.
+        for name in sorted(inputs):
+            if "/" not in name and name.startswith(("LICENSE", "NOTICE", "AUTHORS", "COPYING")):
+                expected[metadata + "licenses/" + name] = name
+    missing = (set(expected) | generated) - set(contents)
+    extra = set(contents) - set(expected) - generated
+    if missing or extra:
+        raise ValueError(
+            f"Package content membership mismatch; missing={sorted(missing)}, extra={sorted(extra)}"
+        )
+    for member, source in expected.items():
+        if hashlib.sha256(contents[member]).hexdigest() != inputs[source]:
+            raise ValueError(f"Package content differs from the staged source manifest: {member}")
+        if (
+            wheel
+            and source in wheel_expected.values()
+            and source.endswith(".py")
+            and _DEVELOPER_HOME.search(contents[member])
+        ):
+            raise ValueError("Packaged public Python source contains an absolute developer-home path")
+    if wheel:
+        _wheel_record(contents, namespace + ".dist-info/RECORD")
+    return {
+        "state": "verified",
+        "artifact": artifact.name,
+        "kind": "wheel" if wheel else "sdist",
+        "expected_source_members": len(expected),
+        "generated_metadata_members": len(generated),
+        "record_verified": wheel,
+        "source_manifest_basis": "explicit-clean-stage-and-pyproject-declarations",
+        "artifact_sha256": digest(artifact),
+    }
 
 
 def fresh_binary_fixture(stage: Path, destination: Path, environment: dict[str, str]) -> Path:
@@ -517,6 +750,13 @@ def release(output: Path, offline: bool) -> dict:
         (bundle / ".gitignore").unlink(missing_ok=True)
         if len(first) != 2 or first != second:
             raise RuntimeError(f"Repeated wheel/sdist builds disagree: {first} / {second}")
+        package_contents = {
+            filename: {
+                "primary": verify_package_contents(bundle / filename, stage, inputs),
+                "repeated": verify_package_contents(repeated / filename, stage, inputs),
+            }
+            for filename in sorted(first)
+        }
         for filename, sha256 in sorted(first.items()):
             artifacts.append({"file": filename, "sha256": sha256})
         wheel = next(bundle.glob("*.whl"))
@@ -620,6 +860,7 @@ def release(output: Path, offline: bool) -> dict:
                 alias: source for alias, source in GENERATED_SOURCE_ALIASES.items() if alias in inputs
             },
             "artifacts": artifacts,
+            "package_content_verification": package_contents,
             "repeated_builds_identical": True,
             "reproducibility_scope": "Two builds of one staged input with the same host/interpreter/toolchain; no cross-platform or whole-bundle byte identity claim.",
             "smoke": smoke_result,
@@ -642,6 +883,7 @@ def release(output: Path, offline: bool) -> dict:
         "version": version,
         "output": str(output),
         "artifacts": artifacts,
+        "package_content_verification": package_contents,
         "smoke": smoke_result,
         "attribution": licenses,
     }

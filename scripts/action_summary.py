@@ -4,8 +4,16 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import sys
 from collections import Counter
+from pathlib import Path
+
+# Load only the stdlib helper, avoiding package/dependency imports under python -I.
+# The Action owns this source alongside its script, even before APSA is installed.
+report_incomplete = runpy.run_path(
+    str(Path(__file__).resolve().parents[1] / "src/mobile_audit/completeness.py")
+)["report_incomplete"]
 
 
 def sarif_root(target: str, workspace: str) -> str:
@@ -32,7 +40,11 @@ def report_of(result: dict) -> dict:
     data = result.get("data")
     if isinstance(data, dict) and isinstance(data.get("report"), dict):
         return data["report"]
-    return data if isinstance(data, dict) else {}
+    # Direct CLI payloads and exported full reports share these report fields.
+    fields = ("findings", "coverage", "inventory", "id", "summary", "runtime", "online_query")
+    if isinstance(data, dict):
+        return data if any(key in data for key in fields) else {}
+    return result if any(key in result for key in fields) else {}
 
 
 RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
@@ -87,20 +99,18 @@ def summary(path: str, code: str) -> str:
         return "\n".join(lines + [f"APSA did not complete: {error} (exit code {code})."]) + "\n"
     inventory = report.get("inventory") or {}
     snapshot = inventory.get("input_snapshot") or {}
-    incomplete = bool(
-        (report.get("summary") or {}).get("incomplete")
-        or code == "3"
-        or report.get("partial")
-        or inventory.get("partial")
-        or inventory.get("fingerprint_complete") is False
-        or snapshot.get("partial")
-        or snapshot.get("app_scope_complete") is False
-        or any(item.get("state") == "partial" for item in report.get("coverage", []))
+    incomplete = (
+        report_incomplete(report) or code == "3" or (report.get("summary") or {}).get("incomplete") is True
     )
+    failed = result.get("ok") is False or code not in {"0", "3", "4"}
+    execution = "failed" if failed else "incomplete" if incomplete else "complete for the stated scope"
     lines += [
         f"- Report: `{report.get('id')}` · APSA {report.get('tool_version')} · rules `{report.get('rule_version')}`",
-        f"- Audit execution: **{'incomplete' if incomplete else 'complete for the stated scope'}** (exit code {code})",
+        f"- Audit execution: **{execution}** (exit code {code})",
     ]
+    if failed:
+        error = (result.get("error") or {}).get("message", "audit execution failed")
+        lines.append(f"- Execution error: {error}.")
     if snapshot:
         lines.append(
             f"- Input staging: **{'partial' if snapshot.get('partial') else 'complete'}**; "

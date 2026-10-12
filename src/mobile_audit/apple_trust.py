@@ -83,7 +83,13 @@ def trust_policy_summary(policy: dict) -> dict:
         "policy_sha256": policy["policy_sha256"],
         "anchor_sha256": [anchor["sha256"] for anchor in policy["anchors"]],
         "verification_time": policy.get("verification_time", "current-time"),
+        "verification_time_basis": "explicit-policy-epoch"
+        if "verification_time" in policy
+        else "verifier-current-time",
+        "anchor_origin": "explicit-policy-anchors",
         "purpose": "cryptographic-chain-only",
+        "openssl_purpose": "any",
+        "apple_critical_extensions": "not-validated",
         "revocation": "not-checked",
         "apple_identity_policy": "unsupported",
     }
