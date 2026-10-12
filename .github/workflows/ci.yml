@@ -68,6 +68,10 @@ jobs:
           version: "0.12.1"
           python-version: "3.12.13"
           enable-cache: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Install namespace backend on disposable Linux runner
         if: runner.os == 'Linux'
         run: |
