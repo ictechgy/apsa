@@ -32,6 +32,7 @@ from scripts.validate_runtime_transport import (
     NewAndroidDevice,
     OwnedResources,
     cleanup_owned,
+    execute_case,
     failure_observation,
     ios_default_set,
     ios_delivery_complete,
@@ -39,6 +40,7 @@ from scripts.validate_runtime_transport import (
     ios_process_identity,
     main,
     owned_ios_url,
+    runtime_projection,
     safe_android_error,
     safe_ios_appinfo,
     safe_ios_dispatcher,
@@ -207,11 +209,16 @@ def server_without_socket(authority, monkeypatch, *, alter=None):
     server.authority = authority
     server.port = 31591
     server.endpoint = "http://127.0.0.1:31591"
+    server.pid_sha256 = digest(b"NEW synthetic PID")
+    server.instance_sha256 = digest(authority.identity.encode())
 
     class Opener:
         def open(self, request, timeout):
-            status, raw = authority.handle(
-                urlparse(request.full_url).path, request.get_header("Authorization", ""), request.data
+            route = urlparse(request.full_url).path
+            status, raw = (
+                server.health_response(request.data)
+                if route == "/health"
+                else authority.handle(route, request.get_header("Authorization", ""), request.data)
             )
             if alter:
                 status, raw = alter(status, raw)
@@ -221,6 +228,207 @@ def server_without_socket(authority, monkeypatch, *, alter=None):
 
     monkeypatch.setattr("tests.support.runtime_transport.build_opener", lambda *_args: Opener())
     return server
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "nonce", "pid_sha256", "instance_sha256", "extra", "oversize", "status", "timeout"]
+)
+def test_owned_health_binds_fresh_nonce_pid_instance_without_auth_mutation(monkeypatch, mutation):
+    authority = OwnedAuthority("apsa.fixture.health", "1" * 64, invalidate=True)
+
+    def alter(status, raw):
+        if mutation == "timeout":
+            raise TimeoutError("NEW synthetic secret must stay private")
+        if mutation == "oversize":
+            return status, b"x" * 4097
+        value = json.loads(raw)
+        if mutation in {"nonce", "pid_sha256", "instance_sha256"}:
+            value[mutation] = "0" * 64
+        elif mutation == "extra":
+            value["secret"] = "NEW synthetic private sentinel"
+        return (201 if mutation == "status" else status), json.dumps(value).encode()
+
+    server = server_without_socket(authority, monkeypatch, alter=alter)
+    first, second = server.health(), server.health()
+    assert first["state"] == ("verified" if mutation is None else "unconfirmed")
+    assert first["nonce_sha256"] != second["nonce_sha256"]
+    assert authority.events == [] and authority.session == authority.credential == ""
+    assert authority.active is False and authority.logged_out is False
+    assert "private" not in json.dumps(first)
+
+
+@pytest.mark.parametrize("raw", [b"{}", b"[]", b'{"nonce":false}', b'{"nonce":"short"}', b"\xff"])
+def test_health_rejects_invalid_challenges_without_auth_events(raw, monkeypatch):
+    authority = OwnedAuthority("apsa.fixture.health", "1" * 64, invalidate=True)
+    server = server_without_socket(authority, monkeypatch)
+    assert server.health_response(raw) == (400, b'{"state":"rejected"}')
+    assert server.event_counts() == {"/issue": 0, "/logout": 0, "/protected": 0, "unsupported": 0}
+
+
+@pytest.mark.parametrize("diagnostic_failure", [False, True])
+@pytest.mark.parametrize("cleanup_failure", [False, True])
+def test_failed_acquisition_keeps_original_deadline_and_persists_health_counts(
+    monkeypatch, diagnostic_failure, cleanup_failure
+):
+    original = subprocess.TimeoutExpired(["NEW synthetic deadline"], 7)
+    record = {}
+    servers = []
+
+    def factory(authority):
+        server = server_without_socket(authority, monkeypatch)
+        health = server.health
+        calls = []
+
+        def probe():
+            calls.append(True)
+            if len(calls) > 1 and diagnostic_failure:
+                raise ValueError("NEW secret diagnostic failure")
+            return health()
+
+        def close():
+            if cleanup_failure:
+                raise ValueError("NEW secret cleanup failure")
+
+        server.health, server.close = probe, close
+        servers.append(server)
+        return server
+
+    def fail_recorder(*args):
+        authority = servers[0].authority
+        authority.bind("a" * 64)
+        authority.handle(
+            "/issue",
+            "",
+            json.dumps(
+                {"session": authority.session, "package": authority.package, "build": authority.build}
+            ).encode(),
+        )
+        raise original
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.AuthorityServer", factory)
+    monkeypatch.setattr("scripts.validate_runtime_transport.AcquisitionRecorder", fail_recorder)
+    target = SimpleNamespace(
+        platform="ios",
+        package="apsa.fixture.new",
+        build={"executable_sha256": "a" * 64, "info_plist_sha256": "b" * 64},
+    )
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        execute_case(target, invalidate=True, retain=False, evidence=record)
+    assert caught.value is original and caught.value.timeout == 7
+    assert record["state"] == "inconclusive"
+    assert record["authority_event_counts"] == {"/issue": 1, "/logout": 0, "/protected": 0, "unsupported": 0}
+    assert [entry["phase"] for entry in record["authority_health"]] == ["before-session", "after-failure"]
+    assert record["authority_health"][-1]["state"] == ("unconfirmed" if diagnostic_failure else "verified")
+    assert record["authority_cleanup"] == ("unconfirmed" if cleanup_failure else "confirmed")
+    assert "secret" not in json.dumps(record) and "authority_events" not in record
+
+
+def test_public_runtime_projection_excludes_raw_fields_and_binds_only_known_sources():
+    secret = "NEW synthetic secret URL response credential"
+    evidence = {
+        "state": "inconclusive",
+        "platform": "ios",
+        "measurement": "installed-acquisition",
+        "terminal": True,
+        "commit": "a" * 40,
+        "source_sha256": {"runtime_transport.py": "b" * 64, secret: "c" * 64},
+        "cases": [
+            {
+                "state": "inconclusive",
+                "url": secret,
+                "authority_health": [
+                    {"phase": "after-failure", "state": "verified", "nonce_sha256": "d" * 64, "raw": secret}
+                ],
+                "authority_event_counts": {"/issue": 1, secret: 5},
+                "verified_fields": {"bound_os_delivery": False, secret: True},
+                "authority_cleanup": "confirmed",
+            }
+        ],
+        "cleanup": {"state": "confirmed"},
+        "workflow_cleanup": {"state": "confirmed"},
+        "error": secret,
+    }
+    output = runtime_projection(evidence)
+    assert secret not in json.dumps(output)
+    assert output["source_sha256"] == {"runtime_transport.py": "b" * 64}
+    assert output["cases"][0]["verified_fields"] == {"bound_os_delivery": False}
+    assert output["workflow_cleanup"] == "confirmed" and output["case_count"] == 1
+    assert output["physical_device_verified"] is False
+
+
+def test_runtime_cli_persists_failed_case_source_binding_and_terminal_projection(
+    tmp_path, monkeypatch, capsys
+):
+    work = tmp_path / "NEW-failed-runtime"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+    monkeypatch.setattr(sys, "argv", ["runtime", "--platform", "ios", "--work", str(work)])
+
+    class Target:
+        device = "NEW-synthetic-target"
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            return {"state": "confirmed", "scope": "NEW target"}
+
+    def fail_case(target, *, invalidate, retain, evidence):
+        evidence.update(
+            state="inconclusive",
+            authority_event_counts={"/issue": 0, "/logout": 0, "/protected": 0, "unsupported": 0},
+            authority_health=[{"phase": "after-failure", "state": "verified", "pid_sha256": "b" * 64}],
+            verified_fields={},
+        )
+        raise subprocess.TimeoutExpired(["NEW secret command"], 7)
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.IosTarget", Target)
+    monkeypatch.setattr("scripts.validate_runtime_transport.execute_case", fail_case)
+    with pytest.raises(SystemExit) as caught:
+        main()
+    assert caught.value.code == 1
+    value = json.loads((work / "evidence.json").read_text())
+    assert value["terminal"] is True and value["state"] == "inconclusive"
+    assert len(value["cases"]) == 1 and len(value["source_sha256"]) == 7
+    assert value["cases"][0]["authority_event_counts"]["/issue"] == 0
+    assert value["failure_observation"]["exception_type"] == "TimeoutExpired"
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    terminal = next(record["runtime_validation"] for record in records if "runtime_validation" in record)
+    assert terminal["commit"] == "a" * 40 and terminal["source_sha256"] == value["source_sha256"]
+    assert terminal["case_count"] == 1 and terminal["cleanup"] == "confirmed"
+    assert "NEW secret" not in json.dumps(value) + json.dumps(records)
+
+
+def test_unconfirmed_authority_health_cannot_start_acquisition(monkeypatch):
+    record = {}
+    calls = []
+
+    class Server:
+        def __init__(self, authority):
+            pass
+
+        def health(self):
+            return {"state": "unconfirmed"}
+
+        def event_counts(self):
+            return {}
+
+        def close(self):
+            calls.append("closed")
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.AuthorityServer", Server)
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.AcquisitionRecorder",
+        lambda *_args: pytest.fail("unverified authority must not start acquisition"),
+    )
+    target = SimpleNamespace(
+        platform="android", package="apsa.fixture.health", build={"apk_sha256": "a" * 64}
+    )
+    with pytest.raises(ValueError, match="readiness/identity unconfirmed"):
+        execute_case(target, invalidate=True, retain=False, evidence=record)
+    assert record["state"] == "inconclusive" and calls == ["closed"]
 
 
 class NewMemoryTarget:

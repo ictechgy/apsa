@@ -1,0 +1,69 @@
+name: NEW synthetic Gitleaks and OSV component comparison
+
+on:
+  push:
+    branches: ["validation/apsa-final-*"]
+    paths:
+      - "benchmarks/component*.py"
+      - "scripts/acquire_component_tools.py"
+      - "scripts/verify_dependency.py"
+      - "tests/test_component*.py"
+      - "src/mobile_audit/**"
+      - ".github/workflows/component-benchmark.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  components:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - name: Install exact locked dependencies
+        run: uv sync --locked --extra dev
+      - name: Check fail-closed adapters and pinned acquisition
+        run: uv run --locked python -m pytest -q tests/test_component_acquisition.py tests/test_component_compare.py --basetemp "$RUNNER_TEMP/component-tests"
+      - name: Acquire public release bytes, check published pins and reject mutations
+        run: uv run --locked python -m scripts.acquire_component_tools --out "$RUNNER_TEMP/component-tools"
+      - name: Measure NEW synthetic provider formats and public advisory pairs three times
+        env:
+          PYTHONPATH: .:src
+          APSA_HOME: ${{ runner.temp }}/component-unused-default-home
+          XDG_CACHE_HOME: ${{ runner.temp }}/component-cache
+          XDG_CONFIG_HOME: ${{ runner.temp }}/component-config
+        run: uv run --locked python benchmarks/component_compare.py --tools "$RUNNER_TEMP/component-tools/manifest.json" --out "$RUNNER_TEMP/component-results" --repetitions 3 --online
+      - name: Preserve only NEW benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: new-synthetic-component-comparison
+          path: |
+            ${{ runner.temp }}/component-tools/manifest.json
+            ${{ runner.temp }}/component-results
+          retention-days: 14
+          if-no-files-found: error
+      - name: Remove only job-owned tools and temporary component state
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          names = ['component-tools', 'component-results', 'component-tests', 'component-unused-default-home', 'component-cache', 'component-config']
+          for name in names:
+              target = root / name
+              if target.is_symlink():
+                  raise ValueError('owned cleanup target is a symlink')
+              if target.exists():
+                  shutil.rmtree(target)
+          print('APSA_COMPONENT_CLEANUP=' + json.dumps({'state': 'complete', 'source_commit': os.environ['GITHUB_SHA'], 'removed_owned_names': names}))
+          PY

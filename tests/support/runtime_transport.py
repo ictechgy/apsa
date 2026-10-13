@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Protocol
 from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import ProxyHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from mobile_audit.core import canonical_json, digest
 from mobile_audit.runtime_acquisition import (
@@ -28,6 +29,12 @@ from mobile_audit.runtime_acquisition import (
 )
 
 MAX_RESPONSE = 1024 * 1024
+MAX_HEALTH_RESPONSE = 4096
+
+
+class NoHealthRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class OwnedAuthority:
@@ -105,6 +112,9 @@ class AuthorityServer:
 
     def __init__(self, authority: OwnedAuthority):
         self.authority = authority
+        self.pid_sha256 = digest(str(os.getpid()).encode())
+        self.instance_sha256 = digest(authority.identity.encode())
+        owner = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, format: str, *args):
@@ -116,7 +126,10 @@ class AuthorityServer:
                     self.send_error(413)
                     return
                 raw = self.rfile.read(int(length))
-                status, response = authority.handle(self.path, self.headers.get("Authorization", ""), raw)
+                if self.path == "/health":
+                    status, response = owner.health_response(raw)
+                else:
+                    status, response = authority.handle(self.path, self.headers.get("Authorization", ""), raw)
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(response)))
@@ -130,6 +143,71 @@ class AuthorityServer:
         self.thread.start()
         self.port = self.server.server_address[1]
         self.endpoint = f"http://127.0.0.1:{self.port}"
+
+    def health_response(self, raw: bytes) -> tuple[int, bytes]:
+        """A nonce echo never creates a credential, session or authority event."""
+        nonce = None
+        try:
+            body = json.loads(raw)
+            nonce = body.get("nonce") if isinstance(body, dict) else None
+            valid = (
+                isinstance(body, dict)
+                and set(body) == {"nonce"}
+                and isinstance(nonce, str)
+                and len(nonce) == 64
+                and all(char in "0123456789abcdef" for char in nonce)
+            )
+        except (ValueError, TypeError):
+            valid = False
+        if not valid:
+            return 400, b'{"state":"rejected"}'
+        return 200, canonical_json(
+            {
+                "state": "ready",
+                "nonce": nonce,
+                "pid_sha256": self.pid_sha256,
+                "instance_sha256": self.instance_sha256,
+            }
+        ).encode()
+
+    def health(self) -> dict:
+        """One bounded, proxy-free probe of this newly owned loopback listener."""
+        nonce = secrets.token_hex(32)
+        result = {
+            "state": "unconfirmed",
+            "nonce_sha256": digest(nonce.encode()),
+            "pid_sha256": self.pid_sha256,
+            "instance_sha256": self.instance_sha256,
+        }
+        try:
+            request = Request(
+                self.endpoint + "/health",
+                data=canonical_json({"nonce": nonce}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with build_opener(ProxyHandler({}), NoHealthRedirect()).open(request, timeout=2) as response:
+                raw = response.read(MAX_HEALTH_RESPONSE + 1)
+                if len(raw) > MAX_HEALTH_RESPONSE or response.status != 200:
+                    return result
+            value = json.loads(raw)
+            if value != {
+                "state": "ready",
+                "nonce": nonce,
+                "pid_sha256": self.pid_sha256,
+                "instance_sha256": self.instance_sha256,
+            }:
+                return result
+            return {**result, "state": "verified", "response_sha256": digest(raw), "response_bytes": len(raw)}
+        except (OSError, ValueError, TypeError):
+            return result
+
+    def event_counts(self) -> dict:
+        with self.authority.lock:
+            return {
+                route: sum(event["route"] == route for event in self.authority.events)
+                for route in ("/issue", "/logout", "/protected", "unsupported")
+            }
 
     def replay(self, nonce: str) -> BackendProbe:
         authority = self.authority

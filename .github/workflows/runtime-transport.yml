@@ -3,7 +3,7 @@ name: NEW synthetic installed runtime transport
 on:
   push:
     branches: ["validation/apsa-final-*"]
-    paths: ["src/mobile_audit/runtime_acquisition.py", "src/mobile_audit/runtime_evidence.py", "tests/support/runtime_transport.py", "scripts/validate_runtime_transport.py", "tests/fixtures/runtime/transport/**", ".github/workflows/runtime-transport.yml"]
+    paths: ["src/mobile_audit/runtime_acquisition.py", "src/mobile_audit/runtime_evidence.py", "tests/support/runtime_transport.py", "scripts/validate_runtime_transport.py", "tests/test_runtime_transport.py", "tests/test_runtime_builder_config.py", "tests/fixtures/runtime/transport/**", ".github/workflows/runtime-transport.yml"]
   workflow_dispatch:
 
 permissions:

@@ -2000,12 +2000,26 @@ def ios_delivery_complete(observations: list[dict], before: dict, after: dict) -
     )
 
 
-def execute_case(target, *, invalidate: bool, retain: bool) -> dict:
+def execute_case(target, *, invalidate: bool, retain: bool, evidence: dict | None = None) -> dict:
     value = scenario(target.platform, target.package)
     key = "apk_sha256" if target.platform == "android" else "executable_sha256"
     authority = OwnedAuthority(target.package, target.build[key], invalidate=invalidate)
     server = AuthorityServer(authority)
+    evidence = {} if evidence is None else evidence
+    evidence.update(
+        state="inconclusive",
+        platform=target.platform,
+        installed_build=target.build,
+        fixture_policy={"invalidate": invalidate, "retain": retain},
+        authority_health=[],
+        verified_fields={},
+    )
+    primary_failed = False
     try:
+        health = server.health()
+        evidence["authority_health"].append({"phase": "before-session", **health})
+        if health["state"] != "verified":
+            raise ValueError("Owned authority readiness/identity unconfirmed")
         adapter = InstalledTransportAdapter(target, server, retain=retain)
         binding = build_binding(target.platform, target.package, target.build)
         recorder = AcquisitionRecorder(adapter, binding, value["markers"])
@@ -2043,48 +2057,76 @@ def execute_case(target, *, invalidate: bool, retain: bool) -> dict:
             ("passed" if invalidate else "failed"),
             ("failed" if retain else "passed"),
         )
-        verified = (
-            backend[0]["state"] == expected_backend
-            and storage[0]["state"] == expected_storage
-            and workflow[0]["state"] == "passed"
-            and (
+        evidence["verified_fields"] = {
+            "backend_policy": backend[0]["state"] == expected_backend,
+            "storage_policy": storage[0]["state"] == expected_storage,
+            "workflow": workflow[0]["state"] == "passed",
+            "bound_os_delivery": (
                 target.platform != "ios" or ios_delivery_complete(target.delivery_observations, before, after)
-            )
-        )
-        return {
-            "state": "passed" if verified else "inconclusive",
-            "fixture_policy": {"invalidate": invalidate, "retain": retain},
-            "platform": target.platform,
-            "package": target.package,
-            "installed_build": target.build,
-            "installed": True,
-            "physical_device_verified": False,
-            "delivery_transport": adapter.delivery_transport,
-            "storage_scope": "only NEW fixture state.dat",
-            "network_scope": "only owned synthetic HTTP protected endpoint; replay sent separately by driver",
-            "ui": "unsupported",
-            "logs": "unsupported",
-            "backend": backend,
-            "storage": storage,
-            "workflow": workflow,
-            "snapshots": snapshots,
-            "authority_events": authority.events,
-            "os_delivery_observations": target.delivery_observations if target.platform == "ios" else [],
+            ),
         }
+        evidence.update(
+            {
+                "state": "passed" if all(evidence["verified_fields"].values()) else "inconclusive",
+                "fixture_policy": {"invalidate": invalidate, "retain": retain},
+                "platform": target.platform,
+                "package": target.package,
+                "installed_build": target.build,
+                "installed": True,
+                "physical_device_verified": False,
+                "delivery_transport": adapter.delivery_transport,
+                "storage_scope": "only NEW fixture state.dat",
+                "network_scope": "only owned synthetic HTTP protected endpoint; replay sent separately by driver",
+                "ui": "unsupported",
+                "logs": "unsupported",
+                "backend": backend,
+                "storage": storage,
+                "workflow": workflow,
+                "snapshots": snapshots,
+                "authority_events": authority.events,
+                "os_delivery_observations": target.delivery_observations if target.platform == "ios" else [],
+            }
+        )
+        return evidence
+    except Exception:
+        primary_failed = True
+        # Diagnostics run only after the original acquisition deadline has failed.
+        # They cannot replace its exception or turn missing delivery into success.
+        try:
+            health = server.health()
+        except Exception:
+            health = {"state": "unconfirmed"}
+        evidence["authority_health"].append({"phase": "after-failure", **health})
+        raise
     finally:
-        server.close()
+        evidence["authority_event_counts"] = server.event_counts()
+        try:
+            server.close()
+            evidence["authority_cleanup"] = "confirmed"
+        except Exception:
+            evidence["authority_cleanup"] = "unconfirmed"
+            evidence["state"] = "inconclusive"
+            if not primary_failed:
+                raise
 
 
-def execute_backend_cases() -> list[dict]:
+def execute_backend_cases(results: list[dict] | None = None) -> list[dict]:
     """Real HTTP fallback proof, explicitly without installed-app or OS delivery claims."""
-    results = []
+    results = [] if results is None else results
     for invalidate in (True, False):
         authority = OwnedAuthority(
             "apsa.fixture.backend", digest(b"NEW synthetic HTTP-only client"), invalidate=invalidate
         )
         authority.bind(uuid.uuid4().hex + uuid.uuid4().hex)
         server = AuthorityServer(authority)
+        result = {"state": "inconclusive", "invalidate": invalidate, "authority_health": []}
+        results.append(result)
+        primary_failed = False
         try:
+            health = server.health()
+            result["authority_health"].append({"phase": "before-session", **health})
+            if health["state"] != "verified":
+                raise ValueError("Owned authority readiness/identity unconfirmed")
             body = json.dumps(
                 {"session": authority.session, "package": authority.package, "build": authority.build}
             ).encode()
@@ -2134,7 +2176,7 @@ def execute_backend_cases() -> list[dict]:
                 and before.credential_sha256 == after.credential_sha256
                 and before.authority_sha256 == after.authority_sha256
             )
-            results.append(
+            result.update(
                 {
                     "state": "passed" if verified else "inconclusive",
                     "invalidate": invalidate,
@@ -2143,11 +2185,133 @@ def execute_backend_cases() -> list[dict]:
                     "os_delivery": "unsupported",
                     "probes": [record(before), record(after)],
                     "authority_events": authority.events,
+                    "verified_fields": {"backend_policy": verified},
                 }
             )
+        except Exception:
+            primary_failed = True
+            try:
+                health = server.health()
+            except Exception:
+                health = {"state": "unconfirmed"}
+            result["authority_health"].append({"phase": "after-failure", **health})
+            raise
         finally:
-            server.close()
+            result["authority_event_counts"] = server.event_counts()
+            try:
+                server.close()
+                result["authority_cleanup"] = "confirmed"
+            except Exception:
+                result["authority_cleanup"] = "unconfirmed"
+                result["state"] = "inconclusive"
+                if not primary_failed:
+                    raise
     return results
+
+
+def runtime_projection(evidence: dict) -> dict:
+    """Small, typed public-CI proof; arbitrary error text/URLs/bodies stay out."""
+
+    def hash_value(value):
+        return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None
+
+    def state(value, allowed):
+        return value if isinstance(value, str) and value in allowed else "unmeasured"
+
+    cases = []
+    for case in evidence.get("cases", [])[:4]:
+        health = []
+        for probe in case.get("authority_health", [])[:2]:
+            health.append(
+                {
+                    "phase": state(probe.get("phase"), {"before-session", "after-failure"}),
+                    "state": state(probe.get("state"), {"verified", "unconfirmed"}),
+                    **{
+                        key: probe[key]
+                        for key in ("nonce_sha256", "pid_sha256", "instance_sha256", "response_sha256")
+                        if hash_value(probe.get(key))
+                    },
+                }
+            )
+        cases.append(
+            {
+                "state": state(case.get("state"), {"passed", "inconclusive"}),
+                "fixture_policy": {
+                    key: value
+                    for key, value in case.get(
+                        "fixture_policy", {"invalidate": case.get("invalidate")}
+                    ).items()
+                    if key in {"invalidate", "retain"} and type(value) is bool
+                },
+                "installed_build": {
+                    key: value
+                    for key, value in case.get("installed_build", {}).items()
+                    if key in {"apk_sha256", "executable_sha256", "info_plist_sha256"} and hash_value(value)
+                },
+                "authority_health": health,
+                "authority_event_counts": {
+                    key: value
+                    for key, value in case.get("authority_event_counts", {}).items()
+                    if key in {"/issue", "/logout", "/protected", "unsupported"}
+                    and type(value) is int
+                    and 0 <= value <= 1024
+                },
+                "authority_cleanup": state(case.get("authority_cleanup"), {"confirmed", "unconfirmed"}),
+                "verified_fields": {
+                    key: value
+                    for key, value in case.get("verified_fields", {}).items()
+                    if key in {"backend_policy", "storage_policy", "workflow", "bound_os_delivery"}
+                    and type(value) is bool
+                },
+            }
+        )
+    result = {
+        "schema_version": 1,
+        "state": state(evidence.get("state"), {"passed", "inconclusive"}),
+        "terminal": evidence.get("terminal") is True,
+        "platform": state(evidence.get("platform"), {"android", "ios", "backend"}),
+        "measurement": state(
+            evidence.get("measurement"),
+            {"installed-acquisition", "backend-http-controls", "os-url-diagnostic-control"},
+        ),
+        "commit": evidence.get("commit")
+        if isinstance(evidence.get("commit"), str) and re.fullmatch(r"[a-f0-9]{40}", evidence["commit"])
+        else None,
+        "source_sha256": {
+            key: value
+            for key, value in evidence.get("source_sha256", {}).items()
+            if key
+            in {
+                "Transport.swift",
+                "UrlDispatcher.swift",
+                "TransportActivity.java",
+                "validate_runtime_transport.py",
+                "runtime_transport.py",
+                "runtime_acquisition.py",
+                "runtime_evidence.py",
+            }
+            and hash_value(value)
+        },
+        "case_count": len(evidence.get("cases", [])),
+        "cases": cases,
+        "cleanup": state(
+            evidence.get("cleanup", {}).get("state") if isinstance(evidence.get("cleanup"), dict) else None,
+            {"confirmed", "unconfirmed"},
+        ),
+        "workflow_cleanup": state(
+            evidence.get("workflow_cleanup", {}).get("state"), {"confirmed", "unconfirmed"}
+        ),
+        "physical_device_verified": False,
+    }
+    encoded = json.dumps(result, sort_keys=True).encode()
+    if len(encoded) > 16 * 1024:
+        return {
+            "state": "unmeasured",
+            "reason": "projection-over-bound",
+            "sha256": digest(encoded),
+            "bytes": len(encoded),
+        }
+    return result
 
 
 def main():
@@ -2216,6 +2380,7 @@ def main():
             evidence_path.write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
             (root / "cleanup.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
         print(json.dumps({"workflow_cleanup": result}), flush=True)
+        print(json.dumps({"runtime_validation": runtime_projection(evidence)}, sort_keys=True), flush=True)
         if result["state"] != "confirmed":
             raise SystemExit(1)
         return
@@ -2229,7 +2394,11 @@ def main():
         "platform": args.platform,
         "ios_device_set": args.ios_device_set if args.platform == "ios" else None,
         "ios_url_driver": args.ios_url_driver if args.platform == "ios" else None,
-        "measurement": "os-url-diagnostic-control" if args.ios_os_url_control else "installed-acquisition",
+        "measurement": "os-url-diagnostic-control"
+        if args.ios_os_url_control
+        else "backend-http-controls"
+        if args.platform == "backend"
+        else "installed-acquisition",
         "commit": os.environ.get("GITHUB_SHA"),
         "run_id": os.environ.get("GITHUB_RUN_ID"),
         "source_sha256": {
@@ -2240,6 +2409,8 @@ def main():
                 SOURCES / "TransportActivity.java",
                 Path(__file__).resolve(),
                 Path(__file__).parents[1] / "tests/support/runtime_transport.py",
+                Path(__file__).parents[1] / "src/mobile_audit/runtime_acquisition.py",
+                Path(__file__).parents[1] / "src/mobile_audit/runtime_evidence.py",
             )
         },
         "scope": "NEW synthetic apps/devices only; no physical device or real backend claim",
@@ -2253,7 +2424,7 @@ def main():
     try:
         if args.platform == "backend":
             stage = "backend-http-controls"
-            evidence["cases"] = execute_backend_cases()
+            execute_backend_cases(evidence["cases"])
             evidence["state"] = (
                 "passed" if all(case["state"] == "passed" for case in evidence["cases"]) else "inconclusive"
             )
@@ -2311,10 +2482,14 @@ def main():
                         raise ValueError("NEW OS URL diagnostic control requires iOS target")
                     result = target.url_control()
                 else:
-                    result = execute_case(target, invalidate=invalidate, retain=retain)
+                    result = {}
+                    # Persist the failed case too, before cleanup and without raw responses.
+                    evidence["cases"].append(result)
+                    execute_case(target, invalidate=invalidate, retain=retain, evidence=result)
                 if args.platform == "ios":
                     result["new_simulator_uuid"] = target.device
-                evidence["cases"].append(result)
+                if args.ios_os_url_control:
+                    evidence["cases"].append(result)
             except Exception as error:
                 if commands.pre_cleanup_failure is None:
                     commands.pre_cleanup_failure = failure_observation(error, stage, commands.records)
@@ -2360,6 +2535,7 @@ def main():
         evidence["commands_sha256"] = digest(json.dumps(commands.records, sort_keys=True).encode())
         evidence["terminal"] = True
         (root / "evidence.json").write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
+        print(json.dumps({"runtime_validation": runtime_projection(evidence)}, sort_keys=True), flush=True)
         if args.ios_os_url_control:
             # Only the bounded diagnostic structures produced above; never raw files/URLs.
             projection = {
