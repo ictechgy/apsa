@@ -195,6 +195,8 @@ PUBLIC_RESOURCES = frozenset(
         "benchmarks/corpus.json",
         "docs/aapt2-integrity.json",
         "docs/benchmark-integrity.json",
+        "scripts/sarif-validator/package.json",
+        "scripts/sarif-validator/package-lock.json",
     }
 )
 # Generate this alias only from the staged public package source. The checkout's

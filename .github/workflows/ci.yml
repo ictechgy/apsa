@@ -221,7 +221,10 @@ jobs:
           python3 -I -c 'import json; r = json.load(open("apsa.sarif"))["runs"][0]; uris = {l["physicalLocation"]["artifactLocation"]["uri"] for x in r["results"] for l in x["locations"]}; assert uris and all(u.startswith("selftest/app/") for u in uris), uris; assert r["properties"]["maswe"]["summary"], r["properties"]["maswe"]'
       - name: Validate SARIF with the Microsoft SARIF multitool
         if: runner.os == 'Linux'
-        run: npx --yes @microsoft/sarif-multitool@5.7.0 validate apsa.sarif --level Error --output "$RUNNER_TEMP/sarif-validation.sarif"
+        run: |
+          npm ci --prefix scripts/sarif-validator --ignore-scripts --no-audit --no-fund --include=dev
+          chmod u+x scripts/sarif-validator/node_modules/@microsoft/sarif-multitool-linux/Sarif.Multitool
+          scripts/sarif-validator/node_modules/.bin/sarif-multitool validate apsa.sarif --level Error --output "$RUNNER_TEMP/sarif-validation.sarif"
       - name: A severity threshold fails the job
         id: gate
         continue-on-error: true

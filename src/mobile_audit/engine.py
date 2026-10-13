@@ -35,6 +35,9 @@ def parser_lease(directory: Path | None = None):
             break
         except BlockingIOError:
             os.close(candidate)
+        except BaseException:
+            os.close(candidate)
+            raise
     if descriptor is None:
         raise ValueError("Two parsers are already active; wait for another audit to finish")
     try:
@@ -136,9 +139,19 @@ def analyze_target(
         result = json.loads(raw)
     except (ValueError, UnicodeError):
         raise ValueError("Parser worker returned invalid output; audit incomplete") from None
+    if not isinstance(result, dict):
+        raise ValueError("Parser worker returned an invalid schema; audit incomplete")
     if result.get("error"):
         raise ValueError(result["error"])
-    if not isinstance(result.get("inventory"), dict) or not isinstance(result.get("findings"), list):
+    inventory, coverage = result.get("inventory"), result.get("coverage")
+    if (
+        not isinstance(inventory, dict)
+        or not isinstance(result.get("findings"), list)
+        or not isinstance(inventory.get("warnings"), list)
+        or any(not isinstance(warning, str) for warning in inventory["warnings"])
+        or not isinstance(coverage, list)
+        or any(not isinstance(check, dict) or not isinstance(check.get("state"), str) for check in coverage)
+    ):
         raise ValueError("Parser worker returned an invalid schema; audit incomplete")
     result["inventory"]["parser_isolation"] = isolation
     if isolation.get("activation_probe") == "failed":

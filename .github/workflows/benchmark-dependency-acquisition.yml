@@ -29,7 +29,7 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           set -euo pipefail
-          python -I scripts/acquire_benchmark_dependencies.py --work "$RUNNER_TEMP/benchmark-dependency-acquisition"
+          python -I -B scripts/acquire_benchmark_dependencies.py --work "$RUNNER_TEMP/benchmark-dependency-acquisition"
       - name: Preserve only public textual acquisition provenance
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

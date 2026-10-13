@@ -1,0 +1,8 @@
+{
+  "name": "apsa-sarif-validator",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "@microsoft/sarif-multitool": "5.7.0"
+  }
+}

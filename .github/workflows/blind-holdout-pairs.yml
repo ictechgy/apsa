@@ -25,16 +25,20 @@ jobs:
           enable-cache: false
       - run: uv sync --locked --extra dev
       - name: Scan each pinned vulnerable and fixed commit with APSA only
+        id: evaluate
         run: |
           uv run --locked python -m benchmarks.fpfn_eval \
             --truth benchmarks/fpfn_truth_holdout2.json \
             --work "$RUNNER_TEMP/holdout-work" --out "$RUNNER_TEMP/holdout/results.json"
-      - name: Keep the captured public archives' hashes and reports
+      - name: Validate results and retain complete or partial reports
         if: always()
         run: |
-          mkdir -p "$RUNNER_TEMP/holdout/reports"
-          cd "$RUNNER_TEMP/holdout-work" 2>/dev/null && find . -name report.json -print0 \
-            | xargs -0 -I{} cp --parents {} "$RUNNER_TEMP/holdout/reports/" || true
+          uv run --locked python scripts/collect_holdout_reports.py \
+            --truth benchmarks/fpfn_truth_holdout2.json \
+            --results "$RUNNER_TEMP/holdout/results.json" \
+            --work "$RUNNER_TEMP/holdout-work" \
+            --out "$RUNNER_TEMP/holdout/reports" \
+            --evaluation-outcome "${{ steps.evaluate.outcome }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
