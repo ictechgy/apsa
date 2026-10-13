@@ -24,16 +24,48 @@ def initialize(store: Store) -> None:
     store.db.commit()
 
 
-def update(store: Store, job_id: str, **fields) -> None:
+def update(store: Store, job_id: str, **fields) -> bool:
     permitted = {"state", "progress", "stage", "pid", "process_started", "report_id", "error"}
     if not fields or set(fields) - permitted:
         raise ValueError("Invalid job update")
     fields["updated"] = now()
     with store.db:
-        store.db.execute(
-            "UPDATE jobs SET " + ",".join(f"{key}=?" for key in fields) + " WHERE id=?",
+        changed = store.db.execute(
+            "UPDATE jobs SET "
+            + ",".join(f"{key}=?" for key in fields)
+            + " WHERE id=? AND state IN ('queued','running') AND stage!='cancellation-requested'",
             (*fields.values(), job_id),
         )
+        return changed.rowcount == 1
+
+
+def claim(store: Store, job_id: str, pid: int, process_started: float) -> bool:
+    """Only one worker may claim a queued job; cancellation wins if committed first."""
+    with store.db:
+        changed = store.db.execute(
+            "UPDATE jobs SET state='running',pid=?,process_started=?,updated=? "
+            "WHERE id=? AND state='queued' AND stage!='cancellation-requested'",
+            (pid, process_started, now(), job_id),
+        )
+        return changed.rowcount == 1
+
+
+def finish(store: Store, job_id: str, state: str, *, report_id: str | None = None, error: str = "") -> bool:
+    """Finish active work without overriding a committed cancellation or terminal state."""
+    if state not in {"completed", "failed", "cancelled"}:
+        raise ValueError("Invalid worker completion state")
+    with store.db:
+        changed = store.db.execute(
+            "UPDATE jobs SET "
+            "state=CASE WHEN stage='cancellation-requested' THEN 'cancelled' ELSE ? END,"
+            "stage=CASE WHEN stage='cancellation-requested' THEN 'cancelled' ELSE ? END,"
+            "progress=CASE WHEN stage!='cancellation-requested' AND ?='completed' THEN 100 ELSE progress END,"
+            "report_id=CASE WHEN stage!='cancellation-requested' AND ?='completed' THEN ? ELSE NULL END,"
+            "error=CASE WHEN stage!='cancellation-requested' AND ?='failed' THEN ? ELSE '' END,"
+            "updated=? WHERE id=? AND state='running'",
+            (state, state, state, state, report_id, state, error, now(), job_id),
+        )
+        return changed.rowcount == 1
 
 
 def worker_process(row: dict) -> psutil.Process | None:
@@ -62,27 +94,27 @@ def get(store: Store, job_id: str, private=False) -> dict:
         and not result["pid"]
         and (datetime.now(timezone.utc) - datetime.fromisoformat(result["created"])).total_seconds() > 120
     ):
-        update(
-            store,
-            job_id,
-            state="interrupted",
-            stage="launch-interrupted",
-            error="Worker launch was interrupted; restart this audit.",
-        )
-        result = dict(store.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
-    if result["state"] not in TERMINAL and result["pid"] and not worker_process(result):
-        cancelled = result["stage"] == "cancellation-requested"
         with store.db:
             store.db.execute(
-                "UPDATE jobs SET state=?,stage=?,error=?,updated=? WHERE id=? AND state NOT IN ('completed','failed','cancelled','interrupted')",
+                "UPDATE jobs SET state='interrupted',stage='launch-interrupted',error=?,updated=? "
+                "WHERE id=? AND state='queued' AND pid IS NULL",
+                ("Worker launch was interrupted; restart this audit.", now(), job_id),
+            )
+        result = dict(store.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+    if result["state"] not in TERMINAL and result["pid"] and not worker_process(result):
+        with store.db:
+            store.db.execute(
+                "UPDATE jobs SET "
+                "state=CASE WHEN stage='cancellation-requested' THEN 'cancelled' ELSE 'interrupted' END,"
+                "stage=CASE WHEN stage='cancellation-requested' THEN 'cancelled' ELSE 'worker-exited' END,"
+                "error=CASE WHEN stage='cancellation-requested' THEN '' ELSE ? END,updated=? "
+                "WHERE id=? AND state IN ('queued','running') AND pid IS ? AND process_started IS ?",
                 (
-                    "cancelled" if cancelled else "interrupted",
-                    "cancelled" if cancelled else "worker-exited",
-                    ""
-                    if cancelled
-                    else "Worker exited before completion; no successful audit result is claimed.",
+                    "Worker exited before completion; no successful audit result is claimed.",
                     now(),
                     job_id,
+                    result["pid"],
+                    result["process_started"],
                 ),
             )
         result = dict(store.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
@@ -161,18 +193,34 @@ def start(store: Store, payload: dict) -> dict:
 
 
 def cancel(store: Store, job_id: str) -> dict:
-    row = get(store, job_id, private=True)
-    if row["state"] in TERMINAL:
-        return get(store, job_id)
-    process = worker_process(row)
-    if process:
-        update(store, job_id, stage="cancellation-requested")
+    # Read and decide under the same write lock as worker claims/completions.
+    # In particular, a worker cannot claim a queued job after cancellation wins.
+    get(store, job_id, private=True)
+    store.db.execute("BEGIN IMMEDIATE")
+    try:
+        row = dict(store.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+        if row["state"] not in TERMINAL:
+            store.db.execute(
+                "UPDATE jobs SET state=?,stage=?,updated=? WHERE id=?",
+                (
+                    "cancelled" if row["state"] == "queued" else row["state"],
+                    "cancelled" if row["state"] == "queued" else "cancellation-requested",
+                    now(),
+                    job_id,
+                ),
+            )
+        store.db.commit()
+    except BaseException:
+        store.db.rollback()
+        raise
+    process = worker_process(row) if row["state"] not in TERMINAL else None
+    if process is not None:
         try:
             process.send_signal(signal.SIGTERM)
         except psutil.NoSuchProcess:
             pass
-    else:
-        update(store, job_id, state="cancelled", stage="cancelled")
+    elif row["state"] == "running":
+        finish(store, job_id, "cancelled")
     return get(store, job_id)
 
 

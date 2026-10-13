@@ -133,3 +133,102 @@ def test_cli_ingest_reports_errors(store, demo, tmp_path, monkeypatch, capsys):
         main(["--json", "--home", home, "reports", "ingest", "latest", "--sarif", str(bad), "--tool", "x"])
         == 2
     )
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("runs",), {}),
+        (("runs", 0), 1),
+        (("runs", 0, "tool"), "scanner"),
+        (("runs", 0, "tool", "driver"), 1),
+        (("runs", 0, "tool", "driver", "name"), ["scanner"]),
+        (("runs", 0, "tool", "driver", "rules"), {}),
+        (("runs", 0, "tool", "driver", "rules", 0, "properties"), ["cwe-295"]),
+        (("runs", 0, "tool", "driver", "rules", 0, "shortDescription"), "description"),
+        (("runs", 0, "results"), {}),
+        (("runs", 0, "results", 0, "message"), "message"),
+        (("runs", 0, "results", 0, "message", "text"), {"text": "nested"}),
+        (("runs", 0, "results", 0, "ruleId"), ["tls/accept-all"]),
+        (("runs", 0, "results", 0, "level"), ["error"]),
+        (("runs", 0, "results", 0, "locations"), {}),
+        (("runs", 0, "results", 0, "locations", 0), 1),
+        (("runs", 0, "results", 0, "locations", 0, "physicalLocation"), "physical"),
+        (("runs", 0, "results", 0, "locations", 0, "physicalLocation", "artifactLocation"), []),
+        (("runs", 0, "results", 0, "locations", 0, "physicalLocation", "region"), []),
+    ],
+)
+def test_malformed_sarif_shapes_are_controlled_errors(path, value):
+    value_document = document([result("MainActivity.kt")])
+    node = value_document
+    for key in path[:-1]:
+        node = node[key]
+    node[path[-1]] = value
+    with pytest.raises(ValueError, match="Invalid SARIF"):
+        external_findings(json.dumps(value_document).encode(), "synthetic")
+
+
+def test_deep_sarif_json_is_a_controlled_error():
+    raw = b'{"version":"2.1.0","runs":' + b"[" * 4096 + b"]" * 4096 + b"}"
+    # JSON parser depth limits differ by Python version; either decoding or shape
+    # validation must reject this through the same public ValueError boundary.
+    with pytest.raises(ValueError, match="SARIF"):
+        external_findings(raw, "synthetic")
+
+
+@pytest.mark.parametrize(("index", "expected_cwes"), [(0, []), (1, ["CWE-295"]), (True, [])])
+def test_rule_index_keeps_original_positions(index, expected_cwes):
+    item = result("MainActivity.kt")
+    item.pop("ruleId")
+    item["ruleIndex"] = index
+    value = document([item])
+    driver = value["runs"][0]["tool"]["driver"]
+    driver["rules"] = [None, driver["rules"][0]]
+    findings, record = external_findings(json.dumps(value).encode(), "synthetic")
+    assert record["imported"] == 1
+    assert findings[0]["cwe"] == expected_cwes
+    if expected_cwes:
+        assert "MASWE-0027" in findings[0]["maswe"]
+    else:
+        assert findings[0]["maswe"] == []
+    assert findings[0]["rule_id"].endswith("tls-accept-all" if expected_cwes else "unknown")
+
+
+def test_conflicting_rule_id_and_index_cannot_supply_another_rules_cwe():
+    item = result("MainActivity.kt", rule="style/naming")
+    item["ruleIndex"] = 0
+    with pytest.raises(ValueError, match="rule ID and index disagree"):
+        external_findings(json.dumps(document([item])).encode(), "synthetic")
+
+
+def test_invalid_sarif_cli_does_not_write_a_derived_report(store, tmp_path, capsys):
+    # A new minimal synthetic report avoids parser/device work in this input-validation check.
+    base = store.save_report(
+        {
+            "id": "audit_synthetic_ingest",
+            "created": "2026-10-13T00:00:00Z",
+            "target": str(tmp_path / "source"),
+        }
+    )
+    bad = tmp_path / "bad.sarif"
+    bad.write_text('{"version":"2.1.0","runs":[1]}')
+    assert (
+        main(
+            [
+                "--json",
+                "--home",
+                str(store.home),
+                "reports",
+                "ingest",
+                base["id"],
+                "--sarif",
+                str(bad),
+                "--tool",
+                "synthetic",
+            ]
+        )
+        == 2
+    )
+    output = json.loads(capsys.readouterr().out)
+    assert "Invalid SARIF run" in str(output)
+    assert len(store.reports()) == 1

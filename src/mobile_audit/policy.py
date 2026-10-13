@@ -210,12 +210,38 @@ def _identity(item: dict) -> str:
 
 def _subject(report: dict) -> tuple:
     inventory = report.get("inventory", {})
+    scope = ()
     if isinstance(inventory, dict):
         selection = inventory.get("source_selection", {})
+        if not isinstance(selection, dict):
+            raise ValueError("Source selection must be an object")
+        for key in ("module", "configuration", "configuration_semantics"):
+            if selection.get(key) is not None and not isinstance(selection[key], str):
+                raise ValueError("Source selection fields must be strings")
+        if "dependency_build" in selection:
+            build = selection["dependency_build"]
+            if (
+                not isinstance(build, dict)
+                or any(
+                    not isinstance(build.get(key), str) or not build[key].strip()
+                    for key in ("application_module", "runtime_configuration")
+                )
+                or not isinstance(build.get("evidence_paths"), list)
+                or any(not isinstance(path, str) or not path for path in build["evidence_paths"])
+                or ("freshness" in build and not isinstance(build["freshness"], str))
+                or (
+                    "installed_build_verified" in build
+                    and type(build["installed_build_verified"]) is not bool
+                )
+            ):
+                raise ValueError("Dependency build selection is malformed")
+        # Preserve the entire declared scope, including future selection fields.
+        # JSON key order is irrelevant; dropping a variant or lockfile scope is not.
         scope = (
-            tuple((key, selection[key]) for key in ("module", "configuration") if selection.get(key))
-            if isinstance(selection, dict)
-            else ()
+            (
+                "source_selection",
+                json.dumps(selection, sort_keys=True, allow_nan=False, separators=(",", ":")),
+            ),
         )
         apps = inventory.get("apps", [])
         if not isinstance(apps, list):
@@ -234,7 +260,7 @@ def _subject(report: dict) -> tuple:
             return ("apps", *known, *scope)
         if inventory.get("package") and isinstance(inventory.get("platforms"), list):
             return ("apps", *((p, inventory["package"]) for p in sorted(inventory["platforms"])), *scope)
-    return ("target", report["target"]) if report.get("target") else ()
+    return ("target", report["target"], *scope) if report.get("target") else scope
 
 
 def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
@@ -276,14 +302,26 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
         else:
             previous, errors = _findings(baseline, "Baseline")
             incomplete.extend(errors)
-            if isinstance(baseline, dict) and _subject(report) != _subject(baseline):
-                incomplete.append(
-                    {
-                        "code": "baseline-target-mismatch",
-                        "message": "Baseline belongs to a different app or source target.",
-                    }
-                )
-                previous = []
+            if isinstance(baseline, dict):
+                try:
+                    subject_matches = _subject(report) == _subject(baseline)
+                except (TypeError, ValueError, RecursionError):
+                    incomplete.append(
+                        {
+                            "code": "invalid-baseline-scope",
+                            "message": "Report and baseline require valid app and source selection scope.",
+                        }
+                    )
+                    previous = []
+                else:
+                    if not subject_matches:
+                        incomplete.append(
+                            {
+                                "code": "baseline-target-mismatch",
+                                "message": "Baseline belongs to a different app, source target, or selection.",
+                            }
+                        )
+                        previous = []
             known: dict[str, list[dict]] = {}
             for item in previous:
                 known.setdefault(_identity(item), []).append(item)

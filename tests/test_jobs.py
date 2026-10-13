@@ -70,9 +70,13 @@ def test_pid_reuse_cannot_cancel_an_unrelated_process_and_roots_filter(store, de
     queued = jobs.start(store, {"kind": "scan", "target": str(demo)})
     terminal(store, queued["id"])
     own = psutil.Process()
-    jobs.update(
-        store, queued["id"], state="running", pid=own.pid, process_started=own.create_time(), report_id=None
-    )
+    # Seed corrupt persisted identity directly: production transitions must not
+    # resurrect the completed job merely to arrange this regression fixture.
+    with store.db:
+        store.db.execute(
+            "UPDATE jobs SET state='running',pid=?,process_started=?,report_id=NULL WHERE id=?",
+            (own.pid, own.create_time(), queued["id"]),
+        )
     result = jobs.cancel(store, queued["id"])
     assert result["state"] == "interrupted"
     assert own.is_running()

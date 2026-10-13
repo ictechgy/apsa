@@ -141,6 +141,106 @@ def test_same_app_builds_can_use_a_baseline_from_another_artifact_path():
     assert gate["exit_code"] == 0 and gate["counts"]["baseline_existing"] == 1
 
 
+def selected_report(selection):
+    return report(
+        item(),
+        target="/fresh-synthetic/app",
+        inventory={
+            "apps": [{"platform": "android", "package": "synthetic.app"}],
+            "source_selection": selection,
+        },
+    )
+
+
+def dependency_selection():
+    return {
+        "configuration": "app/src/main/AndroidManifest.xml",
+        "dependency_build": {
+            "application_module": "app",
+            "runtime_configuration": "demoReleaseRuntimeClasspath",
+            "evidence_paths": ["app/gradle.lockfile"],
+            "freshness": "unverified",
+            "installed_build_verified": False,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("application_module", "other-app"),
+        ("runtime_configuration", "prodReleaseRuntimeClasspath"),
+        ("evidence_paths", ["app/other.lockfile"]),
+    ],
+)
+def test_only_new_reopens_findings_when_dependency_build_scope_changes(key, value):
+    before = selected_report(dependency_selection())
+    after = copy.deepcopy(before)
+    after["inventory"]["source_selection"]["dependency_build"][key] = value
+    snapshots = copy.deepcopy((before, after))
+
+    gate = evaluate(after, config(only_new=True), before)
+
+    assert gate["state"] == "incomplete" and gate["exit_code"] == 3
+    assert gate["counts"]["baseline_existing"] == 0
+    assert gate["gate_findings"] == [after["findings"][0]["id"]]
+    assert any(reason["code"] == "baseline-target-mismatch" for reason in gate["reasons"])
+    assert (before, after) == snapshots
+
+
+def test_only_new_preserves_selection_key_order_independence():
+    selection = dependency_selection()
+    reordered = dict(reversed(list(selection.items())))
+    reordered["dependency_build"] = dict(reversed(list(selection["dependency_build"].items())))
+    gate = evaluate(selected_report(reordered), config(only_new=True), selected_report(selection))
+    assert gate["state"] == "passed" and gate["counts"]["baseline_existing"] == 1
+
+
+def test_only_new_binds_selection_even_without_an_app_identity():
+    before = selected_report({"configuration": "app/debug/AndroidManifest.xml"})
+    after = selected_report({"configuration": "app/release/AndroidManifest.xml"})
+    before["inventory"]["apps"] = after["inventory"]["apps"] = []
+    gate = evaluate(after, config(only_new=True), before)
+    assert gate["state"] == "incomplete" and gate["counts"]["baseline_existing"] == 0
+
+
+def test_only_new_preserves_future_declared_selection_scope():
+    before = selected_report({"future_variant": {"name": "demo"}})
+    after = selected_report({"future_variant": {"name": "production"}})
+    gate = evaluate(after, config(only_new=True), before)
+    assert gate["state"] == "incomplete" and gate["counts"]["baseline_existing"] == 0
+
+
+@pytest.mark.parametrize("side", ["before", "after", "both"])
+@pytest.mark.parametrize(
+    "selection",
+    [
+        None,
+        [],
+        "variant",
+        {"module": []},
+        {"configuration": {"path": "AndroidManifest.xml"}},
+        {"dependency_build": []},
+        {"dependency_build": {}},
+        {"dependency_build": {"application_module": "app", "runtime_configuration": "release"}},
+        {"future_variant": float("nan")},
+    ],
+)
+def test_malformed_selection_never_suppresses_findings_or_raises(side, selection):
+    before, after = selected_report(dependency_selection()), selected_report(dependency_selection())
+    if side in {"before", "both"}:
+        before["inventory"]["source_selection"] = selection
+    if side in {"after", "both"}:
+        after["inventory"]["source_selection"] = selection
+
+    gate = evaluate(after, config(only_new=True), before)
+
+    assert gate["state"] == "incomplete" and gate["exit_code"] == 3
+    assert gate["counts"]["baseline_existing"] == 0
+    assert gate["gate_findings"] == [after["findings"][0]["id"]]
+    assert any(reason["code"] == "invalid-baseline-scope" for reason in gate["reasons"])
+
+
 @pytest.mark.parametrize(
     "old_severity,old_status,new_severity,new_status",
     [

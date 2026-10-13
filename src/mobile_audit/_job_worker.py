@@ -22,22 +22,18 @@ def main() -> None:
     store = Store(Path(sys.argv[1]))
     identifier = sys.argv[2]
     signal.signal(signal.SIGTERM, interrupted)
+    claimed = False
     try:
         row = jobs.get(store, identifier, private=True)
-        if row["state"] in jobs.TERMINAL:
+        if not jobs.claim(store, identifier, os.getpid(), psutil.Process().create_time()):
             return
-        jobs.update(
-            store,
-            identifier,
-            state="running",
-            pid=os.getpid(),
-            process_started=psutil.Process().create_time(),
-        )
+        claimed = True
         payload = row["payload"]
         if payload["kind"] == "scan":
 
             def progress(stage, percent):
-                jobs.update(store, identifier, stage=stage, progress=percent)
+                if not jobs.update(store, identifier, stage=stage, progress=percent):
+                    raise KeyboardInterrupt
 
             report = scan(
                 store,
@@ -57,7 +53,8 @@ def main() -> None:
                 ipa_trust_policy=payload.get("ipa_trust_policy"),
             )
         else:
-            jobs.update(store, identifier, stage="device-scenario", progress=10)
+            if not jobs.update(store, identifier, stage="device-scenario", progress=10):
+                raise KeyboardInterrupt
             report = run(
                 store,
                 Path(payload["scenario"]),
@@ -65,13 +62,13 @@ def main() -> None:
                 screenshots=payload.get("screenshots", False),
                 scenario=payload.get("scenario_value"),
             )
-        jobs.update(
-            store, identifier, state="completed", progress=100, stage="completed", report_id=report["id"]
-        )
+        jobs.finish(store, identifier, "completed", report_id=report["id"])
     except KeyboardInterrupt:
-        jobs.update(store, identifier, state="cancelled", stage="cancelled")
+        if claimed:
+            jobs.finish(store, identifier, "cancelled")
     except Exception as error:
-        jobs.update(store, identifier, state="failed", stage="failed", error=redact(str(error))[:800])
+        if claimed:
+            jobs.finish(store, identifier, "failed", error=redact(str(error))[:800])
     finally:
         store.close()
 

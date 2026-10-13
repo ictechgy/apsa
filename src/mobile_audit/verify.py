@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath, PureWindowsPath
 
-from .completeness import analysis_incomplete
+from .completeness import analysis_incomplete, report_incomplete
 from .core import canonical_json, digest
 from .maswe import RULE_WEAKNESSES, UNMAPPED, finding_weaknesses, weakness_index, weaknesses_for
 from .rules import rules
@@ -251,10 +251,7 @@ def compare_reports(before: dict, after: dict, *, portable_inputs: bool = False)
             if (
                 not states
                 or any(state not in {"checked", "observed"} for state in states)
-                or any(
-                    r.get("partial") or r.get("inventory", {}).get("fingerprint_complete") is False
-                    for r in (before, after)
-                )
+                or any(r.get("partial") or report_incomplete(r) for r in (before, after))
             ):
                 change["verification"] = "inconclusive"
     return {

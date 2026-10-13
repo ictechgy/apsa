@@ -782,7 +782,13 @@ def _normalize_osv(value: Any, dep: dict) -> dict:
 
 
 def _query_dependencies_legacy(
-    store: Store, dependencies: list[dict], client: httpx.Client | None = None
+    store: Store,
+    dependencies: list[dict],
+    client: httpx.Client | None = None,
+    *,
+    max_packages: int = 100,
+    max_requests: int = 2000,
+    attempted_sources: set[str] | None = None,
 ) -> tuple[list[dict], list[str]]:
     fetcher = Fetcher(client)
     found = []
@@ -852,7 +858,12 @@ def _query_dependencies_legacy(
                 -rank.get(dep.get("confidence", "unknown"), 0),
             ),
         )
-        for dep in ordered[:100]:
+        package_limit = min(100, max_packages)
+        requests = processed = 0
+        for dep in ordered[:package_limit]:
+            if requests >= max_requests:
+                break
+            processed += 1
             try:
                 from .source_context import osv_package_name
 
@@ -866,6 +877,11 @@ def _query_dependencies_legacy(
                 tokens = set()
                 complete = False
                 for _ in range(MAX_OSV_PAGES):
+                    if requests >= max_requests:
+                        break
+                    requests += 1
+                    if attempted_sources is not None:
+                        attempted_sources.add(f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}")
                     value = fetcher.post_json(endpoint, payload)
                     if value and not ({"vulns", "next_page_token"} & value.keys()):
                         raise ValueError("Malformed OSV response: no vulnerability or pagination fields")
@@ -892,7 +908,7 @@ def _query_dependencies_legacy(
                     # A bounded/paginated subset cannot retire prior matches.
                     store.upsert_intel(package_records)
                     errors.append(
-                        f"OSV query incomplete for {dep['name']}: page/record budget reached; cached matches retained"
+                        f"OSV query incomplete for {dep['name']}: page/record/request budget reached; cached matches retained"
                     )
                 found.extend(package_records)
                 store.feed(
@@ -908,11 +924,14 @@ def _query_dependencies_legacy(
                     f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}", "error", error=errors[-1]
                 )
         # Packages left out with a fresh earlier result are still checked.
-        unchecked = sum(not fresh(dep) for dep in ordered[100:])
+        unchecked = sum(not fresh(dep) for dep in ordered[processed:])
         if unchecked:
-            errors.append(
-                f"Dependency query limit of 100 reached; {unchecked} remaining packages not checked"
+            budget = (
+                f"request limit of {max_requests}"
+                if requests >= max_requests and processed < package_limit
+                else f"query limit of {package_limit}"
             )
+            errors.append(f"Dependency {budget} reached; {unchecked} remaining packages not checked")
     finally:
         fetcher.close()
     return found, errors
@@ -936,10 +955,11 @@ def query_dependencies(
     ``auto`` retains it for small inventories and batches larger inventories.
     ``batch`` always uses the ordered querybatch protocol and record hydration.
     """
-    from .osv_batch import query_batch
+    from .osv_batch import query_batch, validate_budgets
 
     if query_mode not in {"auto", "legacy", "batch"}:
         raise ValueError("OSV query_mode must be auto, legacy or batch")
+    validate_budgets(max_packages, batch_size, max_requests)
     policy = exclusion_policy or DependencyTransmissionPolicy()
     if not isinstance(policy, DependencyTransmissionPolicy):
         raise ValueError("Expected DependencyTransmissionPolicy")
@@ -979,8 +999,15 @@ def query_dependencies(
             max_requests=max_requests,
         )
     else:
-        previous_attempts = {feed["source"]: feed["attempted"] for feed in store.feeds()}
-        found, errors = _query_dependencies_legacy(store, eligible, client)
+        attempted_sources: set[str] = set()
+        found, errors = _query_dependencies_legacy(
+            store,
+            eligible,
+            client,
+            max_packages=max_packages,
+            max_requests=max_requests,
+            attempted_sources=attempted_sources,
+        )
         health = {feed["source"]: feed for feed in source_health(store)}
         for dep in eligible:
             if not isinstance(dep, dict) or not all(
@@ -988,7 +1015,7 @@ def query_dependencies(
             ):
                 continue
             feed = health.get(f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}")
-            attempted = bool(feed and feed["attempted"] != previous_attempts.get(feed["source"]))
+            attempted = f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}" in attempted_sources
             state = (
                 "superseded"
                 if (dep.get("resolution") or {}).get("state") == "superseded-by-resolved-build"

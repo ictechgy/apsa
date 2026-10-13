@@ -15,6 +15,12 @@ QUERY_ENDPOINT = "https://api.osv.dev/v1/querybatch"
 RECORD_ENDPOINT = "https://api.osv.dev/v1/vulns/"
 
 
+def validate_budgets(max_packages: int, batch_size: int, max_requests: int) -> None:
+    for value, maximum in ((max_packages, 10000), (batch_size, 1000), (max_requests, 10000)):
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+            raise ValueError("OSV request budgets must be positive bounded integers")
+
+
 def query_batch(
     store: Store,
     dependencies: list[dict],
@@ -39,9 +45,7 @@ def query_batch(
         source_health,
     )
 
-    for value, maximum in ((max_packages, 10000), (batch_size, 1000), (max_requests, 10000)):
-        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
-            raise ValueError("OSV request budgets must be positive bounded integers")
+    validate_budgets(max_packages, batch_size, max_requests)
     found, errors = [], []
     unique, originals = {}, {}
     rank = {"unknown": 0, "declared": 1, "exact": 2}
@@ -128,6 +132,7 @@ def query_batch(
                 "records": [],
                 "complete": False,
                 "error": None,
+                "transmitted": False,
             }
         )
     queue.sort(
@@ -166,6 +171,9 @@ def query_batch(
             active = queue[start : start + batch_size]
             while active:
                 try:
+                    if requests < max_requests:
+                        for item in active:
+                            item["transmitted"] = True
                     value, content_hash = request(
                         "POST", QUERY_ENDPOINT, {"queries": [i["payload"] for i in active]}
                     )
@@ -236,6 +244,10 @@ def query_batch(
                         item["error"] = type(error).__name__
                 active = pending
         for item in queue:
+            if not item["transmitted"]:
+                state(item["key"], "not-checked", reason="request-budget")
+                errors.append("OSV request budget reached; package not checked")
+                continue
             query_hashes = list(item["hashes"])
             for identifier, modified in item["ids"].items():
                 endpoint = RECORD_ENDPOINT + quote(identifier, safe="")

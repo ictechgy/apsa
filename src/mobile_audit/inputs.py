@@ -70,6 +70,10 @@ TEXT_SUFFIXES = {
 
 
 def dependency(name: str, version: str, ecosystem: str, path: str, confidence="exact") -> dict:
+    # Untrusted JSON coordinates must not escape the parser as containers or numbers.
+    # Source consumption turns this error into incomplete coverage before deduplication.
+    if not isinstance(name, str) or not isinstance(version, str):
+        raise ValueError("Dependency name and version must be strings")
     return {"name": name, "version": version, "ecosystem": ecosystem, "path": path, "confidence": confidence}
 
 

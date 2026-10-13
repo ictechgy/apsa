@@ -30,44 +30,77 @@ CREDENTIAL = re.compile(
 )
 
 
+def _object(value: object, label: str) -> dict:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Invalid SARIF {label}: expected an object")
+    return value
+
+
+def _array(value: object, label: str) -> list:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"Invalid SARIF {label}: expected an array")
+    return value
+
+
+def _string(value: object, label: str) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid SARIF {label}: expected a string")
+    return value
+
+
 def _text(value: object, limit: int = 300) -> str:
     """Untrusted tool text: no literal contents or credential-like assignments."""
-    text = re.sub(r"""(["'`])(?:\\.|(?!\1).)*?\1""", '"…"', str(value or "")[: limit * 8])
+    text = re.sub(r"""(["'`])(?:\\.|(?!\1).)*?\1""", '"…"', _string(value, "text")[: limit * 8])
     return redact(CREDENTIAL.sub(r"\1[REDACTED]", text)).replace("\n", " ")[:limit]
 
 
 def _severity(rule: dict, result: dict) -> str:
-    score = (rule.get("properties") or {}).get("security-severity")
+    level = _string(result.get("level"), "result level")
+    score = _object(rule.get("properties"), "rule properties").get("security-severity")
     try:
         value = float(score) if isinstance(score, (str, int, float)) else None
-    except ValueError:
+    except (ValueError, OverflowError):
         value = None
     if value is not None:
         return "critical" if value >= 9 else "high" if value >= 7 else "medium" if value >= 4 else "low"
-    level = result.get("level") or (rule.get("defaultConfiguration") or {}).get("level") or "warning"
+    level = (
+        level
+        or _string(
+            _object(rule.get("defaultConfiguration"), "rule default configuration").get("level"), "rule level"
+        )
+        or "warning"
+    )
     return {"error": "medium", "warning": "low"}.get(level, "info")
 
 
 def _cwes(rule: dict) -> list[str]:
-    tags = (rule.get("properties") or {}).get("tags") or []
+    tags = _object(rule.get("properties"), "rule properties").get("tags") or []
     found = []
     for tag in tags if isinstance(tags, list) else []:
-        match = re.search(r"cwe[-/]?(\d{1,5})", str(tag), re.I)
+        if not isinstance(tag, str):
+            continue
+        match = re.search(r"cwe[-/]?(\d{1,5})", tag, re.I)
         if match and f"CWE-{int(match[1])}" not in found:
             found.append(f"CWE-{int(match[1])}")
     return found
 
 
 def _location(result: dict, root: str) -> tuple[str | None, int | None]:
-    for location in result.get("locations") or []:
-        physical = (location or {}).get("physicalLocation") or {}
-        uri = str((physical.get("artifactLocation") or {}).get("uri") or "")
+    for location in _array(result.get("locations"), "result locations"):
+        physical = _object(_object(location, "location").get("physicalLocation"), "physical location")
+        uri = _string(_object(physical.get("artifactLocation"), "artifact location").get("uri"), "URI")
         if not uri or "://" in uri or uri.startswith("/") or ".." in PurePosixPath(uri).parts:
             continue
         if root and uri.startswith(root + "/"):
             uri = uri[len(root) + 1 :]
-        line = (physical.get("region") or {}).get("startLine")
-        return uri, line if isinstance(line, int) and line > 0 else None
+        line = _object(physical.get("region"), "region").get("startLine")
+        return uri, line if type(line) is int and line > 0 else None
     return None, None
 
 
@@ -76,7 +109,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
         raise ValueError("SARIF file exceeds 16 MiB")
     try:
         document = json.loads(raw)
-    except (ValueError, UnicodeError) as error:
+    except (ValueError, UnicodeError, RecursionError) as error:
         raise ValueError(f"SARIF is not valid JSON: {error}") from None
     if not isinstance(document, dict) or document.get("version") != "2.1.0":
         raise ValueError("Only SARIF 2.1.0 is supported")
@@ -89,12 +122,14 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
     root = sarif_root(root) or ""
     label = _slug(tool, 40)
     findings, drivers, skipped, total = [], [], 0, 0
-    for run in document.get("runs") or []:
-        driver = ((run or {}).get("tool") or {}).get("driver") or {}
+    for run_value in _array(document.get("runs"), "runs"):
+        run = _object(run_value, "run")
+        driver = _object(_object(run.get("tool"), "tool").get("driver"), "driver")
         drivers.append({"name": _text(driver.get("name"), 80), "version": _text(driver.get("version"), 40)})
-        rules = [r for r in driver.get("rules") or [] if isinstance(r, dict)]
-        by_id = {str(r.get("id")): r for r in rules}
-        for result in run.get("results") or []:
+        # Keep positional slots: dropping malformed entries changes the meaning of ruleIndex.
+        rules = _array(driver.get("rules"), "rules")
+        by_id = {r["id"]: r for r in rules if isinstance(r, dict) and isinstance(r.get("id"), str)}
+        for result in _array(run.get("results"), "results"):
             total += 1
             if total > MAX_RESULTS:
                 skipped += 1
@@ -103,10 +138,13 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
                 skipped += 1
                 continue
             index = result.get("ruleIndex")
-            rule = by_id.get(str(result.get("ruleId"))) or (
-                rules[index] if isinstance(index, int) and 0 <= index < len(rules) else {}
-            )
-            rule_name = str(result.get("ruleId") or rule.get("id") or "unknown")
+            indexed_rule = rules[index] if type(index) is int and 0 <= index < len(rules) else {}
+            indexed_rule = indexed_rule if isinstance(indexed_rule, dict) else {}
+            rule_id = _string(result.get("ruleId"), "result rule ID")
+            if rule_id and indexed_rule and indexed_rule.get("id") != rule_id:
+                raise ValueError("Invalid SARIF result: rule ID and index disagree")
+            rule = by_id.get(rule_id, {}) if rule_id else indexed_rule
+            rule_name = rule_id or _string(rule.get("id"), "rule ID") or "unknown"
             path, line = _location(result, root)
             if path is None:
                 skipped += 1
@@ -117,12 +155,13 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
                 "path": path,
                 "external_tool": label,
                 "external_rule": _text(rule_name, 120),
-                "external_message": _text((result.get("message") or {}).get("text")),
+                "external_message": _text(_object(result.get("message"), "result message").get("text")),
                 "basis": "imported SARIF result; APSA did not execute this check",
             }
             if line:
                 evidence["line"] = line
-            title = (rule.get("shortDescription") or {}).get("text") or rule_name
+            title = _object(rule.get("shortDescription"), "rule short description").get("text") or rule_name
+            help_uri = _string(rule.get("helpUri"), "rule help URI")
             findings.append(
                 finding(
                     f"EXT-{label}-{_slug(rule_name)}",
@@ -132,7 +171,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
                     [evidence],
                     "Review the imported result in its tool; APSA did not verify it.",
                     "",
-                    [str(rule["helpUri"])] if str(rule.get("helpUri", "")).startswith("https://") else [],
+                    [help_uri] if help_uri.startswith("https://") else [],
                     origin="external",
                     maswe=maswe,
                     cwe=cwes,

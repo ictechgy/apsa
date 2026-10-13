@@ -193,6 +193,39 @@ def test_same_path_revisions_retain_default_behavior_without_normalization():
         assert result["normalization_basis"] == "none"
 
 
+@pytest.mark.parametrize("side", ["before", "after"])
+@pytest.mark.parametrize("portable", [False, True])
+@pytest.mark.parametrize(
+    "partial_inventory",
+    [
+        {"partial": True},
+        {"input_snapshot": {"partial": True}},
+        {"input_snapshot": {"app_scope_complete": False}},
+        {"source_analysis": {"partial": True}},
+        {"source_analysis": "malformed"},
+        {"source_analysis": {"files": [{"state": "partial"}]}},
+        {"hybrid_analysis": {"files": [{"state": "partial"}]}},
+        {"hybrid_inputs_truncated": True},
+        {"hybrid_input_inventory_complete": False},
+    ],
+)
+def test_same_target_partial_analysis_cannot_verify_finding_disappearance(side, portable, partial_inventory):
+    before, after = report_pair()
+    after["target"] = before["target"]
+    (before if side == "before" else after)["inventory"].update(partial_inventory)
+    snapshots = copy.deepcopy((before, after))
+
+    result = compare_reports(before, after, portable_inputs=portable)
+
+    assert result["scope_pairing"]["state"] == "unchanged"
+    assert result["path_pairing"]["state"] == "exact-target"
+    transition = result["finding_transitions"][0]
+    assert transition["observation"] == "no-longer-observed"
+    assert transition["verification"] == "inconclusive"
+    assert "not proof of remediation" in result["note"]
+    assert (before, after) == snapshots
+
+
 def runtime_record(identifier):
     return {
         "id": identifier,
