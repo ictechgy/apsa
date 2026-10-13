@@ -154,3 +154,46 @@ def test_foreground_binding_preserves_explicit_sbom_selection(
     assert json.loads(capsys.readouterr().out)["ok"] is True
     assert staged == [selected.resolve(), sbom.resolve()]
     assert closed == [True]
+
+
+@pytest.mark.parametrize("sbom_kind", ["relative", "symlink", "home-relative"])
+def test_background_binding_preserves_explicit_sbom_selection(
+    tmp_path, monkeypatch, capsys, isolated_boundaries, sbom_kind
+):
+    root = tmp_path / "new-root"
+    selected = root / "app"
+    selected.mkdir(parents=True)
+    store, closed = isolated_boundaries
+    sbom = store.home / "selected-sbom.json"
+    sbom.write_text('{"bomFormat": "CycloneDX", "components": []}')
+    monkeypatch.chdir(tmp_path)
+    if sbom_kind == "relative":
+        sbom_argument = "new-home/selected-sbom.json"
+    elif sbom_kind == "symlink":
+        alias = tmp_path / "selected-sbom-alias.json"
+        alias.symlink_to(sbom)
+        sbom_argument = str(alias)
+    else:
+        sbom_argument = "~/selected-sbom.json"
+    queued = []
+    monkeypatch.setattr(jobs, "start", lambda store, payload: queued.append(payload) or {"id": "new-job"})
+    assert (
+        cli.main(
+            [
+                "scan",
+                str(root),
+                "--source-module",
+                "app",
+                "--sbom",
+                sbom_argument,
+                "--background",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    assert len(queued) == 1
+    assert queued[0]["sbom"] == str(sbom.resolve())
+    assert queued[0]["target"] == queued[0]["expected_target"] == str(selected.resolve())
+    assert closed == [True]

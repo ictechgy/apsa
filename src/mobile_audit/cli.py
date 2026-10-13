@@ -538,7 +538,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                     "configuration": args.configuration,
                     "source_module": args.source_module,
                     "online": args.online,
-                    "sbom": str(args.sbom.resolve()) if args.sbom else None,
+                    "sbom": str(args.sbom.expanduser().resolve()) if args.sbom else None,
                     "environment": read_json(args.device_info) if args.device_info else None,
                     "specs": load_specs(args.specs) if args.specs else None,
                     "dependency_selection": dependency_selection,
