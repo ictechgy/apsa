@@ -528,11 +528,13 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 raise UsageError(
                     "Background scans return a job ID; export or evaluate the completed report afterward"
                 )
+            target = select_source_module(args.target.resolve(), args.source_module)
             return jobs.start(
                 store,
                 {
                     "kind": "scan",
-                    "target": str(select_source_module(args.target.resolve(), args.source_module)),
+                    "target": str(target),
+                    "expected_target": str(target),
                     "configuration": args.configuration,
                     "source_module": args.source_module,
                     "online": args.online,
@@ -548,12 +550,14 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             ), 0
         baseline = policy_baseline(args, store) if args.policy else None
         policy = load_policy(args.policy) if args.policy else None
+        target = select_source_module(args.target.resolve(), args.source_module)
         result = scan(
             store,
-            select_source_module(args.target.resolve(), args.source_module),
+            target,
             args.online,
-            args.sbom,
+            args.sbom.expanduser().resolve() if args.sbom else None,
             read_json(args.device_info) if args.device_info else None,
+            expected_target=target,
             configuration=args.configuration,
             source_module=args.source_module,
             specs=load_specs(args.specs) if args.specs else None,
