@@ -16,6 +16,7 @@ import plistlib
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import time
 import uuid
@@ -23,6 +24,7 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import ProxyHandler, Request, build_opener
+from xml.parsers.expat import ExpatError
 
 from mobile_audit.core import digest
 from mobile_audit.runtime_acquisition import AcquisitionRecorder, evaluate_backend_invalidation
@@ -34,6 +36,7 @@ MAX_OUTPUT = 64 * 1024 * 1024
 IOS_EVENT_BYTES = 64 * 1024
 IOS_EVENT_LIMIT = 128
 IOS_ENTRY_BYTES = 4096
+IOS_CONTRACT_BYTES = 64 * 1024
 IOS_PINNED_RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-18-5"
 IOS_PINNED_DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-16"
 ANDROID_ERROR_BYTES = 4096
@@ -343,17 +346,100 @@ def ios_process_identity(pid: int | None, executable: Path) -> dict:
         return {**result, "state": "unmeasured"}
 
 
+class UniquePlistKeys(dict):
+    """Reject duplicate XML/binary plist keys instead of silently taking the last."""
+
+    def __setitem__(self, key, value):
+        if key in self:
+            raise ValueError("duplicate plist key")
+        super().__setitem__(key, value)
+
+
+def same_typed_shape(value, expected) -> bool:
+    if isinstance(expected, dict):
+        return (
+            isinstance(value, dict)
+            and set(value) == set(expected)
+            and all(same_typed_shape(value[key], item) for key, item in expected.items())
+        )
+    if isinstance(expected, list):
+        return (
+            isinstance(value, list)
+            and len(value) == len(expected)
+            and all(same_typed_shape(item, wanted) for item, wanted in zip(value, expected, strict=True))
+        )
+    return type(value) is type(expected) and value == expected
+
+
+def safe_ios_installed_contract(raw: bytes, package: str, scheme: str, *, helper=False) -> dict:
+    """Only digest/boolean projections of the exact NEW installed Info.plist."""
+    result = {"state": "malformed-or-over-bound", "sha256": digest(raw)}
+    if not raw or len(raw) > IOS_CONTRACT_BYTES:
+        return result
+    try:
+        value = plistlib.loads(raw, dict_type=UniquePlistKeys)
+    except (ValueError, TypeError, OverflowError, RecursionError, ExpatError, plistlib.InvalidFileException):
+        return result
+    if not isinstance(value, dict):
+        return result
+    module, delegate = (
+        ("UrlDispatcherFixture", "DispatcherScene") if helper else ("TransportFixture", "SceneDelegate")
+    )
+    expected_scene = {
+        "UIApplicationSupportsMultipleScenes": False,
+        "UISceneConfigurations": {
+            "UIWindowSceneSessionRoleApplication": [
+                {
+                    "UISceneConfigurationName": "Default",
+                    "UISceneDelegateClassName": module + "." + delegate,
+                }
+            ]
+        },
+    }
+    url_types = [
+        {
+            "CFBundleTypeRole": "Editor",
+            "CFBundleURLName": package + ".transport",
+            "CFBundleURLSchemes": [scheme],
+        }
+    ]
+    checks = {
+        "package_matches": type(value.get("CFBundleIdentifier")) is str
+        and value["CFBundleIdentifier"] == package,
+        "scheme_matches": re.fullmatch(r"a[a-f0-9]{32}", scheme) is not None
+        and type(value.get("APSAFixtureScheme")) is str
+        and value["APSAFixtureScheme"] == scheme,
+        "url_types_match": "CFBundleURLTypes" not in value
+        if helper
+        else same_typed_shape(value.get("CFBundleURLTypes"), url_types),
+        "query_schemes_match": same_typed_shape(value.get("LSApplicationQueriesSchemes"), [scheme])
+        if helper
+        else "LSApplicationQueriesSchemes" not in value,
+        "scene_matches": same_typed_shape(value.get("UIApplicationSceneManifest"), expected_scene),
+        "executable_matches": type(value.get("CFBundleExecutable")) is str
+        and value["CFBundleExecutable"] == ("UrlDispatcher" if helper else "TransportFixture"),
+    }
+    return {**result, **checks, "state": "verified" if all(checks.values()) else "mismatch"}
+
+
 def safe_ios_appinfo(raw: bytes, package: str, scheme: str = "apsatransport") -> dict:
     """Project only matching identity and URL-type booleans from NEW app metadata."""
     result = {"state": "unmeasured", "sha256": digest(raw), "bytes": len(raw)}
     if not raw or len(raw) > IOS_EVENT_BYTES:
         return result
     try:
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=unique_journal_keys)
     except (ValueError, UnicodeError):
         try:
-            value = plistlib.loads(raw)
-        except (ValueError, plistlib.InvalidFileException):
+            value = plistlib.loads(raw, dict_type=UniquePlistKeys)
+        except (
+            ValueError,
+            TypeError,
+            OverflowError,
+            RecursionError,
+            ExpatError,
+            plistlib.InvalidFileException,
+        ):
             return result
     if not isinstance(value, dict):
         return result
@@ -363,7 +449,8 @@ def safe_ios_appinfo(raw: bytes, package: str, scheme: str = "apsatransport") ->
         **result,
         "state": "measured" if isinstance(identifier, str) else "unmeasured",
         "package_matches": identifier == package if isinstance(identifier, str) else None,
-        "url_types_present": isinstance(types, list),
+        "url_types_state": "unreported" if "CFBundleURLTypes" not in value else "reported",
+        "url_types_present": isinstance(types, list) if "CFBundleURLTypes" in value else None,
         "url_types_match": types
         == [
             {
@@ -382,7 +469,7 @@ def safe_ios_dispatcher(raw: bytes, expected_uri: str | None) -> dict:
     if not raw or len(raw) > 4096:
         return result
     try:
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=unique_journal_keys)
         phase = value["phase"]
         if phase not in {
             "rejected-owned-uri",
@@ -392,6 +479,10 @@ def safe_ios_dispatcher(raw: bytes, expected_uri: str | None) -> dict:
         }:
             return result
         keys = {"phase"} if phase == "rejected-owned-uri" else {"phase", "uri_sha256"}
+        if phase in {"os-open-requested", "os-open-completed"} and "can_open_url" in value:
+            keys.add("can_open_url")
+            if type(value.get("can_open_url")) is not bool:
+                return result
         if phase == "os-open-completed":
             keys.add("open_completion")
             if type(value.get("open_completion")) is not bool:
@@ -641,6 +732,7 @@ FAILURE_REASONS = {
     "NEW iOS URL lifecycle differs": "ios-os-url-lifecycle-mismatch",
     "NEW iOS owned PID identity differs": "ios-owned-pid-identity-mismatch",
     "NEW iOS registered package differs": "ios-registered-package-mismatch",
+    "NEW iOS installed URL contract differs": "ios-installed-url-contract-mismatch",
     "NEW iOS callback receipt differs": "ios-callback-receipt-mismatch",
     "NEW iOS cold process epoch differs": "ios-cold-process-epoch-mismatch",
     "NEW iOS target termination unverified": "ios-target-termination-unverified",
@@ -1262,6 +1354,7 @@ class IosTarget:
             self.response = self.container("data") / "Documents/response.json"
             self.stage_path = self.response.with_name("stage.txt")
             self.events_path = self.response.with_name("events.json")
+            self.require_installed_contract()
             if self.installed_build() != self.build:
                 raise ValueError("NEW installed iOS executable differs")
             self.tool_help = self.tool_help_observations()
@@ -1271,6 +1364,7 @@ class IosTarget:
             if self.url_driver == "companion":
                 self.install_dispatcher(root, sdk, arch)
             # Establish a ready NEW scene before delivering the session URL through the OS.
+            self.require_installed_contract()
             raw = commands.run(self.simctl + ["launch", self.device, self.package])
             self.owned_pid = ios_launch_pid(raw, self.package)
             initial = ios_process_identity(self.owned_pid, self.installed / "TransportFixture")
@@ -1308,6 +1402,9 @@ class IosTarget:
                 error, "ios-target-create-boot-install", commands.records
             )
             commands.pre_cleanup_failure["process_entry"] = self.entry_observation()
+            commands.pre_cleanup_failure["installed_url_contract"] = getattr(
+                self, "installed_url_contract", {"state": "unavailable"}
+            )
             try:
                 cleanup = self.close(timeout=120 if journaled else 15, update_journal=journaled)
                 commands.pre_cleanup_failure["constructor_cleanup"] = {
@@ -1375,6 +1472,7 @@ class IosTarget:
             "UIDeviceFamily": [1, 2],
             "UILaunchScreen": {},
             "APSAFixtureScheme": self.scheme,
+            "LSApplicationQueriesSchemes": [self.scheme],
             "UIApplicationSceneManifest": {
                 "UIApplicationSupportsMultipleScenes": False,
                 "UISceneConfigurations": {
@@ -1396,6 +1494,7 @@ class IosTarget:
         self.helper_build = {
             name: digest((app / name).read_bytes()) for name in ("UrlDispatcher", "Info.plist")
         }
+        self.require_installed_contract(helper=True)
         if self.helper_installed_build() != self.helper_build:
             raise ValueError("NEW installed iOS dispatcher differs")
 
@@ -1408,11 +1507,13 @@ class IosTarget:
     def dispatch(self, url: str):
         if self.device is None:
             raise ValueError("NEW simulator has no owned UUID")
+        self.require_installed_contract()
         if self.url_driver == "simctl":
             self.commands.run(self.simctl + ["openurl", self.device, url])
             return
         if self.helper_installed_build() != self.helper_build:
             raise ValueError("NEW installed iOS dispatcher differs")
+        self.require_installed_contract(helper=True)
         # deliver() already rewrote the URI to this NEW target's registered scheme.
         # Bind only helper diagnostics; target callback/session proof remains separate.
         self.helper_uri_sha256 = digest(url.encode())
@@ -1518,6 +1619,59 @@ class IosTarget:
             "info_plist_sha256": digest((self.installed / "Info.plist").read_bytes()),
         }
 
+    def installed_contract_observation(self, *, helper=False):
+        app = getattr(self, "helper_installed" if helper else "installed", None)
+        if not isinstance(app, Path) or self.device is None or not hasattr(self, "device_set"):
+            return {"state": "unavailable"}
+        path = app / "Info.plist"
+        try:
+            owned = (self.device_set / self.device).resolve()
+            if (
+                not app.is_relative_to(owned)
+                or app.is_symlink()
+                or app.resolve() != app
+                or path.is_symlink()
+                or path.resolve() != app / "Info.plist"
+            ):
+                return {"state": "owned-path-mismatch"}
+            metadata = path.stat()
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > IOS_CONTRACT_BYTES:
+                return {"state": "malformed-or-over-bound"}
+            with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as handle:
+                metadata = os.fstat(handle.fileno())
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > IOS_CONTRACT_BYTES:
+                    return {"state": "malformed-or-over-bound"}
+                raw = handle.read(IOS_CONTRACT_BYTES + 1)
+        except (OSError, RuntimeError, ValueError):
+            return {"state": "unavailable"}
+        return safe_ios_installed_contract(
+            raw, self.helper_package if helper else self.package, self.scheme, helper=helper
+        )
+
+    def require_installed_contract(self, *, helper=False):
+        observation = self.installed_contract_observation(helper=helper)
+        if helper:
+            self.helper_url_contract = observation
+        else:
+            self.installed_url_contract = observation
+        if observation["state"] != "verified":
+            raise FixtureFailure(
+                "NEW iOS installed URL contract differs",
+                {"helper_url_contract" if helper else "installed_url_contract": observation},
+            )
+
+    def url_contract_diagnostics(self):
+        try:
+            dispatcher = self.dispatcher_observation()
+        except (OSError, ValueError, RuntimeError):
+            dispatcher = {"state": "unmeasured"}
+        return {
+            "installed_url_contract": getattr(self, "installed_url_contract", {"state": "unavailable"}),
+            "helper_url_contract": getattr(self, "helper_url_contract", {"state": "unavailable"}),
+            "dispatcher": dispatcher,
+            "registration": getattr(self, "registration", {"state": "unmeasured"}),
+        }
+
     def lifecycle_observation(self):
         raw = (
             self.stage_path.read_bytes()
@@ -1532,6 +1686,8 @@ class IosTarget:
             "stage_bytes": len(raw),
             "callback_events": self.events_observation(),
             "dispatcher": self.dispatcher_observation(),
+            "installed_url_contract": getattr(self, "installed_url_contract", {"state": "unavailable"}),
+            "helper_url_contract": getattr(self, "helper_url_contract", {"state": "unavailable"}),
             "process_entry": self.entry_observation(),
             "process_entry_readiness": getattr(self, "readiness_entry", {"state": "unmeasured"}),
             "device_set_selector": getattr(self, "device_set_mode", "custom"),
@@ -1657,6 +1813,7 @@ class IosTarget:
         """One separated probe; never call acquisition, HTTP, or primary deliver again."""
         if self.device is None:
             raise ValueError("NEW simulator has no owned UUID")
+        self.require_installed_contract()
         old = self.events_observation().get("launch_epoch_sha256")
         readiness = getattr(self, "readiness_epoch", old)
         app, data = self.container("app"), self.container("data")
@@ -2209,6 +2366,69 @@ def execute_backend_cases(results: list[dict] | None = None) -> list[dict]:
     return results
 
 
+def ios_url_diagnostic_projection(observation: dict) -> dict:
+    """Retain only fixed enums, booleans and digests; never interpret as delivery."""
+    result = {}
+    contract_states = {
+        "verified",
+        "mismatch",
+        "malformed-or-over-bound",
+        "unavailable",
+        "owned-path-mismatch",
+    }
+    for name in ("installed_url_contract", "helper_url_contract"):
+        value = observation.get(name)
+        if not isinstance(value, dict):
+            continue
+        result[name] = {
+            "state": value.get("state")
+            if isinstance(value.get("state"), str) and value.get("state") in contract_states
+            else "unavailable",
+            **{
+                key: item
+                for key, item in value.items()
+                if key
+                in {
+                    "package_matches",
+                    "scheme_matches",
+                    "url_types_match",
+                    "query_schemes_match",
+                    "scene_matches",
+                    "executable_matches",
+                }
+                and type(item) is bool
+            },
+        }
+        if isinstance(value.get("sha256"), str) and re.fullmatch(r"[a-f0-9]{64}", value["sha256"]):
+            result[name]["sha256"] = value["sha256"]
+    value = observation.get("dispatcher")
+    if isinstance(value, dict):
+        result["dispatcher"] = {
+            "state": "diagnostic-only" if value.get("state") == "diagnostic-only" else "unmeasured",
+            **{
+                key: item
+                for key, item in value.items()
+                if key in {"can_open_url", "open_completion", "uri_matches"} and type(item) is bool
+            },
+        }
+        if isinstance(value.get("phase"), str) and value.get("phase") in {
+            "rejected-owned-uri",
+            "validated-owned-uri",
+            "os-open-requested",
+            "os-open-completed",
+        }:
+            result["dispatcher"]["phase"] = value["phase"]
+    value = observation.get("registration")
+    if isinstance(value, dict):
+        result["registration"] = {
+            "url_types_state": value.get("url_types_state")
+            if isinstance(value.get("url_types_state"), str)
+            and value.get("url_types_state") in {"reported", "unreported"}
+            else "unmeasured"
+        }
+    return result
+
+
 def runtime_projection(evidence: dict) -> dict:
     """Small, typed public-CI proof; arbitrary error text/URLs/bodies stay out."""
 
@@ -2294,6 +2514,9 @@ def runtime_projection(evidence: dict) -> dict:
         },
         "case_count": len(evidence.get("cases", [])),
         "cases": cases,
+        "ios_url_diagnostics": ios_url_diagnostic_projection(
+            {**evidence.get("ios_url_diagnostics", {}), **evidence.get("failure_observation", {})}
+        ),
         "cleanup": state(
             evidence.get("cleanup", {}).get("state") if isinstance(evidence.get("cleanup"), dict) else None,
             {"confirmed", "unconfirmed"},
@@ -2486,11 +2709,18 @@ def main():
                     # Persist the failed case too, before cleanup and without raw responses.
                     evidence["cases"].append(result)
                     execute_case(target, invalidate=invalidate, retain=retain, evidence=result)
-                if args.platform == "ios":
+                if isinstance(target, IosTarget):
                     result["new_simulator_uuid"] = target.device
+                    evidence["ios_url_diagnostics"] = target.url_contract_diagnostics()
                 if args.ios_os_url_control:
                     evidence["cases"].append(result)
             except Exception as error:
+                if isinstance(target, IosTarget):
+                    try:
+                        evidence["ios_url_diagnostics"] = target.url_contract_diagnostics()
+                    except Exception:
+                        # Diagnostics cannot replace the original acquisition/OS failure.
+                        evidence["ios_url_diagnostics"] = {}
                 if commands.pre_cleanup_failure is None:
                     commands.pre_cleanup_failure = failure_observation(error, stage, commands.records)
                 raise

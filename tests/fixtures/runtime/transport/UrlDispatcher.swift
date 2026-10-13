@@ -43,12 +43,14 @@ func validatedDispatcherURL(_ text: String, scheme: String) -> URL? {
 @main
 final class DispatcherDelegate: UIResponder, UIApplicationDelegate {
     var destination: URL?
+    var canOpenDestination: Bool?
     func receipt(_ phase: String, opened: Bool? = nil) {
         var value: [String: Any] = ["phase": phase]
         if let destination {
             value["uri_sha256"] = SHA256.hash(data: Data(destination.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
         }
         if let opened { value["open_completion"] = opened }
+        if let canOpenDestination { value["can_open_url"] = canOpenDestination }
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
         if let bytes = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) {
@@ -87,6 +89,7 @@ final class DispatcherScene: UIResponder, UIWindowSceneDelegate {
         guard !dispatched, let delegate = UIApplication.shared.delegate as? DispatcherDelegate,
               let destination = delegate.destination else { return }
         dispatched = true
+        delegate.canOpenDestination = UIApplication.shared.canOpenURL(destination)
         delegate.receipt("os-open-requested")
         UIApplication.shared.open(destination, options: [:]) { opened in
             // Completion is diagnostic only; target callback/acquisition supplies proof.

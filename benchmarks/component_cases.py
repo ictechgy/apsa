@@ -63,6 +63,27 @@ def secret_cases() -> list[dict]:
                     + '"\n',
                 }
             )
+    # Append stronger controls without changing any original case, its bytes,
+    # or its position. Prefix permutation preserves length and character counts.
+    permutations = {
+        "aws": ("AKIA", "KIAA"),
+        "github": ("ghp_", "hgp_"),
+        "slack": ("xoxb-", "bxox-"),
+        "stripe": ("sk_live_", "ks_live_"),
+    }
+    for provider, _, _, token in definitions:
+        prefix, permuted = permutations[provider]
+        assert token.startswith(prefix)
+        positive = next(case for case in result if case["id"] == f"secret-{provider}-present")
+        result.append(
+            {
+                **positive,
+                "id": f"secret-{provider}-prefix-permuted",
+                "expected": False,
+                "scope": "provider credential-format negative with permuted prefix; identical length, character frequencies, and Shannon entropy to its positive control",
+                "content": positive["content"].replace(token, permuted + token[len(prefix) :]),
+            }
+        )
     return result
 
 

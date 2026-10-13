@@ -111,11 +111,18 @@ def _record_observation(case: dict, findings: list, *, apsa: bool) -> dict:
         primary = item.get("osv_id" if apsa else "id")
         if not isinstance(primary, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", primary):
             return _failed("missing or malformed canonical advisory record ID")
-        secondary = [item.get("id")] if apsa else item.get("aliases", [])
+        if apsa and "aliases" not in item:
+            return _failed("APSA normalized alias identity is unavailable", state="partial")
+        secondary = item.get("aliases", [])
         if not isinstance(secondary, list) or any(
-            not isinstance(value, str) or not value for value in secondary
+            not isinstance(value, str) or not value or any(character.isspace() for character in value)
+            for value in secondary
         ):
             return _failed("invalid advisory secondary IDs")
+        if apsa:
+            # Legacy display IDs stay useful evidence, but only a present,
+            # validated alias list establishes complete normalized identity.
+            secondary = [*secondary, item["id"]]
         affected = item.get("affected", [])
         if not isinstance(affected, list):
             return _failed("invalid advisory affected-package metadata")
@@ -143,7 +150,9 @@ def _record_observation(case: dict, findings: list, *, apsa: bool) -> dict:
         record = {
             "primary_id": primary,
             "secondary_ids": sorted({value for value in secondary if isinstance(value, str)} - {primary}),
-            "secondary_ids_scope": "APSA normalized display ID only" if apsa else "upstream record aliases",
+            "secondary_ids_scope": "upstream record aliases plus APSA display ID"
+            if apsa
+            else "upstream record aliases",
             "affected_package_ranges": ranges,
         }
         if primary in records:
@@ -368,6 +377,8 @@ def verify_tools(manifest: dict, directory: Path, environment: dict[str, str]) -
 
 
 def summarize(trials: list[dict], repetitions: int) -> dict:
+    if type(repetitions) is not int or repetitions < 1:
+        raise ValueError("Repetitions must be a positive integer")
     grouped: dict[str, list[dict]] = {}
     for trial in trials:
         grouped.setdefault(trial["tool"], []).append(trial)
@@ -379,7 +390,15 @@ def summarize(trials: list[dict], repetitions: int) -> dict:
         counts = {key: 0 for key in ("TP", "TN", "FP", "FN")}
         excluded = 0
         stability = {}
+        repetition_completeness = {}
         for case, repeated in cases.items():
+            indices = [item.get("repetition") for item in repeated]
+            complete_repetitions = (
+                len(indices) == repetitions
+                and all(type(index) is int for index in indices)
+                and sorted(indices) == list(range(repetitions))
+            )
+            repetition_completeness[case] = complete_repetitions
             signatures = {
                 (
                     item["observation"]["state"],
@@ -390,7 +409,7 @@ def summarize(trials: list[dict], repetitions: int) -> dict:
                 )
                 for item in repeated
             }
-            stable = len(repeated) == repetitions and len(signatures) == 1
+            stable = complete_repetitions and len(signatures) == 1
             stability[case] = stable
             classification = repeated[0]["classification"] if stable else None
             if classification is None:
@@ -403,6 +422,7 @@ def summarize(trials: list[dict], repetitions: int) -> dict:
             "repetitions": repetitions,
             "stable": all(stability.values()),
             "case_stability": stability,
+            "case_repetition_complete": repetition_completeness,
             "trial_count": len(values),
         }
     return output
@@ -536,7 +556,7 @@ def run(manifest_path: Path, output: Path, repetitions: int, online: bool) -> di
         "scores": summarize(trials, repetitions),
         "completed": datetime.now(timezone.utc).isoformat(),
         "limitations": [
-            "12 predeclared synthetic component cases, not a full mobile-scanner ranking or independent holdout",
+            f"{len(cases)} predeclared synthetic component cases, not a full mobile-scanner ranking or independent holdout",
             "Secret candidates are generated format strings; no credential validity checked or claimed",
             "Dependency scoring measures exact named OSV primary record retrieval, not vulnerability or CVE-family accuracy; aliases alone never match",
             "Other returned records and overlapping aliases remain visible; a target-record negative does not establish safety",

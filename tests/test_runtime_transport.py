@@ -38,6 +38,7 @@ from scripts.validate_runtime_transport import (
     ios_delivery_complete,
     ios_launch_pid,
     ios_process_identity,
+    ios_url_diagnostic_projection,
     main,
     owned_ios_url,
     runtime_projection,
@@ -46,6 +47,7 @@ from scripts.validate_runtime_transport import (
     safe_ios_dispatcher,
     safe_ios_entry,
     safe_ios_events,
+    safe_ios_installed_contract,
     scenario,
 )
 from tests.support.runtime_transport import AuthorityServer, InstalledTransportAdapter, OwnedAuthority
@@ -1160,6 +1162,7 @@ def test_ios_delivery_requires_observed_cold_or_warm_callback_binding(
     action, lifecycle, accepted, tmp_path, monkeypatch
 ):
     target = IosTarget.__new__(IosTarget)
+    monkeypatch.setattr(target, "require_installed_contract", lambda **kwargs: None)
     target.device = "11111111-2222-3333-4444-555555555555"
     target.url_driver = "simctl"
     target.commands = Commands(tmp_path, env={})
@@ -1534,6 +1537,7 @@ def test_ios_entry_new_process_diagnostic_never_promotes_original_cold_failure(t
     events = synthetic_ios_events()
     events["launch_epoch_sha256"] = value["process_epoch_sha256"]
     events["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
+    monkeypatch.setattr(target, "require_installed_contract", lambda **kwargs: None)
     target.events_path.write_text(json.dumps(events))
     target.readiness_epoch = target.readiness_entry_epoch = value["process_epoch_sha256"]
     process = {"state": "exited", "pid_sha256": value["pid_sha256"]}
@@ -1682,6 +1686,7 @@ def test_ios_cold_timeout_retains_primary_failure_even_when_tail_observes_warm_c
     tmp_path, monkeypatch, tail_failure
 ):
     target = IosTarget.__new__(IosTarget)
+    monkeypatch.setattr(target, "require_installed_contract", lambda **kwargs: None)
     target.device = "11111111-2222-3333-4444-555555555555"
     target.url_driver = "simctl"
     target.commands = Commands(tmp_path, env={})
@@ -1723,6 +1728,7 @@ def test_ios_diagnostic_tail_requires_fresh_ready_epoch_and_exact_warm_noncreden
     tmp_path, monkeypatch, launch_creates_epoch
 ):
     target = IosTarget.__new__(IosTarget)
+    monkeypatch.setattr(target, "require_installed_contract", lambda **kwargs: None)
     target.device = "11111111-2222-3333-4444-555555555555"
     target.package = "apsa.fixture.new"
     app, data = tmp_path / "new-app", tmp_path / "new-data"
@@ -1869,6 +1875,7 @@ def test_ios_companion_launch_rejects_unverified_helper_pid_and_retains_primary_
     tmp_path, monkeypatch, identity
 ):
     target = IosTarget.__new__(IosTarget)
+    monkeypatch.setattr(target, "require_installed_contract", lambda **kwargs: None)
     target.device = "11111111-2222-3333-4444-555555555555"
     target.url_driver = "companion"
     target.helper_package = "apsa.fixture.new.dispatcher"
@@ -1895,10 +1902,12 @@ def test_ios_companion_launch_rejects_unverified_helper_pid_and_retains_primary_
 
 @pytest.mark.parametrize("phase", ["os-open-requested", "os-open-completed"])
 @pytest.mark.parametrize("wrong_uri", [False, True])
+@pytest.mark.parametrize("can_open", [True, False, None])
 def test_ios_companion_binds_rewritten_dispatch_uri_without_promoting_helper_receipt(
-    tmp_path, monkeypatch, phase, wrong_uri
+    tmp_path, monkeypatch, phase, wrong_uri, can_open
 ):
     target, data = new_entry_target(tmp_path)
+    monkeypatch.setattr(target, "require_installed_contract", lambda **kwargs: None)
     target.url_driver = "companion"
     target.scheme = "a" + "1" * 32
     target.helper_package = "apsa.fixture.new.dispatcher"
@@ -1927,6 +1936,8 @@ def test_ios_companion_binds_rewritten_dispatch_uri_without_promoting_helper_rec
                 "phase": phase,
                 "uri_sha256": digest(b"new different URI") if wrong_uri else digest(actual.encode()),
             }
+            if can_open is not None:
+                value["can_open_url"] = can_open
             if phase == "os-open-completed":
                 value["open_completion"] = True
             target.helper_receipt.write_text(json.dumps(value))
@@ -1947,6 +1958,7 @@ def test_ios_companion_binds_rewritten_dispatch_uri_without_promoting_helper_rec
         target.deliver(original, fields)
     diagnostic = caught.value.observation["dispatcher"]
     assert diagnostic["state"] == "diagnostic-only" and diagnostic["uri_matches"] is (not wrong_uri)
+    assert diagnostic.get("can_open_url") is can_open
     assert target.helper_uri_sha256 == target.dispatch_expectation["uri_sha256"] == digest(actual.encode())
     assert target.helper_uri_sha256 != digest(original.encode())
     assert (
@@ -2109,6 +2121,7 @@ def test_generated_companion_registers_no_scheme_and_verifies_installed_bytes(tm
     target.simctl = ["/usr/bin/xcrun", "simctl", "--set", str(tmp_path / "new-set")]
     target.commands = Commands(tmp_path, env={})
     calls = []
+    monkeypatch.setattr(target, "require_installed_contract", lambda **kwargs: None)
 
     def fixture_build(argv, **kw):
         calls.append(argv)
@@ -2122,7 +2135,14 @@ def test_generated_companion_registers_no_scheme_and_verifies_installed_bytes(tm
     value = plistlib.loads((tmp_path / "UrlDispatcher.app/Info.plist").read_bytes())
     assert value["CFBundleIdentifier"] == target.package + ".dispatcher"
     assert value["APSAFixtureScheme"] == target.scheme
-    assert "CFBundleURLTypes" not in value and "LSApplicationQueriesSchemes" not in value
+    assert "CFBundleURLTypes" not in value
+    assert value["LSApplicationQueriesSchemes"] == [target.scheme]
+    assert (
+        safe_ios_installed_contract(plistlib.dumps(value), target.helper_package, target.scheme, helper=True)[
+            "state"
+        ]
+        == "verified"
+    )
     install = next(call for call in calls if "install" in call)
     assert target.device in install and install[:4] == target.simctl
     assert target.helper_installed_build() == target.helper_build
@@ -2506,6 +2526,9 @@ def test_ios_url_control_cli_owns_one_readiness_target_and_skips_acquisition(
                 )
             return {"state": "passed", "acquisition": "unsupported", "backend": "unsupported"}
 
+        def url_contract_diagnostics(self):
+            return {}
+
         def close(self):
             return {"state": "confirmed", "scope": "NEW target double only"}
 
@@ -2570,3 +2593,205 @@ def test_ios_url_control_workflow_is_separate_custom_owned_matrix_without_primar
             "--ios-os-url-control" not in step.get("run", "") and "continue-on-error" not in step
             for step in jobs[name]["steps"]
         )
+
+
+def synthetic_installed_ios_contract(package="apsa.fixture.new", scheme="a" + "1" * 32, *, helper=False):
+    value = {
+        "CFBundleIdentifier": package,
+        "CFBundleExecutable": "UrlDispatcher" if helper else "TransportFixture",
+        "APSAFixtureScheme": scheme,
+        "UIApplicationSceneManifest": {
+            "UIApplicationSupportsMultipleScenes": False,
+            "UISceneConfigurations": {
+                "UIWindowSceneSessionRoleApplication": [
+                    {
+                        "UISceneConfigurationName": "Default",
+                        "UISceneDelegateClassName": "UrlDispatcherFixture.DispatcherScene"
+                        if helper
+                        else "TransportFixture.SceneDelegate",
+                    }
+                ]
+            },
+        },
+    }
+    if helper:
+        value["LSApplicationQueriesSchemes"] = [scheme]
+    else:
+        value["CFBundleURLTypes"] = [
+            {
+                "CFBundleTypeRole": "Editor",
+                "CFBundleURLName": package + ".transport",
+                "CFBundleURLSchemes": [scheme],
+            }
+        ]
+    return value
+
+
+@pytest.mark.parametrize("helper", [False, True])
+@pytest.mark.parametrize("fmt", [plistlib.FMT_XML, plistlib.FMT_BINARY])
+def test_installed_ios_contract_validates_exact_typed_package_scheme_scene(helper, fmt):
+    package, scheme = "apsa.fixture.new", "a" + "1" * 32
+    raw = plistlib.dumps(synthetic_installed_ios_contract(package, scheme, helper=helper), fmt=fmt)
+    result = safe_ios_installed_contract(raw, package, scheme, helper=helper)
+    assert result["state"] == "verified"
+    assert all(
+        value is True for key, value in result.items() if key.endswith("matches") or key.endswith("match")
+    )
+    assert result["sha256"] == digest(raw)
+    assert package not in json.dumps(result) and scheme not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "package",
+        "scheme",
+        "extra-scheme",
+        "url-shape",
+        "scene-class",
+        "scene-bool",
+        "executable",
+        "query-scheme",
+    ],
+)
+def test_installed_ios_contract_rejects_mismatched_types_and_registration(mutation):
+    value = synthetic_installed_ios_contract()
+    if mutation == "package":
+        value["CFBundleIdentifier"] = ["apsa.fixture.new"]
+    elif mutation == "scheme":
+        value["APSAFixtureScheme"] = "new-other-scheme"
+    elif mutation == "extra-scheme":
+        value["CFBundleURLTypes"][0]["CFBundleURLSchemes"].append("new-other-scheme")
+    elif mutation == "url-shape":
+        value["CFBundleURLTypes"] = {}
+    elif mutation == "scene-class":
+        value["UIApplicationSceneManifest"]["UISceneConfigurations"]["UIWindowSceneSessionRoleApplication"][
+            0
+        ]["UISceneDelegateClassName"] = "New.Other"
+    elif mutation == "scene-bool":
+        value["UIApplicationSceneManifest"]["UIApplicationSupportsMultipleScenes"] = 0
+    elif mutation == "executable":
+        value["CFBundleExecutable"] = "new-other-executable"
+    else:
+        value["LSApplicationQueriesSchemes"] = ["new-other-scheme"]
+    assert (
+        safe_ios_installed_contract(plistlib.dumps(value), "apsa.fixture.new", "a" + "1" * 32)["state"]
+        == "mismatch"
+    )
+
+
+@pytest.mark.parametrize("key", ["APSAFixtureScheme", "UISceneConfigurationName"])
+def test_installed_ios_contract_rejects_duplicate_keys_at_any_depth(key):
+    raw = plistlib.dumps(synthetic_installed_ios_contract())
+    marker = ("<key>" + key + "</key>").encode()
+    raw = raw.replace(marker, marker + b"<string>new duplicate</string>" + marker, 1)
+    assert (
+        safe_ios_installed_contract(raw, "apsa.fixture.new", "a" + "1" * 32)["state"]
+        == "malformed-or-over-bound"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw", [b"", b"<plist><dict><key>unterminated", b"x" * (65536 + 1), plistlib.dumps([])]
+)
+def test_installed_ios_contract_rejects_malformed_and_oversized_bytes(raw):
+    assert (
+        safe_ios_installed_contract(raw, "apsa.fixture.new", "a" + "1" * 32)["state"]
+        == "malformed-or-over-bound"
+    )
+
+
+def test_appinfo_omission_is_unreported_and_duplicate_keys_are_unmeasured():
+    result = safe_ios_appinfo(b'{"CFBundleIdentifier":"apsa.fixture.new"}', "apsa.fixture.new")
+    assert result["url_types_state"] == "unreported"
+    assert result["url_types_present"] is None and result["url_types_match"] is None
+    assert (
+        safe_ios_appinfo(
+            b'{"CFBundleIdentifier":"wrong","CFBundleIdentifier":"apsa.fixture.new"}', "apsa.fixture.new"
+        )["state"]
+        == "unmeasured"
+    )
+
+
+@pytest.mark.parametrize("escape", [None, "symlink", "directory-symlink", "outside", "oversize", "missing"])
+def test_installed_contract_reads_only_bounded_exact_owned_plist(tmp_path, monkeypatch, escape):
+    target, _ = new_entry_target(tmp_path)
+    target.package, target.scheme = "apsa.fixture.new", "a" + "1" * 32
+    assert target.device is not None
+    target.installed = target.device_set / target.device / "new-app"
+    target.installed.mkdir()
+    path = target.installed / "Info.plist"
+    raw = plistlib.dumps(synthetic_installed_ios_contract())
+    path.write_bytes(raw)
+    if escape == "symlink":
+        outside = tmp_path / "new-outside.plist"
+        outside.write_bytes(raw)
+        path.unlink()
+        path.symlink_to(outside)
+    elif escape == "directory-symlink":
+        path.unlink()
+        target.installed.rmdir()
+        outside = tmp_path / "new-outside-app"
+        outside.mkdir()
+        (outside / "Info.plist").write_bytes(raw)
+        target.installed.symlink_to(outside, target_is_directory=True)
+    elif escape == "outside":
+        target.installed = tmp_path / "new-outside-app"
+    elif escape == "oversize":
+        path.write_bytes(b"x" * 65537)
+    elif escape == "missing":
+        path.unlink()
+    if escape:
+        monkeypatch.setattr(
+            "scripts.validate_runtime_transport.os.open", lambda *a: pytest.fail("unsafe read")
+        )
+    result = target.installed_contract_observation()
+    assert result["state"] == (
+        "verified"
+        if escape is None
+        else "malformed-or-over-bound"
+        if escape == "oversize"
+        else "unavailable"
+        if escape == "missing"
+        else "owned-path-mismatch"
+    )
+
+
+@pytest.mark.parametrize("state", ["mismatch", "unavailable", "malformed-or-over-bound"])
+def test_installed_contract_failure_blocks_dispatch_before_any_os_command(tmp_path, monkeypatch, state):
+    target, _ = new_entry_target(tmp_path)
+    target.commands = Commands(tmp_path, env={})
+    monkeypatch.setattr(target, "installed_contract_observation", lambda **kwargs: {"state": state})
+    monkeypatch.setattr(target.commands, "run", lambda *a, **kw: pytest.fail("OS dispatch before contract"))
+    with pytest.raises(FixtureFailure, match="installed URL contract differs") as caught:
+        target.dispatch("new-synthetic-uri")
+    assert caught.value.observation["installed_url_contract"]["state"] == state
+
+
+@pytest.mark.parametrize("can_open", [True, False, None])
+def test_public_runtime_marker_keeps_only_typed_contract_and_dispatch_diagnostics(can_open):
+    diagnostic = {
+        "installed_url_contract": {
+            "state": "verified",
+            "sha256": "1" * 64,
+            "package_matches": True,
+            "scene_matches": 1,
+            "raw_path": "new-private-path",
+        },
+        "dispatcher": {
+            "state": "diagnostic-only",
+            "phase": "os-open-completed",
+            "can_open_url": can_open,
+            "open_completion": True,
+            "uri_matches": True,
+            "raw_uri": "new-private-uri",
+        },
+        "registration": {"url_types_state": "unreported"},
+    }
+    projected = ios_url_diagnostic_projection(diagnostic)
+    assert projected["dispatcher"].get("can_open_url") is can_open
+    assert projected["registration"]["url_types_state"] == "unreported"
+    assert "scene_matches" not in projected["installed_url_contract"]
+    output = runtime_projection({"state": "inconclusive", "failure_observation": diagnostic})
+    assert output["ios_url_diagnostics"] == projected and output["state"] == "inconclusive"
+    assert "new-private" not in json.dumps(output)

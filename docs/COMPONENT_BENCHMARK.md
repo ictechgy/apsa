@@ -19,9 +19,14 @@ the published checksum manifest, the exact expected byte count, and a mutation
 rejection control before extraction or execution. This verifies pinned bytes;
 it does not claim independent vendor-signature verification.
 
-The driver generates provider-shaped fake credentials and controls with an
-altered, non-provider prefix, plus four CycloneDX SBOMs. The negative secret
+The driver generates 12 secret-format cases and four CycloneDX SBOMs: 16 cases
+and 96 trials when both applicable tools run three repetitions. The original
+eight secret cases retain their IDs, bytes, and labels. Their four negative
 controls do not claim identical length or entropy to the positive controls.
+Four additional negative controls permute only the provider prefix (AKIA to
+KIAA, ghp_ to hgp_, xoxb- to bxox-, and sk_live_ to ks_live_). Each new control
+preserves its positive control's full length, character frequencies, and Shannon
+entropy while changing the credential format.
 The driver hashes input bytes and scoped labels before the first execution.
 No existing app, credential, account, repository history, or runtime data is an input.
 
@@ -42,6 +47,11 @@ during the same run; network and database drift remain limitations.
 Only these public synthetic coordinates are sent. No private coordinates or app
 source are uploaded.
 
+APSA normalization retains the complete upstream alias list alongside its
+compatible display ID and canonical OSV ID. Comparison examines all aliases and
+the display ID. Older normalized cache entries lacking alias metadata are
+incomplete and excluded, never inferred clean from the display ID alone.
+
 ## Completion and measurement contract
 
 Gitleaks uses its shipped default rules, redacted JSON output, and finding exit
@@ -59,7 +69,10 @@ or an unexpected cache hit do not establish a completed negative result.
 
 Only completed, unambiguous results contribute TP/FP/FN/TN. Support scope is declared before
 execution. Repetitions measure stability and retain each command's exit status
-and bounded stdout/stderr separately. Subprocess latency and in-process component
+and bounded stdout/stderr separately. Every tool/case group must contain each
+repetition index from zero through N minus one exactly once; missing, duplicate,
+or invalid indices exclude that case and fail the measurement gate.
+Subprocess latency and in-process component
 latency are different scopes. Online dependency timings include OSV service
 latency. Unmeasured RSS stays null; no speed or memory-efficiency ranking follows.
 

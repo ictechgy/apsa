@@ -743,6 +743,8 @@ def _normalize_osv(value: Any, dep: dict) -> dict:
     if not osv_id:
         raise ValueError("Missing OSV vulnerability id")
     aliases = [_text(alias, "OSV alias") for alias in _list(vuln.get("aliases", []), "OSV aliases")]
+    if any(not alias or any(character.isspace() for character in alias) for alias in aliases):
+        raise ValueError("Malformed OSV alias: expected a nonempty identifier without whitespace")
     identifier = next((alias for alias in aliases if re.fullmatch(r"CVE-\d{4}-\d{4,}", alias)), osv_id)
     for field in ("summary", "details", "modified"):
         _text(vuln.get(field, ""), f"OSV {field}")
@@ -777,6 +779,9 @@ def _normalize_osv(value: Any, dep: dict) -> dict:
         "references": references,
         "query_match": {key: dep[key] for key in ("name", "ecosystem", "version")},
         "osv_id": osv_id,
+        # The first CVE remains the display ID for compatibility, but it cannot
+        # stand in for the complete upstream identity set when correlating records.
+        "aliases": aliases,
         **_osv_severity(vuln),
     }
 
