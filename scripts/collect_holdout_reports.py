@@ -295,19 +295,21 @@ def collect(truth: Path, results: Path, work: Path, out: Path, evaluation_outcom
     errors = manifest["errors"]
     expected = {}
     successful = set()
+    truth_sha = ""
     if evaluation_outcome != "success":
         errors.append(f"Evaluation step outcome: {evaluation_outcome}")
     # The destination must be fresh: retained files cannot mask missing evidence.
     with directory(out, create=True, exclusive=True) as destination:
         try:
             truth_raw = read_document(truth)
+            truth_sha = hashlib.sha256(truth_raw).hexdigest()
             expected = truth_pairs(document(truth_raw))
         except (OSError, ValueError) as error:
             errors.append(f"Frozen truth unavailable or invalid ({type(error).__name__})")
         if expected:
             try:
                 summary = document(read_document(results))
-                successful = successful_ids(summary, expected, hashlib.sha256(truth_raw).hexdigest())
+                successful = successful_ids(summary, expected, truth_sha)
                 if len(successful) != len(expected):
                     errors.append(f"Evaluation failed for {len(expected) - len(successful)} pair(s)")
             except (OSError, ValueError, TypeError) as error:
