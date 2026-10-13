@@ -94,6 +94,88 @@ def parse_gitleaks(run: dict, raw: str | None, case: dict, path: Path) -> dict:
     }
 
 
+def _record_observation(case: dict, findings: list, *, apsa: bool) -> dict:
+    """Score exact OSV records; mutable aliases cannot substitute a record ID.
+
+    Different records can share CVE/GHSA aliases but describe different ranges.
+    Preserve those overlaps as evidence without converting them into detections
+    of the specifically named record. This is deliberately retrieval scoring.
+    """
+    target = case.get("target_record_id")
+    if not isinstance(target, str) or target not in case.get("target_advisories", []):
+        return _failed("missing or inconsistent target record identity")
+    records = {}
+    for item in findings:
+        if not isinstance(item, dict):
+            return _failed("invalid advisory record")
+        primary = item.get("osv_id" if apsa else "id")
+        if not isinstance(primary, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", primary):
+            return _failed("missing or malformed canonical advisory record ID")
+        secondary = [item.get("id")] if apsa else item.get("aliases", [])
+        if not isinstance(secondary, list) or any(
+            not isinstance(value, str) or not value for value in secondary
+        ):
+            return _failed("invalid advisory secondary IDs")
+        affected = item.get("affected", [])
+        if not isinstance(affected, list):
+            return _failed("invalid advisory affected-package metadata")
+        ranges = []
+        for entry in affected:
+            if not isinstance(entry, dict) or not isinstance(entry.get("package"), dict):
+                return _failed("invalid advisory affected-package metadata")
+            package = entry["package"]
+            if {key: package.get(key) for key in ("ecosystem", "name")} == {
+                key: case["coordinate"][key] for key in ("ecosystem", "name")
+            }:
+                versions = entry.get("versions", [])
+                events = entry.get("ranges", [])
+                if not isinstance(versions, list) or not isinstance(events, list):
+                    return _failed("invalid advisory affected-range metadata")
+                ranges.append(
+                    {
+                        "ranges": events,
+                        "explicit_versions_count": len(versions),
+                        "explicit_versions_sha256": hashlib.sha256(
+                            json.dumps(versions, sort_keys=True).encode()
+                        ).hexdigest(),
+                    }
+                )
+        record = {
+            "primary_id": primary,
+            "secondary_ids": sorted({value for value in secondary if isinstance(value, str)} - {primary}),
+            "secondary_ids_scope": "APSA normalized display ID only" if apsa else "upstream record aliases",
+            "affected_package_ranges": ranges,
+        }
+        if primary in records:
+            return _failed("duplicate primary advisory record makes identity ambiguous")
+        records[primary] = record
+    primary_ids = set(records)
+    overlaps = [
+        {
+            "primary_id": key,
+            "overlapping_secondary_ids": sorted(
+                set(record["secondary_ids"]) & set(case["target_advisories"])
+            ),
+        }
+        for key, record in sorted(records.items())
+        if key != target and set(record["secondary_ids"]) & set(case["target_advisories"])
+    ]
+    ambiguous = target not in primary_ids and bool(overlaps)
+    return {
+        "state": "ambiguous" if ambiguous else "completed",
+        "detected": None if ambiguous else target in primary_ids,
+        "coordinate": case["coordinate"],
+        "matching_scope": "exact OSV primary record ID; aliases are informational",
+        "matched": [target] if target in primary_ids else [],
+        "other_findings": sorted(primary_ids - {target}),
+        "records": [records[key] for key in sorted(records)],
+        "alias_overlaps": overlaps,
+        "reason": "target primary record absent but another returned record shares a target alias; excluded from scoring"
+        if ambiguous
+        else "",
+    }
+
+
 def parse_osv(run: dict, case: dict, path: Path) -> dict:
     if run.get("incomplete") or run.get("status") not in (0, 1) or _errors(run.get("stderr", "")):
         return _failed("process failed, emitted error diagnostics, or capture incomplete")
@@ -122,24 +204,9 @@ def parse_osv(run: dict, case: dict, path: Path) -> dict:
     vulns = packages[0].get("vulnerabilities", [])
     if not isinstance(vulns, list):
         return _failed("invalid vulnerability list")
-    identifiers = set()
-    for vuln in vulns:
-        if not isinstance(vuln, dict) or not isinstance(vuln.get("id"), str) or not vuln["id"]:
-            return _failed("invalid vulnerability identifier")
-        aliases = vuln.get("aliases", [])
-        if not isinstance(aliases, list) or any(not isinstance(alias, str) or not alias for alias in aliases):
-            return _failed("invalid vulnerability aliases")
-        identifiers.update([vuln["id"], *aliases])
     if (run["status"] == 1) != bool(vulns):
         return _failed("exit status disagrees with vulnerability presence")
-    target = set(case["target_advisories"])
-    return {
-        "state": "completed",
-        "detected": bool(target & identifiers),
-        "coordinate": case["coordinate"],
-        "matched": sorted(target & identifiers),
-        "other_findings": sorted(identifiers - target),
-    }
+    return _record_observation(case, vulns, apsa=False)
 
 
 def apsa_secrets(case: dict, path: Path) -> dict:
@@ -194,19 +261,10 @@ def parse_apsa_osv(case: dict, findings: list, errors: list, states: list) -> di
         for item in findings
     ):
         return _failed("APSA finding does not bind an advisory to the supplied coordinate")
-    identifiers = {
-        item[field] for item in findings for field in ("id", "osv_id") if isinstance(item.get(field), str)
-    }
-    target = set(case["target_advisories"])
-    return {
-        "state": "completed" if complete else "partial",
-        "detected": bool(target & identifiers) if complete else None,
-        "coordinate": case["coordinate"],
-        "matched": sorted(target & identifiers),
-        "other_findings": sorted(identifiers - target),
-        "package_states": states,
-        "errors": errors,
-    }
+    observation = _record_observation(case, findings, apsa=True)
+    if not complete:
+        observation.update(state="partial", detected=None)
+    return observation | {"package_states": states, "errors": errors}
 
 
 def apsa_osv(case: dict, path: Path, directory: Path) -> dict:
@@ -328,6 +386,7 @@ def summarize(trials: list[dict], repetitions: int) -> dict:
                     item["observation"].get("detected"),
                     tuple(sorted(str(value) for value in item["observation"].get("matched", []))),
                     tuple(sorted(str(value) for value in item["observation"].get("other_findings", []))),
+                    json.dumps(item["observation"].get("records", []), sort_keys=True),
                 )
                 for item in repeated
             }
@@ -479,7 +538,8 @@ def run(manifest_path: Path, output: Path, repetitions: int, online: bool) -> di
         "limitations": [
             "12 predeclared synthetic component cases, not a full mobile-scanner ranking or independent holdout",
             "Secret candidates are generated format strings; no credential validity checked or claimed",
-            "Dependency negatives concern one target advisory only, not all CVEs",
+            "Dependency scoring measures exact named OSV primary record retrieval, not vulnerability or CVE-family accuracy; aliases alone never match",
+            "Other returned records and overlapping aliases remain visible; a target-record negative does not establish safety",
             "OSV results reflect the live public feed at execution time",
             "APSA in-process and tool CLI timing scopes differ; no efficiency ranking",
             "Unmeasured, partial, failed and unstable cases excluded from scoring",

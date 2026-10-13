@@ -20,9 +20,10 @@ rejection control before extraction or execution. This verifies pinned bytes;
 it does not claim independent vendor-signature verification.
 
 The driver generates provider-shaped fake credentials and controls with an
-altered, non-provider prefix, plus four CycloneDX SBOMs. It hashes the input bytes and scoped labels
-before the first execution. No existing app, credential, account, repository
-history, or runtime data is an input.
+altered, non-provider prefix, plus four CycloneDX SBOMs. The negative secret
+controls do not claim identical length or entropy to the positive controls.
+The driver hashes input bytes and scoped labels before the first execution.
+No existing app, credential, account, repository history, or runtime data is an input.
 
 Dependency labels concern only these advisory/version pairs:
 
@@ -31,9 +32,13 @@ Dependency labels concern only these advisory/version pairs:
 | Maven org.apache.logging.log4j:log4j-core | 2.14.1 | 2.17.1 | [GHSA-jfh8-c2jp-5v3q / CVE-2021-44228](https://osv.dev/vulnerability/GHSA-jfh8-c2jp-5v3q) |
 | npm lodash | 4.17.20 | 4.17.21 | [GHSA-35jh-r3h4-6jhm / CVE-2021-23337](https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm) |
 
-Other advisory matches are retained separately. An unaffected control here does
-not assert absence of every vulnerability. Both tools query the live public OSV
-service during the same run; network and database drift remain limitations.
+Other advisory matches are retained separately. Target identity uses the primary
+OSV record ID, not a flattened union of IDs and aliases. If a different primary
+record shares a target alias, an otherwise negative result is ambiguous and is
+excluded from TP/FP/FN/TN. Record identities, aliases, and affected-range metadata
+remain available for inspection. An unaffected control here does not assert
+absence of every vulnerability. Both tools query the live public OSV service
+during the same run; network and database drift remain limitations.
 Only these public synthetic coordinates are sent. No private coordinates or app
 source are uploaded.
 
@@ -52,7 +57,7 @@ and uses a new Store for every query. Each package must be completely checked;
 missing output, logged errors, API failures, partial results, unsupported input,
 or an unexpected cache hit do not establish a completed negative result.
 
-Only completed results contribute TP/FP/FN/TN. Support scope is declared before
+Only completed, unambiguous results contribute TP/FP/FN/TN. Support scope is declared before
 execution. Repetitions measure stability and retain each command's exit status
 and bounded stdout/stderr separately. Subprocess latency and in-process component
 latency are different scopes. Online dependency timings include OSV service
@@ -76,3 +81,17 @@ Console records bind actual executable hashes, versions, inputs, measurements,
 and source revision. Uploaded artifact metadata and its digest can be correlated
 with the upload output without treating an unopened ZIP as inspected evidence.
 The workflow removes only its own newly generated tools and temporary state.
+
+## Observed alias ambiguity
+
+The first actual run on 2026-10-13 preserved an apparent false positive on lodash
+4.17.21 for both tools. Inspection showed that the newer primary record
+[GHSA-r5fr-rjxr-66jc](https://osv.dev/vulnerability/GHSA-r5fr-rjxr-66jc)
+shares CVE-2021-23337 and the older GHSA ID as aliases, while its affected range
+differs. The original flat alias scorer conflated the two records. Those v1
+observations are retained as invalid scoring evidence, not a tool accuracy claim.
+
+The original cases, versions, and expected labels remain unchanged. The revised
+scorer preserves shared-alias ambiguity as inconclusive, including a nonzero
+measurement gate when a case cannot be scored. It does not relabel that package
+as safe, suppress its newer advisory, or claim a false positive from either tool.

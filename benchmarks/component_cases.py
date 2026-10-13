@@ -42,8 +42,8 @@ def secret_cases() -> list[dict]:
     result = []
     for provider, credential_type, rule, token in definitions:
         for present in (True, False):
-            # A changed prefix preserves file, line, length and entropy while
-            # deliberately removing the provider-specific format being scored.
+            # Keep the file and line, and replace the provider prefix. This is
+            # a format-negative control, not a length- or entropy-matched pair.
             value = token if present else "synthetic_" + token.split("_", 1)[-1][5:]
             result.append(
                 {
@@ -98,10 +98,11 @@ def dependency_cases() -> list[dict]:
                     "id": f"dependency-{'log4j' if ecosystem == 'Maven' else 'lodash'}-{version}",
                     "kind": "dependency",
                     "expected": expected,
-                    "scope": "named target advisory only; absent target does not imply absence of all vulnerabilities",
+                    "scope": "exact named OSV record retrieval only; absent record does not imply absence of the vulnerability or other advisories",
                     "supported": {"apsa-osv": True, "osv-scanner": True},
                     "coordinate": {"ecosystem": ecosystem, "name": name, "version": version},
                     "target_advisories": identifiers,
+                    "target_record_id": identifiers[0],
                     "mapping_source": "https://osv.dev/vulnerability/" + identifiers[0],
                     "path": "bom.json",
                     "content": json.dumps(

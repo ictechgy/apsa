@@ -5,6 +5,7 @@ on:
     branches: ["validation/apsa-final-*"]
     paths:
       - "benchmarks/component*.py"
+      - "benchmarks/process_measure.py"
       - "scripts/acquire_component_tools.py"
       - "scripts/verify_dependency.py"
       - "tests/test_component*.py"
