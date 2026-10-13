@@ -11,6 +11,7 @@ from .core import read_bounded
 
 KNOWN_RELEASE_HASHES = {
     "apsa": {
+        "49cf257c114fa2f65fbf09bcbdec93e702799295e8d1cf7bae2fb5e2e7a138ca",
         "ca319e50888e6f6353e5a0e41e6c10208f829765e6149f3b90ecfc05331a19d1",
         "a7aae332969ba98ac8da4831b05a21092b342578e2b4b2c6c8bd270c9c93e81b",
         "248652d8cec8653d3ef265cac24cf9c59df9a9668753a781d8852fa616c6ddd5",
@@ -20,6 +21,7 @@ KNOWN_RELEASE_HASHES = {
         "a1c3e42bfa5e781281e4f894b09ca780ebbc07afb6f9bdbc49189f7d1a7106b8",
     },
     "quaygate": {
+        "97b87a571070eaf12782573d46a46588e29cb1b58dcd2e7e4b8b3a47fce210c2",
         "b6016f299e2207f85db9a2850e5a837c4fb78bbc0cdee18e37bf19102b6c8c60",
         "61c5a4df34781542525177f3fc868e29bcf0ffe7f2757f39c1ef225f8b86b305",
         "f12331750c1ee915179e7956f4856cbc7ec824f8ba48a6146e1ce5a1537a4c09",
@@ -32,6 +34,7 @@ KNOWN_RELEASE_HASHES = {
         "59195031bdf19784cc592011efc68e5261fcba2240df5b64862deeb450bd6353",
     },
     "mobile-audit": {
+        "ae4b28774e41b6ca9c022627e803ff54490d2384b66fb7fc72222d8f85190e8f",
         "5bcb6a468221e51f3c6e786a44b135ff7761652a5fa663a4514372f3ade73280",
         "5bdd02b82f6e71e189130851d7b851aa134d727791e596da775545728c87936b",
         "a0f2df02d2c642b61e5dbb4e74f158b20b480b3dd8cdef8ce15503f4b4a60098",

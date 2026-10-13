@@ -82,16 +82,17 @@ CodeDirectory의 페이지·entitlement 해시를 다시 계산하며, 더 많�
 - 기준선·예외: lockfile로 해결된 발견 항목은 위치(`gradle.lockfile`)와 상태가 바뀌므로
   `only_new`는 새 항목으로 보고, 이전 발견 ID에 대한 예외는 더 이상 일치하지 않습니다.
   업그레이드 후 기준선을 다시 승인하세요.
-- `--online`은 출하 구성에서 쓰는 catalog alias와 모든 모듈 lockfile의 release runtime
-  좌표(전이 좌표·비공개 group ID 포함)를 OSV에 보내며 제외 목록은 없습니다. 한 번에 최대
-  100개 패키지를 조회하며, 최근 하루 안의 OSV 결과가 없는 패키지를 먼저, 그중에서는 빌드
-  파일 선언을 lockfile 좌표보다 먼저 조회합니다. 측정한 application lockfile은 출하 좌표가
-  179~412개였으므로 한 번의 실행으로는 나머지가 `not-run`으로 남아, 필수 `DEPENDENCY-CVE`
-  규칙은 통과할 수 없고 온라인 감사는 불완전하며 기본 `fail_on_partial` 정책은 종료 코드 3을
-  반환합니다. 하루 안에 반복 실행하면 남은 패키지를 이어서 조회하며, 최근 하루 안의 OSV
-  결과가 있는 패키지는 검사된 것으로 봅니다. 미확인 catalog alias와 OSV가 지원하지 않는
-  생태계는 매 실행마다 온라인 오류로 보고되므로, 반복 실행해도 온라인 감사는 불완전하게
-  남습니다.
+- `--online`은 출하 catalog alias, 전이 lockfile 좌표, 비공개 group ID를 포함한
+  의존성 이름·버전을 OSV에 보냅니다. 로컬 제외 정책에 해당하는 좌표는 보내지 않습니다.
+  기본 `auto` 모드는 조회 가능한 고유 패키지·버전 좌표가 100개 이하면 legacy,
+  그보다 많으면 batch를 사용합니다. 기본 온라인 한도는 패키지 1000개, 배치당 100개,
+  OSV 요청 2000회이며 페이지 이동과 취약점 레코드 조회를 포함합니다.
+  `scan --online --osv-query-mode legacy`는 기존 100개 한도를 유지하고,
+  `--osv-query-mode batch`는 기본 한도로 배치를 명시적으로 선택합니다.
+  scan의 `--osv-exclude-ecosystem`, `--osv-exclude-name`, `--osv-exclude-coordinate`로
+  로컬 전송 제외 정책을 설정합니다. 제외된 의존성은 전송하지 않으며 이전 캐시 결과가
+  있어도 검사 완료로 처리하지 않습니다. 미검사·미확인·미지원·제외 의존성이 남으면
+  온라인 검사는 불완전하며, 일부 패키지의 최신 결과가 전체 검사 완료를 뜻하지 않습니다.
 - IPA 보고서에 `BINARY-IOS-CODE-INTEGRITY`가 추가됩니다. 해시가 일치해도 진위를 증명하지
   않습니다. 수정 후 다시 서명한 바이너리도 일치하기 때문입니다. 불일치는 발견 항목이 아닌
   경고를 추가하며, App Store 암호화·서명 없는 실행 파일은 `not-run`입니다.
@@ -268,15 +269,27 @@ apsa tui
 | `apsa intel sync` | 공개 취약점 정보 수집 |
 | `apsa intel watch` | 공개 피드를 폴링하고 저장된 인벤토리를 재평가. 앱 파일을 다시 읽거나 OSV를 자동 조회하지 않음 |
 | `apsa intel backfill --source android --since YYYY-MM` | 지정한 제한된 기간의 월별 Android 보안 공지를 수집 |
-| `apsa scan TARGET --online` | 발견한 의존성 이름·버전을 OSV에 전송. 출하 구성에서 쓰는 Gradle catalog alias와 모든 모듈 lockfile의 release runtime 좌표를 포함하며 한 번에 최대 100개 패키지, 미검사 빌드 파일 선언 우선 |
-| `apsa intel watch --online` | 저장된 의존성 이름·버전도 같은 한도로 OSV에 전송 |
+| `apsa scan TARGET --online` | 조회 가능한 의존성 이름·버전을 OSV에 전송. 기본 `auto`는 고유 좌표 100개 이하에 legacy, 초과 시 batch를 사용하며 기본 패키지 한도는 1000개. 아래 모드·로컬 제외 옵션 지원 |
+| `apsa intel watch --online` | 매 폴링에서 저장된 인벤토리마다 `auto`와 기본 한도로 이름·버전을 전송. 모드·제외 옵션이 없으며 scan의 제외 정책을 이어받지 않음 |
 
 ```sh
 apsa intel sync
 apsa intel status
 apsa intel watch --interval 900
 apsa scan /path/to/owned/app --online
+apsa scan /path/to/owned/app --online --osv-query-mode legacy
+apsa scan /path/to/owned/app --online --osv-exclude-coordinate 'Maven:com.private:*'
 ```
+
+scan의 `--osv-exclude-ecosystem`, `--osv-exclude-name`, `--osv-exclude-coordinate`는
+여러 번 지정할 수 있습니다. 패턴은 대소문자를 구분하는 셸 glob이며 좌표 형식은
+`ecosystem:name`입니다. MCP `dependency_check`는 `query_mode`와
+`exclude_ecosystems`, `exclude_names`, `exclude_coordinates` 목록을 받습니다.
+제외 정책은 전송 전에 로컬에서 적용하며 오래된 캐시로 검사 완료를 표시하지 않습니다.
+제외 정책이 필요하면 scan이나 MCP를 사용하세요. `intel watch --online`은 이 옵션을
+지원하지 않고 scan의 제외 정책도 이어받지 않습니다. 소스 코드나 빌드는 OSV에 보내지
+않습니다. 요청 한도는 페이지 이동·레코드 조회를 포함한 OSV 작업 수이며 HTTP 리다이렉트의
+개별 hop 수는 아닙니다.
 
 Watch는 기본 900초, 최소 60초 주기로 폴링하며 푸시 스트림은 아닙니다. `--cycles`로 횟수를 지정하지 않으면 중단할 때까지 실행합니다. 발견 항목, 검사 범위, 취약점 정보 상태가 달라지면 재평가가 새 스냅샷을 저장합니다. `intel status`로 피드 최신성, 실패, CVE 처리 대기열을 확인하세요. CVE 문서 수집과 처리 완료는 서로 다른 상태입니다. 기본 처리 대기열 정책은 미처리 항목을 허용하지 않으며 `intel_max_pending`으로 허용량을 명시할 수 있습니다.
 

@@ -729,9 +729,9 @@ def test_every_released_skill_fixture_is_a_known_upgrade_source(tmp_path):
     for fixture in fixtures:
         name = fixture.name.rsplit("-", 1)[0]
         packaged = files("mobile_audit").joinpath("data", "skills", name, "SKILL.md").read_bytes()
-        if fixture.name.endswith(current):
-            # A changed skill needs a new fixture, which forces registering the old hash.
-            assert fixture.read_bytes() == packaged, fixture.name
+        if fixture.name.endswith(current) and fixture.read_bytes() == packaged:
+            # An unchanged current skill is already installed. Revised instructions,
+            # even within the same package version, must register their prior hash.
             continue
         destination = tmp_path / fixture.stem
         destination.mkdir()

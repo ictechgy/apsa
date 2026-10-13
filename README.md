@@ -98,19 +98,19 @@ and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/
 - Baselines and waivers: a lockfile-resolved finding has a new location
   (`gradle.lockfile`) and status, so `only_new` treats it as new and waivers for
   the old finding ID no longer match. Re-approve baselines after upgrading.
-- `--online` sends catalog aliases used in shipped configurations and the
-  release-runtime lockfile coordinates of every module, transitive ones and
-  private group IDs included, to OSV; there is no exclusion list. One run
-  queries at most 100 packages: those without an OSV result from the last day
-  first, and among them build-file declarations before lockfile coordinates in
-  lockfile order. Measured application lockfiles hold 179–412 shipped
-  coordinates, so a single run leaves the rest `not-run`: a required
-  `DEPENDENCY-CVE` rule cannot pass, the online audit is incomplete and the
-  default `fail_on_partial` policy exits 3. Repeated runs within a day advance
-  through the remainder, and a package with an OSV result from the last day
-  counts as checked. Unresolved catalog aliases and ecosystems OSV does not
-  support are reported as online errors on every run, so they keep the online
-  audit incomplete however many runs follow.
+- `--online` sends dependency names and versions to OSV, including shipped
+  catalog aliases, transitive lockfile coordinates and private group IDs unless
+  excluded. The default `auto` mode uses legacy queries for at most 100 eligible
+  unique package-version coordinates and batch queries for larger inventories.
+  Default online budgets are 1000 packages, 100 packages per batch and 2000 OSV
+  requests, including pagination and vulnerability-record lookups.
+  `scan --online --osv-query-mode legacy` retains the 100-package limit;
+  `--osv-query-mode batch` explicitly selects batching with the default budgets.
+  Use scan's `--osv-exclude-ecosystem`, `--osv-exclude-name` or
+  `--osv-exclude-coordinate` for local transmission exclusions. Excluded
+  dependencies are never sent or marked checked, even with a prior cached result.
+  Unchecked, unresolved, unsupported or excluded dependencies keep online
+  coverage incomplete; a fresh result for one package does not complete the rest.
 - IPA reports gain `BINARY-IOS-CODE-INTEGRITY`. Consistent hashes do not prove
   authenticity, because a modified binary that was re-signed is consistent. A
   mismatch adds a warning, not a finding; App Store encrypted and unsigned
@@ -325,15 +325,27 @@ A default `scan` reads local files and cached intelligence without uploading sou
 | `apsa intel sync` | Fetches public vulnerability sources |
 | `apsa intel watch` | Polls public sources and reassesses saved inventories; does not reread app files or implicitly query OSV |
 | `apsa intel backfill --source android --since YYYY-MM` | Fetches an explicit, bounded range of monthly Android security bulletins |
-| `apsa scan TARGET --online` | Sends discovered dependency names and versions to OSV, including Gradle catalog aliases used in shipped configurations and release-runtime lockfile coordinates of every module; at most 100 packages per run, unchecked build-file declarations first |
-| `apsa intel watch --online` | Also sends saved dependency names and versions to OSV, with the same budget |
+| `apsa scan TARGET --online` | Sends eligible dependency names and versions to OSV; default `auto` selects legacy for at most 100 eligible unique coordinates and batch above 100, with a 1000-package default budget. Scan accepts explicit mode and local exclusion flags below |
+| `apsa intel watch --online` | Sends saved dependency names and versions using `auto` and the default budgets for each saved inventory on each poll; has no mode/exclusion flags and does not inherit scan exclusions |
 
 ```sh
 apsa intel sync
 apsa intel status
 apsa intel watch --interval 900
 apsa scan /path/to/owned/app --online
+apsa scan /path/to/owned/app --online --osv-query-mode legacy
+apsa scan /path/to/owned/app --online --osv-exclude-coordinate 'Maven:com.private:*'
 ```
+
+Scan supports repeatable `--osv-exclude-ecosystem`, `--osv-exclude-name` and
+`--osv-exclude-coordinate` flags. Patterns are case-sensitive shell globs; coordinates
+use `ecosystem:name`. MCP `dependency_check` accepts `query_mode` and the corresponding
+`exclude_ecosystems`, `exclude_names`, `exclude_coordinates` lists. Exclusions are
+applied locally before transmission and do not count as checked from old cache.
+Use scan or MCP when an exclusion policy is required: `intel watch --online` neither
+accepts these controls nor carries over a scan's exclusions. No source code or builds
+are sent to OSV. The request budget counts OSV operations, including pagination and
+record lookups, rather than individual HTTP redirect hops.
 
 Watch polls every 900 seconds by default, with a 60-second minimum; it is not a push stream. It runs until interrupted unless `--cycles` sets a finite number of polls. Reassessment saves a new snapshot when findings, coverage, or intelligence state changes. Inspect feed freshness, failures, and pending CVE processing with `intel status`. Fetching a CVE document and completing its processing are separate states. The default pending-item policy allows no backlog; use `intel_max_pending` to set an explicit allowance.
 
