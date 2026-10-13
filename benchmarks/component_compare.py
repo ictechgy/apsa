@@ -153,12 +153,12 @@ def _record_observation(case: dict, findings: list, *, apsa: bool) -> dict:
     overlaps = [
         {
             "primary_id": key,
-            "overlapping_secondary_ids": sorted(
-                set(record["secondary_ids"]) & set(case["target_advisories"])
+            "overlapping_identifiers": sorted(
+                ({key} | set(record["secondary_ids"])) & set(case["target_advisories"])
             ),
         }
         for key, record in sorted(records.items())
-        if key != target and set(record["secondary_ids"]) & set(case["target_advisories"])
+        if key != target and ({key} | set(record["secondary_ids"])) & set(case["target_advisories"])
     ]
     ambiguous = target not in primary_ids and bool(overlaps)
     return {

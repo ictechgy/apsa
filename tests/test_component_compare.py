@@ -300,3 +300,25 @@ def test_exact_primary_hit_is_retained_with_different_record_alias_overlap():
     assert score(True, observation) == "TP"
     assert observation["matched"] == [case["target_record_id"]]
     assert observation["alias_overlaps"] and len(observation["records"]) == 2
+
+
+@pytest.mark.parametrize("apsa", [False, True])
+def test_target_alias_as_other_primary_is_ambiguous_without_secondary_aliases(apsa):
+    case = dependency_cases()[3]
+    alias = case["target_advisories"][1]
+    assert alias != case["target_record_id"]
+    if apsa:
+        findings = [{"id": alias, "osv_id": alias, "query_match": case["coordinate"]}]
+        states = [{**case["coordinate"], "state": "complete", "checked": True, "transmitted": True}]
+        observation = parse_apsa_osv(case, findings, [], states)
+    else:
+        findings = [{"id": alias, "aliases": []}]
+        observation = parse_osv(
+            _execution(1, stdout=json.dumps(_osv(case, findings))), case, Path("/fresh/bom.json")
+        )
+    assert observation["state"] == "ambiguous"
+    assert observation["detected"] is None and observation["matched"] == []
+    assert score(False, observation) is None and score(True, observation) is None
+    assert observation["other_findings"] == [alias]
+    assert observation["alias_overlaps"] == [{"primary_id": alias, "overlapping_identifiers": [alias]}]
+    assert observation["records"][0]["secondary_ids"] == []
