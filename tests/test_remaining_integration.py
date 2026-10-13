@@ -181,20 +181,40 @@ def test_mcp_actual_tool_body_forwards_artifact_options(tmp_path, store, chain_f
 
 
 @pytest.mark.parametrize("kind", ["apks", "ipa"])
-def test_actual_job_worker_forwards_serialized_artifact_options(tmp_path, monkeypatch, chain_fixture, kind):
+def test_actual_job_worker_forwards_serialized_artifact_options(tmp_path, store, monkeypatch, kind):
     from mobile_audit import _job_worker as worker
+    from mobile_audit.core import digest, now
 
-    target, key, _, value = artifact_case(tmp_path, kind, chain_fixture[2])
+    # This is an option serialization test; full generated certificate chains
+    # are verified in test_ipa_trust.py. A digest-bound DER sequence is enough
+    # for policy schema normalization and never reaches a certificate verifier.
+    policy = {"schema_version": 1, "anchors": [{"der_base64": "MAA=", "sha256": digest(b"\x30\x00")}]}
+    target, key, _, value = artifact_case(tmp_path, kind, policy)
     payload = {"kind": "scan", "target": str(target), key: value}
-    calls, states = [], []
-    monkeypatch.setattr(worker, "Store", lambda _: SimpleNamespace(close=lambda: None))
-    monkeypatch.setattr(
-        worker.jobs, "get", lambda *a, **kw: {"state": "queued", "target": str(target), "payload": payload}
-    )
-    monkeypatch.setattr(worker.jobs, "update", lambda *a, **kw: states.append(kw))
+    stamp = now()
+    worker.jobs.initialize(store)
+    with store.db:
+        store.db.execute(
+            "INSERT INTO jobs VALUES(?,?,?,?,?,?,?, ?,NULL,NULL,NULL,'')",
+            ("new-job", "queued", stamp, stamp, str(target), json.dumps(payload), 0, "queued"),
+        )
+    calls = []
+
+    def scan(active_store, actual_target, **options):
+        assert actual_target == target
+        assert active_store.db.execute("SELECT state FROM jobs WHERE id='new-job'").fetchone()[0] == "running"
+        calls.append(options)
+        options["progress"]("synthetic-artifact-options", 50)
+        assert active_store.db.execute("SELECT progress FROM jobs WHERE id='new-job'").fetchone()[0] == 50
+        return active_store.save_report({"id": "new-report", "created": stamp, "target": str(target)})
+
     monkeypatch.setattr(worker.signal, "signal", lambda *a: None)
-    monkeypatch.setattr(worker, "scan", lambda *a, **kw: calls.append(kw) or {"id": "new-report"})
-    monkeypatch.setattr(worker.sys, "argv", ["new-worker", str(tmp_path / "new-home"), "new-job"])
+    monkeypatch.setattr(worker, "scan", scan)
+    monkeypatch.setattr(worker.sys, "argv", ["new-worker", str(store.home), "new-job"])
     worker.main()
-    assert calls[0][key] == value
-    assert states[-1]["state"] == "completed" and states[-1]["report_id"] == "new-report"
+    assert len(calls) == 1 and calls[0][key] == value
+    assert calls[0]["expected_target"] == target
+    result = worker.jobs.get(store, "new-job")
+    assert result["state"] == result["stage"] == "completed" and result["progress"] == 100
+    assert result["report_id"] == "new-report"
+    assert store.report("new-report")["target"] == str(target)
