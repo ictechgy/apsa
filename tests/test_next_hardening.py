@@ -616,7 +616,18 @@ def test_auto_audit_continues_with_limits_after_failed_probe(monkeypatch, tmp_pa
     def parser(args, **kwargs):
         launched.append(args)
         return json.dumps(
-            {"inventory": {"warnings": [], "partial": False}, "findings": [], "coverage": []}
+            {
+                "inventory": {
+                    "warnings": [],
+                    "dependencies": [],
+                    "platforms": [],
+                    "fingerprint": "0" * 64,
+                    "partial": False,
+                    "fingerprint_complete": True,
+                },
+                "findings": [],
+                "coverage": [],
+            }
         ).encode()
 
     monkeypatch.setattr(engine, "command", parser)

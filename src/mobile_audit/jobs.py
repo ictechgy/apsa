@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 
 import psutil
@@ -14,6 +15,10 @@ from .core import now, uid
 from .store import Store
 
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
+
+
+class WorkerInspection(Enum):
+    UNINSPECTABLE = "uninspectable"
 
 
 def initialize(store: Store) -> None:
@@ -68,7 +73,7 @@ def finish(store: Store, job_id: str, state: str, *, report_id: str | None = Non
         return changed.rowcount == 1
 
 
-def worker_process(row: dict) -> psutil.Process | None:
+def worker_process(row: dict) -> psutil.Process | WorkerInspection | None:
     if not row.get("pid") or not row.get("process_started"):
         return None
     try:
@@ -79,7 +84,9 @@ def worker_process(row: dict) -> psutil.Process | None:
         if "mobile_audit._job_worker" not in argv or row["id"] not in argv:
             return None
         return process
-    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+    except psutil.AccessDenied:
+        return WorkerInspection.UNINSPECTABLE
+    except (psutil.NoSuchProcess, psutil.ZombieProcess):
         return None
 
 
@@ -101,7 +108,7 @@ def get(store: Store, job_id: str, private=False) -> dict:
                 ("Worker launch was interrupted; restart this audit.", now(), job_id),
             )
         result = dict(store.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
-    if result["state"] not in TERMINAL and result["pid"] and not worker_process(result):
+    if result["state"] not in TERMINAL and result["pid"] and worker_process(result) is None:
         with store.db:
             store.db.execute(
                 "UPDATE jobs SET "
@@ -184,7 +191,9 @@ def start(store: Store, payload: dict) -> dict:
         # returns immediately and never keeps pipe handles to long-running work.
         try:
             update(store, job_id, pid=process.pid, process_started=psutil.Process(process.pid).create_time())
-        except psutil.NoSuchProcess:
+        except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied):
+            # The worker claims its own identity. Parent inspection failure is not
+            # launch failure, and an unverified PID must not be recorded as dead.
             pass
     except OSError:
         update(store, job_id, state="failed", stage="launch-failed", error="Could not start audit worker")
@@ -214,10 +223,14 @@ def cancel(store: Store, job_id: str) -> dict:
         store.db.rollback()
         raise
     process = worker_process(row) if row["state"] not in TERMINAL else None
-    if process is not None:
+    if process is WorkerInspection.UNINSPECTABLE:
+        # Leave the committed cancellation request for the worker to observe;
+        # neither signal an unverified process nor claim it has already stopped.
+        pass
+    elif process is not None:
         try:
             process.send_signal(signal.SIGTERM)
-        except psutil.NoSuchProcess:
+        except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied):
             pass
     elif row["state"] == "running":
         finish(store, job_id, "cancelled")

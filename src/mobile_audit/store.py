@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import stat
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -162,6 +163,9 @@ class Store:
     def save_report(self, report: dict) -> dict:
         body = canonical_json(report)
         body_hash = digest(body.encode())
+        exported = self.home / "reports" / f"{report['id']}.json"
+        temporary: Path | None = None
+        created_identity: tuple[int, int] | None = None
         self.db.execute("BEGIN IMMEDIATE")
         try:
             existing = self.db.execute(
@@ -177,11 +181,40 @@ class Store:
                     "INSERT INTO reports(id,created,target,body,body_hash) VALUES(?,?,?,?,?)",
                     (report["id"], report["created"], report["target"], body, body_hash),
                 )
-            write_json(self.home / "reports" / f"{report['id']}.json", report)
+            exported.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, name = tempfile.mkstemp(prefix=".report-", dir=exported.parent)
+            os.close(descriptor)
+            temporary = Path(name)
+            # Preserve the atomic 0600 JSON writer, but publish without replacing
+            # an existing export belonging to a committed immutable report.
+            write_json(temporary, report)
+            metadata = temporary.lstat()
+            try:
+                os.link(temporary, exported, follow_symlinks=False)
+            except FileExistsError:
+                if canonical_json(read_json(exported, authorized=True)) != body:
+                    raise ValueError("Report export conflicts with immutable report") from None
+            else:
+                created_identity = metadata.st_dev, metadata.st_ino
             self.db.commit()
-        except Exception:
-            self.db.rollback()
+        except BaseException:
+            try:
+                self.db.rollback()
+            finally:
+                if created_identity is not None:
+                    try:
+                        metadata = exported.lstat()
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        # Never remove a preexisting export, or a replacement
+                        # another actor installed after this call published.
+                        if (metadata.st_dev, metadata.st_ino) == created_identity:
+                            exported.unlink()
             raise
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return report
 
     def report(self, report_id: str) -> dict:

@@ -12,6 +12,73 @@ from .processes import command
 
 PARSER_TIMEOUT = 90
 MAX_RESULT = 32 * 1024 * 1024
+PARSER_COVERAGE_STATES = frozenset({"checked", "partial", "not-run", "not-applicable"})
+
+
+def _string_list(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _dependency(value: object) -> bool:
+    if not isinstance(value, dict) or any(
+        not isinstance(value.get(key), str) for key in ("ecosystem", "name", "version")
+    ):
+        return False
+    if any(key in value and not isinstance(value[key], str) for key in ("path", "confidence")):
+        return False
+    for key in ("resolution", "osv_query"):
+        metadata = value.get(key)
+        if metadata is not None and (
+            not isinstance(metadata, dict)
+            or ("state" in metadata and not isinstance(metadata["state"], str))
+            or ("checked" in metadata and not isinstance(metadata["checked"], bool))
+        ):
+            return False
+    return True
+
+
+def _worker_schema(result: dict) -> bool:
+    """Required worker fields used by scan, refresh and report exports.
+
+    Findings and extra metadata remain extensible. Coverage states must match
+    the producers and completeness consumers, which cannot assess other states.
+    """
+    inventory, findings, coverage = (result.get(key) for key in ("inventory", "findings", "coverage"))
+    if (
+        not isinstance(inventory, dict)
+        or not _string_list(inventory.get("warnings"))
+        or not _string_list(inventory.get("platforms"))
+        or not isinstance(inventory.get("fingerprint"), str)
+        or not isinstance(inventory.get("partial"), bool)
+        or not isinstance(inventory.get("fingerprint_complete"), bool)
+        or not isinstance(inventory.get("dependencies"), list)
+        or any(not _dependency(dep) for dep in inventory["dependencies"])
+        or not isinstance(findings, list)
+        or not isinstance(coverage, list)
+    ):
+        return False
+    for item in findings:
+        if (
+            not isinstance(item, dict)
+            or any(
+                not isinstance(item.get(key), str)
+                for key in ("id", "rule_id", "title", "severity", "status", "masvs", "remediation")
+            )
+            or not _string_list(item.get("references"))
+            or not isinstance(item.get("evidence"), list)
+            or any(not isinstance(entry, dict) for entry in item["evidence"])
+            or ("maswe" in item and not _string_list(item["maswe"]))
+        ):
+            return False
+    for check in coverage:
+        if (
+            not isinstance(check, dict)
+            or any(not isinstance(check.get(key), str) for key in ("rule_id", "state"))
+            or check["state"] not in PARSER_COVERAGE_STATES
+            or (check.get("dependency") is not None and not _dependency(check["dependency"]))
+        ):
+            return False
+    return True
 
 
 @contextmanager
@@ -141,17 +208,11 @@ def analyze_target(
         raise ValueError("Parser worker returned invalid output; audit incomplete") from None
     if not isinstance(result, dict):
         raise ValueError("Parser worker returned an invalid schema; audit incomplete")
-    if result.get("error"):
+    if "error" in result:
+        if not isinstance(result["error"], str) or not result["error"]:
+            raise ValueError("Parser worker returned an invalid schema; audit incomplete")
         raise ValueError(result["error"])
-    inventory, coverage = result.get("inventory"), result.get("coverage")
-    if (
-        not isinstance(inventory, dict)
-        or not isinstance(result.get("findings"), list)
-        or not isinstance(inventory.get("warnings"), list)
-        or any(not isinstance(warning, str) for warning in inventory["warnings"])
-        or not isinstance(coverage, list)
-        or any(not isinstance(check, dict) or not isinstance(check.get("state"), str) for check in coverage)
-    ):
+    if not _worker_schema(result):
         raise ValueError("Parser worker returned an invalid schema; audit incomplete")
     result["inventory"]["parser_isolation"] = isolation
     if isolation.get("activation_probe") == "failed":

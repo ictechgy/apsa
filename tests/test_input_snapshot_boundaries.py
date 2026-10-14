@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import errno
 import os
+from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -281,3 +283,149 @@ def test_noncanonical_hidden_path_cannot_open_a_parent_directory(tmp_path, monke
     assert snapshot["files"] == 1
     assert snapshot["warnings"] == []
     assert snapshot["app_scope_complete"] is True
+
+
+@pytest.mark.parametrize(
+    ("target_name", "hidden_root_name"),
+    [("Source", "SOURCE"), ("SOURCE", "Source"), ("Café", "Cafe\u0301"), ("Cafe\u0301", "Café")],
+)
+def test_ambiguous_hidden_root_spelling_refuses_without_inspection(
+    tmp_path, monkeypatch, target_name, hidden_root_name
+):
+    source = tmp_path / target_name
+    source.mkdir()
+    (source / "Main.kt").write_bytes(b"class Main")
+    hidden = tmp_path / hidden_root_name / "reports"
+    output = tmp_path / "output"
+
+    def deny_inspection(*args, **kwargs):
+        raise AssertionError("Ambiguous roots must be refused before any filesystem inspection")
+
+    # This applies on case-sensitive hosts too: lexical aliases cannot safely be
+    # distinguished from separate siblings by probing outside the selected root.
+    with monkeypatch.context() as boundary:
+        for name in ("stat", "open", "scandir"):
+            boundary.setattr(os, name, deny_inspection)
+        boundary.setattr(Path, "lstat", deny_inspection)
+        boundary.setattr(Path, "open", deny_inspection)
+        with pytest.raises(ValueError, match="root spelling is ambiguous.*use consistent root spelling"):
+            input_snapshot.stage_input(source, output, hidden=(hidden,))
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("alias_side", ["target", "hidden"])
+def test_actual_case_alias_root_after_resolve_is_refused(tmp_path, alias_side):
+    real_source = tmp_path / "Source"
+    real_source.mkdir()
+    (real_source / "Main.kt").write_bytes(b"class Main")
+    store = real_source / "reports"
+    store.mkdir()
+    (store / "synthetic.json").write_bytes(b'{"fresh":true}')
+    alias = tmp_path / "SOURCE"
+    if not alias.exists():
+        pytest.skip("Actual alias lookup requires a case-insensitive fixture filesystem")
+    source = (alias if alias_side == "target" else real_source).resolve()
+    hidden = (store if alias_side == "target" else alias / "reports").resolve()
+    assert not hidden.is_relative_to(source), "resolve must preserve this host's root alias spelling"
+    output = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="root spelling is ambiguous"):
+        input_snapshot.stage_input(source, output, hidden=(hidden,))
+
+    assert not output.exists()
+    assert (store / "synthetic.json").read_bytes() == b'{"fresh":true}'
+
+
+def test_clearly_unrelated_hidden_sibling_is_not_inspected(tmp_path, monkeypatch):
+    source = tmp_path / "Source"
+    source.mkdir()
+    (source / "Main.kt").write_bytes(b"class Main")
+    hidden = tmp_path / "UnrelatedReports"
+    hidden.mkdir()
+    (hidden / "synthetic.json").write_bytes(b'{"fresh":true}')
+    hidden_identity = (hidden.stat().st_dev, hidden.stat().st_ino)
+    original_stat = os.stat
+    original_lstat = Path.lstat
+    original_open = Path.open
+    original_scandir = os.scandir
+
+    def guarded_stat(path, *args, **kwargs):
+        if not isinstance(path, int):
+            assert not Path(path).is_relative_to(hidden)
+        return original_stat(path, *args, **kwargs)
+
+    def guarded_lstat(path, *args, **kwargs):
+        assert not path.is_relative_to(hidden)
+        return original_lstat(path, *args, **kwargs)
+
+    def guarded_open(path, *args, **kwargs):
+        assert not path.is_relative_to(hidden)
+        return original_open(path, *args, **kwargs)
+
+    def guarded_scandir(path):
+        if isinstance(path, int):
+            metadata = os.fstat(path)
+            assert (metadata.st_dev, metadata.st_ino) != hidden_identity
+        else:
+            assert not Path(path).is_relative_to(hidden)
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "stat", guarded_stat)
+    monkeypatch.setattr(Path, "lstat", guarded_lstat)
+    monkeypatch.setattr(Path, "open", guarded_open)
+    monkeypatch.setattr(os, "scandir", guarded_scandir)
+    output = tmp_path / "output"
+    snapshot = input_snapshot.stage_input(source, output, hidden=(hidden,))
+
+    assert (output / "Main.kt").read_bytes() == b"class Main"
+    assert snapshot["files"] == 1 and snapshot["warnings"] == []
+    assert snapshot["app_scope_complete"] is True
+
+
+def test_selected_subtree_with_case_alias_hidden_ancestor_is_not_probed(tmp_path, monkeypatch):
+    source = tmp_path / "NewStore" / "selected-demo"
+    source.mkdir(parents=True)
+    (source / "Main.kt").write_bytes(b"class Main")
+    hidden = tmp_path / "NEWSTORE"
+    original_stat = os.stat
+    original_open = os.open
+
+    def guarded_stat(path, *args, **kwargs):
+        assert path != hidden
+        return original_stat(path, *args, **kwargs)
+
+    def guarded_open(path, *args, **kwargs):
+        assert path != hidden
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", guarded_stat)
+    monkeypatch.setattr(os, "open", guarded_open)
+    snapshot = input_snapshot.stage_input(source, tmp_path / "output", hidden=(hidden,))
+
+    assert snapshot["files"] == 1 and snapshot["warnings"] == []
+    assert snapshot["app_scope_complete"] is True
+
+
+def test_engine_does_not_turn_root_ambiguity_refusal_into_a_successful_report(tmp_path, monkeypatch):
+    from mobile_audit import engine
+
+    source = tmp_path / "Source"
+    source.mkdir()
+    (source / "Main.kt").write_bytes(b"class Main")
+    report_home = tmp_path / "SOURCE" / "reports"
+    original_temporary_directory = engine.tempfile.TemporaryDirectory
+    command = Mock(side_effect=AssertionError("Refused staging must never reach the parser"))
+    monkeypatch.setattr(engine, "parser_lease", lambda: nullcontext())
+    monkeypatch.setattr(engine, "command", command)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "new-default-home")
+    monkeypatch.setattr(
+        engine.tempfile,
+        "TemporaryDirectory",
+        lambda **kwargs: original_temporary_directory(dir=tmp_path, **kwargs),
+    )
+
+    with pytest.raises(ValueError, match="root spelling is ambiguous"):
+        engine.analyze_target(source, report_home=report_home)
+
+    command.assert_not_called()

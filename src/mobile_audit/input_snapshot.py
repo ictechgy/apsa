@@ -8,6 +8,7 @@ import os
 import re
 import stat
 import time
+import unicodedata
 from collections import deque
 from pathlib import Path
 
@@ -159,7 +160,22 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
     started = time.monotonic()
     # An explicitly selected source subtree (including generated demo inputs) does
     # not grant sibling report access. Exclude report stores contained in the input.
-    hidden = tuple(path for path in hidden if path.is_relative_to(target))
+    target_parts = tuple(unicodedata.normalize("NFD", part.casefold()) for part in target.parts)
+    contained: list[Path] = []
+    for path in hidden:
+        if path.is_relative_to(target):
+            contained.append(path)
+            continue
+        hidden_parts = tuple(unicodedata.normalize("NFD", part.casefold()) for part in path.parts)
+        if hidden_parts[: len(target_parts)] == target_parts:
+            # resolve() preserves filesystem case/normalization aliases. Proving that
+            # this spelling is an unrelated sibling would require inspecting outside
+            # the selected root, so refuse before accessing either path's contents.
+            raise ValueError(
+                "Input and report-store root spelling is ambiguous in case or Unicode normalization; "
+                "use consistent root spelling for the input and report store; audit refused"
+            )
+    hidden = tuple(contained)
     warnings = []
     counts = {"files": 0, "bytes": 0, "entries": 0}
     omitted_by_kind = {kind: {"files": 0, "bytes": 0} for kind in STAGING_KINDS}
@@ -248,21 +264,21 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                 if not relative.parts:
                     hidden_identities.add(original_identity)
                     continue
-                parent = None
+                parent_fd: int | None = None
                 try:
                     # Report-store spelling may differ in case or Unicode normalization from
                     # directory entries. Inspect only metadata below the authorized root, with
                     # no-follow descriptors; never resolve or inspect sibling stores.
-                    parent = open_parent(root, relative.parent)
-                    metadata = os.stat(relative.name, dir_fd=parent, follow_symlinks=False)
+                    parent_fd = open_parent(root, relative.parent)
+                    metadata = os.stat(relative.name, dir_fd=parent_fd, follow_symlinks=False)
                     if not stat.S_ISLNK(metadata.st_mode):
                         hidden_identities.add((metadata.st_dev, metadata.st_ino))
                 except OSError:
                     # An absent store has no identity. Its exact lexical path stays excluded.
                     pass
                 finally:
-                    if parent is not None:
-                        os.close(parent)
+                    if parent_fd is not None:
+                        os.close(parent_fd)
 
             def visit(fd: int, relative: Path, depth: int):
                 if depth > MAX_DEPTH:
