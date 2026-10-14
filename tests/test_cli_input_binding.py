@@ -135,7 +135,20 @@ def test_foreground_binding_preserves_explicit_sbom_selection(
     monkeypatch.setattr(
         engine,
         "command",
-        lambda *a, **k: json.dumps({"inventory": {"warnings": []}, "findings": [], "coverage": []}),
+        lambda *a, **k: json.dumps(
+            {
+                "inventory": {
+                    "warnings": [],
+                    "platforms": ["android"],
+                    "dependencies": [],
+                    "fingerprint": "synthetic-worker-fingerprint",
+                    "fingerprint_complete": True,
+                    "partial": False,
+                },
+                "findings": [],
+                "coverage": [],
+            }
+        ),
     )
 
     def scan_boundary(store, target, online, sbom, environment, **options):
