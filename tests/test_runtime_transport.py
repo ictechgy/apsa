@@ -264,7 +264,13 @@ def test_health_rejects_invalid_challenges_without_auth_events(raw, monkeypatch)
     authority = OwnedAuthority("apsa.fixture.health", "1" * 64, invalidate=True)
     server = server_without_socket(authority, monkeypatch)
     assert server.health_response(raw) == (400, b'{"state":"rejected"}')
-    assert server.event_counts() == {"/issue": 0, "/logout": 0, "/protected": 0, "unsupported": 0}
+    assert server.event_counts() == {
+        "/issue": 0,
+        "/logout": 0,
+        "/switch": 0,
+        "/protected": 0,
+        "unsupported": 0,
+    }
 
 
 @pytest.mark.parametrize("diagnostic_failure", [False, True])
@@ -318,7 +324,13 @@ def test_failed_acquisition_keeps_original_deadline_and_persists_health_counts(
         execute_case(target, invalidate=True, retain=False, evidence=record)
     assert caught.value is original and caught.value.timeout == 7
     assert record["state"] == "inconclusive"
-    assert record["authority_event_counts"] == {"/issue": 1, "/logout": 0, "/protected": 0, "unsupported": 0}
+    assert record["authority_event_counts"] == {
+        "/issue": 1,
+        "/logout": 0,
+        "/switch": 0,
+        "/protected": 0,
+        "unsupported": 0,
+    }
     assert [entry["phase"] for entry in record["authority_health"]] == ["before-session", "after-failure"]
     assert record["authority_health"][-1]["state"] == ("unconfirmed" if diagnostic_failure else "verified")
     assert record["authority_cleanup"] == ("unconfirmed" if cleanup_failure else "confirmed")
@@ -377,7 +389,7 @@ def test_runtime_cli_persists_failed_case_source_binding_and_terminal_projection
         def close(self):
             return {"state": "confirmed", "scope": "NEW target"}
 
-    def fail_case(target, *, invalidate, retain, evidence):
+    def fail_case(target, *, invalidate, retain, evidence, transition_kind="logout"):
         evidence.update(
             state="inconclusive",
             authority_event_counts={"/issue": 0, "/logout": 0, "/protected": 0, "unsupported": 0},

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hosted-only Simulator GUI setup differential around the unchanged driver.
 
-No UI inspection, default selectors, process discovery or raw Simulator logs.
+No UI inspection, booted/default device selectors, discovery or raw Simulator logs.
 The Simulator arguments have upstream usage, not a supported Apple contract:
 https://github.com/plu/simctl/blob/master/lib/simctl/command/launch.rb
 Process liveness does not attest GUI binding, foreground state or URL delivery.
@@ -26,6 +26,7 @@ from scripts import validate_runtime_transport as transport
 PINNED_DEVELOPER_DIR = "/Applications/Xcode_16.4.app/Contents/Developer"
 GUI_SETTLE_SECONDS = 5
 GUI_WAIT_SECONDS = 10
+GUI_BOOTSTATUS_SECONDS = 600
 
 
 def hosted_gui_guard(root: Path, env: dict) -> Path:
@@ -66,15 +67,35 @@ def hosted_gui_guard(root: Path, env: dict) -> Path:
 class GuiCommands(transport.Commands):
     """Observe fresh CREATE/boot custody and retain only spawned GUI children."""
 
-    def __init__(self, root: Path, env: dict | None = None, *, output_name: str = "commands.json"):
+    def __init__(
+        self,
+        root: Path,
+        env: dict | None = None,
+        *,
+        output_name: str = "commands.json",
+        selector: str = "custom",
+    ):
         super().__init__(root, env=env, output_name=output_name)
         hosted_gui_guard(root, self.env)
+        if selector not in {"custom", "default"}:
+            raise ValueError("GUI setup control device-set selector differs")
+        self.selector = selector
+        # Default is the literal disposable hosted home factory, never caller input.
+        self._selected()
         self.created: set[str] = set()
         self.booted: set[str] = set()
         self.gui: dict[str, subprocess.Popen[bytes]] = {}
         self.gui_records: list[dict] = []
         self.gui_cleanup: dict[str, dict] = {}
         self.gui_update: Callable[[], None] | None = None
+
+    def _selected(self) -> tuple[list[str], Path]:
+        prefix, device_set = transport.ios_selector(self.root, self.selector, self.env)
+        if self.selector == "custom":
+            literal = self.root / "simulator-set"
+            if literal.is_symlink() or device_set != literal or literal.resolve() != literal:
+                raise ValueError("GUI setup control custom device-set ownership differs")
+        return prefix, device_set
 
     def _record(self, operation: str, **fields):
         record = {"operation": operation, **fields}
@@ -92,12 +113,10 @@ class GuiCommands(transport.Commands):
             or self.resources.root != self.root
             or self.resources.value.get("root") != str(self.root)
             or self.resources.value.get("ios", {}).get(device)
-            != {"deleted": False, "selector": "custom"}
+            != {"deleted": False, "selector": self.selector}
         ):
-            raise ValueError("GUI setup control requires a fresh journaled custom-set UUID")
-        device_set = self.root / "simulator-set"
-        if device_set.is_symlink() or device_set.resolve() != device_set:
-            raise ValueError("GUI setup control custom device-set ownership differs")
+            raise ValueError("GUI setup control requires a fresh journaled UUID with matching selector")
+        _, device_set = self._selected()
         return device_set
 
     def _start_gui(self, device: str):
@@ -114,7 +133,8 @@ class GuiCommands(transport.Commands):
         record = {
             "uuid_sha256": digest(device.encode()),
             "argv_sha256": digest(json.dumps(argv).encode()),
-            "selector": "custom",
+            "selector": self.selector,
+            "bootstatus_timeout_seconds": GUI_BOOTSTATUS_SECONDS,
             "state": "spawn-unconfirmed",
             "binding": "unverified-undocumented-arguments",
             "foreground": "unmeasured",
@@ -150,7 +170,12 @@ class GuiCommands(transport.Commands):
     def close_gui(self, device: str) -> dict:
         """Signal/reap only the exact Popen child, never a saved PID or global app."""
         process = self.gui[device]
-        result = {"uuid_sha256": digest(device.encode()), "state": "unconfirmed", "reaped": False}
+        result = {
+            "uuid_sha256": digest(device.encode()),
+            "selector": self.selector,
+            "state": "unconfirmed",
+            "reaped": False,
+        }
         try:
             if process.poll() is None:
                 process.terminate()
@@ -179,10 +204,11 @@ class GuiCommands(transport.Commands):
         }
 
     def run(self, argv: list[str], **kwargs) -> bytes:
-        prefix = ["/usr/bin/xcrun", "simctl", "--set", str(self.root / "simulator-set")]
+        hosted_gui_guard(self.root, self.env)
+        prefix, _ = self._selected()
         tail = argv[len(prefix) :] if argv[: len(prefix)] == prefix else []
         if "simctl" in argv and not tail:
-            raise ValueError("GUI setup control requires its owned custom device-set selector")
+            raise ValueError("GUI setup control requires its exact device-set selector")
         if tail and tail[0] == "create":
             if (
                 len(tail) != 4
@@ -191,10 +217,22 @@ class GuiCommands(transport.Commands):
             ):
                 raise ValueError("GUI setup control fresh CREATE inputs differ")
         elif tail and tail[0] != "help":
-            if tail[0] not in {
-                "boot", "bootstatus", "install", "get_app_container", "appinfo", "openurl",
-                "launch", "terminate", "shutdown", "delete",
-            } or len(tail) < 2:
+            if (
+                tail[0]
+                not in {
+                    "boot",
+                    "bootstatus",
+                    "install",
+                    "get_app_container",
+                    "appinfo",
+                    "openurl",
+                    "launch",
+                    "terminate",
+                    "shutdown",
+                    "delete",
+                }
+                or len(tail) < 2
+            ):
                 raise ValueError("GUI setup control device operation differs")
             self._owned(tail[1])
         if tail and tail[0] in {"boot", "bootstatus"}:
@@ -204,6 +242,10 @@ class GuiCommands(transport.Commands):
             self._owned(tail[1])
             if tail[0] == "bootstatus" and tail[1] not in self.booted:
                 raise ValueError("GUI setup control requires successful owned boot")
+            if tail[0] == "bootstatus":
+                # This setup differential alone has a longer fresh-boot budget.
+                # CommandFailure still propagates once; no retry or fallback.
+                kwargs["timeout"] = GUI_BOOTSTATUS_SECONDS
         if tail and tail[0] in {"shutdown", "delete"} and len(tail) == 2 and tail[1] in self.gui:
             if self.gui_cleanup.get(tail[1], {}).get("state") != "confirmed":
                 self.close_gui(tail[1])
@@ -217,7 +259,11 @@ class GuiCommands(transport.Commands):
             ):
                 raise ValueError("GUI setup control fresh CREATE inputs differ")
             device = str(uuid.UUID(raw.decode().strip())).upper()
-            if device in self.created or self.resources is None or device in self.resources.value.get("ios", {}):
+            if (
+                device in self.created
+                or self.resources is None
+                or device in self.resources.value.get("ios", {})
+            ):
                 raise ValueError("GUI setup control CREATE UUID is not fresh")
             self.created.add(device)
         elif tail and tail[0] == "boot" and self.last_status == 0:
@@ -227,31 +273,38 @@ class GuiCommands(transport.Commands):
         return raw
 
 
-def run_control(root: Path, driver: str):
+def run_control(root: Path, driver: str, selector: str = "custom"):
     """Keep driver verdict/exit intact, attach a separate setup-specific result."""
     hosted_gui_guard(root, os.environ)
     if root.exists() or root.is_symlink():
         raise ValueError("GUI setup control requires a NEW work directory")
     if driver not in {"simctl", "companion"}:
         raise ValueError("GUI setup control URL driver differs")
+    if selector not in {"custom", "default"}:
+        raise ValueError("GUI setup control device-set selector differs")
+    transport.ios_selector(root, selector, os.environ)
     instances: list[GuiCommands] = []
     original_commands, original_argv = transport.Commands, sys.argv
 
     class CapturedGuiCommands(GuiCommands):
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
+            super().__init__(*args, selector=selector, **kwargs)
             instances.append(self)
             self.gui_update = checkpoint
             checkpoint()
 
     result = {
         "schema_version": 1,
+        "source_version": 2,
         "measurement": "hosted-simulator-gui-setup-control",
-        "scope": "NEW custom devices only; setup-specific result independent of primary gate",
-        "hypothesis": "Simulator GUI startup may affect actual OS URL delivery",
+        "scope": "Only CREATE-returned journaled NEW UUIDs; setup-specific result independent of primary gate",
+        "hypothesis": "Device-set selection, fresh boot allowance and Simulator GUI startup may affect OS URL delivery",
         "state": "inconclusive",
         "terminal": False,
         "driver": driver,
+        "ios_device_set": selector,
+        "bootstatus_timeout_seconds": GUI_BOOTSTATUS_SECONDS,
+        "primary_bootstatus_timeout_seconds": 180,
         "commit": os.environ.get("GITHUB_SHA"),
         "run_id": os.environ.get("GITHUB_RUN_ID"),
         "source_sha256": digest(Path(__file__).read_bytes()),
@@ -277,17 +330,25 @@ def run_control(root: Path, driver: str):
         transport.Commands = CapturedGuiCommands
         sys.argv = [
             str(Path(transport.__file__)),
-            "--platform", "ios",
-            "--ios-device-set", "custom",
-            "--ios-runtime", transport.IOS_PINNED_RUNTIME,
-            "--ios-device-type", transport.IOS_PINNED_DEVICE_TYPE,
-            "--ios-url-driver", driver,
-            "--work", str(root),
+            "--platform",
+            "ios",
+            "--ios-device-set",
+            selector,
+            "--ios-runtime",
+            transport.IOS_PINNED_RUNTIME,
+            "--ios-device-type",
+            transport.IOS_PINNED_DEVICE_TYPE,
+            "--ios-url-driver",
+            driver,
+            "--work",
+            str(root),
         ]
         try:
             transport.main()
         except SystemExit as error:
-            result["driver_exit_status"] = error.code if type(error.code) is int else 0 if error.code is None else 1
+            result["driver_exit_status"] = (
+                error.code if type(error.code) is int else 0 if error.code is None else 1
+            )
             failed = result["driver_exit_status"] != 0
             if failed:
                 raise
@@ -317,7 +378,8 @@ def run_control(root: Path, driver: str):
             and result["gui_cleanup"]["state"] == "confirmed"
             and all(
                 item.get("command_journal") != "unconfirmed"
-                for commands in instances for item in commands.gui_cleanup.values()
+                for commands in instances
+                for item in commands.gui_cleanup.values()
             )
             else "inconclusive"
         )
@@ -337,8 +399,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--ios-url-driver", choices=("simctl", "companion"), default="simctl")
+    parser.add_argument("--ios-device-set", choices=("custom", "default"), default="custom")
     args = parser.parse_args()
-    run_control(args.work.resolve(), args.ios_url_driver)
+    run_control(args.work.resolve(), args.ios_url_driver, args.ios_device_set)
 
 
 if __name__ == "__main__":

@@ -39,11 +39,14 @@ IOS_ENTRY_BYTES = 4096
 IOS_CONTRACT_BYTES = 64 * 1024
 IOS_PINNED_RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-18-5"
 IOS_PINNED_DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-16"
+RUNTIME_CONTROL_SOURCE_VERSION = 2
 ANDROID_ERROR_BYTES = 4096
 ANDROID_ERROR_PHASES = {
     "binding",
     "http-issue",
     "http-logout",
+    "http-switch",
+    "http-protected",
     "state-write",
     "state-read",
     "response-write",
@@ -70,6 +73,8 @@ IOS_PHASES = {
     "url-processing",
     "http-issue",
     "http-logout",
+    "http-switch",
+    "http-protected",
     "response-written",
     "binding-or-transport-failure",
     "failure-url-shape",
@@ -78,6 +83,8 @@ IOS_PHASES = {
     "failure-session-binding",
     "failure-http-issue",
     "failure-http-logout",
+    "failure-http-switch",
+    "failure-http-protected",
     "failure-store-write",
     "failure-transition-fields",
     "failure-capture-fields",
@@ -707,6 +714,8 @@ def cleanup_owned(root: Path, commands: "Commands", resources: OwnedResources) -
             "case-1",
             "case-2",
             "case-3",
+            "case-4",
+            "case-5",
         ):
             path = root / name
             if path.is_symlink():
@@ -742,6 +751,10 @@ FAILURE_REASONS = {
     "Installed fixture target/build/transport response differs": "installed-target-build-transport-mismatch",
     "Installed fixture HTTP/session initialization differs": "installed-session-or-http-initialization",
     "Installed fixture logout delivery/HTTP authority differs": "installed-logout-or-http-binding",
+    "Installed fixture switch delivery/HTTP authority differs": "installed-switch-or-http-binding",
+    "Installed fixture account B authentication differs": "installed-switch-account-b-authentication",
+    "Installed fixture capture transition kind differs": "installed-capture-transition-kind",
+    "Installed fixture capture nonce differs": "installed-capture-nonce-binding",
     "Installed fixture capture challenge/state differs": "installed-capture-challenge-or-state",
     "Owned authority replay challenge/status differs": "http-replay-challenge-or-status",
     "Installed fixture session acquisition inconclusive": "installed-session-acquisition-inconclusive",
@@ -2018,6 +2031,8 @@ class IosTarget:
                 and counters.get("failure-session-binding", 0) >= 1
                 and counters.get("http-issue", 0) == 0
                 and counters.get("http-logout", 0) == 0
+                and counters.get("http-switch", 0) == 0
+                and counters.get("http-protected", 0) == 0
             ):
                 return {
                     "lifecycle": lifecycle,
@@ -2094,8 +2109,10 @@ class IosTarget:
         return {"scope": "no remaining owned UUID", "state": "confirmed"}
 
 
-def scenario(platform_name: str, package: str) -> dict:
-    return {
+def scenario(platform_name: str, package: str, transition_kind: str = "logout") -> dict:
+    if transition_kind not in {"logout", "account_switch"}:
+        raise ValueError("Installed fixture transition kind unsupported")
+    value = {
         "schema_version": 2,
         "platform": platform_name,
         "package": package,
@@ -2111,9 +2128,9 @@ def scenario(platform_name: str, package: str) -> dict:
             },
             "transitions": [
                 {
-                    "kind": "logout",
+                    "kind": transition_kind,
                     "from_account": "a",
-                    "to_account": None,
+                    "to_account": "b" if transition_kind == "account_switch" else None,
                     "baseline": "before",
                     "snapshot": "after",
                     "state_marker": "state",
@@ -2123,6 +2140,73 @@ def scenario(platform_name: str, package: str) -> dict:
             ],
         },
     }
+    if transition_kind == "account_switch":
+        value["markers"].update({key: "synthetic-unique-" + key for key in ("b", "login_b")})
+        value["workflow"]["accounts"]["b"] = {
+            "canary": "b",
+            "login_marker": "login_b",
+            "canary_surface": "storage",
+            "login_surface": "storage",
+        }
+    return value
+
+
+def old_account_switch_replay(before: dict, after: dict) -> list[dict]:
+    """Separate old-A replay control; B authentication is verified independently."""
+    captures = [before.get("acquisition", {}), after.get("acquisition", {})]
+    probes = [before.get("backend_probe", {}), after.get("backend_probe", {})]
+    valid = (
+        all(capture.get("state") == "bound" for capture in captures)
+        and bool(captures[0].get("session_sha256"))
+        and captures[0].get("session_sha256") == captures[1].get("session_sha256")
+        and all(capture.get("capture_sha256") for capture in captures)
+        and captures[0]["capture_sha256"] != captures[1]["capture_sha256"]
+        and captures[1].get("account") == "b"
+        and captures[1].get("observed_state") == "authenticated"
+        and captures[1].get("delivery") == "target-observed"
+        and all(probe.get("provenance", {}).get("state") == "bound" for probe in probes)
+        and all(
+            all(
+                probe.get("provenance", {}).get(key) == capture.get(key)
+                for key in (
+                    "session_sha256",
+                    "capture_sha256",
+                    "binding_identity",
+                    "snapshot",
+                    "account",
+                    "observed_state",
+                )
+            )
+            for probe, capture in zip(probes, captures, strict=True)
+        )
+        and bool(captures[0].get("binding_identity"))
+        and captures[0]["binding_identity"] == captures[1].get("binding_identity")
+        and all(
+            probes[0].get(key) and probes[0].get(key) == probes[1].get(key)
+            for key in ("authority_sha256", "credential_sha256")
+        )
+        and all(
+            isinstance(probe.get(key), str) and re.fullmatch(r"[a-f0-9]{64}", probe[key])
+            for probe in probes
+            for key in ("request_sha256", "response_sha256")
+        )
+        and probes[0]["request_sha256"] != probes[1]["request_sha256"]
+        and probes[0].get("outcome") == "accepted"
+        and all(
+            snapshot.get("surfaces", {}).get("network", {}).get("state") == "captured"
+            and snapshot.get("surfaces", {}).get("network", {}).get("acquisition") == "adapter-acquired"
+            for snapshot in (before, after)
+        )
+    )
+    return [
+        {
+            "transition_kind": "account_switch",
+            "state": ("passed" if probes[1].get("outcome") == "rejected" else "failed")
+            if valid and probes[1].get("outcome") in {"accepted", "rejected"}
+            else "inconclusive",
+            "scope": "independent before/after replay of old A credential at the same owned authority",
+        }
+    ]
 
 
 def ios_delivery_complete(observations: list[dict], before: dict, after: dict) -> bool:
@@ -2157,14 +2241,23 @@ def ios_delivery_complete(observations: list[dict], before: dict, after: dict) -
     )
 
 
-def execute_case(target, *, invalidate: bool, retain: bool, evidence: dict | None = None) -> dict:
-    value = scenario(target.platform, target.package)
+def execute_case(
+    target,
+    *,
+    invalidate: bool,
+    retain: bool,
+    evidence: dict | None = None,
+    transition_kind: str = "logout",
+) -> dict:
+    value = scenario(target.platform, target.package, transition_kind)
     key = "apk_sha256" if target.platform == "android" else "executable_sha256"
     authority = OwnedAuthority(target.package, target.build[key], invalidate=invalidate)
     server = AuthorityServer(authority)
     evidence = {} if evidence is None else evidence
     evidence.update(
         state="inconclusive",
+        source_version=RUNTIME_CONTROL_SOURCE_VERSION,
+        transition_kind=transition_kind,
         platform=target.platform,
         installed_build=target.build,
         fixture_policy={"invalidate": invalidate, "retain": retain},
@@ -2177,7 +2270,7 @@ def execute_case(target, *, invalidate: bool, retain: bool, evidence: dict | Non
         evidence["authority_health"].append({"phase": "before-session", **health})
         if health["state"] != "verified":
             raise ValueError("Owned authority readiness/identity unconfirmed")
-        adapter = InstalledTransportAdapter(target, server, retain=retain)
+        adapter = InstalledTransportAdapter(target, server, retain=retain, transition_kind=transition_kind)
         binding = build_binding(target.platform, target.package, target.build)
         recorder = AcquisitionRecorder(adapter, binding, value["markers"])
         if recorder.session is None:
@@ -2190,11 +2283,21 @@ def execute_case(target, *, invalidate: bool, retain: bool, evidence: dict | Non
                 "Installed fixture baseline acquisition inconclusive"
             )
         adapter.open_url("synthetic://transition")
-        after = recorder.capture("after", {"account": None, "state": "logged_out"}, "logout")
+        after = recorder.capture(
+            "after",
+            {"account": "b", "state": "authenticated"}
+            if transition_kind == "account_switch"
+            else {"account": None, "state": "logged_out"},
+            transition_kind,
+        )
         if after.get("acquisition", {}).get("capture_errors"):
             raise adapter.acquisition_error or ValueError("Installed fixture after acquisition inconclusive")
         snapshots = {"before": before, "after": after}
-        backend = evaluate_backend_invalidation(value, snapshots)
+        backend = (
+            old_account_switch_replay(before, after)
+            if transition_kind == "account_switch"
+            else evaluate_backend_invalidation(value, snapshots)
+        )
         workflow = evaluate_workflow(value, snapshots, recorder.binding)
         local_complete = all(
             s.get("surfaces", {}).get("storage", {}).get("state") == "captured" for s in (before, after)
@@ -2211,7 +2314,7 @@ def execute_case(target, *, invalidate: bool, retain: bool, evidence: dict | Non
             }
         ]
         expected_backend, expected_storage = (
-            ("passed" if invalidate else "failed"),
+            ("passed" if transition_kind == "account_switch" or invalidate else "failed"),
             ("failed" if retain else "passed"),
         )
         evidence["verified_fields"] = {
@@ -2222,6 +2325,16 @@ def execute_case(target, *, invalidate: bool, retain: bool, evidence: dict | Non
                 target.platform != "ios" or ios_delivery_complete(target.delivery_observations, before, after)
             ),
         }
+        if transition_kind == "account_switch":
+            evidence["verified_fields"]["account_b_authentication"] = (
+                adapter.account_b_authentication is not None
+                and bool(authority.b_credential)
+                and authority.b_active
+                and authority.switched
+                and not authority.active
+                and not authority.logged_out
+            )
+            evidence["account_b_authentication"] = adapter.account_b_authentication
         evidence.update(
             {
                 "state": "passed" if all(evidence["verified_fields"].values()) else "inconclusive",
@@ -2439,7 +2552,7 @@ def runtime_projection(evidence: dict) -> dict:
         return value if isinstance(value, str) and value in allowed else "unmeasured"
 
     cases = []
-    for case in evidence.get("cases", [])[:4]:
+    for case in evidence.get("cases", [])[:6]:
         health = []
         for probe in case.get("authority_health", [])[:2]:
             health.append(
@@ -2456,6 +2569,10 @@ def runtime_projection(evidence: dict) -> dict:
         cases.append(
             {
                 "state": state(case.get("state"), {"passed", "inconclusive"}),
+                "source_version": case.get("source_version")
+                if type(case.get("source_version")) is int
+                else None,
+                "transition_kind": state(case.get("transition_kind"), {"logout", "account_switch"}),
                 "fixture_policy": {
                     key: value
                     for key, value in case.get(
@@ -2472,7 +2589,7 @@ def runtime_projection(evidence: dict) -> dict:
                 "authority_event_counts": {
                     key: value
                     for key, value in case.get("authority_event_counts", {}).items()
-                    if key in {"/issue", "/logout", "/protected", "unsupported"}
+                    if key in {"/issue", "/logout", "/switch", "/protected", "unsupported"}
                     and type(value) is int
                     and 0 <= value <= 1024
                 },
@@ -2480,13 +2597,23 @@ def runtime_projection(evidence: dict) -> dict:
                 "verified_fields": {
                     key: value
                     for key, value in case.get("verified_fields", {}).items()
-                    if key in {"backend_policy", "storage_policy", "workflow", "bound_os_delivery"}
+                    if key
+                    in {
+                        "backend_policy",
+                        "storage_policy",
+                        "workflow",
+                        "bound_os_delivery",
+                        "account_b_authentication",
+                    }
                     and type(value) is bool
                 },
             }
         )
     result = {
         "schema_version": 1,
+        "source_version": evidence.get("source_version")
+        if type(evidence.get("source_version")) is int
+        else None,
         "state": state(evidence.get("state"), {"passed", "inconclusive"}),
         "terminal": evidence.get("terminal") is True,
         "platform": state(evidence.get("platform"), {"android", "ios", "backend"}),
@@ -2612,6 +2739,7 @@ def main():
     commands.resources = OwnedResources(root)
     evidence = {
         "schema_version": 1,
+        "source_version": RUNTIME_CONTROL_SOURCE_VERSION,
         "state": "inconclusive",
         "terminal": False,
         "platform": args.platform,
@@ -2662,11 +2790,18 @@ def main():
             device.start()
             evidence["new_device"] = {"avd": device.name, "serial": device.serial, "adb_server_port": 5049}
         policies = (
-            ((True, False),)
+            (("logout", True, False),)
             if args.ios_os_url_control
-            else ((True, False), (True, True), (False, False), (False, True))
+            else (
+                ("logout", True, False),
+                ("logout", True, True),
+                ("logout", False, False),
+                ("logout", False, True),
+                ("account_switch", True, False),
+                ("account_switch", True, True),
+            )
         )
-        for index, (invalidate, retain) in enumerate(policies):
+        for index, (transition_kind, invalidate, retain) in enumerate(policies):
             package = "apsa.fixture.c" + uuid.uuid4().hex + ".case" + str(index)
             target = None
             try:
@@ -2705,10 +2840,19 @@ def main():
                         raise ValueError("NEW OS URL diagnostic control requires iOS target")
                     result = target.url_control()
                 else:
-                    result = {}
+                    result = {
+                        "transition_kind": transition_kind,
+                        "source_version": RUNTIME_CONTROL_SOURCE_VERSION,
+                    }
                     # Persist the failed case too, before cleanup and without raw responses.
                     evidence["cases"].append(result)
-                    execute_case(target, invalidate=invalidate, retain=retain, evidence=result)
+                    execute_case(
+                        target,
+                        invalidate=invalidate,
+                        retain=retain,
+                        evidence=result,
+                        transition_kind=transition_kind,
+                    )
                 if isinstance(target, IosTarget):
                     result["new_simulator_uuid"] = target.device
                     evidence["ios_url_diagnostics"] = target.url_contract_diagnostics()

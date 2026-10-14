@@ -64,6 +64,7 @@ final class HTTPResult: @unchecked Sendable {
 final class FixtureTransport: @unchecked Sendable {
     private var session = "", account = "", token = "", backend = ""
     private var after = false, retain = false
+    private var transitionKind = ""
     private var deliveryLifecycle = "unsupported"
     private let eventLock = NSLock()
     private var events: [[String: Any]] = []
@@ -117,13 +118,16 @@ final class FixtureTransport: @unchecked Sendable {
         try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]).write(to: documents.appendingPathComponent("response.json"), options: [.atomic])
         if value["action"] as? String != "fixture-error" { stage("response-written") }
     }
-    private func http(_ route: String) throws -> [String: Any] {
-        stage(route == "/issue" ? "http-issue" : "http-logout")
+    private func http(_ route: String, nonce: String? = nil) throws -> [String: Any] {
+        stage(route == "/issue" ? "http-issue" : route == "/switch" ? "http-switch" : route == "/protected" ? "http-protected" : "http-logout")
         var request = URLRequest(url: URL(string: backend + route)!)
         request.httpMethod = "POST"; request.timeoutInterval = 10
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !token.isEmpty { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["session": session, "package": Bundle.main.bundleIdentifier!, "build": try build()])
+        var body: [String: Any] = ["session": session, "package": Bundle.main.bundleIdentifier!, "build": try build()]
+        if route == "/switch" { body["to_account"] = "b" }
+        if route == "/protected" { body["account"] = account; body["nonce"] = nonce }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let wait = DispatchSemaphore(value: 0)
         let responseResult = HTTPResult()
         let task = URLSession.shared.dataTask(with: request) { data, response, _ in
@@ -135,6 +139,14 @@ final class FixtureTransport: @unchecked Sendable {
         guard response.status == 200, let data = response.data,
               let output = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw FixtureError.invalid }
         return output
+    }
+    private func authenticateB(_ nonce: String) throws -> [String: String] {
+        let output = try http("/protected", nonce: nonce)
+        guard account == "b", output["account"] as? String == "b", output["nonce"] as? String == nonce,
+              output["outcome"] as? String == "accepted" else { throw FixtureError.invalid }
+        return ["account": "b",
+                "credential_sha256": SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined(),
+                "nonce_sha256": SHA256.hash(data: Data(nonce.utf8)).map { String(format: "%02x", $0) }.joined()]
     }
     enum FixtureError: Error { case invalid }
     func receive(_ url: URL, lifecycle: String) {
@@ -167,19 +179,42 @@ final class FixtureTransport: @unchecked Sendable {
                     guard self.session == challenge else { throw FixtureError.invalid }
                     if fields["action"] == "transition" {
                         failure = "failure-transition-fields"
-                        guard !self.after, fields["kind"] == "logout" else { throw FixtureError.invalid }
-                        failure = "failure-http-logout"
-                        _ = try self.http("/logout"); self.account = ""; self.token = ""; self.after = true
+                        guard !self.after, let kind = fields["kind"], ["logout", "account_switch"].contains(kind) else { throw FixtureError.invalid }
+                        var authentication: [String: String]?
+                        var storage: String
+                        if kind == "logout" {
+                            failure = "failure-http-logout"
+                            _ = try self.http("/logout"); self.account = ""; self.token = ""
+                            storage = "synthetic-unique-state synthetic-unique-delivery"
+                        } else {
+                            failure = "failure-http-switch"
+                            let switched = try self.http("/switch")
+                            guard switched["account"] as? String == "b", let credential = switched["credential"] as? String,
+                                  credential.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                                  credential != self.token else { throw FixtureError.invalid }
+                            self.account = "b"; self.token = credential
+                            failure = "failure-http-protected"
+                            let nonce = SHA256.hash(data: Data(UUID().uuidString.utf8)).map { String(format: "%02x", $0) }.joined()
+                            authentication = try self.authenticateB(nonce)
+                            storage = "synthetic-unique-b synthetic-unique-login_b synthetic-unique-state synthetic-unique-delivery"
+                        }
+                        self.after = true; self.transitionKind = kind
                         failure = "failure-store-write"
-                        try ("synthetic-unique-state synthetic-unique-delivery" + (self.retain ? " synthetic-unique-a" : "")).write(to: self.documents.appendingPathComponent("state.dat"), atomically: true, encoding: .utf8)
-                        try self.emit(["action": "transition", "kind": "logout"])
+                        try (storage + (self.retain ? " synthetic-unique-a" : "")).write(to: self.documents.appendingPathComponent("state.dat"), atomically: true, encoding: .utf8)
+                        var receipt: [String: Any] = ["action": "transition", "kind": kind]
+                        if let authentication { receipt["account_authentication"] = authentication }
+                        try self.emit(receipt)
                     } else if fields["action"] == "capture" {
                         failure = "failure-capture-fields"
-                        guard let nonce = fields["nonce"], nonce.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil, let snapshot = fields["snapshot"], fields["account"] == self.account,
-                              fields["state"] == (self.account.isEmpty ? "logged_out" : "authenticated"), fields["transition"] == (self.after ? "logout" : "") else { throw FixtureError.invalid }
+                        guard let nonce = fields["nonce"], nonce.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil, nonce != self.session, let snapshot = fields["snapshot"], fields["account"] == self.account,
+                              fields["state"] == (self.account.isEmpty ? "logged_out" : "authenticated"), fields["transition"] == self.transitionKind else { throw FixtureError.invalid }
+                        var authentication: [String: String]?
+                        if self.account == "b" { failure = "failure-http-protected"; authentication = try self.authenticateB(nonce) }
                         failure = "failure-store-read-or-response"
-                        try self.emit(["action": "capture", "nonce": nonce, "snapshot": snapshot, "transition": self.after ? "logout" : "", "completeness": "complete",
-                                       "storage": try String(contentsOf: self.documents.appendingPathComponent("state.dat"), encoding: .utf8)])
+                        var receipt: [String: Any] = ["action": "capture", "nonce": nonce, "snapshot": snapshot, "transition": self.transitionKind, "completeness": "complete",
+                                                    "storage": try String(contentsOf: self.documents.appendingPathComponent("state.dat"), encoding: .utf8)]
+                        if let authentication { receipt["account_authentication"] = authentication }
+                        try self.emit(receipt)
                     } else { throw FixtureError.invalid }
                 }
             } catch { self.stage(failure); try? self.emit(["action": "fixture-error", "code": failure]) }

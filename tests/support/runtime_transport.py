@@ -48,6 +48,12 @@ class OwnedAuthority:
         self.credential = ""
         self.active = False
         self.logged_out = False
+        # Keep A's original credential for independent before/after replay.
+        # B is issued only by an authorized app HTTP switch, never the driver.
+        self.switched = False
+        self.b_credential = ""
+        self.b_active = False
+        self.b_authentication_nonces: set[str] = set()
         self.events: list[dict] = []
         self.lock = threading.Lock()
 
@@ -69,9 +75,16 @@ class OwnedAuthority:
                 )
             except (ValueError, TypeError):
                 body, bound = {}, False
+            if not isinstance(body, dict):
+                body = {}
             token = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
             authorized = bool(token) and secrets.compare_digest(token, self.credential)
+            authorized_b = (
+                bool(token) and bool(self.b_credential) and secrets.compare_digest(token, self.b_credential)
+            )
+            authenticated_account = "a" if authorized else "b" if authorized_b else None
             status, output = 403, {"outcome": "rejected"}
+            issued = None
             if bound and route == "/issue" and not self.credential:
                 self.credential = secrets.token_hex(32)
                 self.active = True
@@ -81,23 +94,63 @@ class OwnedAuthority:
                 if self.invalidate:
                     self.active = False
                 status, output = 200, {"outcome": "logout-observed"}
-            elif bound and route == "/protected" and authorized:
+            elif (
+                bound
+                and route == "/switch"
+                and authorized
+                and self.active
+                and not self.logged_out
+                and not self.switched
+                and set(body) == {"session", "package", "build", "to_account"}
+                and body["to_account"] == "b"
+            ):
+                credential = secrets.token_hex(32)
+                if secrets.compare_digest(credential, self.credential):
+                    raise ValueError("Authority switch credential must differ")
+                self.b_credential, self.b_active = credential, True
+                self.switched, self.active = True, False
+                issued = digest(credential.encode())
+                status, output = 200, {"credential": credential, "account": "b"}
+            elif bound and route == "/protected" and (authorized or authorized_b):
                 nonce = body.get("nonce", "")
                 if (
                     isinstance(nonce, str)
                     and len(nonce) == 64
                     and all(c in "0123456789abcdef" for c in nonce)
                 ):
-                    status = 200 if self.active else 401
-                    output = {"outcome": "accepted" if self.active else "rejected", "nonce": nonce}
+                    active = self.active if authorized else self.b_active
+                    if authorized_b and (
+                        set(body) != {"session", "package", "build", "account", "nonce"}
+                        or body.get("account") != "b"
+                        or nonce == self.session
+                        or digest(nonce.encode()) in self.b_authentication_nonces
+                    ):
+                        active = False
+                    status = 200 if active else 401
+                    output = {"outcome": "accepted" if active else "rejected", "nonce": nonce}
+                    if authorized_b:
+                        output["account"] = "b"
+                        if active:
+                            self.b_authentication_nonces.add(digest(nonce.encode()))
             response = canonical_json(output).encode()
             self.events.append(
                 {
-                    "route": route if route in {"/issue", "/logout", "/protected"} else "unsupported",
+                    "route": route
+                    if route in {"/issue", "/logout", "/switch", "/protected"}
+                    else "unsupported",
                     "status": status,
                     "bound": bound,
                     "session_sha256": digest(self.session.encode()),
-                    "credential_sha256": digest(self.credential.encode()) if self.credential else None,
+                    "credential_sha256": digest(token.encode())
+                    if authorized or authorized_b
+                    else digest(self.credential.encode())
+                    if route == "/issue" and status == 200
+                    else None,
+                    "authenticated_account": authenticated_account,
+                    "issued_credential_sha256": issued,
+                    "nonce_sha256": digest(body["nonce"].encode())
+                    if isinstance(body.get("nonce"), str)
+                    else None,
                     "request_sha256": digest(raw),
                     "response_sha256": digest(response),
                     "request_bytes": len(raw),
@@ -206,7 +259,7 @@ class AuthorityServer:
         with self.authority.lock:
             return {
                 route: sum(event["route"] == route for event in self.authority.events)
-                for route in ("/issue", "/logout", "/protected", "unsupported")
+                for route in ("/issue", "/logout", "/switch", "/protected", "unsupported")
             }
 
     def replay(self, nonce: str) -> BackendProbe:
@@ -275,8 +328,20 @@ class InstalledTarget(Protocol):
 class InstalledTransportAdapter:
     """NEW installed app data only; every response binds the OS-delivered challenge."""
 
-    def __init__(self, target: InstalledTarget, server: AuthorityServer, *, retain: bool):
+    def __init__(
+        self,
+        target: InstalledTarget,
+        server: AuthorityServer,
+        *,
+        retain: bool,
+        transition_kind: str = "logout",
+    ):
+        if transition_kind not in {"logout", "account_switch"}:
+            raise ValueError("Installed fixture transition kind unsupported")
         self.target, self.server, self.retain = target, server, retain
+        self.transition_kind = transition_kind
+        self.account_b_authentication: dict | None = None
+        self.capture_nonces: set[str] = set()
         self.session: AcquisitionSession | None = None
         # Recorder failures remain inconclusive; the dedicated CI driver may
         # project this exception into its fixed, redacted failure taxonomy.
@@ -341,21 +406,85 @@ class InstalledTransportAdapter:
     def open_url(self, url: str) -> dict:
         if url != "synthetic://transition" or self.after or not self.session:
             raise ValueError("Installed fixture transition unsupported")
-        response = self._exchange({"action": "transition", "session": self.session.nonce, "kind": "logout"})
-        if (
-            response.get("kind") != "logout"
-            or response.get("account") != ""
-            or response.get("state") != "logged_out"
-            or response.get("delivery") != "target-observed"
-            or not self.server.authority.logged_out
-        ):
-            raise ValueError("Installed fixture logout delivery/HTTP authority differs")
+        response = self._exchange(
+            {"action": "transition", "session": self.session.nonce, "kind": self.transition_kind}
+        )
+        if self.transition_kind == "logout":
+            if (
+                response.get("kind") != "logout"
+                or response.get("account") != ""
+                or response.get("state") != "logged_out"
+                or response.get("delivery") != "target-observed"
+                or not self.server.authority.logged_out
+                or self.server.authority.switched
+            ):
+                raise ValueError("Installed fixture logout delivery/HTTP authority differs")
+        else:
+            authority = self.server.authority
+            if (
+                response.get("kind") != "account_switch"
+                or response.get("account") != "b"
+                or response.get("state") != "authenticated"
+                or response.get("delivery") != "target-observed"
+                or not authority.switched
+                or not authority.b_active
+                or authority.active
+                or authority.logged_out
+            ):
+                raise ValueError("Installed fixture switch delivery/HTTP authority differs")
+            self.account_b_authentication = self._verified_b_authentication(response)
         self.after = True
         return {"delivery": "target-activity-reported", "transport": self.delivery_transport}
+
+    def _verified_b_authentication(self, response: dict, nonce: str | None = None) -> dict:
+        proof = response.get("account_authentication")
+        authority = self.server.authority
+        if (
+            not isinstance(proof, dict)
+            or set(proof) != {"account", "credential_sha256", "nonce_sha256"}
+            or proof.get("account") != "b"
+            or not authority.b_credential
+            or proof.get("credential_sha256") != digest(authority.b_credential.encode())
+            or not isinstance(proof.get("nonce_sha256"), str)
+            or len(proof["nonce_sha256"]) != 64
+            or any(char not in "0123456789abcdef" for char in proof["nonce_sha256"])
+            or proof.get("nonce_sha256") not in authority.b_authentication_nonces
+            or proof["nonce_sha256"] == digest(authority.session.encode())
+            or proof["nonce_sha256"] in {digest(value.encode()) for value in self.capture_nonces}
+            or (nonce is not None and proof["nonce_sha256"] != digest(nonce.encode()))
+            or not any(
+                event["route"] == "/protected"
+                and event["status"] == 200
+                and event["bound"]
+                and event["authenticated_account"] == "b"
+                and event["credential_sha256"] == proof["credential_sha256"]
+                and event["nonce_sha256"] == proof["nonce_sha256"]
+                for event in authority.events
+            )
+        ):
+            raise ValueError("Installed fixture account B authentication differs")
+        return proof.copy()
 
     def capture(self, request: CaptureRequest) -> AcquiredCapture:
         if request.session != self.session:
             raise ValueError("Installed fixture capture session differs")
+        if (
+            not isinstance(request.nonce, str)
+            or len(request.nonce) != 64
+            or any(char not in "0123456789abcdef" for char in request.nonce)
+            or request.nonce == request.session.nonce
+            or request.nonce in self.capture_nonces
+        ):
+            raise ValueError("Installed fixture capture nonce differs")
+        expected_account = (
+            "b" if self.after and self.transition_kind == "account_switch" else None if self.after else "a"
+        )
+        if (
+            request.account != expected_account
+            or request.state != ("logged_out" if expected_account is None else "authenticated")
+            or request.transition != (self.transition_kind if self.after else None)
+        ):
+            raise ValueError("Installed fixture capture transition kind differs")
         response = self._exchange(
             {
                 "action": "capture",
@@ -380,6 +509,9 @@ class InstalledTransportAdapter:
             or len(response["storage"].encode()) > MAX_RESPONSE
         ):
             raise ValueError("Installed fixture capture challenge/state differs")
+        if self.after and self.transition_kind == "account_switch":
+            self._verified_b_authentication(response, request.nonce)
+        self.capture_nonces.add(request.nonce)
         probe = self.server.replay(request.nonce)
         return AcquiredCapture(
             request,

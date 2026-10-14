@@ -29,11 +29,16 @@ func validatedDispatcherURL(_ text: String, scheme: String) -> URL? {
         guard Set(fields.keys) == ["action", "session", "nonce", "snapshot", "account", "state", "transition"],
               fields["nonce"]?.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
               ["before", "after"].contains(fields["snapshot"] ?? ""),
-              ["a", ""].contains(fields["account"] ?? "unsupported"),
+              ["a", "b", ""].contains(fields["account"] ?? "unsupported"),
               ["authenticated", "logged_out"].contains(fields["state"] ?? ""),
-              ["", "logout"].contains(fields["transition"] ?? "unsupported") else { return nil }
+              ["", "logout", "account_switch"].contains(fields["transition"] ?? "unsupported") else { return nil }
+        let account = fields["account"]!, state = fields["state"]!, transition = fields["transition"]!
+        guard (account.isEmpty && state == "logged_out" && transition == "logout")
+            || (account == "a" && state == "authenticated" && transition.isEmpty)
+            || (account == "b" && state == "authenticated" && transition == "account_switch")
+            || (account.isEmpty && state == "logged_out" && transition.isEmpty) else { return nil }
     } else {
-        guard Set(fields.keys) == ["action", "session", "kind"], fields["kind"] == "logout" else {
+        guard Set(fields.keys) == ["action", "session", "kind"], ["logout", "account_switch"].contains(fields["kind"] ?? "") else {
             return nil
         }
     }
