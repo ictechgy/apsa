@@ -1816,14 +1816,29 @@ class IosTarget:
         primary["tool_help"] = getattr(self, "tool_help", {})
         # Save the original cold challenge evidence before any tail command can change files.
         if expected["action"] == "session":
+            self.cold_diagnostic_progress = {
+                "process_epoch_observed": None,
+                "scene_active_observed": None,
+                "warm_probe_attempted": False,
+            }
             try:
-                primary["diagnostic_tail"] = self.cold_timeout_diagnostic()
+                tail = self.cold_timeout_diagnostic()
+                primary["diagnostic_tail"] = {**self.cold_diagnostic_progress, **tail}
             except (ValueError, OSError, subprocess.SubprocessError):
-                primary["diagnostic_tail"] = {"state": "unmeasured", "reason": "diagnostic-command-failure"}
+                primary["diagnostic_tail"] = {
+                    **self.cold_diagnostic_progress,
+                    "state": "unmeasured",
+                    "reason": "diagnostic-command-failure",
+                }
         raise FixtureFailure("NEW iOS OS URL response challenge timed out", primary)
 
     def cold_timeout_diagnostic(self):
         """One separated probe; never call acquisition, HTTP, or primary deliver again."""
+        progress = self.cold_diagnostic_progress = {
+            "process_epoch_observed": None,
+            "scene_active_observed": None,
+            "warm_probe_attempted": False,
+        }
         if self.device is None:
             raise ValueError("NEW simulator has no owned UUID")
         self.require_installed_contract()
@@ -1835,6 +1850,7 @@ class IosTarget:
             "info_plist_sha256": digest((app / "Info.plist").read_bytes()),
         }
         result = {
+            **progress,
             "state": "diagnostic-only",
             "url_driver": "simctl",
             "acquisition": "unsupported",
@@ -1859,6 +1875,23 @@ class IosTarget:
             }
         events_path = data / "Documents/events.json"
         events = safe_ios_events(b"", readiness_epoch=readiness)
+
+        def observe_events():
+            # Independent facts from the currently observed owned event receipt.
+            # A new epoch without scene activation never makes readiness pass.
+            relation = events.get("process_epoch_relation")
+            progress["process_epoch_observed"] = (
+                relation == "new-since-readiness"
+                if relation in {"same-as-readiness", "new-since-readiness"}
+                else None
+            )
+            progress["scene_active_observed"] = (
+                events.get("counters", {}).get("scene-active", 0) >= 1
+                if events.get("state") == "complete"
+                else None
+            )
+            result.update(progress)
+
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             raw = (
@@ -1867,6 +1900,7 @@ class IosTarget:
                 else b""
             )
             events = safe_ios_events(raw, readiness_epoch=readiness)
+            observe_events()
             if (
                 events.get("process_epoch_relation") == "new-since-readiness"
                 and events.get("counters", {}).get("scene-active", 0) >= 1
@@ -1904,6 +1938,8 @@ class IosTarget:
         }
         # A different synthetic session cannot initialize credentials or satisfy primary acquisition.
         deadline = time.monotonic() + 15
+        progress["warm_probe_attempted"] = True
+        result.update(progress)
         self.commands.run(self.simctl + ["openurl", self.device, url], timeout=15)
         while True:
             raw = (
@@ -1912,6 +1948,7 @@ class IosTarget:
                 else b""
             )
             events = safe_ios_events(raw, expected, readiness)
+            observe_events()
             bound = events.get("state") == "complete" and any(
                 r["matches_expected_dispatch"] for r in events.get("receipts", [])
             )

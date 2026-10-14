@@ -7,6 +7,12 @@ selection and OSV exclusions, runtime observation contracts, large-input
 staging/reporting and the subsequent CLI/parser/job/store review fixes.
 Rule version: `2026.10.15.apsa.160`.
 
+Native call summaries now require matching package/import/file identity.
+An unrelated module's same-named function or constructor cannot supply a
+sanitizer. Unknown or ambiguous identities preserve argument/field taint and
+partial coverage. Swift cross-file summaries remain unavailable without
+compiler module identity.
+
 ## Upgrade effects
 
 - New candidate findings, partial reasons and stricter source input binding can
@@ -43,6 +49,11 @@ validation items until a new installed target supplies bound observations.
 Transport dispatch, process startup and HTTP backend-only success cannot
 substitute for target acquisition.
 
+The six Android controls passed on `588150f`, including both authenticated
+account switches and terminal cleanup ([owned hosted run](https://github.com/ictechgy/apsa/actions/runs/38608689172)).
+That observation is bound to its recorded driver/native fixture hashes; it
+does not establish iOS or physical-device acceptance.
+
 Publication uses the stable version/tag match, required CI, repeated verified
 wheel/sdist build and Trusted Publishing. A separate post-publication workflow
 checks PyPI and release digests, tag/source binding, MCP Registry metadata and
@@ -60,6 +71,11 @@ Every operation remains bound to the newly created and journaled UUID. GUI
 binding/foreground are unverified; all target session/nonce/build, lifecycle,
 canary, B-authentication and cleanup gates remain required. Primary failures
 are retained. The differential is not a universal Simulator support claim.
+
+The custom/default legacy GUI differential on `588150f` also failed to observe
+a target callback. A separate modern custom-set control pins Xcode 26.3 and
+iOS 26.2 while preserving the same six-case acceptance contract. Its source
+and mocked checks do not establish delivery or a fix for the legacy failures.
 
 The native role-selector review processes failed before start because their
 configured model is unavailable in this account. Independent code/spec and

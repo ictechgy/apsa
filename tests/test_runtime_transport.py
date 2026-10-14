@@ -1717,6 +1717,9 @@ def test_ios_cold_timeout_retains_primary_failure_even_when_tail_observes_warm_c
     monkeypatch.setattr("scripts.validate_runtime_transport.time.monotonic", lambda: next(times))
 
     def diagnostic():
+        target.cold_diagnostic_progress.update(
+            process_epoch_observed=True, scene_active_observed=False, warm_probe_attempted=False
+        )
         target.stage_path.write_text("os-url-context-received")
         target.events_path.write_text(json.dumps(synthetic_ios_events()))
         if tail_failure:
@@ -1733,11 +1736,27 @@ def test_ios_cold_timeout_retains_primary_failure_even_when_tail_observes_warm_c
     assert target.dispatch_expectation["action"] == "session"
     assert target.dispatch_expectation["uri_sha256"] == digest(b"new-synthetic-primary-url")
     assert "new-synthetic-private-error" not in json.dumps(caught.value.observation)
+    assert caught.value.observation["diagnostic_tail"]["process_epoch_observed"] is True
+    assert caught.value.observation["diagnostic_tail"]["scene_active_observed"] is False
+    assert caught.value.observation["diagnostic_tail"]["warm_probe_attempted"] is False
 
 
 @pytest.mark.parametrize("launch_creates_epoch", [True, False])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "ready",
+        "inactive",
+        "same-epoch",
+        "unavailable",
+        "before-identity",
+        "after-identity",
+        "launch-error",
+        "openurl-error",
+    ],
+)
 def test_ios_diagnostic_tail_requires_fresh_ready_epoch_and_exact_warm_noncredential_receipt(
-    tmp_path, monkeypatch, launch_creates_epoch
+    tmp_path, monkeypatch, launch_creates_epoch, outcome
 ):
     target = IosTarget.__new__(IosTarget)
     monkeypatch.setattr(target, "require_installed_contract", lambda **kwargs: None)
@@ -1765,23 +1784,44 @@ def test_ios_diagnostic_tail_requires_fresh_ready_epoch_and_exact_warm_noncreden
         old["launch_epoch_sha256"] if launch_creates_epoch else digest(b"earlier readiness")
     )
     monkeypatch.setattr(target, "container", lambda kind: app if kind == "app" else data)
-    monkeypatch.setattr(target, "appinfo", lambda: {"state": "unmeasured"})
     monkeypatch.setattr(
-        "scripts.validate_runtime_transport.ios_process_identity", lambda *a: {"state": "unmeasured"}
+        target,
+        "appinfo",
+        lambda: {"package_matches": False} if outcome == "before-identity" else {"state": "unmeasured"},
     )
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.ios_process_identity",
+        lambda *a: {"state": "identity-mismatch" if outcome == "after-identity" else "unmeasured"},
+    )
+    times = iter([0, 1, 16])
+    monkeypatch.setattr("scripts.validate_runtime_transport.time.monotonic", lambda: next(times))
     calls = []
 
     def control(argv, **kwargs):
         calls.append(argv)
         if "launch" in argv:
+            if outcome == "launch-error":
+                raise ValueError("new synthetic launch failure")
             value = synthetic_ios_events()
             value["launch_epoch_sha256"] = (
                 digest(b"new direct-launch process") if launch_creates_epoch else old["launch_epoch_sha256"]
             )
-            value["events"] = [{"sequence": 1, "phase": "scene-active", "main_thread": True}]
+            if outcome == "same-epoch":
+                value["launch_epoch_sha256"] = target.readiness_epoch
+            value["events"] = [
+                {
+                    "sequence": 1,
+                    "phase": "startup-scene" if outcome == "inactive" else "scene-active",
+                    "main_thread": True,
+                }
+            ]
             target.events_path.write_text(json.dumps(value))
+            if outcome == "unavailable":
+                target.events_path.unlink()
             return b"apsa.fixture.new: 321\n"
         if "openurl" in argv:
+            if outcome == "openurl-error":
+                raise ValueError("new synthetic openurl failure")
             fields = parse_qs(urlparse(argv[-1]).query)
             assert set(fields) == {"action", "session", "nonce"}
             assert fields["action"] == ["capture"]
@@ -1803,13 +1843,38 @@ def test_ios_diagnostic_tail_requires_fresh_ready_epoch_and_exact_warm_noncreden
         return b""
 
     monkeypatch.setattr(target.commands, "run", control)
+    if outcome in {"launch-error", "openurl-error"}:
+        with pytest.raises(ValueError, match="new synthetic"):
+            target.cold_timeout_diagnostic()
+        progress = target.cold_diagnostic_progress
+        assert progress == {
+            "process_epoch_observed": True if outcome == "openurl-error" else None,
+            "scene_active_observed": True if outcome == "openurl-error" else None,
+            "warm_probe_attempted": outcome == "openurl-error",
+        }
+        assert target.delivery_observations == []
+        return
     result = target.cold_timeout_diagnostic()
-    assert result["fresh_epoch"] is True and result["warm_receipt_bound"] is True
-    assert result["diagnostic_launch_created_fresh_epoch"] is launch_creates_epoch
-    assert result["state"] == "diagnostic-only"
+    if outcome in {"before-identity", "after-identity"}:
+        assert result["state"] == "identity-mismatch"
+        assert result["process_epoch_observed"] is None and result["scene_active_observed"] is None
+        assert result["warm_probe_attempted"] is False
+    else:
+        assert result["fresh_epoch"] is (outcome == "ready")
+        assert result["warm_receipt_bound"] is (outcome == "ready")
+        assert result["process_epoch_observed"] is (
+            None if outcome == "unavailable" else outcome != "same-epoch"
+        )
+        assert result["scene_active_observed"] is (
+            None if outcome == "unavailable" else outcome != "inactive"
+        )
+        assert result["warm_probe_attempted"] is (outcome == "ready")
+        if outcome in {"ready", "inactive"}:
+            assert result["diagnostic_launch_created_fresh_epoch"] is launch_creates_epoch
+        assert result["state"] == "diagnostic-only"
     assert target.dispatch_expectation == {"primary": "unchanged"}
     assert target.delivery_observations == []
-    assert ["launch" in c for c in calls] == [True, False]
+    assert sum("openurl" in call for call in calls) == (1 if outcome == "ready" else 0)
 
 
 @pytest.mark.parametrize(

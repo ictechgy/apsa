@@ -17,27 +17,77 @@ import subprocess
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from types import MappingProxyType
+from typing import Callable, Mapping
 
 from mobile_audit.core import digest
 from scripts import validate_runtime_transport as transport
 
 PINNED_DEVELOPER_DIR = "/Applications/Xcode_16.4.app/Contents/Developer"
+MODERN_DEVELOPER_DIR = "/Applications/Xcode_26.3.app/Contents/Developer"
 GUI_SETTLE_SECONDS = 5
 GUI_WAIT_SECONDS = 10
 GUI_BOOTSTATUS_SECONDS = 600
 
 
-def hosted_gui_guard(root: Path, env: dict) -> Path:
+@dataclass(frozen=True)
+class GuiToolchain:
+    key: str
+    developer_dir: str
+    runtime: str
+    device_type: str
+
+    def evidence(self) -> dict:
+        values = {
+            "toolchain": self.key,
+            "developer_dir": self.developer_dir,
+            "ios_runtime": self.runtime,
+            "ios_device_type": self.device_type,
+        }
+        return {**values, **{f"{key}_sha256": digest(value.encode()) for key, value in values.items()}}
+
+
+GUI_TOOLCHAINS: Mapping[str, GuiToolchain] = MappingProxyType(
+    {
+        "legacy": GuiToolchain(
+            "legacy", PINNED_DEVELOPER_DIR, transport.IOS_PINNED_RUNTIME, transport.IOS_PINNED_DEVICE_TYPE
+        ),
+        "modern": GuiToolchain(
+            "modern",
+            MODERN_DEVELOPER_DIR,
+            "com.apple.CoreSimulator.SimRuntime.iOS-26-2",
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-16",
+        ),
+    }
+)
+
+
+def selected_toolchain(key: str) -> GuiToolchain:
+    try:
+        return GUI_TOOLCHAINS[key]
+    except (KeyError, TypeError):
+        raise ValueError("GUI setup control toolchain must be legacy or modern") from None
+
+
+def validate_selector(selector: str, config: GuiToolchain):
+    if selector not in {"custom", "default"}:
+        raise ValueError("GUI setup control device-set selector differs")
+    if config.key == "modern" and selector != "custom":
+        raise ValueError("GUI setup control modern toolchain requires custom device set")
+
+
+def hosted_gui_guard(root: Path, env: Mapping[str, str], toolchain: str = "legacy") -> Path:
     """Operational containment only; no host/device/UI attestation."""
+    config = selected_toolchain(toolchain)
     required = {
         "GITHUB_ACTIONS": "true",
         "CI": "true",
         "RUNNER_ENVIRONMENT": "github-hosted",
         "RUNNER_OS": "macOS",
         "HOME": "/Users/runner",
-        "DEVELOPER_DIR": PINNED_DEVELOPER_DIR,
+        "DEVELOPER_DIR": config.developer_dir,
     }
     forbidden = {
         "SIMULATOR_DEVICE_SET_PATH",
@@ -61,7 +111,7 @@ def hosted_gui_guard(root: Path, env: dict) -> Path:
     if root != root.resolve() or root == runner_temp or not root.is_relative_to(runner_temp):
         raise ValueError("GUI setup control work must be contained in RUNNER_TEMP")
     # Exact pinned source, without xcode-select, preferences or tool discovery.
-    return Path(env["DEVELOPER_DIR"]) / "Applications/Simulator.app/Contents/MacOS/Simulator"
+    return Path(config.developer_dir) / "Applications/Simulator.app/Contents/MacOS/Simulator"
 
 
 class GuiCommands(transport.Commands):
@@ -70,15 +120,16 @@ class GuiCommands(transport.Commands):
     def __init__(
         self,
         root: Path,
-        env: dict | None = None,
+        env: Mapping[str, str] | None = None,
         *,
         output_name: str = "commands.json",
         selector: str = "custom",
+        toolchain: str = "legacy",
     ):
-        super().__init__(root, env=env, output_name=output_name)
-        hosted_gui_guard(root, self.env)
-        if selector not in {"custom", "default"}:
-            raise ValueError("GUI setup control device-set selector differs")
+        self.config = selected_toolchain(toolchain)
+        validate_selector(selector, self.config)
+        super().__init__(root, env=dict(env) if env is not None else None, output_name=output_name)
+        hosted_gui_guard(root, self.env, self.config.key)
         self.selector = selector
         # Default is the literal disposable hosted home factory, never caller input.
         self._selected()
@@ -105,7 +156,7 @@ class GuiCommands(transport.Commands):
             self.gui_update()
 
     def _owned(self, device: str):
-        hosted_gui_guard(self.root, self.env)
+        hosted_gui_guard(self.root, self.env, self.config.key)
         if (
             str(uuid.UUID(device)).upper() != device
             or device not in self.created
@@ -124,13 +175,14 @@ class GuiCommands(transport.Commands):
         if device not in self.booted or device in self.gui:
             raise ValueError("GUI setup control boot custody differs")
         argv = [
-            str(hosted_gui_guard(self.root, self.env)),
+            str(hosted_gui_guard(self.root, self.env, self.config.key)),
             "-CurrentDeviceUDID",
             device,
             "-DeviceSetPath",
             str(device_set),
         ]
         record = {
+            **self.config.evidence(),
             "uuid_sha256": digest(device.encode()),
             "argv_sha256": digest(json.dumps(argv).encode()),
             "selector": self.selector,
@@ -204,7 +256,7 @@ class GuiCommands(transport.Commands):
         }
 
     def run(self, argv: list[str], **kwargs) -> bytes:
-        hosted_gui_guard(self.root, self.env)
+        hosted_gui_guard(self.root, self.env, self.config.key)
         prefix, _ = self._selected()
         tail = argv[len(prefix) :] if argv[: len(prefix)] == prefix else []
         if "simctl" in argv and not tail:
@@ -212,7 +264,7 @@ class GuiCommands(transport.Commands):
         if tail and tail[0] == "create":
             if (
                 len(tail) != 4
-                or tail[2:] != [transport.IOS_PINNED_DEVICE_TYPE, transport.IOS_PINNED_RUNTIME]
+                or tail[2:] != [self.config.device_type, self.config.runtime]
                 or not tail[1].startswith("APSA-NEW-")
             ):
                 raise ValueError("GUI setup control fresh CREATE inputs differ")
@@ -253,7 +305,7 @@ class GuiCommands(transport.Commands):
         if tail and tail[0] == "create":
             if (
                 len(tail) != 4
-                or tail[2:] != [transport.IOS_PINNED_DEVICE_TYPE, transport.IOS_PINNED_RUNTIME]
+                or tail[2:] != [self.config.device_type, self.config.runtime]
                 or not tail[1].startswith("APSA-NEW-")
                 or self.last_status != 0
             ):
@@ -273,22 +325,22 @@ class GuiCommands(transport.Commands):
         return raw
 
 
-def run_control(root: Path, driver: str, selector: str = "custom"):
+def run_control(root: Path, driver: str, selector: str = "custom", toolchain: str = "legacy"):
     """Keep driver verdict/exit intact, attach a separate setup-specific result."""
-    hosted_gui_guard(root, os.environ)
+    config = selected_toolchain(toolchain)
+    validate_selector(selector, config)
+    hosted_gui_guard(root, dict(os.environ), config.key)
     if root.exists() or root.is_symlink():
         raise ValueError("GUI setup control requires a NEW work directory")
     if driver not in {"simctl", "companion"}:
         raise ValueError("GUI setup control URL driver differs")
-    if selector not in {"custom", "default"}:
-        raise ValueError("GUI setup control device-set selector differs")
-    transport.ios_selector(root, selector, os.environ)
+    transport.ios_selector(root, selector, dict(os.environ))
     instances: list[GuiCommands] = []
     original_commands, original_argv = transport.Commands, sys.argv
 
     class CapturedGuiCommands(GuiCommands):
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, selector=selector, **kwargs)
+            super().__init__(*args, selector=selector, toolchain=config.key, **kwargs)
             instances.append(self)
             self.gui_update = checkpoint
             checkpoint()
@@ -296,9 +348,10 @@ def run_control(root: Path, driver: str, selector: str = "custom"):
     result = {
         "schema_version": 1,
         "source_version": 2,
+        **config.evidence(),
         "measurement": "hosted-simulator-gui-setup-control",
         "scope": "Only CREATE-returned journaled NEW UUIDs; setup-specific result independent of primary gate",
-        "hypothesis": "Device-set selection, fresh boot allowance and Simulator GUI startup may affect OS URL delivery",
+        "hypothesis": "Pinned toolchain/runtime, device-set selection, fresh boot allowance and Simulator GUI startup may affect OS URL delivery",
         "state": "inconclusive",
         "terminal": False,
         "driver": driver,
@@ -335,9 +388,9 @@ def run_control(root: Path, driver: str, selector: str = "custom"):
             "--ios-device-set",
             selector,
             "--ios-runtime",
-            transport.IOS_PINNED_RUNTIME,
+            config.runtime,
             "--ios-device-type",
-            transport.IOS_PINNED_DEVICE_TYPE,
+            config.device_type,
             "--ios-url-driver",
             driver,
             "--work",
@@ -400,8 +453,9 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--ios-url-driver", choices=("simctl", "companion"), default="simctl")
     parser.add_argument("--ios-device-set", choices=("custom", "default"), default="custom")
+    parser.add_argument("--ios-toolchain", choices=tuple(GUI_TOOLCHAINS), default="legacy")
     args = parser.parse_args()
-    run_control(args.work.resolve(), args.ios_url_driver, args.ios_device_set)
+    run_control(args.work.resolve(), args.ios_url_driver, args.ios_device_set, args.ios_toolchain)
 
 
 if __name__ == "__main__":

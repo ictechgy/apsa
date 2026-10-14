@@ -65,6 +65,8 @@ class NativeFlow:
     def __init__(self, files: list[tuple[Analyzer, Any, list[Any]]]):
         self.by_name: dict[str, list[Callable]] = {}
         self.classes: dict[str, set[str]] = {}
+        self.class_definitions: dict[str, list[tuple[Analyzer, Any]]] = {}
+        self.namespaces: dict[int, str] = {}
         self.stack: list[tuple] = []
         self.call_sites: list[str] = []
         self.evaluations = 0
@@ -80,6 +82,18 @@ class NativeFlow:
         for analyzer, root, nodes in self.files:
             analyzer.prepare(root, nodes)
             analyzer.native_flow = self
+            packages = [
+                node for node in root.named_children if node.type in {"package_declaration", "package_header"}
+            ]
+            namespace = ""
+            if packages:
+                match = re.fullmatch(r"package\s+([\w.]+)\s*;?", analyzer.text(packages[0]))
+                if len(packages) != 1 or packages[0].has_error or match is None:
+                    self.partial("package identity unavailable", analyzer, node=packages[0])
+                    namespace = "@file:" + analyzer.path
+                else:
+                    namespace = match[1]
+            self.namespaces[id(analyzer)] = namespace
             for node in nodes:
                 if node.type in {"class_declaration", "object_declaration"}:
                     name = _field(node, "name") or next(
@@ -93,6 +107,7 @@ class NativeFlow:
                     if name is not None:
                         owner = self.owner(analyzer, name)
                         self.classes.setdefault(analyzer.text(name), set()).add(owner)
+                        self.class_definitions.setdefault(owner, []).append((analyzer, node))
                 if node.type not in FUNCTIONS or node.has_error:
                     continue
                 count += 1
@@ -132,7 +147,8 @@ class NativeFlow:
             owner = ""
         else:
             owner = ".".join(
-                ([analyzer.package_name] if analyzer.package_name else []) + list(reversed(names))
+                ([self.namespaces[id(analyzer)]] if self.namespaces[id(analyzer)] else [])
+                + list(reversed(names))
             )
         self.owner_cache[key] = owner
         return owner
@@ -211,57 +227,265 @@ class NativeFlow:
             identity = self.receiver_identity(analyzer, base, frame)
             frame.object_fields.setdefault(identity, {})[member] = value
 
-    def resolve(self, analyzer: Analyzer, call: Call, receiver: Value) -> tuple[list[Callable], bool]:
-        choices = self.by_name.get(call.name, [])
-        if not choices:
-            return [], False
-        named_choices = choices
+    @staticmethod
+    def enclosing(node: Any, types: set[str]) -> Any:
+        parent = node.parent
+        while parent is not None:
+            if parent.type in types:
+                return parent
+            parent = parent.parent
+        return None
+
+    @staticmethod
+    def imported_symbols(analyzer: Analyzer, name: str, *, classes: bool = False) -> set[str]:
+        """Exact source imports only; aliases bind to their declared symbol."""
+        result = set()
+        for declaration in analyzer.imports:
+            declaration = declaration.strip()
+            if analyzer.language == "java":
+                static = declaration.startswith("static ")
+                if static == classes:
+                    continue
+                declaration = declaration.removeprefix("static ")
+            elif analyzer.language == "swift":
+                scoped = re.fullmatch(r"(func|class|struct|enum|protocol|typealias)\s+([\w.]+)", declaration)
+                if not scoped or (scoped[1] == "func") == classes:
+                    continue
+                declaration = scoped[2]
+            match = re.fullmatch(r"([\w.]+)(?:\s+as\s+(\w+))?", declaration)
+            if match and (match[2] or match[1].rsplit(".", 1)[-1]) == name:
+                result.add(match[1])
+        return result
+
+    def class_owners(self, analyzer: Analyzer, declared: str) -> set[str]:
+        """Class identity is package/import/file based, never globally unique by leaf."""
+        root, _, remainder = declared.partition(".")
+        imported = self.imported_symbols(analyzer, root, classes=True)
+        references = {symbol + ("." + remainder if remainder else "") for symbol in imported}
+        if not imported:
+            namespace = self.namespaces[id(analyzer)]
+            if "." in declared or not namespace or analyzer.language == "swift":
+                references.add(declared)
+            if namespace and analyzer.language in {"java", "kotlin"}:
+                references.add(namespace + "." + declared)
+            for declaration in analyzer.imports:
+                if declaration.endswith(".*") and not declaration.startswith("static "):
+                    references.add(declaration[:-1] + declared)
+        owners = set()
+        for owner in references:
+            definitions = self.class_definitions.get(owner, [])
+            if any(
+                source.language == analyzer.language
+                and (analyzer.language != "swift" or source.path == analyzer.path)
+                and (
+                    not self.namespaces[id(analyzer)]
+                    or self.namespaces[id(source)]
+                    or source.path == analyzer.path
+                )
+                and (
+                    analyzer.language != "kotlin"
+                    or self.namespaces[id(source)]
+                    or source.path == analyzer.path
+                    or bool(imported)
+                )
+                for source, _ in definitions
+            ):
+                owners.add(owner)
+        return owners
+
+    def constructor_type(self, analyzer: Analyzer, call: Call, frame: Frame) -> str | None:
+        name = call.name
+        if call.receiver is not None:
+            namespace = analyzer.key(call.receiver)
+            if (
+                namespace in frame.values
+                or namespace in analyzer.parameter_types
+                or namespace in analyzer.field_types
+            ):
+                return None
+            name = namespace + "." + name
+        leaf = name.rsplit(".", 1)[-1]
+        if call.node.type == "object_creation_expression" or (
+            leaf[:1].isupper()
+            and (leaf in self.classes or self.imported_symbols(analyzer, leaf, classes=True))
+        ):
+            imported = self.imported_symbols(analyzer, leaf, classes=True) if "." not in name else set()
+            return next(iter(imported)) if len(imported) == 1 else name
+        return None
+
+    def lexical_visible(self, analyzer: Analyzer, target: Callable) -> bool:
+        if target.analyzer.language == "kotlin":
+            name = _field(target.node, "name")
+            if name is not None and any(
+                child.type == "." for child in target.node.children if child.end_byte <= name.start_byte
+            ):
+                # An extension receiver is not an ordinary top-level argument.
+                return False
+        parent = self.enclosing(target.node, FUNCTIONS)
+        if parent is not None:
+            if target.analyzer.path != analyzer.path:
+                return False
+            current = analyzer.function
+            while current is not None:
+                if current.id == parent.id:
+                    break
+                current = self.enclosing(current, FUNCTIONS)
+            else:
+                return False
+        if target.analyzer.path != analyzer.path and re.search(
+            r"\b(?:private|fileprivate)\b", target.analyzer.text(target.node).split("{", 1)[0]
+        ):
+            return False
+        return True
+
+    def type_member(self, target: Callable) -> bool:
+        """Only source-declared static/class/object members permit type receivers."""
+        if target.analyzer.language == "kotlin":
+            return self.enclosing(target.node, {"object_declaration"}) is not None
+        name = _field(target.node, "name")
+        if name is None:
+            return False
+        pending = [child for child in target.node.children if child.end_byte <= name.start_byte]
+        while pending:
+            node = pending.pop()
+            if node.type in {"static", "class"}:
+                return True
+            pending.extend(node.children)
+        return False
+
+    @staticmethod
+    def signature_visible(analyzer: Analyzer, target: Callable, call: Call) -> bool:
+        if len(target.parameters) != len(call.args):
+            return False
+        if target.analyzer.language == "swift":
+            for (name, _type, parameter), argument in zip(target.parameters, call.args, strict=True):
+                external = _field(parameter, "external_name")
+                label = target.analyzer.text(external) if external is not None else name
+                actual = _field(argument.parent, "name") if argument.parent is not None else None
+                actual_label = analyzer.text(actual) if actual is not None else ""
+                if ("" if label == "_" else label) != actual_label:
+                    return False
+        return True
+
+    def resolve(
+        self, analyzer: Analyzer, call: Call, receiver: Value, frame: Frame
+    ) -> tuple[list[Callable], bool]:
+        imported = self.imported_symbols(analyzer, call.name)
+        names = {call.name, *(symbol.rsplit(".", 1)[-1] for symbol in imported)}
+        constructor_type = self.constructor_type(analyzer, call, frame)
+        if constructor_type is not None:
+            names.add(constructor_type.rsplit(".", 1)[-1])
+        named_choices = [
+            target
+            for name in names
+            for target in self.by_name.get(name, [])
+            if target.analyzer.language == analyzer.language
+        ]
         choices = [
             target
-            for target in choices
-            if target.analyzer.language == analyzer.language and len(target.parameters) == len(call.args)
+            for target in named_choices
+            if self.signature_visible(analyzer, target, call) and self.lexical_visible(analyzer, target)
         ]
-        owner = self.owner(analyzer, analyzer.function)
-        if call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}:
+        if constructor_type is not None:
+            owners = self.class_owners(analyzer, constructor_type)
+            if any(len(self.class_definitions[owner]) > 1 for owner in owners):
+                self.partial("ambiguous class identity", analyzer, call=call)
+                return [], True
             constructors = [
                 target
                 for target in choices
-                if target.node.type == "constructor_declaration"
-                and target.owner.rsplit(".", 1)[-1] == call.name
+                if target.node.type == "constructor_declaration" and target.owner in owners
             ]
-            if constructors:
-                return constructors, True
+            return constructors, bool(
+                named_choices
+                or owners
+                or constructor_type.rsplit(".", 1)[-1] in self.classes
+                or self.imported_symbols(analyzer, call.name, classes=True)
+            )
+        owner = self.owner(analyzer, analyzer.function)
+        receiver_key = analyzer.key(call.receiver) if call.receiver is not None else ""
+        if call.receiver is None or receiver_key in {"this", "self"}:
             local = [
                 target
                 for target in choices
-                if target.owner == owner and (owner or target.analyzer.path == analyzer.path)
+                if target.owner == owner
+                and target.analyzer.path == analyzer.path
+                and self.enclosing(target.node, {"class_declaration", "object_declaration"})
+                == self.enclosing(analyzer.function, {"class_declaration", "object_declaration"})
             ]
-            if local:
+            # Top-level imports must be checked before a same-file top-level match.
+            if local and (owner or not imported):
                 return local, True
+            if receiver_key in {"this", "self"}:
+                return [], bool(named_choices)
+            visible = []
+            for target in choices:
+                if imported:
+                    if analyzer.language == "swift":
+                        # Source inputs do not include the compiler's Swift module membership.
+                        continue
+                    identity = (target.owner or self.namespaces[id(target.analyzer)]) + "." + target.name
+                    if identity in imported and (not target.owner or self.type_member(target)):
+                        visible.append(target)
+                elif not target.owner and self.enclosing(target.node, FUNCTIONS) is None:
+                    if (
+                        analyzer.language == "kotlin"
+                        and bool(self.namespaces[id(analyzer)])
+                        and self.namespaces[id(target.analyzer)] == self.namespaces[id(analyzer)]
+                    ):
+                        visible.append(target)
+                    elif target.analyzer.path == analyzer.path:
+                        visible.append(target)
+                    elif (
+                        analyzer.language == "kotlin"
+                        and self.namespaces[id(target.analyzer)] + ".*" in analyzer.imports
+                    ):
+                        visible.append(target)
             if any(
-                target.owner == owner and (owner or target.analyzer.path == analyzer.path)
-                for target in named_choices
+                target.owner and len(self.class_definitions.get(target.owner, [])) > 1 for target in visible
             ):
+                self.partial("ambiguous class identity", analyzer, call=call)
                 return [], True
-            # Kotlin and Swift top-level functions are directly callable in the same module.
-            choices = [target for target in choices if not target.owner]
-            return choices, bool(choices)
-        declared = re.sub(r"[?!<>].*", "", receiver.type_name).strip() or analyzer.key(call.receiver)
-        owners = self.classes.get(declared.rsplit(".", 1)[-1], set())
-        if "." in declared:
-            owners = {candidate for candidate in owners if candidate == declared}
-        else:
-            imported = {item for item in analyzer.imports if item.rsplit(".", 1)[-1] == declared}
-            if imported:
-                owners = owners & imported
-            elif owner and "." in owner:
-                package = owner.rsplit(".", 1)[0]
-                local_owners = {candidate for candidate in owners if candidate.rsplit(".", 1)[0] == package}
-                if local_owners:
-                    owners = local_owners
+            return visible, bool(named_choices or imported)
+        # A fully qualified Kotlin package call is source evidence of top-level identity.
+        if (
+            analyzer.language == "kotlin"
+            and not receiver.type_name
+            and not receiver.identity
+            and receiver_key not in frame.values
+            and receiver_key not in analyzer.parameter_types
+            and receiver_key not in analyzer.field_types
+        ):
+            top_level = [
+                target
+                for target in choices
+                if not target.owner
+                and self.enclosing(target.node, FUNCTIONS) is None
+                and self.namespaces[id(target.analyzer)] == receiver_key
+            ]
+            if top_level:
+                return top_level, True
+        declared = re.sub(r"[?!<>].*", "", receiver.type_name).strip() or receiver_key
+        owners = self.class_owners(analyzer, declared)
+        if any(len(self.class_definitions[identity]) > 1 for identity in owners):
+            self.partial("ambiguous class identity", analyzer, call=call)
+            return [], True
         resolved = [target for target in choices if target.owner in owners]
-        # Unknown receiver identity with a known local method is explicitly unresolved.
-        return resolved, bool(resolved) or (not owners and bool(choices))
+        if (
+            analyzer.type_reference(call.receiver)
+            and receiver_key not in frame.values
+            and not receiver.identity
+        ):
+            resolved = [target for target in resolved if self.type_member(target)]
+        imported_class = self.imported_symbols(analyzer, declared.partition(".")[0], classes=True)
+        namespace = bool(
+            "." in receiver_key
+            and re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", receiver_key)
+            and receiver_key.partition(".")[0] not in frame.values
+            and receiver_key.partition(".")[0] not in analyzer.parameter_types
+            and receiver_key.partition(".")[0] not in analyzer.field_types
+        )
+        return resolved, bool(named_choices or owners or imported_class or namespace)
 
     @staticmethod
     def signature(value: Value) -> tuple:
@@ -306,31 +530,45 @@ class NativeFlow:
     ) -> Value | None:
         if any(TRACE_PARTIAL in trace.description for value in [receiver, *args] for trace in value.traces):
             self.partial("source trace budget", analyzer, call=call)
-        targets, relevant = self.resolve(analyzer, call, receiver)
+        targets, relevant = self.resolve(analyzer, call, receiver, frame)
         if not relevant:
-            # A known source-local constructor supplies receiver type and allocation identity.
-            if call.receiver is None and call.name in self.classes:
+            constructor_type = self.constructor_type(analyzer, call, frame)
+            # A source-identified constructor supplies allocation identity, never a global leaf match.
+            if constructor_type is not None and self.class_owners(analyzer, constructor_type):
                 identity = f"{analyzer.path}:{call.node.start_byte}"
                 if args:
                     self.partial("constructor field mapping unavailable", analyzer, call=call)
                     unknown = self.incomplete(analyzer.changed(call.node, _union(args)))
                     frame.object_fields[identity] = {"__unknown_fields__": unknown}
-                    return Value(unknown.traces, type_name=call.name, identity=identity)
-                return Value(type_name=call.name, identity=identity)
+                    return Value(unknown.traces, type_name=constructor_type, identity=identity)
+                return Value(type_name=constructor_type, identity=identity)
+            if (
+                any(argument.traces for argument in args)
+                and call.receiver is None
+                and call.name[:1].islower()
+            ):
+                self.partial("unresolved callable identity", analyzer, call=call)
             return None
         if not targets:
-            self.partial("unresolved receiver or argument signature", analyzer, call=call)
+            constructor_type = self.constructor_type(analyzer, call, frame)
+            if constructor_type is not None:
+                self.partial("constructor field mapping unavailable", analyzer, call=call)
+                identity = f"{analyzer.path}:{call.node.start_byte}"
+                unknown = self.incomplete(analyzer.changed(call.node, _union([receiver, *args])))
+                frame.object_fields[identity] = {"__unknown_fields__": unknown}
+                return Value(unknown.traces, type_name=constructor_type, identity=identity)
+            self.partial("unresolved callable identity or argument signature", analyzer, call=call)
             return analyzer.changed(call.node, _union([receiver, *args]))
         if len(targets) > 1:
             self.partial("ambiguous direct call", analyzer, call=call)
         dynamic = bool(
             call.receiver is not None
             and not receiver.identity
-            and not analyzer.type_reference(call.receiver)
+            and (not analyzer.type_reference(call.receiver) or analyzer.key(call.receiver) in frame.values)
             and analyzer.key(call.receiver) not in {"this", "self"}
         )
         dynamic &= any(
-            not re.search(r"\bstatic\b", target.analyzer.text(target.node).split("{", 1)[0])
+            target.owner and not re.search(r"\bstatic\b", target.analyzer.text(target.node).split("{", 1)[0])
             for target in targets
         )
         if dynamic:
@@ -385,6 +623,12 @@ class NativeFlow:
             try:
                 local = callee.start_function(target.node)
                 local.object_fields = {key: fields.copy() for key, fields in frame.object_fields.items()}
+                if self.enclosing(target.node, FUNCTIONS) is not None and callee is analyzer:
+                    # The lexical ancestor check above proves these captures are
+                    # caller-local values, not similarly named values in another file.
+                    local.values.update(frame.values)
+                    local.types.update(frame.types)
+                    local.constants.update(frame.constants)
                 if not constructor and (
                     call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}
                 ):
@@ -486,7 +730,11 @@ class NativeFlow:
         frame.object_fields[identity] = merged
         if not constructor and (call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}):
             frame.values.update(merged)
-        result = Value(type_name=call.name, identity=identity) if constructor else self.merge(results)
+        result = (
+            Value(type_name=targets[0].owner if len(targets) == 1 else call.name, identity=identity)
+            if constructor
+            else self.merge(results)
+        )
         if len(targets) != 1 or dynamic:
             result = analyzer.changed(call.node, _union([result, receiver, *args]))
         frame.call_results[cache_key] = result
