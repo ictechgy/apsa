@@ -169,6 +169,7 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
     too_deep: list[Path] = []
     oversized: list[Path] = []
     unreadable: list[str] = []
+    symlinks: list[Path] = []
     hybrid_inputs: list[dict] = []
     presence = {"truncated": False}
     # False once a file that could change which rules apply (code, configuration, shipped text) is
@@ -196,8 +197,10 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
         if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
             raise ValueError("Input staging requires a regular file within byte limits")
         destination.parent.mkdir(parents=True, exist_ok=True)
+        created = False
         try:
             with destination.open("xb") as stream:
+                created = True
                 destination.chmod(0o600)
                 size = 0
                 while raw := os.read(fd, min(1024 * 1024, limit + 1 - size)):
@@ -210,7 +213,8 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
             if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                 raise ValueError("Input changed during staging; audit refused")
         except BaseException:
-            destination.unlink(missing_ok=True)
+            if created:
+                destination.unlink(missing_ok=True)
             raise
         counts["bytes"] += size
         counts["files"] += 1
@@ -234,6 +238,31 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                 raise ValueError("Authorized input moved during staging; audit refused")
             output.mkdir(parents=True)
             candidates: list[tuple[str, int, tuple[int, int]]] = []
+            hidden_identities: set[tuple[int, int]] = set()
+            for path in hidden:
+                relative = path.relative_to(target)
+                if ".." in relative.parts:
+                    # Callers canonicalize hidden paths. A lexical child containing '..'
+                    # must never make the descriptor walk escape the authorized root.
+                    continue
+                if not relative.parts:
+                    hidden_identities.add(original_identity)
+                    continue
+                parent = None
+                try:
+                    # Report-store spelling may differ in case or Unicode normalization from
+                    # directory entries. Inspect only metadata below the authorized root, with
+                    # no-follow descriptors; never resolve or inspect sibling stores.
+                    parent = open_parent(root, relative.parent)
+                    metadata = os.stat(relative.name, dir_fd=parent, follow_symlinks=False)
+                    if not stat.S_ISLNK(metadata.st_mode):
+                        hidden_identities.add((metadata.st_dev, metadata.st_ino))
+                except OSError:
+                    # An absent store has no identity. Its exact lexical path stays excluded.
+                    pass
+                finally:
+                    if parent is not None:
+                        os.close(parent)
 
             def visit(fd: int, relative: Path, depth: int):
                 if depth > MAX_DEPTH:
@@ -264,6 +293,16 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                         continue
                     try:
                         metadata = entry.stat(follow_symlinks=False)
+                        if (metadata.st_dev, metadata.st_ino) in hidden_identities:
+                            omitted("Report store excluded from staged input: " + str(child))
+                            continue
+                        if stat.S_ISLNK(metadata.st_mode):
+                            if entry.name not in SKIP_DIRS:
+                                # A link's target type and contents are deliberately unknown;
+                                # even a resource-looking name could hide an app module.
+                                symlinks.append(child)
+                                scope["complete"] = False
+                            continue
                         compiled = compiled_hybrid_input(child.as_posix())
                         if stat.S_ISREG(metadata.st_mode) and compiled is not None:
                             # Preserve name-only presence through staging; never copy/read AOT bytes.
@@ -378,6 +417,11 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                 omitted(
                     f"Source staging could not read or stage {len(unreadable)} entr"
                     f"{'y' if len(unreadable) == 1 else 'ies'} (first: {unreadable[0]}); coverage partial"
+                )
+            if symlinks:
+                omitted(
+                    f"Source staging skipped {len(symlinks)} symbolic link(s) without reading their targets "
+                    f"(first: {symlinks[0]}); app scope unknown; coverage partial"
                 )
             if oversized:
                 omitted(
