@@ -1,6 +1,7 @@
 """Protocol-independent limits use synthetic coordinates and mock HTTP only."""
 
 import json
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -76,7 +77,8 @@ def test_invalid_budgets_rejected_before_dependency_mutation_or_http(store, mode
 
 
 def test_legacy_transmission_state_does_not_depend_on_clock_resolution(store, monkeypatch):
-    monkeypatch.setattr("mobile_audit.store.now", lambda: "2026-10-13T00:00:00+00:00")
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    monkeypatch.setattr("mobile_audit.store.now", lambda: timestamp)
     deps = dependencies(1)
     store.feed("osv:Maven:synthetic.public:lib0:1.0", "error")
     with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))) as client:
