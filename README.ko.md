@@ -18,8 +18,8 @@ JS/TS/Dart 후보 탐지, 기록된 Gradle 변형 선택, OSV 배치·전송 제
 [5개 검증 항목](docs/FIVE_GATE_VALIDATION.md)에 새 컴파일 입력, 서명 변조 대조군,
 설치한 iOS 시뮬레이터 실행 결과와 남은 패키지·경쟁 도구·bundletool·백엔드 검증을 기록했습니다.
 
-**미배포 대형 입력 후속 개선.** 작업 트리의 규칙 버전은 `2026.10.11.apsa.next`이며,
-공개된 1.5.1 패키지에는 아직 포함되지 않습니다. 입력 스테이징과 AST 분석이 같은 코드 우선순위를
+**미배포 대형 입력 후속 개선.** 작업 트리의 규칙 버전은 `2026.10.15.apsa.160`이며,
+1.6 릴리스 후보의 범위와 업그레이드 영향은 [검증 안내](docs/RELEASE_160.md)에 기록합니다. 입력 스테이징과 AST 분석이 같은 코드 우선순위를
 쓰고, 추정 모듈 그룹 안에서 번갈아 파일을 처리합니다. lock 목록은 앱 코드 뒤로 보내며,
 모호한 `*Tests/`와 일반 `Frameworks/` 폴더는 운영 코드 우선순위를 유지합니다. 보고서에 모듈별 생략
 내역을 기록하고, 비교 결과에는 입력 완전성, Action 요약에는 스테이징 생략 내역을 표시합니다.
@@ -221,7 +221,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.5.1
+uv tool install --python 3.12 apsa==1.6.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -338,7 +338,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.5.1; 전체 커밋 SHA로 고정
+  - uses: ictechgy/apsa@<commit-sha> # v1.6.0; 전체 커밋 SHA로 고정
     with:
       path: android            # 소스 폴더 또는 workspace 안의 APK/AAB/IPA
       fail-on-incomplete: "true"

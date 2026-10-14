@@ -1,4 +1,4 @@
-name: NEW synthetic installed runtime transport
+name: NEW synthetic installed runtime transport — 1.6.0 candidate
 
 on:
   push:

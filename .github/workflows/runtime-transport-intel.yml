@@ -1,4 +1,4 @@
-name: NEW synthetic Intel runtime transport differential
+name: NEW synthetic Intel runtime transport differential — 1.6.0 candidate
 
 on:
   push:

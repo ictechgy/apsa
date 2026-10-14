@@ -6,7 +6,7 @@
 
 This English README is the source of truth. The Korean README follows it.
 
-**Unreleased competitive follow-up.** The working tree adds bounded native cross-file
+**APSA 1.6 analysis extensions.** This version adds bounded native cross-file
 flow and input-bound path guards, JS/TS/Dart candidates, recorded Gradle variant
 selection, OSV batching and transmission exclusions, authenticated runtime evidence,
 AAB scalar resources, detached CMS consistency and paired verification.
@@ -15,14 +15,18 @@ See [scope, options and remaining limits](docs/COMPETITIVE_FOLLOWUP.md) and the
 The [remaining follow-up](docs/REMAINING_FOLLOWUP.md) adds explicit `.apks` device
 selection, IPA sparse-page/resource seals and supplied-anchor chain checks,
 and a typed runtime recorder exercised with fresh synthetic app models.
-Installed split merging, Apple signer identity, physical-device validation and
-fresh competitor measurements remain unverified.
+The synthetic bundletool selection checks pass; installed split merging, Apple
+signer identity and physical-device validation remain outside verified scope.
+Fresh comparator samples remain partial and do not establish accuracy rankings.
+iOS OS URL delivery is still under validation; callback dispatch alone is not
+proof of app acquisition or backend revocation.
 The [five validation gates](docs/FIVE_GATE_VALIDATION.md) record new compiler,
 signature-mutation and installed iOS simulator evidence, along with the separate
-package, comparator, bundletool and backend measurements still required.
+package, comparator, bundletool and backend measurement scopes.
+See [1.6 release validation](docs/RELEASE_160.md) for the current candidate gates
+and upgrade effects, including the changed MCP tool manifest.
 
-**Unreleased large-input follow-up.** The working tree uses rule version
-`2026.10.11.apsa.next`; these changes are not in the published 1.5.1 package.
+**APSA 1.6 large-input follow-up.** Rule version: `2026.10.15.apsa.160`.
 Input staging and AST analysis share code priorities and round-robin scheduling
 within inferred module groups. Lock inventories follow app code; ambiguous
 `*Tests/` and plain `Frameworks/` directories retain production priority.
@@ -30,7 +34,7 @@ Reports record module omissions, comparisons expose input completeness, and the
 Action summary shows staging omissions. Partial fingerprints remain SBOM
 metadata instead of application hashes. See [scope and validation](docs/LARGE_INPUT_FOLLOWUP.md).
 
-**Unreleased external-review strengthening.** Bounded device-spec metadata,
+**APSA 1.6 review fixes.** Bounded device-spec metadata,
 per-file partial reasons, text/compiled hybrid coverage, explicit signature
 binding scope, portable source comparisons and exact package-content checks
 are documented in [strengthening scope and evidence limits](docs/STRENGTHENING.md).
@@ -277,7 +281,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.5.1
+uv tool install --python 3.12 apsa==1.6.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -394,7 +398,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.5.1; pin the full commit SHA
+  - uses: ictechgy/apsa@<commit-sha> # v1.6.0; pin the full commit SHA
     with:
       path: android            # source folder, or a built APK/AAB/IPA in the workspace
       fail-on-incomplete: "true"
