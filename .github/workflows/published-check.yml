@@ -1,0 +1,90 @@
+name: Verify published APSA artifacts and cold startup
+
+on:
+  workflow_run:
+    workflows: ["Publish APSA to PyPI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-publication:
+    if: github.repository == 'ictechgy/apsa' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - name: Bind checkout, version, public registries and downloaded package bytes
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          python scripts/verify_publication.py --version "$version" --source-sha "$RELEASE_SHA" --out "$RUNNER_TEMP/publication"
+      - name: Install verified PyPI wheel into a new isolated environment
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/public-install-cache
+        run: |
+          uv venv --python 3.12.13 "$RUNNER_TEMP/public-install"
+          uv pip install --python "$RUNNER_TEMP/public-install/bin/python" --require-hashes --only-binary :all: -r requirements-release.txt
+          uv pip install --python "$RUNNER_TEMP/public-install/bin/python" --no-deps "$RUNNER_TEMP/publication/apsa-${RELEASE_VERSION}-py3-none-any.whl"
+          for alias in apsa quaygate mobile-audit; do
+            test "$("$RUNNER_TEMP/public-install/bin/$alias" --version)" = "$RELEASE_VERSION"
+          done
+          for module in apsa quaygate mobile_audit; do
+            test "$("$RUNNER_TEMP/public-install/bin/python" -I -m "$module" --version)" = "$RELEASE_VERSION"
+          done
+      - name: Public uvx cold resolution with an empty dedicated cache
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/public-cold-cache
+          APSA_HOME: ${{ runner.temp }}/public-cold-home
+        run: |
+          test "$(uvx --python 3.12.13 "apsa@${RELEASE_VERSION}" --version)" = "$RELEASE_VERSION"
+      - name: Actual installed stdio SDK initialize and tools/list in both scopes
+        run: |
+          "$RUNNER_TEMP/public-install/bin/python" -I scripts/served_mcp_manifest.py --out "$RUNNER_TEMP/public-mcp" --contract tests/contracts/mcp_tool_manifest_pending.json
+      - name: Offline source scan and report integrity on NEW synthetic inputs
+        env:
+          APSA_HOME: ${{ runner.temp }}/public-scan-home
+        run: |
+          mkdir "$RUNNER_TEMP/public-source"
+          printf '%s\n' 'class NewPublicFixture { void run() {} }' > "$RUNNER_TEMP/public-source/Main.java"
+          "$RUNNER_TEMP/public-install/bin/apsa" scan "$RUNNER_TEMP/public-source" --home "$APSA_HOME" --json > "$RUNNER_TEMP/public-scan.json"
+          "$RUNNER_TEMP/public-install/bin/python" - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          report = json.loads((root / "public-scan.json").read_text())["data"]
+          assert report["id"]
+          result = subprocess.run([str(root / "public-install/bin/apsa"), "reports", "verify", "--home", os.environ["APSA_HOME"], "--json"], check=True, capture_output=True, text=True)
+          (root / "public-report-verify.json").write_text(result.stdout)
+          print("APSA_PUBLIC_STARTUP=" + json.dumps({"version": os.environ["RELEASE_VERSION"], "scan_and_report_verify": True, "served_mcp_scopes": ["default", "runtime"], "published_baseline_approved": False}, sort_keys=True), flush=True)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: public-publication-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/publication/*.json
+            ${{ runner.temp }}/publication/SHA256SUMS
+            ${{ runner.temp }}/public-mcp/*.json
+            ${{ runner.temp }}/public-scan.json
+            ${{ runner.temp }}/public-report-verify.json
+          retention-days: 30
+          if-no-files-found: error
