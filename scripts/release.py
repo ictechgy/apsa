@@ -49,6 +49,8 @@ STAGE_PATHS = (
     "pyproject.toml",
     "uv.lock",
     "requirements-release.txt",
+    ".gitignore",
+    ".gitattributes",
     "README.md",
     "README.ko.md",
     "NAMING.md",

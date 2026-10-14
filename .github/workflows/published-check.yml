@@ -65,6 +65,7 @@ jobs:
         run: |
           mkdir "$RUNNER_TEMP/public-source"
           printf '%s\n' 'class NewPublicFixture { void run() {} }' > "$RUNNER_TEMP/public-source/Main.java"
+          printf '%s\n' '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="apsa.new.publicfixture"><uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36"/><application android:debuggable="false" android:allowBackup="false"/></manifest>' > "$RUNNER_TEMP/public-source/AndroidManifest.xml"
           "$RUNNER_TEMP/public-install/bin/apsa" scan "$RUNNER_TEMP/public-source" --home "$APSA_HOME" --json > "$RUNNER_TEMP/public-scan.json"
           "$RUNNER_TEMP/public-install/bin/python" - <<'PY'
           import json, os, subprocess
@@ -76,6 +77,28 @@ jobs:
           (root / "public-report-verify.json").write_text(result.stdout)
           print("APSA_PUBLIC_STARTUP=" + json.dumps({"version": os.environ["RELEASE_VERSION"], "scan_and_report_verify": True, "served_mcp_scopes": ["default", "runtime"], "published_baseline_approved": False}, sort_keys=True), flush=True)
           PY
+      - name: Actual installed MCP capabilities and synthetic audit call
+        run: |
+          "$RUNNER_TEMP/public-install/bin/python" -I - <<'PY'
+          import asyncio, json, os, sys
+          from pathlib import Path
+          from mcp import ClientSession, StdioServerParameters
+          from mcp.client.stdio import stdio_client
+          async def check():
+              root = Path(os.environ["RUNNER_TEMP"])
+              params = StdioServerParameters(command=sys.executable, args=["-I", "-m", "apsa", "--home", str(root / "public-tool-home"), "mcp", "--root", str(root / "public-source")])
+              async with stdio_client(params) as streams:
+                  async with ClientSession(*streams) as session:
+                      await session.initialize()
+                      capabilities = await session.call_tool("capabilities", {})
+                      assert not capabilities.isError and "apks" in capabilities.structuredContent["inputs"]
+                      audit = await session.call_tool("audit_scan", {"target": str(root / "public-source")})
+                      assert not audit.isError and audit.structuredContent["report_id"]
+                      result = {"capabilities_apks": True, "synthetic_audit_scan": True}
+                      (root / "public-mcp-tools.json").write_text(json.dumps(result) + "\n")
+                      print("APSA_PUBLIC_TOOLS=" + json.dumps(result), flush=True)
+          asyncio.run(asyncio.wait_for(check(), timeout=90))
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -86,5 +109,6 @@ jobs:
             ${{ runner.temp }}/public-mcp/*.json
             ${{ runner.temp }}/public-scan.json
             ${{ runner.temp }}/public-report-verify.json
+            ${{ runner.temp }}/public-mcp-tools.json
           retention-days: 30
           if-no-files-found: error

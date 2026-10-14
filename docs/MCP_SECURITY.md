@@ -6,7 +6,7 @@ APSA's MCP server reads app source and builds that may be untrusted, on behalf o
 a model that may be steered by that content. This page states what the server
 does to limit that, mapped to the
 [OWASP MCP Top 10 (2025, beta)](https://owasp.org/www-project-mcp-top-10/), and
-what remains the client's or user's responsibility. It describes APSA 1.5.1.
+what remains the client's or user's responsibility. It describes the APSA 1.6.0 candidate; publication is tracked separately.
 
 ## Fixed, inspectable tool surface
 
@@ -18,7 +18,7 @@ what remains the client's or user's responsibility. It describes APSA 1.5.1.
   is each tool's name, description, annotation hints and parameter shapes
   (types, defaults, enums, items, required names), sorted by name. Schema titles
   and other details the MCP SDK generates are left out, so the value follows
-  APSA's definitions rather than SDK formatting. The unreleased competitive follow-up adds
+  APSA's definitions rather than SDK formatting. APSA 1.6 adds
   dependency resolution/transmission options, paired verification, explicit APK-set device
   selection and digest-bound IPA chain policies. Its source contract is
   `60374d3e5418f366c2bd8e3833ea33bbae89610bfa81b699661f8a268a2f1382` by default
@@ -30,8 +30,9 @@ what remains the client's or user's responsibility. It describes APSA 1.5.1.
   and runtime `818ab0bab3202f364478d866d094cd035e7d7b5c60b252c256bb2ade37d79a79`.
   The development hashes above were derived from AST parameter declarations and Pydantic,
   after reproducing both published hashes from the base source. This host's privacy guard
-  denies an MCP SDK dependency directory named `prompts`; current served `tools/list`
-  validation is pending on an allowed CI host. This source check does not replace that check.
+  denies an MCP SDK dependency directory named `prompts`; the exact 1.5.1 development snapshot `50f1a0f` passed actual served
+  `tools/list` checks in [four fresh package/MCP jobs](https://github.com/ictechgy/apsa/actions/runs/38495988256).
+  The 1.6 candidate requires the same check on its own source snapshot. This source check does not replace that check.
   The strengthening candidate adds an explicit `portable_inputs` option to
   `reports_compare`; it requires verification and identical complete source
   fingerprints. It does not weaken runtime pairing. See [comparison scope](REPORT_COMPARISON.md).
@@ -74,7 +75,7 @@ what remains the client's or user's responsibility. It describes APSA 1.5.1.
 APSA MCP 서버는 신뢰할 수 없는 앱 소스·빌드를 읽으며, 그 내용에 영향을 받을 수 있는
 모델을 대신해 동작합니다. 서버는 stdio 전용이고 네트워크 포트를 열지 않습니다. 실행 중 도구
 목록이 바뀌지 않으며(`listChanged: false`), `capabilities`의 `tool_manifest_sha256`은 APSA가
-정의한 도구 이름·설명·annotation·파라미터 형태를 정규화한 해시입니다(1.4.0과 같은 1.5.1 기본값과
+정의한 도구 이름·설명·annotation·파라미터 형태를 정규화한 해시입니다(1.6 후보 계약 및 역사적 1.5.1 기본값과
 `--allow-runtime` 값은 위 영어 본문 참조). 서버가 스스로 보고한 값만으로는 증명이 되지 않으므로,
 `tools/list` 결과로 `manifest_sha256`을 직접 계산해 공개 값과 비교하세요. 읽기 전용 도구는 read-only·idempotent, 네트워크 도구는 open-world, 기기
 실행 도구는 `--allow-runtime`일 때만 등록되고 destructive로 표시됩니다.
