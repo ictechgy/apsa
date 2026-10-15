@@ -76,7 +76,7 @@ def test_native_negative_literal_helper_remains_checked():
                 "New.java",
                 """class Handler {
       void entry() { new FileOutputStream(clean()); }
-      String clean() { return "fixed.txt"; }
+      private String clean() { return "fixed.txt"; }
     }""",
             )
         ]
@@ -84,6 +84,23 @@ def test_native_negative_literal_helper_remains_checked():
     assert not report["findings"]
     assert report["metadata"]["native_flow"]["partial_details"] == []
     assert report["metadata"]["native_flow"]["state"] == "checked"
+
+
+def test_native_literal_helper_with_unknown_dispatch_remains_partial():
+    report = analyze_sources(
+        [
+            (
+                "New.java",
+                """class Handler {
+      void entry() { new FileOutputStream(clean()); }
+      String clean() { return "fixed.txt"; }
+    }""",
+            )
+        ]
+    )
+    assert not report["findings"]
+    assert report["metadata"]["native_flow"]["state"] == "partial"
+    assert "receiver runtime dispatch unresolved" in report["metadata"]["native_flow"]["reasons"]
 
 
 def test_native_diagnostics_are_bounded_deduplicated_and_order_independent(monkeypatch):

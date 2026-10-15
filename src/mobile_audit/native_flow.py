@@ -207,6 +207,9 @@ class NativeFlow:
                         self.class_definitions.setdefault(owner, []).append((analyzer, node))
                 if node.type not in FUNCTIONS or node.has_error:
                     continue
+                if self.anonymous_scope(node) is not None:
+                    self.partial("anonymous callable scope unavailable", analyzer, node=node)
+                    continue
                 count += 1
                 if count > MAX_CALLABLES:
                     self.partial("callable inventory budget", analyzer, node=node)
@@ -229,7 +232,13 @@ class NativeFlow:
         parent = function.parent
         names = []
         while parent:
-            if parent.type in {"class_declaration", "object_declaration"}:
+            if (
+                parent.type == "class_body"
+                and parent.parent is not None
+                and parent.parent.type == "object_creation_expression"
+            ):
+                names.append(f"@anonymous:{parent.parent.start_byte}")
+            elif parent.type in {"class_declaration", "object_declaration"}:
                 name = _field(parent, "name") or next(
                     (
                         child
@@ -332,6 +341,19 @@ class NativeFlow:
         while parent is not None:
             if parent.type in types:
                 return parent
+            parent = parent.parent
+        return None
+
+    @staticmethod
+    def anonymous_scope(node: Any) -> Any:
+        parent = node.parent
+        while parent is not None:
+            if (
+                parent.type == "class_body"
+                and parent.parent is not None
+                and parent.parent.type == "object_creation_expression"
+            ):
+                return parent.parent
             parent = parent.parent
         return None
 
@@ -564,9 +586,13 @@ class NativeFlow:
         return False
 
     def allocation(self, analyzer: Analyzer, call: Call, declared: str, identity: str) -> None:
-        # Java `new` proves the concrete nominal type. Other expression forms
+        # A non-anonymous Java `new` proves the concrete nominal type. Other forms
         # retain field identity but do not establish exact dispatch here.
         if analyzer.language == "java" and call.node.type == "object_creation_expression":
+            if any(child.type == "class_body" for child in call.node.named_children):
+                self.allocations.pop(identity, None)
+                self.partial("anonymous allocation dispatch unresolved", analyzer, call=call)
+                return
             owners = self.class_owners(analyzer, declared)
             if len(owners) == 1:
                 owner = next(iter(owners))

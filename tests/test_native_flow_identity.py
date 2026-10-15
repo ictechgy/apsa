@@ -807,3 +807,155 @@ class Handler {
         "AST-PENDINGINTENT-MUTABLE",
     ]:
         assert findings(report, rule), report
+
+
+@pytest.mark.parametrize("direct_expression", [False, True])
+@pytest.mark.parametrize("anonymous", [False, True])
+def test_java_anonymous_override_never_receives_base_allocation_dispatch_proof(direct_expression, anonymous):
+    allocation = "new Helper()"
+    if anonymous:
+        allocation += " { @Override String route(String input) { return input; } }"
+    declaration = "" if direct_expression else f"Helper helper = {allocation};"
+    receiver = allocation if direct_expression else "helper"
+    source = f"""class Helper {{
+    String route(String input) {{ return "https://safe.example/"; }}
+}}
+class Handler {{
+    WebView web;
+    void open(Intent input) {{
+        {declaration}
+        web.loadUrl({receiver}.route(input.getDataString()));
+    }}
+}}
+"""
+    report = scan(("App.java", source))
+    if anonymous:
+        candidate_and_partial(report)
+        assert "anonymous allocation dispatch unresolved" in report["metadata"]["native_flow"]["reasons"], (
+            report
+        )
+    else:
+        assert not findings(report, URL), report
+        assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+def test_anonymous_subclass_nested_this_call_preserves_actual_caller_taint():
+    source = """class FreshBase {
+    String route(String input) { return "https://safe.example/"; }
+    void open(String input, WebView browser) { browser.loadUrl(this.route(input)); }
+}
+class Handler {
+    WebView web;
+    void entry(Intent input) {
+        FreshBase helper = new FreshBase() { @Override String route(String input) { return input; } };
+        helper.open(input.getDataString(), web);
+    }
+}
+"""
+    report = scan(("App.java", source))
+    candidate_and_partial(report)
+    assert any(
+        step["line"] == 9
+        for item in findings(report, URL)
+        for evidence in item["evidence"]
+        for step in evidence["flow"]
+    ), report
+
+
+def test_anonymous_subclass_cannot_clear_constructor_argument_field_taint():
+    source = """class Helper {
+    String value;
+    Helper(String input) { value = input; }
+    void clear() { value = "https://safe.example/"; }
+}
+class Handler {
+    WebView web;
+    void open(Intent input) {
+        Helper helper = new Helper(input.getDataString()) { @Override void clear() {} };
+        helper.clear();
+        web.loadUrl(helper.value);
+    }
+}
+"""
+    candidate_and_partial(scan(("App.java", source)))
+
+
+def test_ordinary_and_anonymous_allocations_keep_distinct_nested_dispatch_cache_contexts(monkeypatch):
+    from mobile_audit.native_flow import NativeFlow
+
+    allocations = []
+    original = NativeFlow.allocation
+
+    def capture(self, analyzer, call, declared, identity):
+        original(self, analyzer, call, declared, identity)
+        if call.name == "Helper":
+            allocations.append(
+                (
+                    any(child.type == "class_body" for child in call.node.named_children),
+                    self.allocations.get(identity),
+                )
+            )
+
+    monkeypatch.setattr(NativeFlow, "allocation", capture)
+    source = """class Helper {
+    String route(String input) { return "https://safe.example/"; }
+}
+class Handler {
+    WebView web;
+    static String forward(Helper helper, String input) { return helper.route(input); }
+    void open(Intent input) {
+        Helper exact = new Helper();
+        Helper anonymous = new Helper() { @Override String route(String input) { return input; } };
+        web.loadUrl(forward(exact, input.getDataString()));
+        web.loadUrl(forward(anonymous, input.getDataString()));
+    }
+}
+"""
+    report = scan(("App.java", source))
+    matches = findings(report, URL)
+    assert len(matches) == 1, report
+    assert matches[0]["evidence"][0]["line"] == 11, report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert any(not anonymous and owner == "Helper" for anonymous, owner in allocations), allocations
+    assert any(anonymous for anonymous, _owner in allocations), allocations
+    assert all(owner is None for anonymous, owner in allocations if anonymous), allocations
+
+
+@pytest.mark.parametrize("static_import", [False, True])
+def test_anonymous_method_cannot_become_a_surrounding_class_or_imported_helper(static_import):
+    prefix = "import static external.Helper.route;\n" if static_import else ""
+    source = (
+        prefix
+        + """class Handler {
+    WebView web;
+    void open(Intent input) {
+        Object ignored = new Object() {
+            String route(String value) { return "https://safe.example/"; }
+        };
+        web.loadUrl(route(input.getDataString()));
+    }
+}
+"""
+    )
+    report = scan(("App.java", source))
+    candidate_and_partial(report)
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+    assert "anonymous callable scope unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+def test_named_nested_class_still_has_a_proven_ordinary_java_allocation():
+    source = """class Handler {
+    WebView web;
+    static class Nested {
+        String route(String input) { return "https://safe.example/"; }
+    }
+    void open(Intent input) {
+        Handler.Nested helper = new Handler.Nested();
+        web.loadUrl(helper.route(input.getDataString()));
+    }
+}
+"""
+    report = scan(("App.java", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    assert report["metadata"]["native_flow"]["evaluations"] > 0, report
