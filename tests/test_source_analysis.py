@@ -61,7 +61,7 @@ BRIDGE_RULE = "AST-WEBVIEW-JS-BRIDGE"
         (
             "swift",
             """
-            class LinkHandler: UIViewController {
+            class LinkHandler {
                 private var browser: WKWebView!
                 func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
                     let components = URLComponents(url: incoming, resolvingAgainstBaseURL: false)

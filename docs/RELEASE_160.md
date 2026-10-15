@@ -36,6 +36,8 @@ compiler module identity.
   take precedence over similarly named functions where the language requires it.
   Local/member type declarations also take precedence over package classes and
   imports. Unresolved type identity cannot borrow a same-named SDK sanitizer.
+  Inherited member types and static type imports also participate in ownership;
+  unavailable ownership retains taint and partial coverage before package fallback.
 
 ## Verification and limits
 
@@ -48,6 +50,13 @@ Synthetic benchmark execution preserves incomplete controls: the fresh corpus
 reports `passed=false` while its declared regression contract passes. Public
 CVE alias overlap cases remain unscored; the component benchmark's failure is
 preserved. Comparator partial results establish no accuracy or product ranking.
+The stricter inherited-type boundary's direct source-only replay also observed
+three disagreements among 28 unchanged corpus labels: `java-intent-fixed`,
+`kotlin-query-fixed` and `swift-url-fixed` now retain URL candidates with partial
+native-flow coverage instead of an empty finding list. This is a measured
+support-contract impact, not a passing accuracy result. Frozen labels and the
+official hosted quality gate remain unchanged; that gate must be assessed on
+the final candidate.
 Physical devices and genuine Apple signing identity/provisioning/revocation
 remain unverified. The source driver now retains four logout controls and adds two authenticated
 A-to-B account-switch controls per platform (old-A canary deleted/retained).

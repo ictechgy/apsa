@@ -1105,3 +1105,328 @@ class Handler {
     report = scan(("App.java", source))
     assert findings(report), report
     assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+@pytest.mark.parametrize("safe_package_helper", [False, True])
+@pytest.mark.parametrize("inheritance", ["extends Parent", "implements Parent", "enclosing"])
+def test_java_inherited_member_type_precedes_unrelated_package_class(safe_package_helper, inheritance):
+    parent_kind = "interface" if inheritance == "implements Parent" else "class"
+    caller = f"""package app;
+{parent_kind} Parent {{
+    public static class Helper {{ public String route(String value) {{ return value; }} }}
+}}
+class Handler {"extends Parent" if inheritance == "enclosing" else inheritance} {{
+    {"class Inner {" if inheritance == "enclosing" else ""}
+    WebView web;
+    void open(Intent input) {{
+        Helper helper = new Helper();
+        web.loadUrl(helper.route(input.getDataString()));
+    }}
+    {"}" if inheritance == "enclosing" else ""}
+}}
+"""
+    sources = [("app/Handler.java", caller)]
+    if safe_package_helper:
+        sources.append(
+            (
+                "app/Helper.java",
+                'package app; class Helper { String route(String value) { return "https://safe.example/"; } }',
+            )
+        )
+    report = scan(*sources)
+    candidate_and_partial(report)
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+
+
+@pytest.mark.parametrize("safe_package_helper", [False, True])
+@pytest.mark.parametrize("wildcard", [False, True])
+def test_java_static_type_import_precedes_unrelated_package_class(safe_package_helper, wildcard):
+    caller = f"""package app;
+import static external.Parent.{"*" if wildcard else "Helper"};
+class Handler {{
+    WebView web;
+    void open(Intent input) {{
+        Helper helper = new Helper();
+        web.loadUrl(helper.route(input.getDataString()));
+    }}
+}}
+"""
+    sources = [
+        ("app/Handler.java", caller),
+        (
+            "external/Parent.java",
+            """package external;
+public class Parent {
+    public static class Helper { public String route(String value) { return value; } }
+}
+""",
+        ),
+    ]
+    if safe_package_helper:
+        sources.append(
+            (
+                "app/Helper.java",
+                'package app; class Helper { String route(String value) { return "https://safe.example/"; } }',
+            )
+        )
+    report = scan(*sources)
+    candidate_and_partial(report)
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+
+
+@pytest.mark.parametrize("represented_parent", [False, True])
+def test_inherited_qualified_sdk_root_never_supplies_basename_safety(represented_parent):
+    caller = """package app;
+import java.io.FileOutputStream;
+class Handler extends Parent {
+    void open(Intent input) {
+        new FileOutputStream(new java.io.File(input.getStringExtra("name")).getName());
+    }
+}
+"""
+    sources = [("app/Handler.java", caller)]
+    if represented_parent:
+        sources.append(
+            (
+                "app/Parent.java",
+                """package app;
+class Parent {
+    static class java {
+        static class io {
+            static class File {
+                String value;
+                File(String input) { value = input; }
+                String getName() { return value; }
+            }
+        }
+    }
+}
+""",
+            )
+        )
+    report = scan(*sources)
+    assert findings(report), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+@pytest.mark.parametrize("suffix", ["kt", "swift"])
+def test_unknown_inherited_type_root_cannot_borrow_same_file_sanitizer(suffix):
+    if suffix == "kt":
+        source = """package app
+class Helper {
+    fun route(value: String): String { return "https://safe.example/" }
+}
+class Handler: ExternalParent() {
+    val web: WebView = WebView(context)
+    fun open(input: Intent) {
+        val helper = Helper()
+        web.loadUrl(helper.route(input.getDataString()))
+    }
+}
+"""
+    else:
+        source = """import WebKit
+final class Helper {
+    static func route(_ value: URL) -> URL { return URL(string: "https://safe.example/")! }
+}
+class Handler: ExternalParent {
+    let web = WKWebView()
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+        web.load(URLRequest(url: Helper.route(incoming)))
+        return true
+    }
+}
+"""
+    candidate_and_partial(scan((f"App.{suffix}", source)))
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+@pytest.mark.parametrize("canonical_guard", [False, True])
+def test_framework_path_safety_requires_resolved_type_root_while_input_taint_survives(
+    inherited, canonical_guard
+):
+    expression = (
+        'val path = File(root, input.getStringExtra("name"))\n'
+        "        if (!path.canonicalPath.startsWith(root.canonicalPath + File.separator)) return\n"
+        "        FileOutputStream(path)"
+        if canonical_guard
+        else 'FileOutputStream(File(input.getStringExtra("name")).name)'
+    )
+    source = f"""package app
+import android.content.Intent
+import java.io.File
+import java.io.FileOutputStream
+class Handler{": Activity()" if inherited else ""} {{
+    fun open(input: Intent, root: File) {{
+        {expression}
+    }}
+}}
+"""
+    report = scan(("App.kt", source))
+    if inherited:
+        assert findings(report), report
+        assert report["metadata"]["native_flow"]["state"] == "partial", report
+    else:
+        assert not findings(report), report
+        assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+def test_unknown_inherited_sdk_type_keeps_nested_intent_compat_source_provenance():
+    source = """package app
+import android.content.Intent
+import androidx.core.content.IntentCompat
+class Handler: Activity() {
+    fun open(input: Intent) {
+        val nested = IntentCompat.getParcelableExtra(input, "next", Intent::class.java)
+        startActivity(nested)
+    }
+}
+"""
+    report = scan(("App.kt", source))
+    assert findings(report, "AST-INTENT-REDIRECTION"), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+ORIGINAL_INHERITED_PATHS_KT = """package com.example.breadth
+
+import android.app.Activity
+import android.content.Intent
+import android.provider.OpenableColumns
+import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipInputStream
+
+class Files : Activity() {
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        val uri = data?.data ?: return
+        var name = "default"
+        contentResolver.query(uri, null, null, null, null)?.use {
+            val index = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (it.moveToFirst()) {
+                name = it.getString(index)
+            }
+        }
+        val target = File(filesDir, name)
+        FileOutputStream(target).use { it.write(1) }
+        val safe = File(filesDir, File(name).name)
+        val extra = File(cacheDir, intent.getStringExtra("file") ?: "x")
+    }
+
+    fun unzip(stream: ZipInputStream, dir: File) {
+        var entry = stream.nextEntry
+        while (entry != null) {
+            val out = File(dir, entry.name)
+            entry = stream.nextEntry
+        }
+    }
+
+    fun guarded(stream: ZipInputStream, dir: File) {
+        val entry = stream.nextEntry ?: return
+        val out = File(dir, entry.name)
+        if (!out.canonicalPath.startsWith(dir.canonicalPath + File.separator)) {
+            throw SecurityException("zip slip")
+        }
+    }
+
+    fun local() {
+        val file = File(filesDir, "settings.json")
+    }
+}
+"""
+
+
+ORIGINAL_INHERITED_FINAL_KT = """package com.example.breadth
+
+import android.app.Activity
+import android.content.ComponentName
+import android.content.Intent
+import android.webkit.WebView
+import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipInputStream
+
+class Final : Activity() {
+    fun unzip(zis: ZipInputStream, dest: File) {
+        val entry = zis.nextEntry ?: return
+        if (".." in entry.name) return
+        FileOutputStream(File(dest, entry.name))
+    }
+
+    fun unzipSlash(zis: ZipInputStream, dest: File) {
+        val entry = zis.nextEntry ?: return
+        if (entry.name.contains("../")) return
+        FileOutputStream(File(dest, entry.name))
+    }
+
+    fun forward() {
+        val next = intent.getParcelableExtra<Intent>("next") ?: return
+        val target: ComponentName? = next.component
+        if (target == null || target.packageName != packageName) return
+        startActivity(next)
+    }
+
+    fun always(view: WebView) {
+        var url = intent.getStringExtra("u")
+        run { url = "https://example.com/home" }
+        view.loadUrl(url)
+    }
+}
+"""
+
+
+ORIGINAL_INHERITED_SWIFT_URL_ALIAS = """
+            class LinkHandler: UIViewController {
+                private var browser: WKWebView!
+                func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+                    let components = URLComponents(url: incoming, resolvingAgainstBaseURL: false)
+                    let destination = components?.queryItems?.first?.value
+                    browser.load(URLRequest(url: URL(string: destination!)!))
+                    return true
+                }
+            }
+            """
+
+
+@pytest.mark.parametrize(
+    "source,expected_original_lines",
+    [(ORIGINAL_INHERITED_PATHS_KT, {20, 23, 29}), (ORIGINAL_INHERITED_FINAL_KT, {21})],
+)
+def test_original_inherited_path_controls_keep_existing_candidates_and_declare_type_uncertainty(
+    source, expected_original_lines
+):
+    from mobile_audit.source_analysis import analyze_sources
+
+    report = analyze_sources([("OriginalInherited.kt", source)])
+    matches = findings(report)
+    assert expected_original_lines <= {item["evidence"][0]["line"] for item in matches}, report
+    assert all(item["status"] == "candidate" for item in matches), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "constructor field mapping unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+def test_original_inherited_swift_url_alias_keeps_platform_input_candidate_and_declares_uncertainty():
+    from mobile_audit.source_analysis import analyze_sources
+
+    report = analyze_sources([("OriginalInherited.swift", ORIGINAL_INHERITED_SWIFT_URL_ALIAS)])
+    candidate_and_partial(report)
+    assert any(
+        source["kind"].startswith("iOS application URL callback parameter")
+        for item in findings(report, URL)
+        for evidence in item["evidence"]
+        for source in evidence["sources"]
+    ), report
+
+
+def test_unresolved_inherited_type_receiver_cannot_borrow_generic_uri_host_guard_safety():
+    source = """class Handler extends ExternalParent {
+    WebView web;
+    void open(Intent input) {
+        String destination = input.getStringExtra("url");
+        Uri parsed = Uri.parse(destination);
+        if ("https".equals(parsed.getScheme()) && "safe.example".equals(parsed.getHost())) {
+            web.loadUrl(destination);
+        }
+    }
+}
+"""
+    candidate_and_partial(scan(("App.java", source)))

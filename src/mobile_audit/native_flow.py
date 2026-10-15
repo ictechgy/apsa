@@ -10,6 +10,7 @@ from .source_analysis import (
     FILE_SINKS,
     FUNCTIONS,
     INTENT_LAUNCHERS,
+    NESTED_INTENT_GETTERS,
     RULES,
     SQL_SINKS,
     TRACE_PARTIAL,
@@ -27,6 +28,13 @@ MAX_CALL_EVALUATIONS = 1024
 MAX_CALLABLES = 4096
 MAX_FIELD_ROUNDS = 4
 MAX_PARTIAL_DETAILS = 256
+INHERITED_TYPE_SCOPES = {
+    "superclass",
+    "super_interfaces",
+    "extends_interfaces",
+    "delegation_specifiers",
+    "inheritance_specifier",
+}
 # These exact platform identities already have value/sink models in Analyzer.
 # An import is evidence for deferring to those models, not for inferring a body.
 MODELED_EXTERNAL_CONSTRUCTORS = {
@@ -398,6 +406,7 @@ class NativeFlow:
             "type_alias",
             "typealias_declaration",
             "associatedtype_declaration",
+            "protocol_declaration",
         }
         scopes = {
             "block",
@@ -438,7 +447,24 @@ class NativeFlow:
                     self.type_parameter_cache[key] = names
                 if root in self.type_parameter_cache[key]:
                     return self.type_parameter_cache[key][root]
+                inherited = next(
+                    (child for child in scope.named_children if child.type in INHERITED_TYPE_SCOPES), None
+                )
+                if inherited is not None:
+                    # The represented superclass/protocol may supply a member
+                    # type before an enclosing/package/import binding. No
+                    # complete inherited type lookup is available here.
+                    return inherited
             if scope.type in scopes:
+                if scope.type == "program" and analyzer.language == "java":
+                    for declaration in analyzer.imports:
+                        if declaration.startswith("static ") and (
+                            declaration.endswith(".*") or declaration.rsplit(".", 1)[-1] == root
+                        ):
+                            # A static import may name a nested type. Treat it
+                            # as unresolved rather than falling back to a
+                            # same-package class with the same spelling.
+                            return scope
                 if key not in self.type_scope_cache:
                     entries = []
                     for declaration in scope.named_children:
@@ -551,7 +577,9 @@ class NativeFlow:
         if call.node.type == "object_creation_expression" or (
             leaf[:1].isupper()
             and (
-                self.class_name_present(analyzer, leaf) or self.imported_symbols(analyzer, leaf, classes=True)
+                self.class_name_present(analyzer, leaf)
+                or self.imported_symbols(analyzer, leaf, classes=True)
+                or self.lexical_type(analyzer, name, call.node) is not None
             )
         ):
             # Preserve the original source root for lexical checks; only the
@@ -805,6 +833,7 @@ class NativeFlow:
                 or owners
                 or self.class_name_present(analyzer, constructor_type.rsplit(".", 1)[-1])
                 or self.imported_symbols(analyzer, call.name, classes=True)
+                or self.lexical_type(analyzer, constructor_type, call.node) is not None
             )
         owner = self.owner(analyzer, analyzer.function)
         receiver_key = analyzer.key(call.receiver) if call.receiver is not None else ""
@@ -901,12 +930,20 @@ class NativeFlow:
         # A compatible signature without receiver identity remains uncertain;
         # a same-name declaration with a different signature is irrelevant.
         # Neither case permits a global leaf-name target match.
+        binding = self.lexical_type(analyzer, declared, call.node)
         return resolved, bool(
             choices
             or owners
             or imported_class
             or namespace
-            or self.lexical_type(analyzer, declared, call.node) is not None
+            or binding is not None
+            and (
+                binding.type not in INHERITED_TYPE_SCOPES
+                or analyzer.type_reference(call.receiver)
+                and receiver_key not in frame.values
+                and receiver_key not in analyzer.parameter_types
+                and receiver_key not in analyzer.field_types
+            )
         )
 
     @staticmethod
@@ -1011,6 +1048,26 @@ class NativeFlow:
                 self.partial("unresolved callable identity", analyzer, call=call)
             return None
         if not targets:
+            if (
+                receiver.category == "intent"
+                and call.name
+                in {"getData", "getDataString", "getStringExtra", "getCharSequenceExtra", "getExtras"}
+                or receiver.category in {"intent", "bundle"}
+                and call.name in NESTED_INTENT_GETTERS
+                or analyzer.key(call.receiver) in {"IntentCompat", "BundleCompat"}
+                and call.name in NESTED_INTENT_GETTERS
+                and args
+                and args[0].category in {"intent", "bundle"}
+                or receiver.traces
+                and call.name in {"getQueryParameter", "getQueryParameters"}
+                or receiver.category in {"request", "navigation"}
+                and call.name in {"getUrl", "getURL"}
+            ):
+                # Unavailable type identity must not erase Analyzer's existing
+                # conservative platform input provenance. These models add or
+                # retain taint; they transfer no sanitizer or guard assertion.
+                self.partial("source receiver type identity unresolved", analyzer, call=call)
+                return None
             constructor_type = self.constructor_type(analyzer, call, frame)
             if constructor_type is not None:
                 if self.implicit_constructor(analyzer, constructor_type, call):

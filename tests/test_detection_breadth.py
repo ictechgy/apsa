@@ -337,8 +337,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
 
-class Files : Activity() {
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+class Files {
+    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?, intent: Intent) {
         val uri = data?.data ?: return
         var name = "default"
         contentResolver.query(uri, null, null, null, null)?.use {
@@ -1244,7 +1244,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
 
-class Final : Activity() {
+class Final {
     fun unzip(zis: ZipInputStream, dest: File) {
         val entry = zis.nextEntry ?: return
         if (".." in entry.name) return
@@ -1257,14 +1257,14 @@ class Final : Activity() {
         FileOutputStream(File(dest, entry.name))
     }
 
-    fun forward() {
+    fun forward(intent: Intent) {
         val next = intent.getParcelableExtra<Intent>("next") ?: return
         val target: ComponentName? = next.component
         if (target == null || target.packageName != packageName) return
         startActivity(next)
     }
 
-    fun always(view: WebView) {
+    fun always(view: WebView, intent: Intent) {
         var url = intent.getStringExtra("u")
         run { url = "https://example.com/home" }
         view.loadUrl(url)
