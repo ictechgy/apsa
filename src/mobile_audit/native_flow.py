@@ -29,6 +29,34 @@ MAX_CALLABLES = 4096
 MAX_FIELD_ROUNDS = 4
 MAX_PARTIAL_DETAILS = 256
 SCALAR_STRING_TYPES = {"java": "java.lang.String", "kotlin": "kotlin.String", "swift": "Swift.String"}
+NOMINAL_DECLARATIONS = {
+    "class_declaration",
+    "object_declaration",
+    "interface_declaration",
+    "enum_declaration",
+    "record_declaration",
+    "annotation_type_declaration",
+    "protocol_declaration",
+}
+NOMINAL_BODIES = {
+    "class_body",
+    "interface_body",
+    "enum_body",
+    "enum_class_body",
+    "annotation_type_body",
+    "protocol_body",
+    "struct_body",
+    "actor_body",
+    "extension_body",
+    "object_body",
+}
+UNAVAILABLE_NOMINAL_DECLARATIONS = {
+    "companion_object",
+    "class_interface",
+    "class_implementation",
+    "category_interface",
+    "category_implementation",
+}
 INHERITED_TYPE_SCOPES = {
     "superclass",
     "super_interfaces",
@@ -165,6 +193,13 @@ class Callable:
         return self.analyzer.path, self.node.start_byte
 
 
+@dataclass(frozen=True)
+class ScopeBoundary:
+    kind: str
+    node: Any
+    name: Any = None
+
+
 class NativeFlow:
     def __init__(self, files: list[tuple[Analyzer, Any, list[Any]]]):
         self.by_name: dict[str, list[Callable]] = {}
@@ -203,23 +238,24 @@ class NativeFlow:
                     namespace = match[1]
             self.namespaces[id(analyzer)] = namespace
             for node in nodes:
-                if node.type in {"class_declaration", "object_declaration"}:
-                    name = _field(node, "name") or next(
-                        (
-                            child
-                            for child in node.named_children
-                            if child.type in {"identifier", "simple_identifier", "type_identifier"}
-                        ),
-                        None,
-                    )
-                    if name is not None:
+                boundary = self.scope_boundary(node)
+                if boundary is not None and boundary.kind == "nominal":
+                    name = boundary.name
+                    if name is not None and self.unavailable_scope(node) is None:
                         owner = self.owner(analyzer, name)
                         self.classes.setdefault(analyzer.text(name), set()).add(owner)
                         self.class_definitions.setdefault(owner, []).append((analyzer, node))
                 if node.type not in FUNCTIONS or node.has_error:
                     continue
-                if self.anonymous_scope(node) is not None:
-                    self.partial("anonymous callable scope unavailable", analyzer, node=node)
+                unavailable = self.unavailable_scope(node)
+                if unavailable is not None:
+                    self.partial(
+                        "anonymous callable scope unavailable"
+                        if unavailable.kind == "anonymous"
+                        else "nominal callable scope unavailable",
+                        analyzer,
+                        node=node,
+                    )
                     continue
                 count += 1
                 if count > MAX_CALLABLES:
@@ -240,26 +276,14 @@ class NativeFlow:
         key = (id(analyzer), function.id)
         if key in self.owner_cache:
             return self.owner_cache[key]
-        parent = function.parent
+        scope = self.enclosing_scope(function)
         names = []
-        while parent:
-            if (
-                parent.type == "class_body"
-                and parent.parent is not None
-                and parent.parent.type == "object_creation_expression"
-            ):
-                names.append(f"@anonymous:{parent.parent.start_byte}")
-            elif parent.type in {"class_declaration", "object_declaration"}:
-                name = _field(parent, "name") or next(
-                    (
-                        child
-                        for child in parent.named_children
-                        if child.type in {"identifier", "simple_identifier", "type_identifier"}
-                    ),
-                    None,
-                )
-                names.append(analyzer.text(name))
-            parent = parent.parent
+        while scope is not None:
+            if scope.kind != "nominal":
+                names.append(f"@{scope.kind}:{analyzer.path}:{scope.node.start_byte}")
+                break
+            names.append(analyzer.text(scope.name))
+            scope = self.enclosing_scope(scope.node)
         if not names:
             owner = ""
         else:
@@ -356,36 +380,67 @@ class NativeFlow:
         return None
 
     @staticmethod
-    def lexical_function(node: Any) -> bool:
-        """An intervening class makes a callable a member, even inside a function."""
-        parent = node.parent
-        while parent is not None:
-            if parent.type in FUNCTIONS:
-                return True
-            if parent.type in {
-                "class_declaration",
-                "object_declaration",
-                "interface_declaration",
-                "enum_declaration",
-                "record_declaration",
-                "protocol_declaration",
-            }:
-                return False
-            parent = parent.parent
-        return False
-
-    @staticmethod
-    def anonymous_scope(node: Any) -> Any:
-        parent = node.parent
-        while parent is not None:
-            if (
-                parent.type == "class_body"
-                and parent.parent is not None
-                and parent.parent.type == "object_creation_expression"
+    def scope_boundary(node: Any) -> ScopeBoundary | None:
+        """Use one callable/nominal boundary, including unsupported ownership fences."""
+        if node.type in FUNCTIONS:
+            return ScopeBoundary("callable", node)
+        if node.type in {"object_literal", "object_creation_expression", "enum_constant"}:
+            if node.type == "object_literal" or any(
+                child.type in NOMINAL_BODIES for child in node.named_children
             ):
-                return parent.parent
+                return ScopeBoundary("anonymous", node)
+        if node.type in UNAVAILABLE_NOMINAL_DECLARATIONS:
+            return ScopeBoundary("unavailable", node)
+        if node.type in NOMINAL_DECLARATIONS:
+            name = _field(node, "name") or next(
+                (
+                    child
+                    for child in node.named_children
+                    if child.type in {"identifier", "simple_identifier", "type_identifier"}
+                ),
+                None,
+            )
+            if name is None or any(child.type == "extension" for child in node.children):
+                return ScopeBoundary("unavailable", node)
+            return ScopeBoundary("nominal", node, name)
+        if node.type in NOMINAL_BODIES:
+            parent = node.parent
+            boundary = NativeFlow.scope_boundary(parent) if parent is not None else None
+            if boundary is None or boundary.kind != "nominal":
+                return ScopeBoundary(
+                    boundary.kind if boundary is not None and boundary.kind != "callable" else "unavailable",
+                    parent if parent is not None else node,
+                )
+        return None
+
+    @classmethod
+    def enclosing_scope(cls, node: Any, *, callables: bool = False) -> ScopeBoundary | None:
+        parent = node.parent
+        while parent is not None:
+            boundary = cls.scope_boundary(parent)
+            if boundary is not None and (callables or boundary.kind != "callable"):
+                return boundary
             parent = parent.parent
         return None
+
+    @classmethod
+    def lexical_function(cls, node: Any) -> bool:
+        boundary = cls.enclosing_scope(node, callables=True)
+        return boundary is not None and boundary.kind == "callable"
+
+    @classmethod
+    def unavailable_scope(cls, node: Any) -> ScopeBoundary | None:
+        boundary = cls.enclosing_scope(node)
+        while boundary is not None:
+            if boundary.kind != "nominal":
+                return boundary
+            boundary = cls.enclosing_scope(boundary.node)
+        return None
+
+    @classmethod
+    def anonymous_scope(cls, node: Any) -> Any:
+        boundary = cls.unavailable_scope(node)
+        return boundary.node if boundary is not None and boundary.kind == "anonymous" else None
 
     @staticmethod
     def imported_symbols(analyzer: Analyzer, name: str, *, classes: bool = False) -> set[str]:
@@ -416,31 +471,22 @@ class NativeFlow:
         root = match[0]
         use = use if use is not None else analyzer.function
         scope = use
-        declarations = {
-            "class_declaration",
-            "object_declaration",
-            "interface_declaration",
-            "enum_declaration",
-            "record_declaration",
-            "annotation_type_declaration",
+        declarations = NOMINAL_DECLARATIONS | {
             "type_alias",
             "typealias_declaration",
             "associatedtype_declaration",
-            "protocol_declaration",
         }
-        scopes = {
+        scopes = NOMINAL_BODIES | {
             "block",
             "statements",
             "function_body",
-            "class_body",
-            "enum_body",
-            "interface_body",
-            "annotation_type_body",
-            "protocol_body",
             "program",
             "source_file",
         }
         while scope is not None:
+            boundary = self.scope_boundary(scope)
+            if boundary is not None and boundary.kind in {"anonymous", "unavailable"}:
+                return boundary.node
             key = (id(analyzer), scope.id)
             if scope.type in FUNCTIONS | declarations:
                 if key not in self.type_parameter_cache:
@@ -531,7 +577,7 @@ class NativeFlow:
             # named nested types) are source identities. Local/member aliases,
             # classes and type parameters are deliberately unresolved here.
             if (
-                binding.type not in {"class_declaration", "object_declaration"}
+                binding.type not in NOMINAL_DECLARATIONS
                 or binding.parent is None
                 or binding.parent.type not in {"program", "source_file"}
             ):
@@ -638,7 +684,7 @@ class NativeFlow:
             ):
                 # An extension receiver is not an ordinary top-level argument.
                 return False
-        parent = self.enclosing(target.node, FUNCTIONS)
+        parent = self.enclosing(target.node, FUNCTIONS) if self.lexical_function(target.node) else None
         if parent is not None:
             if target.analyzer.path != analyzer.path:
                 return False
@@ -713,6 +759,8 @@ class NativeFlow:
         ):
             return False
         _source, node = definitions[0]
+        if analyzer.language == "java" and node.type != "class_declaration":
+            return False
         primary = next((child for child in node.named_children if child.type == "primary_constructor"), None)
         return primary is None or not any(
             child.named_children for child in primary.named_children if child.type == "class_parameters"
@@ -732,6 +780,8 @@ class NativeFlow:
         return tokens
 
     def closed_dispatch(self, target: Callable) -> bool:
+        if self.unavailable_scope(target.node) is not None:
+            return False
         if target.node.type == "constructor_declaration" or self.lexical_function(target.node):
             return True
         if not target.owner and target.analyzer.language != "java":
@@ -739,7 +789,10 @@ class NativeFlow:
         modifiers = self.declaration_tokens(target.node)
         if modifiers & {"private", "final", "static"}:
             return True
-        owner = self.enclosing(target.node, {"class_declaration", "object_declaration"})
+        boundary = self.enclosing_scope(target.node)
+        if boundary is not None and boundary.kind != "nominal":
+            return False
+        owner = boundary.node if boundary is not None else None
         owner_tokens = self.declaration_tokens(owner) if owner is not None else set()
         if "final" in owner_tokens:
             return True
@@ -785,8 +838,15 @@ class NativeFlow:
 
     def type_member(self, target: Callable) -> bool:
         """Only source-declared static/class/object members permit type receivers."""
+        if self.unavailable_scope(target.node) is not None:
+            return False
         if target.analyzer.language == "kotlin":
-            return self.enclosing(target.node, {"object_declaration"}) is not None
+            boundary = self.enclosing_scope(target.node)
+            return (
+                boundary is not None
+                and boundary.kind == "nominal"
+                and boundary.node.type == "object_declaration"
+            )
         name = _field(target.node, "name")
         if name is None:
             return False
@@ -873,6 +933,8 @@ class NativeFlow:
     def summary_signature_reason(
         self, analyzer: Analyzer, target: Callable, call: Call, args: list[Value], frame: Frame
     ) -> str | None:
+        if self.unavailable_scope(target.node) is not None:
+            return "nominal callable scope unavailable"
         lexical = self.lexical_function(target.node)
         inherited = False
         if not lexical and target.node.type != "constructor_declaration":
@@ -954,8 +1016,7 @@ class NativeFlow:
                 for target in choices
                 if target.owner == owner
                 and target.analyzer.path == analyzer.path
-                and self.enclosing(target.node, {"class_declaration", "object_declaration"})
-                == self.enclosing(analyzer.function, {"class_declaration", "object_declaration"})
+                and self.enclosing_scope(target.node) == self.enclosing_scope(analyzer.function)
             ]
             # Top-level imports must be checked before a same-file top-level match.
             if local and (owner or not imported):
@@ -971,7 +1032,7 @@ class NativeFlow:
                     identity = (target.owner or self.namespaces[id(target.analyzer)]) + "." + target.name
                     if identity in imported and (not target.owner or self.type_member(target)):
                         visible.append(target)
-                elif not target.owner and self.enclosing(target.node, FUNCTIONS) is None:
+                elif not target.owner and not self.lexical_function(target.node):
                     if (
                         analyzer.language == "kotlin"
                         and bool(self.namespaces[id(analyzer)])
@@ -1005,7 +1066,7 @@ class NativeFlow:
                 target
                 for target in choices
                 if not target.owner
-                and self.enclosing(target.node, FUNCTIONS) is None
+                and not self.lexical_function(target.node)
                 and self.namespaces[id(target.analyzer)] == receiver_key
             ]
             if top_level:
@@ -1282,7 +1343,7 @@ class NativeFlow:
             self.stack.append(target.key)
             context = concrete
             if "static" in self.declaration_tokens(target.node) or (
-                not target.owner and self.enclosing(target.node, FUNCTIONS) is None
+                not target.owner and not self.lexical_function(target.node)
             ):
                 context = None
             self.receiver_context.append(context)

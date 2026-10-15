@@ -1696,3 +1696,194 @@ fun route(input: Intent): String { return input.getDataString() }
     candidate_and_partial(report)
     assert "lexical overload signature unresolved" in report["metadata"]["native_flow"]["reasons"], report
     assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+
+
+@pytest.mark.parametrize("container", ["interface", "enum", "record"])
+@pytest.mark.parametrize("unused_present", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_unused_java_nominal_member_cannot_borrow_enclosing_entry_owner(container, unused_present, reverse):
+    prefix = {
+        "interface": "interface Unrelated {",
+        "enum": "enum Unrelated { ONLY;",
+        "record": "record Unrelated(int value) {",
+    }[container]
+    unused = prefix + ' static String route(String input) { return "https://safe.example/"; } }'
+    caller = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+import static external.Helper.route;
+class Entry {{
+    {unused if unused_present else ""}
+    void open(Intent input, WebView web) {{ web.loadUrl(route(input.getDataString())); }}
+}}
+"""
+    sources = [
+        ("app/Entry.java", caller),
+        (
+            "external/Helper.java",
+            "package external; public class Helper { public static String route(String input) { return input; } }",
+        ),
+    ]
+    report = scan(*(reversed(sources) if reverse else sources))
+    assert findings(report, URL), report
+    flow = report["metadata"]["native_flow"]
+    assert flow["state"] == "checked", report
+    assert flow["reasons"] == [], report
+    assert flow["evaluations"] == 1, report
+
+
+@pytest.mark.parametrize("container", ["interface", "enum", "record", "annotation"])
+def test_qualified_java_nominal_owner_retains_explicit_static_summary(container):
+    declaration = {
+        "interface": "interface Unrelated {",
+        "enum": "enum Unrelated { ONLY;",
+        "record": "record Unrelated(int value) {",
+        "annotation": "@interface Unrelated { class Nested {",
+    }[container]
+    receiver = "Entry.Unrelated.Nested" if container == "annotation" else "Entry.Unrelated"
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+class Entry {{
+    {declaration}
+        public static String route(String input) {{ return "https://safe.example/"; }}
+    {"}" if container == "annotation" else ""}}}
+    void open(Intent input, WebView web) {{ web.loadUrl({receiver}.route(input.getDataString())); }}
+}}
+"""
+    report = scan(("app/Entry.java", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    assert report["metadata"]["native_flow"]["evaluations"] == 1, report
+
+
+def test_enum_constant_class_body_is_an_anonymous_ownership_fence():
+    source = """package app;
+import android.content.Intent;
+import android.webkit.WebView;
+import static external.Helper.route;
+class Entry {
+    enum Unrelated {
+        ONLY { String route(String input) { return "https://safe.example/"; } };
+    }
+    void open(Intent input, WebView web) { web.loadUrl(route(input.getDataString())); }
+}
+"""
+    report = scan(
+        ("app/Entry.java", source),
+        (
+            "external/Helper.java",
+            "package external; public class Helper { public static String route(String input) { return input; } }",
+        ),
+    )
+    candidate_and_partial(report)
+    assert "anonymous callable scope unavailable" in report["metadata"]["native_flow"]["reasons"], report
+    assert report["metadata"]["native_flow"]["evaluations"] == 1, report
+
+
+@pytest.mark.parametrize("container", ["interface", "enum", "annotation", "object"])
+@pytest.mark.parametrize("unused_present", [False, True])
+def test_unused_kotlin_nominal_scope_preserves_imported_input_helper(container, unused_present):
+    declaration = {
+        "interface": "interface Unrelated",
+        "enum": "enum class Unrelated",
+        "annotation": "annotation class Unrelated",
+        "object": "object Unrelated",
+    }[container]
+    unused = declaration + ' {\nfun route(input: String): String { return "https://safe.example/" }\n}'
+    caller = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+import external.route
+class Entry {{
+    {unused if unused_present else ""}
+    fun open(input: Intent, web: WebView) {{ web.loadUrl(route(input.getDataString())) }}
+}}
+"""
+    helper = "package external\nfun route(input: String): String { return input }"
+    report = scan(("app/Entry.kt", caller), ("external/Helper.kt", helper))
+    assert findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    assert report["metadata"]["native_flow"]["evaluations"] == 1, report
+
+
+def test_kotlin_interface_default_method_remains_open_with_nominal_ownership():
+    source = """package app
+import android.content.Intent
+import android.webkit.WebView
+interface Handler {
+    fun route(input: String): String { return "https://safe.example/" }
+    fun open(input: Intent, web: WebView) { web.loadUrl(route(input.getDataString())) }
+}
+class Unsafe: Handler {
+    override fun route(input: String): String { return input }
+}
+"""
+    report = scan(("app/Handler.kt", source))
+    candidate_and_partial(report)
+    assert "receiver runtime dispatch unresolved" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("container", ["struct", "enum", "actor"])
+@pytest.mark.parametrize("unused_present", [False, True])
+def test_unused_swift_nominal_scope_cannot_replace_visible_file_helper(container, unused_present):
+    unused = f"""{container} Unrelated {{
+        static func route(_ input: URL) -> URL {{ return URL(string: "https://safe.example/")! }}
+    }}"""
+    source = f"""import WebKit
+class Entry {{
+    let web = WKWebView()
+    {unused if unused_present else ""}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        web.load(URLRequest(url: route(incoming)))
+        return true
+    }}
+}}
+func route(_ input: URL) -> URL {{ return input }}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    assert report["metadata"]["native_flow"]["evaluations"] == 1, report
+
+
+@pytest.mark.parametrize("container", ["companion", "object-literal", "extension"])
+def test_unsupported_nominal_container_stops_summary_lookup(container):
+    if container == "extension":
+        source = """import WebKit
+class Entry {
+    let web = WKWebView()
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+        web.load(URLRequest(url: route(incoming)))
+        return true
+    }
+}
+class Unrelated {}
+extension Unrelated {
+    static func route(_ input: URL) -> URL { return URL(string: "https://safe.example/")! }
+}
+func route(_ input: URL) -> URL { return input }
+"""
+        suffix = "swift"
+    else:
+        unused = (
+            'class Unrelated {\ncompanion object {\nfun route(input: String): String { return "https://safe.example/" }\n}\n}'
+            if container == "companion"
+            else 'val ignored = object {\nfun route(input: String): String { return "https://safe.example/" }\n}'
+        )
+        source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+class Entry {{
+    {unused}
+    fun open(input: Intent, web: WebView) {{ web.loadUrl(route(input.getDataString())) }}
+}}
+fun route(input: String): String {{ return input }}
+"""
+        suffix = "kt"
+    report = scan((f"app/Entry.{suffix}", source))
+    candidate_and_partial(report)
+    assert any(
+        reason in report["metadata"]["native_flow"]["reasons"]
+        for reason in ["nominal callable scope unavailable", "anonymous callable scope unavailable"]
+    ), report

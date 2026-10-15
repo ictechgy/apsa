@@ -8,6 +8,8 @@ staging/reporting and the subsequent CLI/parser/job/store review fixes.
 Rule version: `2026.10.15.apsa.160`.
 
 Native call summaries now require matching package/import/file identity.
+Nested nominal containers keep independent lexical ownership; unresolved
+ownership preserves taint and partial coverage.
 An unrelated module's same-named function or constructor cannot supply a
 sanitizer. Unknown or ambiguous identities preserve argument/field taint and
 partial coverage. Swift cross-file summaries remain unavailable without
