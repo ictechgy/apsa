@@ -795,8 +795,61 @@ class NativeFlow:
                     return False
         return True
 
+    def signature_type(self, analyzer: Analyzer, declared: str, use: Any) -> tuple | None:
+        """A bounded nominal or identical lexical binding, without assignability guesses."""
+        declared = declared.strip()
+        if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", declared):
+            return None
+        binding = self.lexical_type(analyzer, declared, use)
+        if binding is not None:
+            # An inherited type can be unavailable nominally yet both
+            # declarations can refer to the identical lexical binding. A
+            # caller's method type parameter/local type is a different node.
+            return ("lexical", analyzer.path, binding.id, declared)
+        owners = self.class_owners(analyzer, declared, use)
+        if len(owners) == 1:
+            return ("nominal", next(iter(owners)))
+        root, _, remainder = declared.partition(".")
+        imported = self.imported_symbols(analyzer, root, classes=True)
+        if len(imported) == 1:
+            return ("nominal", next(iter(imported)) + ("." + remainder if remainder else ""))
+        if analyzer.language == "java" and declared in {
+            "boolean",
+            "byte",
+            "char",
+            "short",
+            "int",
+            "long",
+            "float",
+            "double",
+        }:
+            return ("primitive", declared)
+        return None
+
+    def inherited_signature_exact(
+        self, analyzer: Analyzer, target: Callable, call: Call, args: list[Value], frame: Frame
+    ) -> bool:
+        if self.enclosing(target.node, FUNCTIONS) is not None:
+            return True
+        current = call.node
+        while current is not None:
+            if any(child.type in INHERITED_TYPE_SCOPES for child in current.named_children):
+                break
+            current = current.parent
+        if current is None:
+            return True
+        for (_name, expected_type, parameter), argument, value in zip(
+            target.parameters, call.args, args, strict=True
+        ):
+            actual_type = frame.types.get(analyzer.key(argument), value.type_name)
+            actual = self.signature_type(analyzer, actual_type, argument)
+            expected = self.signature_type(target.analyzer, expected_type, parameter)
+            if actual is None or expected is None or actual != expected:
+                return False
+        return True
+
     def resolve(
-        self, analyzer: Analyzer, call: Call, receiver: Value, frame: Frame
+        self, analyzer: Analyzer, call: Call, receiver: Value, frame: Frame, args: list[Value]
     ) -> tuple[list[Callable], bool]:
         if self.value_binding(analyzer, call, frame) is not None:
             return [], True
@@ -848,7 +901,14 @@ class NativeFlow:
             ]
             # Top-level imports must be checked before a same-file top-level match.
             if local and (owner or not imported):
-                return local, True
+                exact = [
+                    target
+                    for target in local
+                    if self.inherited_signature_exact(analyzer, target, call, args, frame)
+                ]
+                if len(exact) != len(local):
+                    self.partial("inherited overload signature unresolved", analyzer, call=call)
+                return exact, True
             if receiver_key in {"this", "self"}:
                 return [], bool(named_choices)
             visible = []
@@ -1004,7 +1064,7 @@ class NativeFlow:
                 return None
             self.partial("callable value binding unresolved", analyzer, call=call)
             return analyzer.changed(call.node, _union([binding, *args]))
-        targets, relevant = self.resolve(analyzer, call, receiver, frame)
+        targets, relevant = self.resolve(analyzer, call, receiver, frame, args)
         if not relevant:
             constructor_type = self.constructor_type(analyzer, call, frame)
             if constructor_type is not None and self.modeled_external(

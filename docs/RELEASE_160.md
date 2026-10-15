@@ -38,6 +38,8 @@ compiler module identity.
   imports. Unresolved type identity cannot borrow a same-named SDK sanitizer.
   Inherited member types and static type imports also participate in ownership;
   unavailable ownership retains taint and partial coverage before package fallback.
+  Member helper calls in inherited scopes require exact argument-to-parameter
+  type identity; equal argument counts alone cannot select a safe overload.
 
 ## Verification and limits
 
@@ -57,6 +59,11 @@ native-flow coverage instead of an empty finding list. This is a measured
 support-contract impact, not a passing accuracy result. Frozen labels and the
 official hosted quality gate remain unchanged; that gate must be assessed on
 the final candidate.
+On `d86172b`, the unchanged official test runs failed the existing benchmark
+expectations and regression contract. These failures remain release blockers.
+Validation preserves independent benchmark, stdio and package measurements
+after an earlier failed check; the overall job still fails, and publication
+gates are unchanged.
 Physical devices and genuine Apple signing identity/provisioning/revocation
 remain unverified. The source driver now retains four logout controls and adds two authenticated
 A-to-B account-switch controls per platform (old-A canary deleted/retained).

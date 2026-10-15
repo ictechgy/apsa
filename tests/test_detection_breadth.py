@@ -1066,12 +1066,24 @@ def test_home_documents_and_objc_messages_to_call_results():
 def test_budget_truncation_marks_coverage_partial():
     launches = "\n".join(f'        startActivity(Intent("com.example.breadth.A{i}"))' for i in range(250))
     kotlin = (
-        "package com.example.breadth\nclass D : Activity() {\n    fun f() {\n" + launches + "\n    }\n}\n"
+        "package com.example.breadth\nclass D {\n    fun f() {\n" + launches + "\n    }\n}\n"
     )
     result = analyze_sources([("D.kt", kotlin)])
     states = {c["rule_id"]: c["state"] for c in result["coverage"]}
     assert states["AST-IMPLICIT-INTENT"] == "partial"
     assert states["AST-PATH-TRAVERSAL"] == "checked"
+
+
+def test_budget_fixture_with_unknown_ancestor_keeps_type_uncertainty_partial():
+    launches = "\n".join(f'        startActivity(Intent("com.example.breadth.A{i}"))' for i in range(250))
+    kotlin = (
+        "package com.example.breadth\nclass D : Activity() {\n    fun f() {\n" + launches + "\n    }\n}\n"
+    )
+    result = analyze_sources([("D.kt", kotlin)])
+    states = {c["rule_id"]: c["state"] for c in result["coverage"]}
+    assert states["AST-IMPLICIT-INTENT"] == "partial"
+    assert states["AST-PATH-TRAVERSAL"] == "partial"
+    assert result["metadata"]["native_flow"]["state"] == "partial"
 
 
 def test_long_lines_and_repeated_declarations_stay_fast():

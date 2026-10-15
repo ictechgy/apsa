@@ -1430,3 +1430,111 @@ def test_unresolved_inherited_type_receiver_cannot_borrow_generic_uri_host_guard
 }
 """
     candidate_and_partial(scan(("App.java", source)))
+
+
+@pytest.mark.parametrize("base_provided", [False, True])
+@pytest.mark.parametrize("unknown_argument", [False, True])
+@pytest.mark.parametrize("explicit_this", [False, True])
+def test_inherited_java_overload_cannot_bind_private_same_arity_incompatible_sanitizer(
+    base_provided, unknown_argument, explicit_this
+):
+    argument = "make(input)" if unknown_argument else "input"
+    caller = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+class Handler extends Base {{
+    private String route(String text) {{ return "https://safe.example/"; }}
+    void open(Intent input, WebView web) {{
+        web.loadUrl({"this." if explicit_this else ""}route({argument}));
+    }}
+}}
+"""
+    sources = [("app/Handler.java", caller)]
+    if base_provided:
+        sources.append(
+            (
+                "app/Base.java",
+                """package app;
+import android.content.Intent;
+class Base {
+    String route(Intent input) { return input.getDataString(); }
+    Intent make(Intent input) { return input; }
+}
+""",
+            )
+        )
+    report = scan(*sources)
+    candidate_and_partial(report)
+    flow = report["metadata"]["native_flow"]
+    assert flow["evaluations"] == 0, report
+    assert any(
+        item["reason"] == "inherited overload signature unresolved" and item["call"] == "route"
+        for item in flow["partial_details"]
+    ), report
+
+
+@pytest.mark.parametrize("suffix", ["kt", "swift"])
+@pytest.mark.parametrize("base_provided", [False, True])
+def test_inherited_native_overload_cannot_bind_private_same_arity_incompatible_sanitizer(
+    suffix, base_provided
+):
+    if suffix == "kt":
+        caller = """package app
+import android.content.Intent
+import android.webkit.WebView
+class Handler: Base() {
+    private fun route(text: String): String { return "https://safe.example/" }
+    fun open(input: Intent, web: WebView) { web.loadUrl(route(input)) }
+}
+"""
+        base = """package app
+import android.content.Intent
+open class Base {
+    fun route(input: Intent): String { return input.getDataString() }
+}
+"""
+    else:
+        caller = """import WebKit
+class Handler: Base {
+    let web = WKWebView()
+    private func route(_ text: String) -> URL { return URL(string: "https://safe.example/")! }
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+        web.load(URLRequest(url: route(incoming)))
+        return true
+    }
+}
+"""
+        base = """import Foundation
+class Base {
+    func route(_ incoming: URL) -> URL { return incoming }
+}
+"""
+    sources = [(f"App.{suffix}", caller)]
+    if base_provided:
+        sources.append((f"Base.{suffix}", base))
+    report = scan(*sources)
+    candidate_and_partial(report)
+    assert "inherited overload signature unresolved" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+@pytest.mark.parametrize("explicit_this", [False, True])
+def test_exact_private_string_signature_keeps_direct_summary(inherited, explicit_this):
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+class Handler{" extends Base" if inherited else ""} {{
+    private String route(String text) {{ return "https://safe.example/"; }}
+    void open(Intent input, WebView web) {{
+        String text = input.getDataString();
+        web.loadUrl({"this." if explicit_this else ""}route(text));
+    }}
+}}
+"""
+    report = scan(("App.java", source))
+    assert not findings(report, URL), report
+    flow = report["metadata"]["native_flow"]
+    assert flow["evaluations"] == 1, report
+    assert "inherited overload signature unresolved" not in flow["reasons"], report
+    if not inherited:
+        assert flow["state"] == "checked", report

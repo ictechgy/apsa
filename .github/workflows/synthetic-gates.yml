@@ -53,6 +53,7 @@ jobs:
           packages: "platforms;android-36 build-tools;36.0.0"
           log-accepted-android-sdk-licenses: false
       - name: Install exact locked dependencies and fresh fixture toolchain
+        id: locked_dependencies
         run: |
           uv sync --locked --extra dev
       - name: Test source and served MCP on newly compiled inputs
@@ -63,12 +64,17 @@ jobs:
           APSA_TEST_ANDROID_BUILD_TOOLS: 36.0.0
         run: |
           APSA_TEST_ANDROID_SDK="$ANDROID_HOME" uv run --locked python -m pytest --basetemp "$RUNNER_TEMP/apsa-synthetic-tests"
-      - name: Measure fresh benchmark labels and preserve the known partial control
+      # Preserve independent measurements after a failed check. No continue-on-error:
+      # the job remains failed, and publication still requires its unchanged gates.
+      - name: Measure fresh benchmark labels without changing quality acceptance
+        if: ${{ !cancelled() && steps.locked_dependencies.outcome == 'success' }}
         run: APSA_TEST_ANDROID_SDK="$ANDROID_HOME" make benchmark BENCHMARK_OUT="$RUNNER_TEMP/apsa-fresh-benchmark"
       - name: Capture actual stdio tool manifests without baseline approval
+        if: ${{ !cancelled() && steps.locked_dependencies.outcome == 'success' }}
         run: |
           uv run --locked python scripts/served_mcp_manifest.py --out "$RUNNER_TEMP/apsa-served-mcp" --contract tests/contracts/mcp_tool_manifest_pending.json
       - name: Build twice and clean-install smoke with newly compiled APK
+        if: ${{ !cancelled() && steps.locked_dependencies.outcome == 'success' }}
         env:
           APSA_HOME: ${{ runner.temp }}/apsa-package-home
           APSA_TEST_ANDROID_PLATFORM: android-36
