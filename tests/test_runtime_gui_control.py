@@ -66,9 +66,13 @@ class Process:
         return 0
 
 
-def synthetic_commands(root, hosted, monkeypatch, *, process=None, selector="custom", toolchain="legacy"):
+def synthetic_commands(
+    root, hosted, monkeypatch, *, process=None, selector="custom", toolchain="legacy", setup_mode="gui"
+):
     root.mkdir()
-    commands = control.GuiCommands(root, env=hosted, selector=selector, toolchain=toolchain)
+    commands = control.GuiCommands(
+        root, env=hosted, selector=selector, toolchain=toolchain, setup_mode=setup_mode
+    )
     commands.resources = transport.OwnedResources(root)
     sdk_calls, gui_calls = [], []
     process = process or Process()
@@ -592,6 +596,7 @@ def test_guard_and_commands_accept_typed_mapping_copy(tmp_path, hosted, monkeypa
         ["--ios-toolchain", "/Applications/Xcode_26.3.app"],
         ["--ios-runtime", "com.apple.CoreSimulator.SimRuntime.iOS-NEW"],
         ["--developer-dir", "/Applications/Xcode_NEW.app/Contents/Developer"],
+        ["--setup-mode", "new-unknown"],
     ],
 )
 def test_cli_never_accepts_arbitrary_toolchain_runtime_or_path(tmp_path, monkeypatch, options):
@@ -618,11 +623,11 @@ def test_workflow_is_bounded_setup_control_with_independent_cleanup():
     workflow = yaml.safe_load(path.read_text())
     trigger = workflow.get("on", workflow.get(True))
     assert trigger["push"]["branches"] == ["validation/apsa-final-*"]
-    assert set(trigger["push"]["paths"]) == {
+    assert {
         "scripts/validate_runtime_gui_control.py",
         "tests/test_runtime_gui_control.py",
         ".github/workflows/runtime-gui-control.yml",
-    }
+    }.issubset(trigger["push"]["paths"])
     assert workflow["permissions"] == {"contents": "read"}
     job = workflow["jobs"]["ios-gui-setup-control"]
     assert job["runs-on"] == "macos-15" and job["timeout-minutes"] == 45
@@ -646,11 +651,11 @@ def test_modern_workflow_is_bounded_custom_set_control_with_independent_cleanup(
     workflow = yaml.safe_load(path.read_text())
     trigger = workflow.get("on", workflow.get(True))
     assert trigger["push"]["branches"] == ["validation/apsa-final-*"]
-    assert set(trigger["push"]["paths"]) == {
+    assert {
         "scripts/validate_runtime_gui_control.py",
         "tests/test_runtime_gui_control.py",
         ".github/workflows/runtime-modern-control.yml",
-    }
+    }.issubset(trigger["push"]["paths"])
     assert "workflow_dispatch" in trigger
     assert workflow["permissions"] == {"contents": "read"}
     job = workflow["jobs"]["ios-modern-setup-control"]
@@ -669,6 +674,192 @@ def test_modern_workflow_is_bounded_custom_set_control_with_independent_cleanup(
     cleanup = next(item for item in job["steps"] if "--cleanup-only" in item.get("run", ""))
     assert cleanup["if"] == "always()" and cleanup["timeout-minutes"] == 5
     assert '--work "$RUNNER_TEMP/runtime-new-modern-' in cleanup["run"]
+    for item in job["steps"]:
+        if "upload-artifact" in item.get("uses", ""):
+            assert item["if"] == "always()"
+            assert all(line.endswith(".json") for line in item["with"]["path"].splitlines())
+
+
+@pytest.mark.parametrize("hosted", ["modern"], indirect=True)
+def test_headless_has_owned_boot_proof_without_gui_and_keeps_other_deadlines(tmp_path, hosted, monkeypatch):
+    commands, sdk_calls, gui_calls, process = synthetic_commands(
+        tmp_path / "new-work", hosted, monkeypatch, toolchain="modern", setup_mode="headless"
+    )
+    prefix = create_and_boot(commands)
+    commands.run(prefix + ["bootstatus", DEVICE, "-b"], timeout=180)
+    commands.run(prefix + ["install", DEVICE, "new-synthetic-app"], timeout=120)
+    commands.run(prefix + ["get_app_container", DEVICE, "new-synthetic-package", "app"], timeout=120)
+    commands.run(prefix + ["openurl", DEVICE, "new-synthetic-url"], timeout=15)
+    assert [item[1]["timeout"] for item in sdk_calls[-4:]] == [600, 120, 120, 15]
+    assert gui_calls == [] and process.calls == [] and commands.gui == {}
+    assert commands.setup_records[0]["state"] == "owned-bootstatus-complete"
+    assert commands.setup_records[0]["gui_spawned"] is False
+    assert commands.setup_records[0]["ios_runtime"] == "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
+    with pytest.raises(ValueError, match="cannot start Simulator GUI"):
+        commands._start_gui(DEVICE)
+
+
+@pytest.mark.parametrize(
+    "mode,toolchain,selector",
+    [
+        ("new-unknown", "modern", "custom"),
+        ("headless", "legacy", "custom"),
+        ("headless", "legacy", "default"),
+        ("headless", "modern", "default"),
+    ],
+)
+def test_setup_mode_combinations_rejected_before_device_work(
+    tmp_path, hosted, monkeypatch, mode, toolchain, selector
+):
+    monkeypatch.setattr(transport.Commands, "__init__", lambda *_a, **_k: pytest.fail("unexpected commands"))
+    monkeypatch.setattr(transport, "ios_selector", lambda *_a: pytest.fail("unexpected selector"))
+    monkeypatch.setattr(transport, "main", lambda: pytest.fail("unexpected driver"))
+    with pytest.raises(ValueError):
+        control.GuiCommands(
+            tmp_path / "new-work", env=hosted, selector=selector, toolchain=toolchain, setup_mode=mode
+        )
+    with pytest.raises(ValueError):
+        control.run_control(tmp_path / "new-work", "simctl", selector, toolchain, mode)
+
+
+@pytest.mark.parametrize("hosted", ["modern"], indirect=True)
+@pytest.mark.parametrize(
+    "failure",
+    ["foreign", "unjournaled", "deleted", "wrong-prefix", "no-boot", "reused-create", "wrong-runtime"],
+)
+def test_headless_never_bypasses_fresh_uuid_selector_or_runtime_gates(tmp_path, hosted, monkeypatch, failure):
+    commands, sdk_calls, gui_calls, _process = synthetic_commands(
+        tmp_path / "new-work", hosted, monkeypatch, toolchain="modern", setup_mode="headless"
+    )
+    assert commands.resources is not None
+    prefix = create_and_boot(commands)
+    argv = prefix + ["bootstatus", DEVICE, "-b"]
+    if failure == "foreign":
+        commands.resources.ios(OTHER_DEVICE, selector="custom")
+        argv[-2] = OTHER_DEVICE
+    elif failure == "unjournaled":
+        commands.resources.value["ios"] = {}
+    elif failure == "deleted":
+        commands.resources.value["ios"][DEVICE]["deleted"] = True
+    elif failure == "wrong-prefix":
+        argv = ["/usr/bin/xcrun", "simctl", "bootstatus", DEVICE, "-b"]
+    elif failure == "no-boot":
+        commands.booted.clear()
+    else:
+        argv = prefix + ["create", "APSA-NEW-other", commands.config.device_type, commands.config.runtime]
+        if failure == "wrong-runtime":
+            argv[-1] = transport.IOS_PINNED_RUNTIME
+    previous = len(sdk_calls)
+    with pytest.raises(ValueError):
+        commands.run(argv)
+    assert len(sdk_calls) == previous + (1 if failure == "reused-create" else 0)
+    assert commands.setup_records == [] and gui_calls == []
+
+
+@pytest.mark.parametrize("hosted", ["modern"], indirect=True)
+@pytest.mark.parametrize("failure", ["none", "nonzero", "exception", "no-bootstatus"])
+def test_headless_wrapper_preserves_primary_failure_and_requires_owned_setup(
+    tmp_path, hosted, monkeypatch, failure
+):
+    root = tmp_path / "new-headless"
+    original_commands, original_argv = transport.Commands, sys.argv
+    error = ValueError("new synthetic primary failure")
+
+    def mock_run(self, argv, **_kwargs):
+        self.last_status = 0
+        return (DEVICE + "\n").encode() if "create" in argv else b""
+
+    monkeypatch.setattr(original_commands, "run", mock_run)
+    monkeypatch.setattr(control.subprocess, "Popen", lambda *_a, **_k: pytest.fail("unexpected GUI"))
+    monkeypatch.setattr(control.GuiCommands, "close_all_gui", lambda *_a: pytest.fail("unexpected GUI reap"))
+
+    def driver():
+        assert sys.argv[1:] == [
+            "--platform",
+            "ios",
+            "--ios-device-set",
+            "custom",
+            "--ios-runtime",
+            "com.apple.CoreSimulator.SimRuntime.iOS-26-2",
+            "--ios-device-type",
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-16",
+            "--ios-url-driver",
+            "companion",
+            "--work",
+            str(root),
+        ]
+        root.mkdir()
+        commands = transport.Commands(root)
+        commands.resources = transport.OwnedResources(root)
+        prefix = create_and_boot(commands)
+        if failure != "no-bootstatus":
+            commands.run(prefix + ["bootstatus", DEVICE, "-b"])
+        checkpoint = json.loads((root / "headless-control.json").read_text())
+        assert checkpoint["terminal"] is False and checkpoint["gui"] == []
+        assert checkpoint["gui_cleanup"]["state"] == "not-started"
+        if failure == "nonzero":
+            raise SystemExit(7)
+        if failure == "exception":
+            raise error
+
+    monkeypatch.setattr(transport, "main", driver)
+    if failure == "none":
+        control.run_control(root, "companion", "custom", "modern", "headless")
+    elif failure == "exception":
+        with pytest.raises(ValueError) as caught:
+            control.run_control(root, "companion", "custom", "modern", "headless")
+        assert caught.value is error
+    else:
+        with pytest.raises(SystemExit) as caught:
+            control.run_control(root, "companion", "custom", "modern", "headless")
+        assert caught.value.code == (7 if failure == "nonzero" else 1)
+    result = json.loads((root / "headless-control.json").read_text())
+    assert result["measurement"] == "hosted-simulator-headless-setup-control"
+    assert result["state"] == ("passed-setup-specific" if failure == "none" else "inconclusive")
+    assert result["gui"] == [] and result["gui_cleanup"]["state"] == "not-started"
+    assert result["gui_binding"] == result["gui_foreground"] == "not-started"
+    assert transport.Commands is original_commands and sys.argv is original_argv
+    assert not (root / "gui-control.json").exists()
+
+
+def test_headless_cli_forwards_the_closed_modern_mode(tmp_path, monkeypatch):
+    root = tmp_path / "new-work"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["new-control", "--work", str(root), "--ios-toolchain", "modern", "--setup-mode", "headless"],
+    )
+    calls = []
+    monkeypatch.setattr(control, "run_control", lambda *args: calls.append(args))
+    control.main()
+    assert calls == [(root, "simctl", "custom", "modern", "headless")]
+
+
+def test_headless_workflow_preserves_pins_all_driver_inputs_and_owned_cleanup():
+    path = Path(__file__).parents[1] / ".github/workflows/runtime-modern-headless.yml"
+    workflow = yaml.safe_load(path.read_text())
+    trigger = workflow.get("on", workflow.get(True))
+    assert trigger["push"]["branches"] == ["validation/apsa-final-*"]
+    assert {
+        "scripts/validate_runtime_transport.py",
+        "tests/fixtures/runtime/transport/**",
+        "tests/support/runtime_transport.py",
+        "src/mobile_audit/**",
+        "pyproject.toml",
+        "uv.lock",
+    }.issubset(trigger["push"]["paths"])
+    assert workflow["permissions"] == {"contents": "read"}
+    job = workflow["jobs"]["ios-modern-headless-control"]
+    assert job["runs-on"] == "macos-15" and job["timeout-minutes"] == 45
+    assert job["strategy"] == {"fail-fast": False, "matrix": {"driver": ["simctl", "companion"]}}
+    assert job["env"] == {"DEVELOPER_DIR": "/Applications/Xcode_26.3.app/Contents/Developer"}
+    step = next(
+        item for item in job["steps"] if "scripts.validate_runtime_gui_control" in item.get("run", "")
+    )
+    assert "--ios-toolchain modern --ios-device-set custom --setup-mode headless" in step["run"]
+    assert "--ios-os-url-control" not in step["run"]
+    cleanup = next(item for item in job["steps"] if "--cleanup-only" in item.get("run", ""))
+    assert cleanup["if"] == "always()" and cleanup["timeout-minutes"] == 5
     for item in job["steps"]:
         if "upload-artifact" in item.get("uses", ""):
             assert item["if"] == "always()"

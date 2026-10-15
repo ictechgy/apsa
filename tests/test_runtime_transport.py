@@ -334,6 +334,16 @@ def test_failed_acquisition_keeps_original_deadline_and_persists_health_counts(
     assert [entry["phase"] for entry in record["authority_health"]] == ["before-session", "after-failure"]
     assert record["authority_health"][-1]["state"] == ("unconfirmed" if diagnostic_failure else "verified")
     assert record["authority_cleanup"] == ("unconfirmed" if cleanup_failure else "confirmed")
+    assert record["authority_issue_diagnostic"] == {
+        "state": "diagnostic-only",
+        "requests": 1,
+        "accepted": 1,
+        "rejected": 0,
+        "bound": 1,
+        "unbound": 0,
+        "distinct_request_digests": 1,
+        "truncated": False,
+    }
     assert "secret" not in json.dumps(record) and "authority_events" not in record
 
 

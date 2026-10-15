@@ -27,6 +27,13 @@ compiler module identity.
   rollback. The store must reside on a filesystem supporting same-directory
   hard links; an unsupported filesystem fails rather than claiming a save.
   Cancellation remains cooperative when process identity cannot be inspected.
+- Native helper safety requires closed dispatch. Overridable Java/Swift methods
+  and open/override Kotlin calls preserve taint and partial coverage when their
+  runtime target is unproven; their guards cannot establish sanitizer proof.
+  Qualify genuinely direct helpers appropriately and review newly retained
+  candidates; incomplete analysis can now produce CLI exit 3 for such calls.
+  Callable parameters/local values and declaration blocks also
+  take precedence over similarly named functions where the language requires it.
 
 ## Verification and limits
 
@@ -53,6 +60,11 @@ The six Android controls passed on `588150f`, including both authenticated
 account switches and terminal cleanup ([owned hosted run](https://github.com/ictechgy/apsa/actions/runs/38608689172)).
 That observation is bound to its recorded driver/native fixture hashes; it
 does not establish iOS or physical-device acceptance.
+The later `54e319c` Android rerun failed during first-session issuance with
+two `/issue` requests and a fixture HTTP-status error. The failure remains
+inconclusive. Bounded issuance diagnostics now distinguish accepted/rejected,
+bound/unbound and distinct request digests without retaining request bodies
+or changing any acceptance condition.
 
 Publication uses the stable version/tag match, required CI, repeated verified
 wheel/sdist build and Trusted Publishing. A separate post-publication workflow
@@ -76,6 +88,14 @@ The custom/default legacy GUI differential on `588150f` also failed to observe
 a target callback. A separate modern custom-set control pins Xcode 26.3 and
 iOS 26.2 while preserving the same six-case acceptance contract. Its source
 and mocked checks do not establish delivery or a fix for the legacy failures.
+
+The modern GUI control on `54e319c` failed earlier: installation or app-container
+lookup timed out before any target launch or URL probe. Its NEW device and owned
+GUI-child cleanup were confirmed; no callback conclusion follows. A separate
+modern/custom headless setup differential keeps the same pinned factory,
+600-second bootstatus allowance, other command deadlines and six-case driver
+contract while omitting GUI spawn/reap. Its measurement and evidence file are
+distinct; it cannot replace a failed primary result.
 
 The native role-selector review processes failed before start because their
 configured model is unavailable in this account. Independent code/spec and

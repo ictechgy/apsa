@@ -78,6 +78,13 @@ def validate_selector(selector: str, config: GuiToolchain):
         raise ValueError("GUI setup control modern toolchain requires custom device set")
 
 
+def validate_setup_mode(setup_mode: str, config: GuiToolchain, selector: str):
+    if setup_mode not in {"gui", "headless"}:
+        raise ValueError("Simulator setup mode must be gui or headless")
+    if setup_mode == "headless" and (config.key != "modern" or selector != "custom"):
+        raise ValueError("Headless setup control requires modern custom device set")
+
+
 def hosted_gui_guard(root: Path, env: Mapping[str, str], toolchain: str = "legacy") -> Path:
     """Operational containment only; no host/device/UI attestation."""
     config = selected_toolchain(toolchain)
@@ -125,9 +132,12 @@ class GuiCommands(transport.Commands):
         output_name: str = "commands.json",
         selector: str = "custom",
         toolchain: str = "legacy",
+        setup_mode: str = "gui",
     ):
         self.config = selected_toolchain(toolchain)
         validate_selector(selector, self.config)
+        validate_setup_mode(setup_mode, self.config, selector)
+        self.setup_mode = setup_mode
         super().__init__(root, env=dict(env) if env is not None else None, output_name=output_name)
         hosted_gui_guard(root, self.env, self.config.key)
         self.selector = selector
@@ -138,6 +148,7 @@ class GuiCommands(transport.Commands):
         self.gui: dict[str, subprocess.Popen[bytes]] = {}
         self.gui_records: list[dict] = []
         self.gui_cleanup: dict[str, dict] = {}
+        self.setup_records: list[dict] = []
         self.gui_update: Callable[[], None] | None = None
 
     def _selected(self) -> tuple[list[str], Path]:
@@ -171,6 +182,8 @@ class GuiCommands(transport.Commands):
         return device_set
 
     def _start_gui(self, device: str):
+        if self.setup_mode != "gui":
+            raise ValueError("Headless setup control cannot start Simulator GUI")
         device_set = self._owned(device)
         if device not in self.booted or device in self.gui:
             raise ValueError("GUI setup control boot custody differs")
@@ -321,14 +334,31 @@ class GuiCommands(transport.Commands):
         elif tail and tail[0] == "boot" and self.last_status == 0:
             self.booted.add(tail[1])
         elif tail and tail[0] == "bootstatus" and self.last_status == 0:
-            self._start_gui(tail[1])
+            if self.setup_mode == "gui":
+                self._start_gui(tail[1])
+            else:
+                record = {
+                    **self.config.evidence(),
+                    "uuid_sha256": digest(tail[1].encode()),
+                    "selector": self.selector,
+                    "state": "owned-bootstatus-complete",
+                    "setup_mode": "headless",
+                    "gui_spawned": False,
+                    "bootstatus_timeout_seconds": GUI_BOOTSTATUS_SECONDS,
+                    "delivery": "unsupported",
+                }
+                self.setup_records.append(record)
+                self._record("ios-headless-setup-ready", **record)
         return raw
 
 
-def run_control(root: Path, driver: str, selector: str = "custom", toolchain: str = "legacy"):
+def run_control(
+    root: Path, driver: str, selector: str = "custom", toolchain: str = "legacy", setup_mode: str = "gui"
+):
     """Keep driver verdict/exit intact, attach a separate setup-specific result."""
     config = selected_toolchain(toolchain)
     validate_selector(selector, config)
+    validate_setup_mode(setup_mode, config, selector)
     hosted_gui_guard(root, dict(os.environ), config.key)
     if root.exists() or root.is_symlink():
         raise ValueError("GUI setup control requires a NEW work directory")
@@ -337,10 +367,11 @@ def run_control(root: Path, driver: str, selector: str = "custom", toolchain: st
     transport.ios_selector(root, selector, dict(os.environ))
     instances: list[GuiCommands] = []
     original_commands, original_argv = transport.Commands, sys.argv
+    evidence_name = "headless-control.json" if setup_mode == "headless" else "gui-control.json"
 
     class CapturedGuiCommands(GuiCommands):
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, selector=selector, toolchain=config.key, **kwargs)
+            super().__init__(*args, selector=selector, toolchain=config.key, setup_mode=setup_mode, **kwargs)
             instances.append(self)
             self.gui_update = checkpoint
             checkpoint()
@@ -349,7 +380,8 @@ def run_control(root: Path, driver: str, selector: str = "custom", toolchain: st
         "schema_version": 1,
         "source_version": 2,
         **config.evidence(),
-        "measurement": "hosted-simulator-gui-setup-control",
+        "measurement": f"hosted-simulator-{setup_mode}-setup-control",
+        "setup_mode": setup_mode,
         "scope": "Only CREATE-returned journaled NEW UUIDs; setup-specific result independent of primary gate",
         "hypothesis": "Pinned toolchain/runtime, device-set selection, fresh boot allowance and Simulator GUI startup may affect OS URL delivery",
         "state": "inconclusive",
@@ -362,21 +394,25 @@ def run_control(root: Path, driver: str, selector: str = "custom", toolchain: st
         "run_id": os.environ.get("GITHUB_RUN_ID"),
         "source_sha256": digest(Path(__file__).read_bytes()),
         "ui_inspection": "none",
-        "gui_binding": "unverified-undocumented-arguments",
-        "gui_foreground": "unmeasured",
+        "gui_binding": "not-started" if setup_mode == "headless" else "unverified-undocumented-arguments",
+        "gui_foreground": "not-started" if setup_mode == "headless" else "unmeasured",
         "driver_exit_status": None,
         "gui": [],
+        "setup": [],
     }
 
     def checkpoint():
         result["gui"] = [item for commands in instances for item in commands.gui_records]
+        result["setup"] = [item for commands in instances for item in commands.setup_records]
         result["gui_cleanup"] = {
             "scope": "only directly spawned Simulator children",
             "state": "unconfirmed",
             "reason": "driver-active-or-interrupted-no-terminal-reap-proof",
             "results": [item for commands in instances for item in commands.gui_cleanup.values()],
         }
-        (root / "gui-control.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
+        if setup_mode == "headless":
+            result["gui_cleanup"] = {"scope": "no GUI child requested", "state": "not-started", "results": []}
+        (root / evidence_name).write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
 
     failed = True
     try:
@@ -411,22 +447,21 @@ def run_control(root: Path, driver: str, selector: str = "custom", toolchain: st
     finally:
         transport.Commands, sys.argv = original_commands, original_argv
         cleanups = []
-        for commands in instances:
+        for commands in instances if setup_mode == "gui" else []:
             try:
                 cleanups.append(commands.close_all_gui())
             except Exception:
                 # Cleanup diagnostics cannot suppress the original driver failure.
                 cleanups.append({"state": "unconfirmed", "reason": "owned-gui-cleanup-unconfirmed"})
         result["gui"] = [item for commands in instances for item in commands.gui_records]
+        result["setup"] = [item for commands in instances for item in commands.setup_records]
         result["gui_cleanup"] = {
             "scope": "only directly spawned Simulator children",
             "state": "confirmed" if all(item["state"] == "confirmed" for item in cleanups) else "unconfirmed",
             "results": cleanups,
         }
-        result["state"] = (
-            "passed-setup-specific"
-            if not failed
-            and result["gui"]
+        setup_passed = (
+            bool(result["gui"])
             and all(item["state"] == "live-after-settle" for item in result["gui"])
             and result["gui_cleanup"]["state"] == "confirmed"
             and all(
@@ -434,16 +469,25 @@ def run_control(root: Path, driver: str, selector: str = "custom", toolchain: st
                 for commands in instances
                 for item in commands.gui_cleanup.values()
             )
-            else "inconclusive"
         )
+        if setup_mode == "headless":
+            result["gui_cleanup"] = {"scope": "no GUI child requested", "state": "not-started", "results": []}
+            setup_passed = (
+                bool(result["setup"])
+                and not result["gui"]
+                and all(not commands.gui for commands in instances)
+                and all(item["state"] == "owned-bootstatus-complete" for item in result["setup"])
+            )
+        result["state"] = "passed-setup-specific" if not failed and setup_passed else "inconclusive"
         result["terminal"] = True
         if root.is_dir():
             try:
-                (root / "gui-control.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
+                (root / evidence_name).write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
             except OSError:
                 result["state"] = "inconclusive"
                 result["evidence_write"] = "unconfirmed"
-        print(json.dumps({"runtime_gui_control": result}, sort_keys=True), flush=True)
+        key = "runtime_headless_control" if setup_mode == "headless" else "runtime_gui_control"
+        print(json.dumps({key: result}, sort_keys=True), flush=True)
     if result["state"] != "passed-setup-specific":
         raise SystemExit(1)
 
@@ -454,8 +498,14 @@ def main():
     parser.add_argument("--ios-url-driver", choices=("simctl", "companion"), default="simctl")
     parser.add_argument("--ios-device-set", choices=("custom", "default"), default="custom")
     parser.add_argument("--ios-toolchain", choices=tuple(GUI_TOOLCHAINS), default="legacy")
+    parser.add_argument("--setup-mode", choices=("gui", "headless"), default="gui")
     args = parser.parse_args()
-    run_control(args.work.resolve(), args.ios_url_driver, args.ios_device_set, args.ios_toolchain)
+    if args.setup_mode == "gui":
+        run_control(args.work.resolve(), args.ios_url_driver, args.ios_device_set, args.ios_toolchain)
+    else:
+        run_control(
+            args.work.resolve(), args.ios_url_driver, args.ios_device_set, args.ios_toolchain, args.setup_mode
+        )
 
 
 if __name__ == "__main__":

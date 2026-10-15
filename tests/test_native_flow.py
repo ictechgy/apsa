@@ -78,7 +78,7 @@ def test_noop_native_helper_preserves_constructed_path_category():
                     if (!output.getCanonicalPath().startsWith(root.getCanonicalPath() + File.separator)) return;
                     new FileOutputStream(output);
                 }
-                void idle() {}
+                private void idle() {}
             }""",
         )
     )
@@ -101,7 +101,7 @@ def test_noop_native_helper_preserves_receiver_allocation_identity():
                     idle();
                     new FileOutputStream(box.get());
                 }
-                void idle() {}
+                private void idle() {}
             }""",
         )
     )
@@ -601,7 +601,7 @@ def test_direct_helper_containment_can_validate_provisional_path_construction():
             File output = new File(root, input.getStringExtra("name"));
             write(output, root);
         }
-        void write(File output, File root) {
+        private void write(File output, File root) {
             if (!output.getCanonicalPath().startsWith(root.getCanonicalPath() + File.separator)) return;
             new FileOutputStream(output);
         }

@@ -2407,6 +2407,8 @@ def execute_case(
         raise
     finally:
         evidence["authority_event_counts"] = server.event_counts()
+        with authority.lock:
+            evidence["authority_issue_diagnostic"] = authority_issue_projection(authority.events)
         try:
             server.close()
             evidence["authority_cleanup"] = "confirmed"
@@ -2579,6 +2581,39 @@ def ios_url_diagnostic_projection(observation: dict) -> dict:
     return result
 
 
+def authority_issue_projection(events) -> dict:
+    """Bounded issuance diagnostics; never a retry or an acceptance condition."""
+    counts = {"requests", "accepted", "rejected", "bound", "unbound", "distinct_request_digests"}
+    if isinstance(events, dict):
+        if (
+            set(events) == counts | {"state", "truncated"}
+            and events.get("state") == "diagnostic-only"
+            and type(events.get("truncated")) is bool
+            and all(type(events[key]) is int and 0 <= events[key] <= 1024 for key in counts)
+        ):
+            return events.copy()
+        return {"state": "unmeasured"}
+    if not isinstance(events, list):
+        return {"state": "unmeasured"}
+    issues = [event for event in events[:1024] if isinstance(event, dict) and event.get("route") == "/issue"]
+    request_digests = {
+        event["request_sha256"]
+        for event in issues
+        if isinstance(event.get("request_sha256"), str)
+        and re.fullmatch(r"[a-f0-9]{64}", event["request_sha256"])
+    }
+    return {
+        "state": "diagnostic-only",
+        "requests": len(issues),
+        "accepted": sum(type(event.get("status")) is int and event["status"] == 200 for event in issues),
+        "rejected": sum(type(event.get("status")) is int and event["status"] == 403 for event in issues),
+        "bound": sum(event.get("bound") is True for event in issues),
+        "unbound": sum(event.get("bound") is False for event in issues),
+        "distinct_request_digests": len(request_digests),
+        "truncated": len(events) > 1024,
+    }
+
+
 def runtime_projection(evidence: dict) -> dict:
     """Small, typed public-CI proof; arbitrary error text/URLs/bodies stay out."""
 
@@ -2630,6 +2665,9 @@ def runtime_projection(evidence: dict) -> dict:
                     and type(value) is int
                     and 0 <= value <= 1024
                 },
+                "authority_issue_diagnostic": authority_issue_projection(
+                    case.get("authority_issue_diagnostic", case.get("authority_events"))
+                ),
                 "authority_cleanup": state(case.get("authority_cleanup"), {"confirmed", "unconfirmed"}),
                 "verified_fields": {
                     key: value

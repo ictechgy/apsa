@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from .source_analysis import (
+    FILE_SINKS,
     FUNCTIONS,
+    INTENT_LAUNCHERS,
     RULES,
+    SQL_SINKS,
     TRACE_PARTIAL,
     Analyzer,
     Call,
@@ -24,6 +27,98 @@ MAX_CALL_EVALUATIONS = 1024
 MAX_CALLABLES = 4096
 MAX_FIELD_ROUNDS = 4
 MAX_PARTIAL_DETAILS = 256
+# These exact platform identities already have value/sink models in Analyzer.
+# An import is evidence for deferring to those models, not for inferring a body.
+MODELED_EXTERNAL_CONSTRUCTORS = {
+    "android.content.Intent",
+    "android.webkit.WebView",
+    "java.io.File",
+    "java.io.FileInputStream",
+    "java.io.FileOutputStream",
+    "java.io.FileReader",
+    "java.io.FileWriter",
+    "java.io.RandomAccessFile",
+    "java.net.URI",
+    "java.net.URL",
+    "javax.crypto.spec.SecretKeySpec",
+    "javax.crypto.spec.DESKeySpec",
+    "javax.crypto.spec.DESedeKeySpec",
+    "javax.crypto.spec.PBEKeySpec",
+    "javax.crypto.spec.IvParameterSpec",
+    "javax.crypto.spec.GCMParameterSpec",
+}
+MODELED_EXTERNAL_METHODS = {
+    "android.content.Intent": {
+        "getData",
+        "getDataString",
+        "getStringExtra",
+        "getCharSequenceExtra",
+        "getExtras",
+        "getParcelableExtra",
+        "getParcelable",
+        "getSerializableExtra",
+    },
+    "android.net.Uri": {
+        "parse",
+        "getHost",
+        "getScheme",
+        "getQueryParameter",
+        "getQueryParameters",
+        "toString",
+    },
+    "android.webkit.WebView": {
+        "loadUrl",
+        "loadData",
+        "loadDataWithBaseURL",
+        "evaluateJavascript",
+        "evaluateJavaScript",
+        "addJavascriptInterface",
+        "removeJavascriptInterface",
+        "getSettings",
+        "setJavaScriptEnabled",
+    },
+    "android.webkit.SslErrorHandler": {"proceed"},
+    "android.util.Log": {"d", "i", "v", "e", "w"},
+    "android.app.PendingIntent": {
+        "getActivity",
+        "getActivities",
+        "getBroadcast",
+        "getService",
+        "getForegroundService",
+    },
+    "javax.crypto.Cipher": {"getInstance"},
+    "java.security.MessageDigest": {"getInstance"},
+    "androidx.core.content.IntentCompat": {"getParcelableExtra", "getParcelable", "getSerializableExtra"},
+    "androidx.core.os.BundleCompat": {"getParcelableExtra", "getParcelable", "getSerializableExtra"},
+    "java.io.File": {
+        "getName",
+        "getCanonicalPath",
+        "getCanonicalFile",
+        "toPath",
+        "toString",
+        "writeText",
+        "writeBytes",
+        "appendText",
+        "appendBytes",
+        "readText",
+        "readBytes",
+    },
+    "java.net.URI": {"getHost", "getScheme", "getQueryParameter", "getQueryParameters", "toString"},
+    "java.net.URL": {"getHost", "getScheme", "toString"},
+    "java.nio.file.Path": {"getFileName", "toRealPath", "toString"},
+    "java.nio.file.Files": {
+        "newOutputStream",
+        "newInputStream",
+        "write",
+        "writeString",
+        "readAllBytes",
+        "readString",
+        "copy",
+        "move",
+    },
+}
+for _sdk_type, _sdk_method in SQL_SINKS:
+    MODELED_EXTERNAL_METHODS.setdefault(_sdk_type, set()).add(_sdk_method)
 CONTEXT = (
     "scope",
     "function",
@@ -68,6 +163,8 @@ class NativeFlow:
         self.class_definitions: dict[str, list[tuple[Analyzer, Any]]] = {}
         self.namespaces: dict[int, str] = {}
         self.stack: list[tuple] = []
+        self.receiver_context: list[tuple[str, str] | None] = []
+        self.allocations: dict[str, str] = {}
         self.call_sites: list[str] = []
         self.evaluations = 0
         self.reasons: set[str] = set()
@@ -193,6 +290,8 @@ class NativeFlow:
 
     def receiver_identity(self, analyzer: Analyzer, receiver: Any, frame: Frame) -> str:
         if receiver is None or analyzer.key(receiver) in {"this", "self"}:
+            if self.receiver_context and self.receiver_context[-1] is not None:
+                return self.receiver_context[-1][1]
             return self.owner(analyzer, analyzer.function) + ":self"
         value = analyzer.value(receiver, frame)
         return value.identity or analyzer.path + ":" + analyzer.key(receiver)
@@ -294,6 +393,8 @@ class NativeFlow:
         return owners
 
     def constructor_type(self, analyzer: Analyzer, call: Call, frame: Frame) -> str | None:
+        if self.value_binding(analyzer, call, frame) is not None:
+            return None
         name = call.name
         if call.receiver is not None:
             namespace = analyzer.key(call.receiver)
@@ -307,13 +408,38 @@ class NativeFlow:
         leaf = name.rsplit(".", 1)[-1]
         if call.node.type == "object_creation_expression" or (
             leaf[:1].isupper()
-            and (leaf in self.classes or self.imported_symbols(analyzer, leaf, classes=True))
+            and (
+                self.class_name_present(analyzer, leaf) or self.imported_symbols(analyzer, leaf, classes=True)
+            )
         ):
             imported = self.imported_symbols(analyzer, leaf, classes=True) if "." not in name else set()
             return next(iter(imported)) if len(imported) == 1 else name
         return None
 
-    def lexical_visible(self, analyzer: Analyzer, target: Callable) -> bool:
+    def class_name_present(self, analyzer: Analyzer, name: str) -> bool:
+        """A class from another source language supplies no constructor identity."""
+        return any(
+            source.language == analyzer.language
+            for owner in self.classes.get(name, set())
+            for source, _node in self.class_definitions.get(owner, [])
+        )
+
+    @staticmethod
+    def value_binding(analyzer: Analyzer, call: Call, frame: Frame) -> Value | None:
+        """A current lexical value binds an unqualified callee before a member/type name."""
+        if (
+            analyzer.language not in {"kotlin", "swift"}
+            or call.receiver is not None
+            or not (
+                call.name in frame.values
+                or call.name in analyzer.parameter_types
+                or call.name in analyzer.field_types
+            )
+        ):
+            return None
+        return frame.values.get(call.name, Value(type_name=frame.types.get(call.name, "")))
+
+    def lexical_visible(self, analyzer: Analyzer, target: Callable, call: Call) -> bool:
         if target.analyzer.language == "kotlin":
             name = _field(target.node, "name")
             if name is not None and any(
@@ -332,11 +458,136 @@ class NativeFlow:
                 current = self.enclosing(current, FUNCTIONS)
             else:
                 return False
+            # A function-local declaration belongs to its declaration block,
+            # not every block of the enclosing function or class.
+            scope = self.enclosing(target.node, {"block", "statements", "function_body"})
+            current = call.node
+            while current is not None and current != scope:
+                current = current.parent
+            if scope is None or current is None or target.node.start_byte > call.node.start_byte:
+                return False
         if target.analyzer.path != analyzer.path and re.search(
             r"\b(?:private|fileprivate)\b", target.analyzer.text(target.node).split("{", 1)[0]
         ):
             return False
         return True
+
+    def modeled_external(
+        self,
+        analyzer: Analyzer,
+        declared: str,
+        call: Call,
+        *,
+        constructor: bool = False,
+        receiver: Value | None = None,
+    ) -> bool:
+        if self.class_owners(analyzer, declared):
+            return False
+        root, _, remainder = declared.partition(".")
+        imported = self.imported_symbols(analyzer, root, classes=True)
+        identities = {symbol + ("." + remainder if remainder else "") for symbol in imported}
+        if not imported and "." in declared:
+            identities.add(declared)
+        if len(identities) != 1:
+            return False
+        identity = next(iter(identities))
+        if (
+            not constructor
+            and identity in {"java.io.File", "java.nio.file.Path"}
+            and receiver is not None
+            and receiver.category in {"canonical-path", "text"}
+            and call.name in {"startsWith", "endsWith", "contains"}
+        ):
+            # Canonical path strings retain the originating File/Path type.
+            return True
+        return (
+            identity in MODELED_EXTERNAL_CONSTRUCTORS
+            if constructor
+            else call.name in MODELED_EXTERNAL_METHODS.get(identity, set())
+        )
+
+    def implicit_constructor(self, analyzer: Analyzer, declared: str, call: Call) -> bool:
+        """A unique source class with no declared constructor permits a no-arg allocation."""
+        owners = self.class_owners(analyzer, declared)
+        if call.args or analyzer.language not in {"java", "kotlin"} or len(owners) != 1:
+            return False
+        owner = next(iter(owners))
+        definitions = self.class_definitions[owner]
+        if len(definitions) != 1 or any(
+            target.owner == owner and target.node.type == "constructor_declaration"
+            for targets in self.by_name.values()
+            for target in targets
+        ):
+            return False
+        _source, node = definitions[0]
+        primary = next((child for child in node.named_children if child.type == "primary_constructor"), None)
+        return primary is None or not any(
+            child.named_children for child in primary.named_children if child.type == "class_parameters"
+        )
+
+    @staticmethod
+    def declaration_tokens(node: Any) -> set[str]:
+        """Read declaration keywords from AST tokens, excluding bodies/comments."""
+        name = _field(node, "name")
+        pending = [child for child in node.children if name is not None and child.end_byte <= name.start_byte]
+        tokens = set()
+        while pending:
+            child = pending.pop()
+            if not child.children:
+                tokens.add(child.type)
+            pending.extend(child.children)
+        return tokens
+
+    def closed_dispatch(self, target: Callable) -> bool:
+        if (
+            target.node.type == "constructor_declaration"
+            or self.enclosing(target.node, FUNCTIONS) is not None
+        ):
+            return True
+        if not target.owner and target.analyzer.language != "java":
+            return True
+        modifiers = self.declaration_tokens(target.node)
+        if modifiers & {"private", "final", "static"}:
+            return True
+        owner = self.enclosing(target.node, {"class_declaration", "object_declaration"})
+        owner_tokens = self.declaration_tokens(owner) if owner is not None else set()
+        if "final" in owner_tokens:
+            return True
+        if target.analyzer.language == "kotlin":
+            if owner is not None and owner.type == "object_declaration":
+                return True
+            if "class" in owner_tokens and not owner_tokens & {"open", "abstract", "sealed"}:
+                return True
+            return not bool(modifiers & {"open", "override", "abstract"} or "interface" in owner_tokens)
+        if target.analyzer.language == "swift":
+            return bool(owner_tokens & {"struct", "enum", "actor"})
+        return False
+
+    def allocation(self, analyzer: Analyzer, call: Call, declared: str, identity: str) -> None:
+        # Java `new` proves the concrete nominal type. Other expression forms
+        # retain field identity but do not establish exact dispatch here.
+        if analyzer.language == "java" and call.node.type == "object_creation_expression":
+            owners = self.class_owners(analyzer, declared)
+            if len(owners) == 1:
+                owner = next(iter(owners))
+                if len(self.class_definitions[owner]) == 1:
+                    self.allocations[identity] = owner
+
+    def concrete_receiver(self, analyzer: Analyzer, call: Call, receiver: Value) -> tuple[str, str] | None:
+        if call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}:
+            return self.receiver_context[-1] if self.receiver_context else None
+        owner = self.allocations.get(receiver.identity)
+        return (owner, receiver.identity) if owner else None
+
+    def weak_write(
+        self, analyzer: Analyzer, call: Call, previous: Value, written: Value, unknown: Value
+    ) -> Value:
+        value = self.merge([previous, written, unknown])
+        # Dispatch uncertainty invalidates value/identity safety, not a known
+        # field's nominal type needed to recognize subsequent sinks.
+        return analyzer.changed(
+            call.node, Value(value.traces, type_name=previous.type_name or written.type_name)
+        )
 
     def type_member(self, target: Callable) -> bool:
         """Only source-declared static/class/object members permit type receivers."""
@@ -370,6 +621,8 @@ class NativeFlow:
     def resolve(
         self, analyzer: Analyzer, call: Call, receiver: Value, frame: Frame
     ) -> tuple[list[Callable], bool]:
+        if self.value_binding(analyzer, call, frame) is not None:
+            return [], True
         imported = self.imported_symbols(analyzer, call.name)
         names = {call.name, *(symbol.rsplit(".", 1)[-1] for symbol in imported)}
         constructor_type = self.constructor_type(analyzer, call, frame)
@@ -384,9 +637,11 @@ class NativeFlow:
         choices = [
             target
             for target in named_choices
-            if self.signature_visible(analyzer, target, call) and self.lexical_visible(analyzer, target)
+            if self.signature_visible(analyzer, target, call) and self.lexical_visible(analyzer, target, call)
         ]
         if constructor_type is not None:
+            if self.modeled_external(analyzer, constructor_type, call, constructor=True):
+                return [], False
             owners = self.class_owners(analyzer, constructor_type)
             if any(len(self.class_definitions[owner]) > 1 for owner in owners):
                 self.partial("ambiguous class identity", analyzer, call=call)
@@ -399,7 +654,7 @@ class NativeFlow:
             return constructors, bool(
                 named_choices
                 or owners
-                or constructor_type.rsplit(".", 1)[-1] in self.classes
+                or self.class_name_present(analyzer, constructor_type.rsplit(".", 1)[-1])
                 or self.imported_symbols(analyzer, call.name, classes=True)
             )
         owner = self.owner(analyzer, analyzer.function)
@@ -466,6 +721,8 @@ class NativeFlow:
             if top_level:
                 return top_level, True
         declared = re.sub(r"[?!<>].*", "", receiver.type_name).strip() or receiver_key
+        if self.modeled_external(analyzer, declared, call, receiver=receiver):
+            return [], False
         owners = self.class_owners(analyzer, declared)
         if any(len(self.class_definitions[identity]) > 1 for identity in owners):
             self.partial("ambiguous class identity", analyzer, call=call)
@@ -485,7 +742,10 @@ class NativeFlow:
             and receiver_key.partition(".")[0] not in analyzer.parameter_types
             and receiver_key.partition(".")[0] not in analyzer.field_types
         )
-        return resolved, bool(named_choices or owners or imported_class or namespace)
+        # A compatible signature without receiver identity remains uncertain;
+        # a same-name declaration with a different signature is irrelevant.
+        # Neither case permits a global leaf-name target match.
+        return resolved, bool(choices or owners or imported_class or namespace)
 
     @staticmethod
     def signature(value: Value) -> tuple:
@@ -530,12 +790,32 @@ class NativeFlow:
     ) -> Value | None:
         if any(TRACE_PARTIAL in trace.description for value in [receiver, *args] for trace in value.traces):
             self.partial("source trace budget", analyzer, call=call)
+        binding = self.value_binding(analyzer, call, frame)
+        if binding is not None:
+            if (
+                analyzer.language == "swift"
+                and analyzer.scope == "webView"
+                and any("WKNavigationAction" in kind for kind in analyzer.parameter_types.values())
+                and "WKNavigationActionPolicy" in analyzer.parameter_types.get(call.name, "")
+                and len(call.args) == 1
+                and analyzer.text(call.args[0]).strip() in {".allow", ".cancel"}
+            ):
+                # Analyzer already models this typed WebKit policy callback;
+                # its lexical binding still must not resolve to a helper body.
+                return None
+            self.partial("callable value binding unresolved", analyzer, call=call)
+            return analyzer.changed(call.node, _union([binding, *args]))
         targets, relevant = self.resolve(analyzer, call, receiver, frame)
         if not relevant:
             constructor_type = self.constructor_type(analyzer, call, frame)
+            if constructor_type is not None and self.modeled_external(
+                analyzer, constructor_type, call, constructor=True
+            ):
+                return None
             # A source-identified constructor supplies allocation identity, never a global leaf match.
             if constructor_type is not None and self.class_owners(analyzer, constructor_type):
                 identity = f"{analyzer.path}:{call.node.start_byte}"
+                self.allocation(analyzer, call, constructor_type, identity)
                 if args:
                     self.partial("constructor field mapping unavailable", analyzer, call=call)
                     unknown = self.incomplete(analyzer.changed(call.node, _union(args)))
@@ -543,17 +823,41 @@ class NativeFlow:
                     return Value(unknown.traces, type_name=constructor_type, identity=identity)
                 return Value(type_name=constructor_type, identity=identity)
             if (
+                call.node.type == "object_creation_expression"
+                and any(argument.traces for argument in args)
+                and call.name not in {*FILE_SINKS, "Intent", "URI", "URL", "WebView"}
+            ):
+                # Java's `new` establishes allocation syntax even when the
+                # source inventory contains no definition at all. Keep its
+                # unknown field provenance independent of unrelated classes.
+                self.partial("constructor field mapping unavailable", analyzer, call=call)
+                identity = f"{analyzer.path}:{call.node.start_byte}"
+                unknown = self.incomplete(analyzer.changed(call.node, _union(args)))
+                frame.object_fields[identity] = {"__unknown_fields__": unknown}
+                return Value(unknown.traces, type_name=constructor_type or call.name, identity=identity)
+            if (
                 any(argument.traces for argument in args)
                 and call.receiver is None
                 and call.name[:1].islower()
+                and not (
+                    analyzer.language in {"java", "kotlin"}
+                    and call.name in INTENT_LAUNCHERS
+                    and args
+                    and args[0].category in {"intent", "nested-intent"}
+                )
             ):
                 self.partial("unresolved callable identity", analyzer, call=call)
             return None
         if not targets:
             constructor_type = self.constructor_type(analyzer, call, frame)
             if constructor_type is not None:
+                if self.implicit_constructor(analyzer, constructor_type, call):
+                    identity = f"{analyzer.path}:{call.node.start_byte}"
+                    self.allocation(analyzer, call, constructor_type, identity)
+                    return Value(type_name=constructor_type, identity=identity)
                 self.partial("constructor field mapping unavailable", analyzer, call=call)
                 identity = f"{analyzer.path}:{call.node.start_byte}"
+                self.allocation(analyzer, call, constructor_type, identity)
                 unknown = self.incomplete(analyzer.changed(call.node, _union([receiver, *args])))
                 frame.object_fields[identity] = {"__unknown_fields__": unknown}
                 return Value(unknown.traces, type_name=constructor_type, identity=identity)
@@ -561,24 +865,42 @@ class NativeFlow:
             return analyzer.changed(call.node, _union([receiver, *args]))
         if len(targets) > 1:
             self.partial("ambiguous direct call", analyzer, call=call)
-        dynamic = bool(
-            call.receiver is not None
-            and not receiver.identity
-            and (not analyzer.type_reference(call.receiver) or analyzer.key(call.receiver) in frame.values)
-            and analyzer.key(call.receiver) not in {"this", "self"}
-        )
-        dynamic &= any(
-            target.owner and not re.search(r"\bstatic\b", target.analyzer.text(target.node).split("{", 1)[0])
-            for target in targets
-        )
-        if dynamic:
-            self.partial("receiver runtime dispatch unresolved", analyzer, call=call)
         constructor = all(target.node.type == "constructor_declaration" for target in targets)
         identity = (
             f"{analyzer.path}:{call.node.start_byte}"
             if constructor
             else self.receiver_identity(analyzer, call.receiver, frame)
         )
+        if constructor:
+            self.allocation(
+                analyzer, call, self.constructor_type(analyzer, call, frame) or call.name, identity
+            )
+            concrete = (self.allocations[identity], identity) if identity in self.allocations else None
+        else:
+            concrete = self.concrete_receiver(analyzer, call, receiver)
+        dynamic = any(
+            not self.closed_dispatch(target) and (concrete is None or concrete[0] != target.owner)
+            for target in targets
+        )
+        if dynamic:
+            self.partial("receiver runtime dispatch unresolved", analyzer, call=call)
+        local_receiver = (call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}) and all(
+            target.owner == self.owner(analyzer, analyzer.function) for target in targets
+        )
+        affected = {identity, *(argument.identity for argument in args if argument.identity)}
+        if local_receiver:
+            affected.update(
+                value.identity
+                for name in analyzer.field_types
+                if (value := frame.values.get(name, Value())).identity
+            )
+        prior_objects = {key: fields.copy() for key, fields in frame.object_fields.items()}
+        uncertain_values = [receiver, *args]
+        if local_receiver:
+            uncertain_values.extend(frame.values.get(name, Value()) for name in analyzer.field_types)
+        for object_identity in affected:
+            uncertain_values.extend(prior_objects.get(object_identity, {}).values())
+        unknown_write = analyzer.changed(call.node, _union(uncertain_values))
         state = tuple(
             sorted(
                 (name, self.signature(value)) for name, value in frame.object_fields.get(identity, {}).items()
@@ -595,6 +917,7 @@ class NativeFlow:
             tuple(self.signature(value) for value in [receiver, *args]),
             state,
             guards,
+            concrete,
         )
         if cache_key in frame.call_results:
             return frame.call_results[cache_key]
@@ -618,6 +941,12 @@ class NativeFlow:
             saved_guards = self.active_guards
             saved_conditions = self.active_conditions
             self.stack.append(target.key)
+            context = concrete
+            if "static" in self.declaration_tokens(target.node) or (
+                not target.owner and self.enclosing(target.node, FUNCTIONS) is None
+            ):
+                context = None
+            self.receiver_context.append(context)
             self.call_sites.append(f"{analyzer.path}:{call.node.start_byte}")
             self.evaluations += 1
             try:
@@ -629,9 +958,7 @@ class NativeFlow:
                     local.values.update(frame.values)
                     local.types.update(frame.types)
                     local.constants.update(frame.constants)
-                if not constructor and (
-                    call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}
-                ):
+                if not constructor and local_receiver:
                     local.values.update(
                         {name: frame.values[name] for name in callee.field_types if name in frame.values}
                     )
@@ -712,9 +1039,27 @@ class NativeFlow:
                 writes.append(
                     {name: local.values[name] for name in callee.field_types if name in local.values}
                 )
-                frame.object_fields.update(local.object_fields)
+                if dynamic:
+                    for object_identity, fields in local.object_fields.items():
+                        previous = prior_objects.get(object_identity, {})
+                        if fields != previous or object_identity in affected:
+                            frame.object_fields[object_identity] = {
+                                name: self.weak_write(
+                                    analyzer,
+                                    call,
+                                    previous.get(name, Value()),
+                                    fields.get(name, Value()),
+                                    unknown_write,
+                                )
+                                for name in set(previous) | set(fields) | {"__unknown_fields__"}
+                            }
+                        else:
+                            frame.object_fields[object_identity] = fields
+                else:
+                    frame.object_fields.update(local.object_fields)
             finally:
                 self.stack.pop()
+                self.receiver_context.pop()
                 self.call_sites.pop()
                 self.active_guards = saved_guards
                 self.active_conditions = saved_conditions
@@ -727,16 +1072,31 @@ class NativeFlow:
             name: self.merge([write.get(name, Value()) for write in writes])
             for name in set().union(*(write.keys() for write in writes))
         }
+        if dynamic:
+            previous = prior_objects.get(identity, {})
+            if local_receiver:
+                previous = {
+                    **previous,
+                    **{name: frame.values.get(name, Value()) for name in analyzer.field_types},
+                }
+            merged = {
+                name: self.weak_write(
+                    analyzer, call, previous.get(name, Value()), merged.get(name, Value()), unknown_write
+                )
+                for name in set(previous) | set(merged) | {"__unknown_fields__"}
+            }
         frame.object_fields[identity] = merged
-        if not constructor and (call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}):
-            frame.values.update(merged)
+        if not constructor and local_receiver:
+            frame.values.update(
+                {name: value for name, value in merged.items() if name in analyzer.field_types}
+            )
         result = (
             Value(type_name=targets[0].owner if len(targets) == 1 else call.name, identity=identity)
             if constructor
             else self.merge(results)
         )
         if len(targets) != 1 or dynamic:
-            result = analyzer.changed(call.node, _union([result, receiver, *args]))
+            result = analyzer.changed(call.node, _union([result, receiver, *args, unknown_write]))
         frame.call_results[cache_key] = result
         return result
 

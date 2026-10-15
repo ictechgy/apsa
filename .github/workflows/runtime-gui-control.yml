@@ -3,7 +3,7 @@ name: NEW hosted Simulator GUI setup control — 1.6.0 candidate
 on:
   push:
     branches: ["validation/apsa-final-*"]
-    paths: ["scripts/validate_runtime_gui_control.py", "tests/test_runtime_gui_control.py", ".github/workflows/runtime-gui-control.yml"]
+    paths: ["scripts/validate_runtime_gui_control.py", "scripts/validate_runtime_transport.py", "src/mobile_audit/runtime_acquisition.py", "src/mobile_audit/runtime_evidence.py", "tests/support/runtime_transport.py", "tests/fixtures/runtime/transport/**", "tests/test_runtime_gui_control.py", "tests/test_runtime_transport.py", "tests/test_runtime_issue_diagnostic.py", "pyproject.toml", "uv.lock", ".github/workflows/runtime-gui-control.yml"]
   workflow_dispatch:
 
 permissions:

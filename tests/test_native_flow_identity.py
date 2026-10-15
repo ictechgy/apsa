@@ -287,7 +287,7 @@ class Handler {
     }
 }"""
     baseline = scan(("App.java", caller))
-    assert findings(baseline, URL), baseline
+    candidate_and_partial(baseline)
     unrelated = 'package unrelated; class UnknownBox { String value; UnknownBox(String input) { value = "https://safe.example/"; } }'
     report = scan(("App.java", caller), ("Unused.java", unrelated))
     candidate_and_partial(report)
@@ -307,3 +307,503 @@ def test_kotlin_default_package_cross_file_class_has_no_module_identity():
 }"""
     helper = "class Box(val input: String)"
     candidate_and_partial(scan(("OneModule/App.kt", caller), ("OtherModule/Box.kt", helper)))
+
+
+@pytest.mark.parametrize("suffix", ["java", "kt"])
+def test_unique_source_implicit_no_arg_constructor_is_complete(suffix):
+    if suffix == "java":
+        source = """package app;
+class AccountBridge { void idle() {} }
+class Handler { void open() { AccountBridge bridge = new AccountBridge(); bridge.idle(); } }
+"""
+    else:
+        source = """package app
+class AccountBridge {
+    fun idle() {}
+}
+class Handler {
+    fun open() { val bridge = AccountBridge(); bridge.idle() }
+}
+"""
+    report = scan((f"App.{suffix}", source))
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    assert report["metadata"]["native_flow"]["evaluations"] == 1, report
+
+
+def test_explicit_constructor_with_unmatched_signature_remains_partial():
+    report = scan(
+        (
+            "App.java",
+            """package app;
+class Box { Box(String name) {} }
+class Handler { void open() { Box box = new Box(); } }
+""",
+        )
+    )
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+def test_imported_framework_file_model_preserves_basename_containment_and_single_io_candidate():
+    report = scan(
+        (
+            "App.kt",
+            """package app
+import java.io.File
+import java.io.FileOutputStream
+class Handler {
+    fun open(input: Intent, root: File) {
+        val name = input.getStringExtra("name")!!
+        val unsafe = File(root, name)
+        FileOutputStream(unsafe)
+        val basename = File(root, File(name).name)
+        FileOutputStream(basename)
+    }
+    fun guarded(input: Intent, root: File) {
+        val name = input.getStringExtra("name")!!
+        val path = File(root, name)
+        if (!path.canonicalPath.startsWith(root.canonicalPath + File.separator)) return
+        FileOutputStream(path)
+    }
+}
+""",
+        )
+    )
+    assert len(findings(report)) == 1, report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+def test_external_class_named_file_cannot_borrow_framework_basename_safety():
+    source = """package app
+import external.File
+class Handler {
+    val web: WebView = WebView(context)
+    fun open(input: Intent) { web.loadUrl(File(input.getDataString()).name) }
+}
+"""
+    candidate_and_partial(scan(("App.kt", source)))
+
+
+def test_framework_nested_intent_model_is_not_intercepted_by_unrelated_source_class():
+    caller = """package app
+import android.content.Intent
+import androidx.core.content.IntentCompat
+class Handler {
+    fun open(input: Intent) {
+        val next = IntentCompat.getParcelableExtra(input, "next", Intent::class.java)
+        startActivity(next)
+    }
+}
+"""
+    unrelated = """package unrelated
+object IntentCompat {
+    fun getParcelableExtra(input: Intent, name: String, kind: Class): Intent { return Intent() }
+}
+"""
+    for sources in [[("App.kt", caller)], [("App.kt", caller), ("Unused.kt", unrelated)]]:
+        report = scan(*sources)
+        assert len(findings(report, "AST-INTENT-REDIRECTION")) == 1, report
+        assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+def test_unknown_method_on_a_framework_type_still_retains_taint_and_partial_coverage():
+    caller = """package app
+import java.io.File
+class Handler {
+    val web: WebView = WebView(context)
+    fun open(input: Intent) { web.loadUrl(File.route(input.getDataString())) }
+}
+"""
+    candidate_and_partial(scan(("App.kt", caller)))
+
+
+def test_qualified_unknown_receiver_does_not_bind_unrelated_same_name_method():
+    report = scan(
+        (
+            "App.kt",
+            """class Handler {
+    val web: WebView = WebView(context)
+    fun record(input: Intent, flag: Boolean) {
+        val destination = "https://safe.example/"
+        if (flag) {
+            val destination = input.getDataString()
+            audit.record(destination)
+        }
+        web.loadUrl(destination)
+    }
+}
+""",
+        )
+    )
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+
+
+def test_matching_unknown_receiver_signature_remains_partial_without_global_dispatch():
+    report = scan(
+        (
+            "App.java",
+            """class Handler {
+    WebView web;
+    void record(Intent input) {
+        String destination = input.getDataString();
+        audit.record(destination);
+    }
+    void help() { web.loadUrl("https://safe.example/"); }
+}
+""",
+        )
+    )
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+
+
+@pytest.mark.parametrize("local_helper", [False, True])
+def test_block_local_kotlin_helper_cannot_resolve_a_call_outside_its_declaration_block(local_helper):
+    declaration = (
+        'fun route(value: String): String { return "https://safe.example/" }' if local_helper else ""
+    )
+    caller = f"""package app
+import external.route
+class Handler {{
+    val web: WebView = WebView(context)
+    fun open(input: Intent, flag: Boolean) {{
+        if (flag) {{ {declaration} }}
+        web.loadUrl(route(input.getDataString()))
+    }}
+}}
+"""
+    report = scan(("App.kt", caller))
+    candidate_and_partial(report)
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+
+
+def test_block_local_kotlin_helper_resolves_after_declaration_in_the_same_block():
+    source = """package app
+import external.route
+class Handler {
+    val web: WebView = WebView(context)
+    fun open(input: Intent, flag: Boolean) {
+        if (flag) {
+            fun route(value: String): String { return "https://safe.example/" }
+            web.loadUrl(route(input.getDataString()))
+        }
+    }
+}
+"""
+    report = scan(("App.kt", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    assert report["metadata"]["native_flow"]["evaluations"] > 0, report
+
+
+@pytest.mark.parametrize("suffix", ["kt", "swift"])
+@pytest.mark.parametrize("binding", ["parameter", "local-value", "unshadowed", "explicit-member"])
+def test_lexical_callable_values_take_precedence_over_same_name_native_members(suffix, binding):
+    if suffix == "kt":
+        parameter = ", route: (String) -> String" if binding in {"parameter", "explicit-member"} else ""
+        local = "val route = externalTransform" if binding == "local-value" else ""
+        callee = "this.route" if binding == "explicit-member" else "route"
+        source = f"""package app
+class Handler {{
+    val web: WebView = WebView(context)
+    fun route(input: String): String {{ return "https://safe.example/" }}
+    fun open(intent: Intent{parameter}) {{
+        {local}
+        web.loadUrl({callee}(intent.getDataString()))
+    }}
+}}
+"""
+    else:
+        parameter = ", route: (URL) -> URL" if binding in {"parameter", "explicit-member"} else ""
+        local = "let route = externalTransform" if binding == "local-value" else ""
+        callee = "self.route" if binding == "explicit-member" else "route"
+        source = f"""import WebKit
+class Handler {{
+    let web = WKWebView()
+    final func route(_ input: URL) -> URL {{ return URL(string: "https://safe.example/")! }}
+    func application(_ app: UIApplication, open incoming: URL{parameter}) {{
+        {local}
+        web.load(URLRequest(url: {callee}(incoming)))
+    }}
+}}
+"""
+    report = scan((f"App.{suffix}", source))
+    if binding in {"parameter", "local-value"}:
+        candidate_and_partial(report)
+        assert "callable value binding unresolved" in report["metadata"]["native_flow"]["reasons"], report
+        assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+    else:
+        assert not findings(report, URL), report
+        assert report["metadata"]["native_flow"]["state"] == "checked", report
+        assert report["metadata"]["native_flow"]["evaluations"] > 0, report
+
+
+def test_swift_class_inventory_cannot_classify_an_unbound_kotlin_no_arg_call_as_a_constructor():
+    caller = """class Handler {
+    fun open() { val web = WebView(context); web.addJavascriptInterface(AccountBridge(), "account") }
+}
+"""
+    baseline = scan(("App.kt", caller))
+    combined = scan(
+        ("App.kt", caller),
+        ("Other.swift", "import WebKit\nclass AccountBridge: WKScriptMessageHandler {}"),
+    )
+    assert baseline["metadata"]["native_flow"]["state"] == "checked", baseline
+    assert combined["metadata"]["native_flow"]["state"] == "checked", combined
+    assert combined["metadata"]["native_flow"]["evaluations"] == 0, combined
+    assert baseline["findings"] == combined["findings"], combined
+
+
+def test_java_value_names_do_not_shadow_method_or_constructor_namespaces():
+    source = """package app;
+class Box {
+    String value;
+    Box(String input) { value = "https://safe.example/"; }
+}
+class Handler {
+    WebView web;
+    private final String route(String input) { return "https://safe.example/"; }
+    void open(Intent input, String route, String Box) {
+        web.loadUrl(route(input.getDataString()));
+        Box box = new Box(input.getDataString());
+        web.loadUrl(box.value);
+    }
+}
+"""
+    report = scan(("App.java", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("receiver", ["", "this."])
+@pytest.mark.parametrize("override", [False, True])
+def test_overridable_java_same_receiver_call_never_supplies_a_sanitizer(receiver, override):
+    source = f"""class Handler {{
+    WebView web;
+    String route(String input) {{ return "https://safe.example/"; }}
+    void open(Intent input) {{ web.loadUrl({receiver}route(input.getDataString())); }}
+}}
+"""
+    if override:
+        source += "class Child extends Handler { @Override String route(String input) { return input; } }"
+    report = scan(("App.java", source))
+    candidate_and_partial(report)
+    assert "receiver runtime dispatch unresolved" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("closed", ["private", "final", "static", "final-class"])
+def test_java_declared_closed_dispatch_preserves_constant_helper_positive(closed):
+    method = "" if closed == "final-class" else closed + " "
+    kind = "final class" if closed == "final-class" else "class"
+    source = f"""{kind} Handler {{
+    WebView web;
+    {method}String route(String input) {{ return "https://safe.example/"; }}
+    void open(Intent input) {{ web.loadUrl(route(input.getDataString())); }}
+}}
+"""
+    report = scan(("App.java", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("receiver", ["", "self."])
+def test_original_nonfinal_swift_member_remains_a_partial_candidate(receiver):
+    source = f"""import WebKit
+class Handler {{
+    let web = WKWebView()
+    func route(_ input: URL) -> URL {{ return URL(string: "https://safe.example/")! }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) {{
+        web.load(URLRequest(url: {receiver}route(incoming)))
+    }}
+}}
+"""
+    candidate_and_partial(scan(("App.swift", source)))
+
+
+@pytest.mark.parametrize("closed", ["private", "final", "final-class", "struct"])
+def test_swift_declared_closed_dispatch_preserves_constant_helper_positive(closed):
+    method = closed + " " if closed in {"private", "final"} else ""
+    kind = {"final-class": "final class", "struct": "struct"}.get(closed, "class")
+    source = f"""import WebKit
+{kind} Handler {{
+    let web = WKWebView()
+    {method}func route(_ input: URL) -> URL {{ return URL(string: "https://safe.example/")! }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) {{
+        web.load(URLRequest(url: self.route(incoming)))
+    }}
+}}
+"""
+    report = scan(("App.swift", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_kotlin_open_member_is_partial_but_default_final_member_remains_supported(closed):
+    modifier = "" if closed else "open "
+    source = f"""open class Handler {{
+    val web: WebView = WebView(context)
+    {modifier}fun route(input: String): String {{ return "https://safe.example/" }}
+    fun open(input: Intent) {{ web.loadUrl(this.route(input.getDataString())) }}
+}}
+"""
+    report = scan(("App.kt", source))
+    if closed:
+        assert not findings(report, URL), report
+        assert report["metadata"]["native_flow"]["state"] == "checked", report
+    else:
+        candidate_and_partial(report)
+
+
+@pytest.mark.parametrize("helper", ["idle-path", "idle-allocation", "containment"])
+def test_original_overridable_java_guard_and_idle_controls_remain_uncertain(helper):
+    sources = {
+        "idle-path": """class Handler {
+    File output;
+    void open(Intent input, File root) {
+        output = new File(root, input.getStringExtra("name"));
+        idle();
+        if (!output.getCanonicalPath().startsWith(root.getCanonicalPath() + File.separator)) return;
+        new FileOutputStream(output);
+    }
+    void idle() {}
+}""",
+        "idle-allocation": """class Box {
+    String name;
+    Box(String value) { name = value; }
+    String get() { return name; }
+}
+class Handler {
+    Box box;
+    void open(Intent input) {
+        box = new Box(input.getStringExtra("name"));
+        idle();
+        new FileOutputStream(box.get());
+    }
+    void idle() {}
+}""",
+        "containment": """class Handler {
+    void entry(Intent input, File root) {
+        File output = new File(root, input.getStringExtra("name"));
+        write(output, root);
+    }
+    void write(File output, File root) {
+        if (!output.getCanonicalPath().startsWith(root.getCanonicalPath() + File.separator)) return;
+        new FileOutputStream(output);
+    }
+}""",
+    }
+    report = scan(("App.java", sources[helper]))
+    assert findings(report), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "receiver runtime dispatch unresolved" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("member", [False, True])
+def test_virtual_writes_cannot_erase_receiver_or_argument_field_taint(member):
+    if member:
+        source = """class Handler {
+    WebView web;
+    String value;
+    void clear(String input) { value = "https://safe.example/"; }
+    void open(Intent input) {
+        value = input.getDataString();
+        this.clear(value);
+        web.loadUrl(value);
+    }
+}
+class Child extends Handler { @Override void clear(String input) { value = input; } }
+"""
+    else:
+        source = """class Box {
+    String value;
+    Box(String input) { value = input; }
+}
+class Handler {
+    WebView web;
+    void clear(Box box) { box.value = "https://safe.example/"; }
+    void open(Intent input) {
+        Box box = new Box(input.getDataString());
+        clear(box);
+        web.loadUrl(box.value);
+    }
+}
+class Child extends Handler { @Override void clear(Box box) {} }
+"""
+    candidate_and_partial(scan(("App.java", source)))
+
+
+def test_exact_java_allocation_type_propagates_into_nested_this_summaries_and_cache(monkeypatch):
+    from mobile_audit.native_flow import NativeFlow
+
+    observed = []
+    original = NativeFlow.call
+
+    def capture(self, analyzer, call, frame, receiver, args):
+        result = original(self, analyzer, call, frame, receiver, args)
+        if call.name == "inner":
+            observed.append((self.concrete_receiver(analyzer, call, receiver), list(frame.call_results)))
+        return result
+
+    monkeypatch.setattr(NativeFlow, "call", capture)
+    source = """class Helper {
+    String outer(String input) { return this.inner(input); }
+    String inner(String input) { return "https://safe.example/"; }
+}
+class Handler {
+    WebView web;
+    void open(Intent input, Helper unknown) {
+        Helper exact = new Helper();
+        web.loadUrl(exact.outer(input.getDataString()));
+        web.loadUrl(unknown.outer(input.getDataString()));
+    }
+}
+"""
+    report = scan(("App.java", source))
+    matches = findings(report, URL)
+    assert len(matches) == 1, report
+    assert matches[0]["evidence"][0]["line"] == 10, report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    exact = [(context, keys) for context, keys in observed if context is not None]
+    assert exact and all(context[0] == "Helper" for context, _keys in exact), observed
+    assert all(any(key[-1] == context for key in keys) for context, keys in exact), observed
+    assert any(context is None for context, _keys in observed), observed
+
+
+def test_exact_imported_sdk_sinks_defer_to_existing_models_without_native_body_uncertainty():
+    source = """import android.content.Intent;
+import android.webkit.WebView;
+import android.webkit.SslErrorHandler;
+import android.app.PendingIntent;
+import android.database.sqlite.SQLiteDatabase;
+import android.util.Log;
+import javax.crypto.Cipher;
+import java.security.MessageDigest;
+import javax.crypto.spec.SecretKeySpec;
+class Handler {
+    WebView web;
+    void open(Intent input, SQLiteDatabase db, SslErrorHandler handler) {
+        web.loadUrl(input.getDataString());
+        handler.proceed();
+        Cipher.getInstance("AES");
+        MessageDigest.getInstance("MD5");
+        new SecretKeySpec("literal".getBytes(), "AES");
+        db.execSQL("SELECT * FROM items WHERE name=" + input.getDataString());
+        Log.d("tag", input.getDataString());
+        PendingIntent.getActivity(context, 0, new Intent("app.INTERNAL"), PendingIntent.FLAG_MUTABLE);
+    }
+}
+"""
+    report = scan(("App.java", source))
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    for rule in [
+        URL,
+        "AST-CRYPTO-ECB",
+        "AST-CRYPTO-WEAK-HASH",
+        "AST-CRYPTO-HARDCODED-KEY",
+        "AST-SQL-CONCAT",
+        "AST-PENDINGINTENT-MUTABLE",
+    ]:
+        assert findings(report, rule), report
