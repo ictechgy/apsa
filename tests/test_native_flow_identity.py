@@ -959,3 +959,149 @@ def test_named_nested_class_still_has_a_proven_ordinary_java_allocation():
     assert not findings(report, URL), report
     assert report["metadata"]["native_flow"]["state"] == "checked", report
     assert report["metadata"]["native_flow"]["evaluations"] > 0, report
+
+
+@pytest.mark.parametrize("placement", ["local", "member"])
+@pytest.mark.parametrize("imported", [False, True])
+def test_java_lexical_class_cannot_borrow_top_level_or_imported_allocation_identity(placement, imported):
+    shadow = "class Helper { String route(String value) { return value; } }"
+    source = f"""package app;
+{"import external.Helper;" if imported else ""}
+class Handler {{
+    WebView web;
+    {"static " + shadow if placement == "member" else ""}
+    void open(Intent input) {{
+        {shadow if placement == "local" else ""}
+        Helper helper = new Helper();
+        web.loadUrl(helper.route(input.getDataString()));
+    }}
+}}
+"""
+    helper = f"""package {"external" if imported else "app"};
+class Helper {{ String route(String value) {{ return "https://safe.example/"; }} }}
+"""
+    report = scan(("app/Handler.java", source), ("helpers/Helper.java", helper))
+    candidate_and_partial(report)
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+
+
+@pytest.mark.parametrize("placement", ["local", "member"])
+def test_kotlin_lexical_class_cannot_borrow_package_class_identity(placement):
+    shadow = "class Helper {\nfun route(value: String): String { return value }\n}"
+    source = f"""package app
+class Helper {{
+    fun route(value: String): String {{ return "https://safe.example/" }}
+}}
+class Handler {{
+    val web: WebView = WebView(context)
+    {shadow if placement == "member" else ""}
+    fun open(input: Intent) {{
+        {shadow if placement == "local" else ""}
+        val helper = Helper()
+        web.loadUrl(helper.route(input.getDataString()))
+    }}
+}}
+"""
+    report = scan(("App.kt", source))
+    candidate_and_partial(report)
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+
+
+@pytest.mark.parametrize("method_parameter", [False, True])
+def test_java_type_parameter_cannot_borrow_final_package_class_sanitizer(method_parameter):
+    source = f"""package app;
+interface Routing {{ String route(String value); }}
+final class Helper {{ String route(String value) {{ return "https://safe.example/"; }} }}
+class Handler{"" if method_parameter else "<Helper extends Routing>"} {{
+    WebView web;
+    {"<Helper extends Routing> " if method_parameter else ""}void open(Intent input, Helper helper) {{
+        web.loadUrl(helper.route(input.getDataString()));
+    }}
+}}
+"""
+    candidate_and_partial(scan(("App.java", source)))
+
+
+def test_kotlin_type_parameter_cannot_borrow_final_package_class_sanitizer():
+    source = """package app
+interface Routing {
+    fun route(value: String): String
+}
+class Helper {
+    fun route(value: String): String { return "https://safe.example/" }
+}
+class Handler<Helper: Routing> {
+    val web: WebView = WebView(context)
+    fun open(input: Intent, helper: Helper) { web.loadUrl(helper.route(input.getDataString())) }
+}
+"""
+    candidate_and_partial(scan(("App.kt", source)))
+
+
+@pytest.mark.parametrize("placement", ["local", "member", "type-parameter"])
+def test_swift_lexical_alias_or_type_parameter_cannot_borrow_static_class_sanitizer(placement):
+    source = f"""import WebKit
+protocol Routing {{ static func route(_ value: URL) -> URL }}
+final class Helper {{
+    static func route(_ value: URL) -> URL {{ return URL(string: "https://safe.example/")! }}
+}}
+class Handler{"<Helper: Routing>" if placement == "type-parameter" else ""} {{
+    let web = WKWebView()
+    {"typealias Helper = ExternalRouting" if placement == "member" else ""}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        {"typealias Helper = ExternalRouting" if placement == "local" else ""}
+        web.load(URLRequest(url: Helper.route(incoming)))
+        return true
+    }}
+}}
+"""
+    candidate_and_partial(scan(("App.swift", source)))
+
+
+@pytest.mark.parametrize("qualified", [False, True])
+def test_java_shadowed_sdk_file_cannot_borrow_basename_safety(qualified):
+    source = f"""package app;
+import java.io.File;
+import java.io.FileOutputStream;
+class Handler {{
+    static class File {{
+        String value;
+        File(String input) {{ value = input; }}
+        String getName() {{ return value; }}
+    }}
+    void open(Intent input) {{
+        new FileOutputStream(new {"java.io.File" if qualified else "File"}(input.getStringExtra("name")).getName());
+    }}
+}}
+"""
+    report = scan(("App.java", source))
+    if qualified:
+        assert not findings(report), report
+        assert report["metadata"]["native_flow"]["state"] == "checked", report
+    else:
+        assert findings(report), report
+        assert report["metadata"]["native_flow"]["state"] == "partial", report
+        assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+
+
+def test_qualified_sdk_spelling_with_lexical_first_segment_cannot_borrow_basename_safety():
+    source = """package app;
+import java.io.FileOutputStream;
+class Handler {
+    static class java {
+        static class io {
+            static class File {
+                String value;
+                File(String input) { value = input; }
+                String getName() { return value; }
+            }
+        }
+    }
+    void open(Intent input) {
+        new FileOutputStream(new java.io.File(input.getStringExtra("name")).getName());
+    }
+}
+"""
+    report = scan(("App.java", source))
+    assert findings(report), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report

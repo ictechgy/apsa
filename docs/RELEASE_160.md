@@ -34,6 +34,8 @@ compiler module identity.
   candidates; incomplete analysis can now produce CLI exit 3 for such calls.
   Callable parameters/local values and declaration blocks also
   take precedence over similarly named functions where the language requires it.
+  Local/member type declarations also take precedence over package classes and
+  imports. Unresolved type identity cannot borrow a same-named SDK sanitizer.
 
 ## Verification and limits
 
@@ -66,6 +68,13 @@ inconclusive. Bounded issuance diagnostics now distinguish accepted/rejected,
 bound/unbound and distinct request digests without retaining request bodies
 or changing any acceptance condition.
 
+The next Android run on `5813403` passed all six controls, including both account
+switches, with one accepted, bound issuance per case and both cleanup stages
+confirmed ([owned hosted run](https://github.com/ictechgy/apsa/actions/runs/38689208783)).
+This is evidence for that execution and unchanged recorded runtime inputs;
+it neither identifies the earlier issuance failure's cause nor establishes iOS
+acceptance or an exact-head run for a later source-analysis change.
+
 Publication uses the stable version/tag match, required CI, repeated verified
 wheel/sdist build and Trusted Publishing. A separate post-publication workflow
 checks PyPI and release digests, tag/source binding, MCP Registry metadata and
@@ -96,6 +105,13 @@ modern/custom headless setup differential keeps the same pinned factory,
 600-second bootstatus allowance, other command deadlines and six-case driver
 contract while omitting GUI spawn/reap. Its measurement and evidence file are
 distinct; it cannot replace a failed primary result.
+
+Both modern headless drivers on `5813403` completed boot, installation and
+container lookup, then reached the target-response deadline with no new URL
+receipt or `/issue` request ([owned hosted run](https://github.com/ictechgy/apsa/actions/runs/38689208946)).
+Direct diagnostic launch created a new process epoch but did not observe an
+active scene, so no warm URL probe ran. Both cleanup stages were confirmed.
+This control remains inconclusive and does not satisfy live iOS acceptance.
 
 The native role-selector review processes failed before start because their
 configured model is unavailable in this account. Independent code/spec and

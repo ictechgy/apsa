@@ -172,6 +172,8 @@ class NativeFlow:
         self.partial_details_truncated = False
         self.fields: dict[str, dict[str, Value]] = {}
         self.owner_cache: dict[tuple[int, int], str] = {}
+        self.type_scope_cache: dict[tuple[int, int], list[tuple[str, Any]]] = {}
+        self.type_parameter_cache: dict[tuple[int, int], dict[str, Any]] = {}
         self.active_guards: dict[int | tuple[int, str], set[str]] = {}
         self.active_conditions: list[Any] = []
         self.files = sorted(files, key=lambda item: item[0].path)
@@ -378,8 +380,126 @@ class NativeFlow:
                 result.add(match[1])
         return result
 
-    def class_owners(self, analyzer: Analyzer, declared: str) -> set[str]:
+    def lexical_type(self, analyzer: Analyzer, declared: str, use: Any = None) -> Any:
+        """Find source type bindings before interpreting a spelling as an import/package."""
+        match = re.match(r"[A-Za-z_]\w*", declared)
+        if match is None:
+            return None
+        root = match[0]
+        use = use if use is not None else analyzer.function
+        scope = use
+        declarations = {
+            "class_declaration",
+            "object_declaration",
+            "interface_declaration",
+            "enum_declaration",
+            "record_declaration",
+            "annotation_type_declaration",
+            "type_alias",
+            "typealias_declaration",
+            "associatedtype_declaration",
+        }
+        scopes = {
+            "block",
+            "statements",
+            "function_body",
+            "class_body",
+            "enum_body",
+            "interface_body",
+            "annotation_type_body",
+            "protocol_body",
+            "program",
+            "source_file",
+        }
+        while scope is not None:
+            key = (id(analyzer), scope.id)
+            if scope.type in FUNCTIONS | declarations:
+                if key not in self.type_parameter_cache:
+                    names = {}
+                    for parameters in scope.named_children:
+                        if parameters.type != "type_parameters":
+                            continue
+                        for parameter in parameters.named_children:
+                            name = next(
+                                (
+                                    child
+                                    for child in parameter.named_children
+                                    if child.type
+                                    in {
+                                        "identifier",
+                                        "simple_identifier",
+                                        "type_identifier",
+                                    }
+                                ),
+                                None,
+                            )
+                            if name is not None:
+                                names[analyzer.text(name)] = parameter
+                    self.type_parameter_cache[key] = names
+                if root in self.type_parameter_cache[key]:
+                    return self.type_parameter_cache[key][root]
+            if scope.type in scopes:
+                if key not in self.type_scope_cache:
+                    entries = []
+                    for declaration in scope.named_children:
+                        if declaration.type not in declarations:
+                            continue
+                        name = (
+                            _field(declaration, "name")
+                            or (_field(declaration, "type") if declaration.type == "type_alias" else None)
+                            or next(
+                                (
+                                    child
+                                    for child in declaration.named_children
+                                    if child.type
+                                    in {
+                                        "identifier",
+                                        "simple_identifier",
+                                        "type_identifier",
+                                    }
+                                ),
+                                None,
+                            )
+                        )
+                        if name is not None:
+                            entries.append((analyzer.text(name), declaration))
+                    self.type_scope_cache[key] = entries
+                for name, declaration in self.type_scope_cache[key]:
+                    if name != root:
+                        continue
+                    if (
+                        scope.type in {"block", "statements", "function_body"}
+                        and analyzer.language != "swift"
+                        and declaration.start_byte > use.start_byte
+                    ):
+                        continue
+                    return declaration
+            scope = scope.parent
+        return None
+
+    def class_owners(self, analyzer: Analyzer, declared: str, use: Any = None) -> set[str]:
         """Class identity is package/import/file based, never globally unique by leaf."""
+        binding = self.lexical_type(analyzer, declared, use)
+        if binding is not None:
+            # Same-file top-level nominal declarations (including qualified
+            # named nested types) are source identities. Local/member aliases,
+            # classes and type parameters are deliberately unresolved here.
+            if (
+                binding.type not in {"class_declaration", "object_declaration"}
+                or binding.parent is None
+                or binding.parent.type not in {"program", "source_file"}
+            ):
+                return set()
+            name = _field(binding, "name")
+            if name is None:
+                return set()
+            owner = self.owner(analyzer, name)
+            imported = self.imported_symbols(analyzer, declared.partition(".")[0], classes=True)
+            if imported and imported != {owner}:
+                return set()
+            suffix = declared.partition(".")[2]
+            reference = owner + ("." + suffix if suffix else "")
+            return {reference} if self.class_definitions.get(reference) else set()
         root, _, remainder = declared.partition(".")
         imported = self.imported_symbols(analyzer, root, classes=True)
         references = {symbol + ("." + remainder if remainder else "") for symbol in imported}
@@ -434,8 +554,9 @@ class NativeFlow:
                 self.class_name_present(analyzer, leaf) or self.imported_symbols(analyzer, leaf, classes=True)
             )
         ):
-            imported = self.imported_symbols(analyzer, leaf, classes=True) if "." not in name else set()
-            return next(iter(imported)) if len(imported) == 1 else name
+            # Preserve the original source root for lexical checks; only the
+            # identity lookup may expand an import after that check succeeds.
+            return name
         return None
 
     def class_name_present(self, analyzer: Analyzer, name: str) -> bool:
@@ -503,7 +624,9 @@ class NativeFlow:
         constructor: bool = False,
         receiver: Value | None = None,
     ) -> bool:
-        if self.class_owners(analyzer, declared):
+        if self.lexical_type(analyzer, declared, call.node) is not None:
+            return False
+        if self.class_owners(analyzer, declared, call.node):
             return False
         root, _, remainder = declared.partition(".")
         imported = self.imported_symbols(analyzer, root, classes=True)
@@ -530,7 +653,7 @@ class NativeFlow:
 
     def implicit_constructor(self, analyzer: Analyzer, declared: str, call: Call) -> bool:
         """A unique source class with no declared constructor permits a no-arg allocation."""
-        owners = self.class_owners(analyzer, declared)
+        owners = self.class_owners(analyzer, declared, call.node)
         if call.args or analyzer.language not in {"java", "kotlin"} or len(owners) != 1:
             return False
         owner = next(iter(owners))
@@ -593,7 +716,7 @@ class NativeFlow:
                 self.allocations.pop(identity, None)
                 self.partial("anonymous allocation dispatch unresolved", analyzer, call=call)
                 return
-            owners = self.class_owners(analyzer, declared)
+            owners = self.class_owners(analyzer, declared, call.node)
             if len(owners) == 1:
                 owner = next(iter(owners))
                 if len(self.class_definitions[owner]) == 1:
@@ -668,7 +791,7 @@ class NativeFlow:
         if constructor_type is not None:
             if self.modeled_external(analyzer, constructor_type, call, constructor=True):
                 return [], False
-            owners = self.class_owners(analyzer, constructor_type)
+            owners = self.class_owners(analyzer, constructor_type, call.node)
             if any(len(self.class_definitions[owner]) > 1 for owner in owners):
                 self.partial("ambiguous class identity", analyzer, call=call)
                 return [], True
@@ -736,6 +859,7 @@ class NativeFlow:
             and receiver_key not in frame.values
             and receiver_key not in analyzer.parameter_types
             and receiver_key not in analyzer.field_types
+            and self.lexical_type(analyzer, receiver_key, call.node) is None
         ):
             top_level = [
                 target
@@ -747,9 +871,15 @@ class NativeFlow:
             if top_level:
                 return top_level, True
         declared = re.sub(r"[?!<>].*", "", receiver.type_name).strip() or receiver_key
+        source_receiver = analyzer.unwrap(call.receiver) if call.receiver is not None else None
+        receiver_call = analyzer.call(source_receiver) if source_receiver is not None else None
+        if receiver_call is not None and receiver_call.node.type == "object_creation_expression":
+            # The direct `new java.io.File(...)` spelling remains qualified
+            # even though Analyzer's path value uses the simple File type.
+            declared = receiver_call.name
         if self.modeled_external(analyzer, declared, call, receiver=receiver):
             return [], False
-        owners = self.class_owners(analyzer, declared)
+        owners = self.class_owners(analyzer, declared, call.node)
         if any(len(self.class_definitions[identity]) > 1 for identity in owners):
             self.partial("ambiguous class identity", analyzer, call=call)
             return [], True
@@ -771,7 +901,13 @@ class NativeFlow:
         # A compatible signature without receiver identity remains uncertain;
         # a same-name declaration with a different signature is irrelevant.
         # Neither case permits a global leaf-name target match.
-        return resolved, bool(choices or owners or imported_class or namespace)
+        return resolved, bool(
+            choices
+            or owners
+            or imported_class
+            or namespace
+            or self.lexical_type(analyzer, declared, call.node) is not None
+        )
 
     @staticmethod
     def signature(value: Value) -> tuple:
@@ -839,7 +975,7 @@ class NativeFlow:
             ):
                 return None
             # A source-identified constructor supplies allocation identity, never a global leaf match.
-            if constructor_type is not None and self.class_owners(analyzer, constructor_type):
+            if constructor_type is not None and self.class_owners(analyzer, constructor_type, call.node):
                 identity = f"{analyzer.path}:{call.node.start_byte}"
                 self.allocation(analyzer, call, constructor_type, identity)
                 if args:
