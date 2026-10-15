@@ -25,6 +25,10 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 UV_VERSION = "0.12.1"
 SOURCE_DATE_EPOCH = "315532800"
+SOURCE_SMOKE_JAVA = (
+    "import android.content.Intent; import android.webkit.WebView;\n"
+    "class Main { void open(Intent incoming, WebView web) { web.loadUrl(incoming.getDataString()); } }\n"
+)
 # Exact wheel hashes from each distribution's official PyPI JSON file records.
 BUILD_REQUIREMENTS = """hatchling==1.32.4 --hash=sha256:08ecf7548fb48205e7f213d70c71e67b8271b7242093dc3f1da578b42c734a2c
 editables==0.6 --hash=sha256:d70e4698078a1d033e7786d9c64e5be070d058a67c21417024d38a58ac20aa43
@@ -542,10 +546,7 @@ def smoke(python: Path, directory: Path, environment: dict[str, str], version: s
         '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="release.smoke">'
         '<application android:debuggable="false"/></manifest>'
     )
-    (source / "Main.java").write_text(
-        "import android.app.Activity; import android.webkit.WebView;\n"
-        "class Main extends Activity { void open(WebView web) { web.loadUrl(getIntent().getDataString()); } }\n"
-    )
+    (source / "Main.java").write_text(SOURCE_SMOKE_JAVA)
     installed_path = Path(
         run(
             [str(python), "-c", "import mobile_audit; print(mobile_audit.__file__)"], directory, environment

@@ -13,6 +13,33 @@ import pytest
 from scripts import release
 
 
+def test_release_source_smoke_keeps_candidate_and_checked_rule():
+    from mobile_audit.source_analysis import analyze_sources
+
+    result = analyze_sources([("Main.java", release.SOURCE_SMOKE_JAVA)])
+    findings = [item for item in result["findings"] if item["rule_id"] == "AST-WEBVIEW-UNTRUSTED-URL"]
+    assert findings and all(item["status"] == "candidate" for item in findings)
+    assert any(
+        item["rule_id"] == "AST-WEBVIEW-UNTRUSTED-URL" and item["state"] == "checked"
+        for item in result["coverage"]
+    )
+
+
+def test_original_inherited_release_smoke_retains_partial_uncertainty():
+    from mobile_audit.source_analysis import analyze_sources
+
+    original = (
+        "import android.app.Activity; import android.webkit.WebView;\n"
+        "class Main extends Activity { void open(WebView web) { web.loadUrl(getIntent().getDataString()); } }\n"
+    )
+    result = analyze_sources([("Main.java", original)])
+    assert result["metadata"]["native_flow"]["state"] == "partial"
+    assert any(
+        item["rule_id"] == "AST-WEBVIEW-UNTRUSTED-URL" and item["status"] == "candidate"
+        for item in result["findings"]
+    )
+
+
 def minimal_source(root: Path) -> None:
     for name in ("pyproject.toml", "uv.lock", "requirements-release.txt", "src/mobile_audit/__init__.py"):
         path = root / name

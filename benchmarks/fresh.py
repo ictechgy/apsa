@@ -121,6 +121,10 @@ def main() -> int:
     result["omitted_cases"] = json.loads(frozen.read_text())["omitted_cases"]
     result["regression_contract_passed"] = regression_contract(result)
     result["expected_partial_cases"] = sorted(EXPECTED_PARTIAL_CASES)
+    result["observed_partial_cases"] = sorted(
+        case["id"] for case in result["cases"] if case["warnings"] or case["incomplete_rules"]
+    )
+    result["disagreement_case_ids"] = sorted({row["case_id"] for row in result["disagreements"]})
     result["published_baseline_approved"] = False
     (args.out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(
@@ -133,6 +137,8 @@ def main() -> int:
                     "summary",
                     "omitted_cases",
                     "expected_partial_cases",
+                    "observed_partial_cases",
+                    "disagreement_case_ids",
                     "published_baseline_approved",
                 )
             },

@@ -28,6 +28,7 @@ MAX_CALL_EVALUATIONS = 1024
 MAX_CALLABLES = 4096
 MAX_FIELD_ROUNDS = 4
 MAX_PARTIAL_DETAILS = 256
+SCALAR_STRING_TYPES = {"java": "java.lang.String", "kotlin": "kotlin.String", "swift": "Swift.String"}
 INHERITED_TYPE_SCOPES = {
     "superclass",
     "super_interfaces",
@@ -353,6 +354,25 @@ class NativeFlow:
                 return parent
             parent = parent.parent
         return None
+
+    @staticmethod
+    def lexical_function(node: Any) -> bool:
+        """An intervening class makes a callable a member, even inside a function."""
+        parent = node.parent
+        while parent is not None:
+            if parent.type in FUNCTIONS:
+                return True
+            if parent.type in {
+                "class_declaration",
+                "object_declaration",
+                "interface_declaration",
+                "enum_declaration",
+                "record_declaration",
+                "protocol_declaration",
+            }:
+                return False
+            parent = parent.parent
+        return False
 
     @staticmethod
     def anonymous_scope(node: Any) -> Any:
@@ -712,10 +732,7 @@ class NativeFlow:
         return tokens
 
     def closed_dispatch(self, target: Callable) -> bool:
-        if (
-            target.node.type == "constructor_declaration"
-            or self.enclosing(target.node, FUNCTIONS) is not None
-        ):
+        if target.node.type == "constructor_declaration" or self.lexical_function(target.node):
             return True
         if not target.owner and target.analyzer.language != "java":
             return True
@@ -824,32 +841,73 @@ class NativeFlow:
             "double",
         }:
             return ("primitive", declared)
+        if declared == "String" and analyzer.language in SCALAR_STRING_TYPES:
+            return ("nominal", SCALAR_STRING_TYPES[analyzer.language])
+        # With no lexical/import/inheritance binding difference, equal type
+        # spellings in this source share its unresolved external lookup scope.
+        # This supplies no identity across Swift files or unrelated packages.
+        return ("file-type", analyzer.language, analyzer.path, declared)
+
+    def argument_signature_type(
+        self, analyzer: Analyzer, argument: Any, value: Value, frame: Frame
+    ) -> tuple | None:
+        actual_type = frame.types.get(analyzer.key(argument), value.type_name)
+        if actual_type:
+            return self.signature_type(analyzer, actual_type, argument)
+        node = analyzer.unwrap(argument)
+        call = analyzer.call(node)
+        if analyzer.language in SCALAR_STRING_TYPES and (
+            node.type in {"string_literal", "line_string_literal", "multi_line_string_literal"}
+            or (
+                call is not None
+                and call.name in {"getDataString", "getStringExtra", "getQueryParameter"}
+                and value.category == "text"
+            )
+        ):
+            # These existing Analyzer input models/literals produce a scalar
+            # String. Unknown helper results have category unknown and cannot
+            # borrow this evidence from their tainted arguments.
+            return ("nominal", SCALAR_STRING_TYPES[analyzer.language])
         return None
 
-    def inherited_signature_exact(
+    def summary_signature_reason(
         self, analyzer: Analyzer, target: Callable, call: Call, args: list[Value], frame: Frame
-    ) -> bool:
-        if self.enclosing(target.node, FUNCTIONS) is not None:
-            return True
-        current = call.node
-        while current is not None:
-            if any(child.type in INHERITED_TYPE_SCOPES for child in current.named_children):
-                break
-            current = current.parent
-        if current is None:
-            return True
+    ) -> str | None:
+        lexical = self.lexical_function(target.node)
+        inherited = False
+        if not lexical and target.node.type != "constructor_declaration":
+            for context in (call.node, target.node):
+                current = context
+                while current is not None:
+                    if any(child.type in INHERITED_TYPE_SCOPES for child in current.named_children):
+                        inherited = True
+                        break
+                    current = current.parent
         for (_name, expected_type, parameter), argument, value in zip(
             target.parameters, call.args, args, strict=True
         ):
-            actual_type = frame.types.get(analyzer.key(argument), value.type_name)
-            actual = self.signature_type(analyzer, actual_type, argument)
+            actual = self.argument_signature_type(analyzer, argument, value, frame)
             expected = self.signature_type(target.analyzer, expected_type, parameter)
-            if actual is None or expected is None or actual != expected:
-                return False
-        return True
+            if (inherited or lexical) and (actual is None or expected is None or actual != expected):
+                return (
+                    "inherited overload signature unresolved"
+                    if inherited
+                    else "lexical overload signature unresolved"
+                )
+            if (
+                actual is not None
+                and expected is not None
+                and actual[0] != "file-type"
+                and expected[0] != "file-type"
+                and actual != expected
+            ):
+                # Assignability/overload priority is unavailable for different
+                # bindings. An arity match cannot justify a sanitizer summary.
+                return "callable argument type identity unresolved"
+        return None
 
     def resolve(
-        self, analyzer: Analyzer, call: Call, receiver: Value, frame: Frame, args: list[Value]
+        self, analyzer: Analyzer, call: Call, receiver: Value, frame: Frame
     ) -> tuple[list[Callable], bool]:
         if self.value_binding(analyzer, call, frame) is not None:
             return [], True
@@ -901,14 +959,7 @@ class NativeFlow:
             ]
             # Top-level imports must be checked before a same-file top-level match.
             if local and (owner or not imported):
-                exact = [
-                    target
-                    for target in local
-                    if self.inherited_signature_exact(analyzer, target, call, args, frame)
-                ]
-                if len(exact) != len(local):
-                    self.partial("inherited overload signature unresolved", analyzer, call=call)
-                return exact, True
+                return local, True
             if receiver_key in {"this", "self"}:
                 return [], bool(named_choices)
             visible = []
@@ -1064,7 +1115,16 @@ class NativeFlow:
                 return None
             self.partial("callable value binding unresolved", analyzer, call=call)
             return analyzer.changed(call.node, _union([binding, *args]))
-        targets, relevant = self.resolve(analyzer, call, receiver, frame, args)
+        targets, relevant = self.resolve(analyzer, call, receiver, frame)
+        admitted = []
+        for target in targets:
+            reason = self.summary_signature_reason(analyzer, target, call, args, frame)
+            if reason is None:
+                admitted.append(target)
+            else:
+                self.partial(reason, analyzer, call=call)
+                relevant = True
+        targets = admitted
         if not relevant:
             constructor_type = self.constructor_type(analyzer, call, frame)
             if constructor_type is not None and self.modeled_external(
@@ -1231,7 +1291,7 @@ class NativeFlow:
             try:
                 local = callee.start_function(target.node)
                 local.object_fields = {key: fields.copy() for key, fields in frame.object_fields.items()}
-                if self.enclosing(target.node, FUNCTIONS) is not None and callee is analyzer:
+                if self.lexical_function(target.node) and callee is analyzer:
                     # The lexical ancestor check above proves these captures are
                     # caller-local values, not similarly named values in another file.
                     local.values.update(frame.values)
