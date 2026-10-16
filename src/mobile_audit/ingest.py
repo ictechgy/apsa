@@ -13,12 +13,13 @@ import json
 import re
 from pathlib import Path, PurePosixPath
 
-from .core import digest, finding, now, read_bounded, redact, severity_rank, uid
+from .core import canonical_json, digest, finding, now, read_bounded, redact, severity_rank, uid
 from .maswe import finding_weaknesses, weakness_index
 
 MAX_SARIF_BYTES = 16 * 1024 * 1024
 MAX_RESULTS = 5000
 LINE_WINDOW = 3
+MAX_OBSERVATIONS = 20
 
 
 def _slug(value: str, limit: int = 60) -> str:
@@ -121,11 +122,17 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
 
     root = sarif_root(root) or ""
     label = _slug(tool, 40)
-    findings, drivers, skipped, total = [], [], 0, 0
-    for run_value in _array(document.get("runs"), "runs"):
+    groups: dict[str, dict] = {}
+    drivers, skipped, total, accepted = [], 0, 0, 0
+    for run_index, run_value in enumerate(_array(document.get("runs"), "runs")):
         run = _object(run_value, "run")
         driver = _object(_object(run.get("tool"), "tool").get("driver"), "driver")
-        drivers.append({"name": _text(driver.get("name"), 80), "version": _text(driver.get("version"), 40)})
+        driver_name = _string(driver.get("name"), "driver name")
+        driver_key = digest(driver_name.encode())
+        public_driver = {"name": _text(driver_name, 80), "version": _text(driver.get("version"), 40)}
+        drivers.append(public_driver)
+        named_keys: dict[str, tuple[str, str]] = {}
+        unnamed_descriptors: dict[int | None, str] = {}
         # Keep positional slots: dropping malformed entries changes the meaning of ruleIndex.
         rules = _array(driver.get("rules"), "rules")
         by_id = {r["id"]: r for r in rules if isinstance(r, dict) and isinstance(r.get("id"), str)}
@@ -144,7 +151,33 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
             if rule_id and indexed_rule and indexed_rule.get("id") != rule_id:
                 raise ValueError("Invalid SARIF result: rule ID and index disagree")
             rule = by_id.get(rule_id, {}) if rule_id else indexed_rule
-            rule_name = rule_id or _string(rule.get("id"), "rule ID") or "unknown"
+            raw_rule_name = rule_id or _string(rule.get("id"), "rule ID")
+            rule_name = raw_rule_name or "unknown"
+            if raw_rule_name:
+                if raw_rule_name not in named_keys:
+                    named_keys[raw_rule_name] = (
+                        digest(canonical_json(["named-rule-v1", driver_key, raw_rule_name]).encode()),
+                        _slug(raw_rule_name),
+                    )
+                namespace, display_rule = named_keys[raw_rule_name]
+            else:
+                # Without an identified rule, only byte-equivalent canonical
+                # descriptor/result data can share an identity. Hash each
+                # descriptor once so repeated indices cannot amplify its size.
+                descriptor_index = index if type(index) is int and 0 <= index < len(rules) else None
+                if descriptor_index not in unnamed_descriptors:
+                    unnamed_descriptors[descriptor_index] = digest(canonical_json(rule).encode())
+                namespace = digest(
+                    canonical_json(
+                        [
+                            "unnamed-result-v1",
+                            driver_key,
+                            unnamed_descriptors[descriptor_index],
+                            digest(canonical_json(result).encode()),
+                        ]
+                    ).encode()
+                )
+                display_rule = "unknown"
             path, line = _location(result, root)
             if path is None:
                 skipped += 1
@@ -162,27 +195,69 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
                 evidence["line"] = line
             title = _object(rule.get("shortDescription"), "rule short description").get("text") or rule_name
             help_uri = _string(rule.get("helpUri"), "rule help URI")
-            findings.append(
-                finding(
-                    f"EXT-{label}-{_slug(rule_name)}",
-                    _text(title, 160),
-                    _severity(rule, result),
-                    "candidate",
-                    [evidence],
-                    "Review the imported result in its tool; APSA did not verify it.",
-                    "",
-                    [help_uri] if help_uri.startswith("https://") else [],
-                    origin="external",
-                    maswe=maswe,
-                    cwe=cwes,
-                )
+            # Slugs are display labels: distinct raw rule/driver names can share
+            # one. Keep their exact namespace in the rule used by all identity,
+            # baseline, waiver and comparison consumers.
+            item = finding(
+                f"EXT-{label}-{display_rule}-{namespace}",
+                _text(title, 160),
+                _severity(rule, result),
+                "candidate",
+                [evidence],
+                "Review the imported result in its tool; APSA did not verify it.",
+                "",
+                [help_uri] if help_uri.startswith("https://") else [],
+                origin="external",
+                maswe=maswe,
+                cwe=cwes,
             )
+            accepted += 1
+            observation = {
+                "run": run_index,
+                "driver": public_driver,
+                "message": evidence["external_message"],
+                "severity": item["severity"],
+                "cwe": sorted(cwes),
+            }
+            representative = (-severity_rank(item["severity"]), canonical_json(item))
+            group = groups.setdefault(
+                item["id"],
+                {
+                    "finding": item,
+                    "representative": representative,
+                    "cwe": set(),
+                    "maswe": set(),
+                    "references": set(),
+                    "observations": {},
+                    "count": 0,
+                },
+            )
+            if representative < group["representative"]:
+                group["finding"], group["representative"] = item, representative
+            for key in ("cwe", "maswe", "references"):
+                group[key].update(item[key])
+            group["observations"][canonical_json(observation)] = observation
+            group["count"] += 1
+    findings = []
+    for group in groups.values():
+        item = group["finding"]
+        for key in ("cwe", "maswe", "references"):
+            item[key] = sorted(group[key])
+        evidence = item["evidence"][0]
+        observations = group["observations"]
+        evidence["external_observations"] = [
+            observations[key] for key in sorted(observations)[:MAX_OBSERVATIONS]
+        ]
+        evidence["external_observation_count"] = group["count"]
+        evidence["external_observations_truncated"] = len(observations) > MAX_OBSERVATIONS
+        findings.append(item)
     return findings, {
         "tool": label,
         "drivers": drivers[:10],
         "sha256": digest(raw),
         "results": total,
         "imported": len(findings),
+        "deduplicated": accepted - len(findings),
         "skipped": skipped,
     }
 

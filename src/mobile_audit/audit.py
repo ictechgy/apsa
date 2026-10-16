@@ -507,9 +507,18 @@ def scan(
     return store.save_report(report)
 
 
-def refresh_report(store: Store, report_id: str, *, save=True, dependency_query: dict | None = None) -> dict:
+def refresh_report(
+    store: Store,
+    report_id: str,
+    *,
+    save=True,
+    dependency_query: dict | None = None,
+    online_query: dict | None = None,
+) -> dict:
     previous = store.report(report_id)
     report = copy.deepcopy(previous)
+    if online_query is not None:
+        report["online_query"] = copy.deepcopy(online_query)
     if dependency_query is not None:
         report["inventory"]["dependency_query"] = copy.deepcopy(dependency_query)
         states = {(s["ecosystem"], s["name"], s["version"]): s for s in dependency_query["packages"]}
@@ -547,7 +556,10 @@ def refresh_report(store: Store, report_id: str, *, save=True, dependency_query:
         w
         for w in report["warnings"]
         if not w.startswith(("No cached intelligence.", "Some intelligence sources"))
+        and (online_query is None or w not in previous.get("online_query", {}).get("errors", []))
     ]
+    if online_query is not None:
+        report["warnings"].extend(report["online_query"]["errors"])
     if not records:
         report["warnings"].append(
             "No cached intelligence. Run intel sync; offline scan did not check current CVEs."

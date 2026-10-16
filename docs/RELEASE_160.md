@@ -23,6 +23,15 @@ compiler module identity.
 
 ## Upgrade effects
 
+- Online dependency reassessment saves the new per-package query states and
+  latest request/errors before computing completeness. A new online attempt
+  replaces its predecessor's query warnings; offline refresh retains them.
+  Watch still uses its documented default options rather than scan exclusions.
+- Imported SARIF rule keys now include exact driver/rule identity. Previously
+  ambiguous external baselines and waivers require explicit review; old slug
+  keys are not migrated. Repeated results for one rule/location are combined
+  with maximum severity, merged weakness/reference metadata and bounded
+  observation provenance. Reduced duplicate counts do not prove remediation.
 - New candidate findings, partial reasons and stricter source input binding can
   change policy outcomes. Skipped symlinks and ambiguous report-store roots do
   not produce complete scans. Narrow the input or resolve ambiguity explicitly.

@@ -466,7 +466,13 @@ def create_server(
             )
             query = {"mode": query_mode, "packages": states, "transmission_exclusions": policy}
             result = assistant_context(
-                refresh_report(store, report["id"], dependency_query=query), max_bytes=49152
+                refresh_report(
+                    store,
+                    report["id"],
+                    dependency_query=query,
+                    online_query={"requested": True, "errors": errors},
+                ),
+                max_bytes=49152,
             )
             result["dependency_query_errors"] = [
                 str(error).encode("utf-8")[:1024].decode("utf-8", errors="ignore") for error in errors[:8]

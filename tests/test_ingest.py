@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 
 import pytest
@@ -11,6 +12,97 @@ from mobile_audit.cli import main
 from mobile_audit.ingest import external_findings, ingest
 from mobile_audit.maswe import coverage_matrix
 from mobile_audit.verify import verify_claim
+
+
+def test_raw_rule_identity_cannot_borrow_another_rules_baseline_or_waiver():
+    from mobile_audit.policy import evaluate
+
+    def imported(rule_name):
+        return external_findings(
+            json.dumps(document([result("Entry.java", rule=rule_name)])).encode(), "owned"
+        )[0]
+
+    def report(findings):
+        return {
+            "id": "owned-current",
+            "target": "/synthetic/owned",
+            "findings": findings,
+            "coverage": [{"rule_id": "EXTERNAL-owned", "state": "not-applicable"}],
+        }
+
+    policy = {"schema_version": 1, "allowed_statuses": ["candidate"], "thresholds": {"medium": 0}}
+    first = imported("tls/check")
+    second = imported("tls?check")
+    assert first[0]["rule_id"] != second[0]["rule_id"]
+    assert first[0]["id"] != second[0]["id"]
+    assert evaluate(report(second), {**policy, "only_new": True}, report(first))["state"] == "failed"
+    waived = {
+        **policy,
+        "waivers": [
+            {"finding_id": first[0]["id"], "reason": "Owned first rule only", "expires": "2099-01-01"}
+        ],
+    }
+    assert evaluate(report(second), waived)["state"] == "failed"
+
+
+def test_long_rule_names_and_driver_names_remain_distinct():
+    first = document([result("Entry.java", rule="x" * 60 + "a"), result("Entry.java", rule="x" * 60 + "b")])
+    findings, _ = external_findings(json.dumps(first).encode(), "owned")
+    assert len({item["id"] for item in findings}) == 2
+    second = copy.deepcopy(first["runs"][0])
+    second["tool"]["driver"]["name"] = "OtherDriver"
+    first["runs"].append(second)
+    findings, _ = external_findings(json.dumps(first).encode(), "owned")
+    assert len({item["id"] for item in findings}) == 4
+
+
+def test_duplicate_sarif_results_merge_without_losing_severity_or_provenance():
+    raw = document([result("Entry.java")])
+    low = raw["runs"][0]
+    low["tool"]["driver"]["rules"][0]["properties"] = {"security-severity": "3.0", "tags": ["CWE-79"]}
+    high = copy.deepcopy(low)
+    high["tool"]["driver"]["version"] = "10.0"
+    high["tool"]["driver"]["rules"][0]["properties"] = {"security-severity": "9.8", "tags": ["CWE-295"]}
+    high["results"][0]["message"]["text"] = "Owned critical observation"
+    raw["runs"].append(high)
+    findings, record = external_findings(json.dumps(raw).encode(), "owned")
+    assert len(findings) == 1 and record["deduplicated"] == 1
+    item = findings[0]
+    assert item["severity"] == "critical"
+    assert item["cwe"] == ["CWE-295", "CWE-79"]
+    evidence = item["evidence"][0]
+    assert evidence["external_observation_count"] == 2
+    assert {row["severity"] for row in evidence["external_observations"]} == {"low", "critical"}
+    assert {row["driver"]["version"] for row in evidence["external_observations"]} == {"9.9", "10.0"}
+    raw["runs"].reverse()
+    reversed_findings, _ = external_findings(json.dumps(raw).encode(), "owned")
+    assert reversed_findings[0]["id"] == item["id"]
+    assert reversed_findings[0]["severity"] == item["severity"]
+    assert reversed_findings[0]["cwe"] == item["cwe"]
+
+
+def test_sarif_duplicate_observations_are_bounded_and_locations_stay_distinct():
+    rows = [result("Entry.java", message=f"Owned observation {index}") for index in range(25)]
+    rows.append(result("Entry.java", line=12))
+    findings, record = external_findings(json.dumps(document(rows)).encode(), "owned")
+    assert len(findings) == 2 and len({item["id"] for item in findings}) == 2
+    assert record["results"] == 26 and record["imported"] == 2 and record["deduplicated"] == 24
+    evidence = findings[0]["evidence"][0]
+    assert evidence["external_observation_count"] == 25
+    assert len(evidence["external_observations"]) == 20 and evidence["external_observations_truncated"]
+
+
+def test_unidentified_results_use_exact_payload_identity_without_aliasing_named_unknown():
+    unnamed = result("Entry.java", rule="unknown", message="Owned first observation")
+    unnamed.pop("ruleId")
+    other = copy.deepcopy(unnamed)
+    other["message"]["text"] = "Owned other observation"
+    named = result("Entry.java", rule="unknown", message="Owned first observation")
+    findings, record = external_findings(
+        json.dumps(document([unnamed, unnamed, other, named])).encode(), "owned"
+    )
+    assert len(findings) == len({item["id"] for item in findings}) == 3
+    assert record["deduplicated"] == 1
 
 
 def document(results: list[dict]) -> dict:
@@ -68,7 +160,8 @@ def test_parsing_is_bounded_sanitized_and_mapped():
     findings, record = external_findings(raw, "other scanner", root="app")
     assert record["results"] == 4 and record["imported"] == 2 and record["skipped"] == 2
     tls = findings[0]
-    assert tls["rule_id"] == "EXT-other-scanner-tls-accept-all" and tls["status"] == "candidate"
+    assert tls["rule_id"].startswith("EXT-other-scanner-tls-accept-all-")
+    assert tls["status"] == "candidate"
     assert tls["severity"] == "high" and "MASWE-0027" in tls["maswe"] and tls["cwe"] == ["CWE-295"]
     assert tls["evidence"][0]["path"] == "MainActivity.kt" and "abc123" not in json.dumps(tls)
     assert findings[1]["severity"] == "medium" and findings[1]["maswe"] == []
@@ -191,7 +284,8 @@ def test_rule_index_keeps_original_positions(index, expected_cwes):
         assert "MASWE-0027" in findings[0]["maswe"]
     else:
         assert findings[0]["maswe"] == []
-    assert findings[0]["rule_id"].endswith("tls-accept-all" if expected_cwes else "unknown")
+    label = "tls-accept-all" if expected_cwes else "unknown"
+    assert findings[0]["rule_id"].startswith(f"EXT-synthetic-{label}-")
 
 
 def test_conflicting_rule_id_and_index_cannot_supply_another_rules_cwe():
