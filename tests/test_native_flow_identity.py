@@ -4245,3 +4245,382 @@ def test_swift_parentheses_normalization_does_not_flatten_real_tuple_storage():
     assert analyzer.text(analyzer.unwrap(nodes[0])) == "slot"
     for node in nodes[1:]:
         assert analyzer.unwrap(node) == node
+
+
+V21_TUPLE_REFERENCE_SOURCE = 'import WebKit\nimport UIKit\nimport External\nfinal class Holder {\n var stash: String = "https://safe.example/"\n func read() -> String { return stash }\n}\n\nfinal class Entry {\n let web = WKWebView()\n let slot: Holder = Holder()\n let separate: Holder = Holder()\n func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {\n  let values: (Holder, Int) = (slot, 1)\n  ExternalMutator.put(values, incoming.absoluteString)\n  web.load(URLRequest(url: URL(string: slot.read())!))\n  web.load(URLRequest(url: URL(string: separate.read())!))\n  return true\n }\n}\n'
+
+
+V21_ARRAY_REFERENCE_SOURCE = 'import WebKit\nimport UIKit\nimport External\nfinal class Holder {\n var stash: String = "https://safe.example/"\n func read() -> String { return stash }\n}\n\nfinal class Entry {\n let web = WKWebView()\n let slot: Holder = Holder()\n let separate: Holder = Holder()\n func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {\n  let values: [Holder] = [slot, separate]\n  ExternalMutator.put(values, incoming.absoluteString)\n  web.load(URLRequest(url: URL(string: slot.read())!))\n  web.load(URLRequest(url: URL(string: separate.read())!))\n  return true\n }\n}\n'
+
+
+@pytest.mark.parametrize("kind", ["tuple", "array"])
+@pytest.mark.parametrize("binding", ["explicit", "inferred", "alias", "erased", "nested", "field"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_swift_aggregate_argument_reaches_all_exposed_references(kind, binding, tainted):
+    source = V21_TUPLE_REFERENCE_SOURCE if kind == "tuple" else V21_ARRAY_REFERENCE_SOURCE
+    # Keep a genuinely unexposed object outside the argument graph.
+    source = source.replace(
+        "let separate: Holder = Holder()", "let separate: Holder = Holder()\n let outside: Holder = Holder()"
+    )
+    source = source.replace(
+        "  return true", "  web.load(URLRequest(url: URL(string: outside.read())!))\n  return true"
+    )
+    declaration = (
+        "let values: (Holder, Int) = (slot, 1)"
+        if kind == "tuple"
+        else "let values: [Holder] = [slot, separate]"
+    )
+    if binding == "inferred":
+        source = source.replace(
+            declaration, declaration.replace(": (Holder, Int)", "").replace(": [Holder]", "")
+        )
+    elif binding in {"alias", "erased"}:
+        source = source.replace(
+            "  ExternalMutator.put(values,",
+            f"  let alias{': Any' if binding == 'erased' else ''} = values\n  ExternalMutator.put(alias,",
+        )
+    elif binding == "nested":
+        source = source.replace(declaration, "let values = ([((slot, 1), separate)], 2)")
+    elif binding == "field":
+        source = source.replace("let web = WKWebView()", "var stored: Any\n let web = WKWebView()")
+        source = source.replace(
+            "  ExternalMutator.put(values,", "  stored = values\n  ExternalMutator.put(stored,"
+        )
+    if not tainted:
+        source = source.replace("incoming.absoluteString)", '"https://fresh-safe.example/")')
+    report = scan(("app/Entry.swift", source))
+    matches = findings(report, URL)
+    expected = 2 if kind == "array" or binding == "nested" else 1
+    assert len(matches) == (expected if tainted else 0), report
+    if tainted:
+        assert all("outside.read()" not in row["evidence"][0]["excerpt"] for row in matches), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert not any(row.get("parse_errors") for row in report["metadata"]["files"]), report
+
+
+@pytest.mark.parametrize("kind", ["tuple", "array"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_known_swift_aggregate_noop_keeps_body_precision(kind, tainted):
+    source = V21_TUPLE_REFERENCE_SOURCE if kind == "tuple" else V21_ARRAY_REFERENCE_SOURCE
+    declared = "(Holder, Int)" if kind == "tuple" else "[Holder]"
+    source = source.replace(
+        "final class Entry {",
+        f"final class ExternalMutator {{ static func put(_ values: {declared}, _ input: String) {{}} }}\nfinal class Entry {{",
+    )
+    if not tainted:
+        source = source.replace("incoming.absoluteString)", '"https://fresh-safe.example/")')
+    report = scan(("app/Entry.swift", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize(
+    "literal",
+    ['(1, "safe")', '["safe", "also-safe"]', '(label: "safe", number: 1)', '[(1, "safe"), (2, "also-safe")]'],
+)
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_scalar_only_swift_aggregate_has_no_caller_reference_effects(literal, tainted):
+    source = V21_TUPLE_REFERENCE_SOURCE.replace(
+        "let values: (Holder, Int) = (slot, 1)", f"let values = {literal}"
+    )
+    if not tainted:
+        source = source.replace("incoming.absoluteString)", '"https://fresh-safe.example/")')
+    report = scan(("app/Entry.swift", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("declared", ["[Holder]", "(Holder, Int)", "[String: Holder]", "Array<Holder>"])
+@pytest.mark.parametrize("binding", ["parameter", "factory"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_opaque_swift_aggregate_root_reports_unavailable_ownership(declared, binding, tainted):
+    source = V21_TUPLE_REFERENCE_SOURCE
+    if binding == "parameter":
+        source = source.replace("options: [String: Any])", f"values: {declared}, options: [String: Any])")
+        source = source.replace("  let values: (Holder, Int) = (slot, 1)\n", "")
+    else:
+        source = source.replace(
+            "let values: (Holder, Int) = (slot, 1)", f"let values: {declared} = ExternalFactory.make()"
+        )
+    if not tainted:
+        source = source.replace("incoming.absoluteString)", '"https://fresh-safe.example/")')
+    report = scan(("app/Entry.swift", source))
+    assert not findings(report, URL), report
+    assert "aggregate reference ownership unavailable" in report["metadata"]["native_flow"]["reasons"], report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (V21_TUPLE_REFERENCE_SOURCE, "0c7859ced5044290f014eeee2549b39d3014edcecc300ec85c08e962d549237c"),
+        (V21_ARRAY_REFERENCE_SOURCE, "5de7d97a376fe4cab385bb48347b395326fe914996322fe519e1d8189cefb130"),
+    ],
+)
+def test_independent_v21_aggregate_sources_are_preserved(source, expected):
+    assert hashlib.sha256(source.encode()).hexdigest() == expected
+
+
+@pytest.mark.parametrize(
+    "expression,exposed",
+    [("(slot, 1)", 1), ("[slot, separate]", 2), ('["child": slot]', 1), ("(items: [slot], count: 1)", 1)],
+)
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_direct_swift_container_expression_retains_reference_edges(expression, exposed, tainted):
+    source = V21_TUPLE_REFERENCE_SOURCE.replace("  let values: (Holder, Int) = (slot, 1)\n", "")
+    source = source.replace("put(values,", f"put({expression},")
+    if not tainted:
+        source = source.replace("incoming.absoluteString)", '"https://fresh-safe.example/")')
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == (exposed if tainted else 0), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+@pytest.mark.parametrize("copy", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_swift_container_reassignment_replaces_edges_without_rebinding_existing_copy(copy, tainted):
+    source = V21_TUPLE_REFERENCE_SOURCE.replace(
+        "let values: (Holder, Int) = (slot, 1)", "var values = [slot]"
+    )
+    replacement = (
+        "let alias: Any = values\n  values = [separate]\n  ExternalMutator.put(alias,"
+        if copy
+        else "values = [separate]\n  ExternalMutator.put(values,"
+    )
+    source = source.replace("ExternalMutator.put(values,", replacement)
+    if not tainted:
+        source = source.replace("incoming.absoluteString)", '"https://fresh-safe.example/")')
+    report = scan(("app/Entry.swift", source))
+    matches = findings(report, URL)
+    assert len(matches) == int(tainted), report
+    if tainted:
+        expected = "slot.read()" if copy else "separate.read()"
+        assert expected in matches[0]["evidence"][0]["excerpt"], report
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+def test_swift_mixed_aggregate_keeps_value_only_member_storage_separate(tainted):
+    source = V21_TUPLE_REFERENCE_SOURCE.replace(
+        "final class Entry {",
+        'struct Plain { var text: String = "https://safe.example/"; func read() -> String { return text } }\nfinal class Entry {',
+    )
+    source = source.replace(
+        "let values: (Holder, Int) = (slot, 1)", "let plain = Plain()\n  let values = (plain, [slot])"
+    )
+    source = source.replace(
+        "  return true", "  web.load(URLRequest(url: URL(string: plain.read())!))\n  return true"
+    )
+    if not tainted:
+        source = source.replace("incoming.absoluteString)", '"https://fresh-safe.example/")')
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+
+
+@pytest.mark.parametrize(
+    "suffix,declared", [("java", "String[]"), ("kt", "Array<String>"), ("kt", "MutableList<String>")]
+)
+@pytest.mark.parametrize("known", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_scalar_java_kotlin_reference_containers_are_not_swift_value_copies(suffix, declared, known, tainted):
+    argument = "incoming.getDataString()" if tainted else '"https://fresh-safe.example/"'
+    if suffix == "java":
+        helper = (
+            "final class ExternalMutator { static void put(String[] values, String input) {} }"
+            if known
+            else ""
+        )
+        source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+{helper}
+class Entry {{
+ void open(Intent incoming, WebView web, String[] values, String[] outside) {{
+  ExternalMutator.put(values, {argument});
+  web.loadUrl(values[0]);
+  web.loadUrl(outside[0]);
+ }}
+}}
+"""
+    else:
+        helper = (
+            f"object ExternalMutator {{ fun put(values: {declared}, input: String) {{}} }}" if known else ""
+        )
+        source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+{helper}
+class Entry {{
+ fun open(incoming: Intent, web: WebView, values: {declared}, outside: {declared}) {{
+  ExternalMutator.put(values, {argument})
+  web.loadUrl(values[0])
+  web.loadUrl(outside[0])
+ }}
+}}
+"""
+    report = scan((f"app/Entry.{suffix}", source))
+    assert len(findings(report, URL)) == int(tainted and not known), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    if known:
+        assert "unresolved reference argument effects" not in report["metadata"]["native_flow"]["reasons"], (
+            report
+        )
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+def test_java_array_literal_retains_contained_reference_identities(tainted):
+    argument = "incoming.getDataString()" if tainted else '"https://fresh-safe.example/"'
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{ String text = "https://safe.example/"; final String read() {{ return text; }} }}
+class Entry {{
+ void open(Intent incoming, WebView web) {{
+  Holder slot = new Holder();
+  Holder outside = new Holder();
+  Object values = new Holder[] {{slot}};
+  ExternalMutator.put(values, {argument});
+  web.loadUrl(slot.read());
+  web.loadUrl(outside.read());
+ }}
+}}
+"""
+    report = scan(("app/Entry.java", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+@pytest.mark.parametrize("kind", ["tuple", "array"])
+def test_aggregate_effect_edges_never_become_nominal_or_dispatch_evidence(monkeypatch, kind):
+    from mobile_audit.native_flow import NativeFlow, StorageKey
+
+    original = NativeFlow.call
+    captures = []
+
+    def capture(self, analyzer, call, frame, receiver, args):
+        if call.name == "put" and args and args[0].identity in self.effect_aggregates:
+            aggregate = args[0]
+            assert aggregate.identity not in self.effect_nominals
+            assert aggregate.identity not in self.allocations
+            assert aggregate.type_name in {"(Holder, Int)", "[Holder]"}
+            elements = [
+                value.identity
+                for key, value in frame.object_fields[aggregate.identity].items()
+                if isinstance(key, tuple) and key[0] is StorageKey.AGGREGATE_ELEMENT
+            ]
+            assert frame.values["slot"].identity in elements
+            captures.append(aggregate.identity)
+        return original(self, analyzer, call, frame, receiver, args)
+
+    monkeypatch.setattr(NativeFlow, "call", capture)
+    source = V21_TUPLE_REFERENCE_SOURCE if kind == "tuple" else V21_ARRAY_REFERENCE_SOURCE
+    scan(("app/Entry.swift", source))
+    assert captures
+
+
+@pytest.mark.parametrize("budget", ["MAX_EFFECT_DEPTH", "MAX_EFFECT_OBJECTS"])
+def test_aggregate_inventory_limit_retains_explicit_partial_boundary(monkeypatch, budget):
+    from mobile_audit import native_flow
+
+    monkeypatch.setattr(native_flow, budget, 1)
+    report = scan(("app/Entry.swift", V21_TUPLE_REFERENCE_SOURCE))
+    assert findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "reference effect inventory budget" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("second_tainted", [False, True])
+def test_reference_container_unknown_write_does_not_erase_possible_old_element_aliases(second_tainted):
+    argument = 'incoming.getStringExtra("next")' if second_tainted else '"https://fresh-safe.example/"'
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{ String text = "https://safe.example/"; final String read() {{ return text; }} }}
+class Entry {{
+ void open(Intent incoming, WebView web) {{
+  Holder slot = new Holder();
+  Holder[] values = new Holder[] {{slot}};
+  ExternalMutator.put(values, incoming.getDataString());
+  slot.text = "https://reset-safe.example/";
+  ExternalMutator.put(values, {argument});
+  web.loadUrl(slot.read());
+ }}
+}}
+"""
+    report = scan(("app/Entry.java", source))
+    # Even a literal second argument may transfer previously stored uncertain
+    # container state; neither unknown call proves the old alias was removed.
+    assert findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+@pytest.mark.parametrize(
+    "declared,projection",
+    [
+        ("[String]", "values[0]"),
+        ("Array<String>", "values[0]"),
+        ("[String: String]", 'values["key"]!'),
+        ("(String, Int)", "values.0"),
+        ("[(String, Int)]", "values[0].0"),
+    ],
+)
+@pytest.mark.parametrize("tainted", [False, True])
+def test_opaque_typed_swift_scalar_aggregate_remains_a_value_copy(declared, projection, tainted):
+    argument = "incoming.absoluteString" if tainted else '"https://fresh-safe.example/"'
+    source = f"""import WebKit
+import UIKit
+import External
+final class Entry {{
+ let web = WKWebView()
+ func application(_ app: UIApplication, open incoming: URL, values: {declared}, options: [String: Any]) -> Bool {{
+  ExternalMutator.put(values, {argument})
+  web.load(URLRequest(url: URL(string: {projection})!))
+  return true
+ }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert not findings(report, URL), report
+    assert "unresolved reference argument effects" not in report["metadata"]["native_flow"]["reasons"], report
+    assert "aggregate reference ownership unavailable" not in report["metadata"]["native_flow"]["reasons"], (
+        report
+    )
+
+
+def test_scalar_aggregate_type_proof_refuses_shadowed_builtin_names():
+    source = """import WebKit
+import UIKit
+import External
+final class String { var stash: Swift.String = "https://safe.example/" }
+final class Entry {
+ let web = WKWebView()
+ func application(_ app: UIApplication, open incoming: URL, values: [String], options: [Swift.String: Any]) -> Bool {
+  ExternalMutator.put(values, incoming.absoluteString)
+  return true
+ }
+}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert "aggregate reference ownership unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("declared", ["Any", "AnyObject"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_source_bound_opaque_swift_erased_root_keeps_unavailable_reference_effects(declared, tainted):
+    argument = "incoming.absoluteString" if tainted else '"https://fresh-safe.example/"'
+    source = f"""import WebKit
+import UIKit
+import External
+final class Holder {{ var stash: String = "https://safe.example/"; func read() -> String {{ return stash }} }}
+final class Entry {{
+ let web = WKWebView()
+ func application(_ app: UIApplication, open incoming: URL, value: {declared}, outside: {declared}, options: [String: Any]) -> Bool {{
+  ExternalMutator.put(value, {argument})
+  web.load(URLRequest(url: URL(string: (value as! Holder).stash)!))
+  web.load(URLRequest(url: URL(string: (outside as! Holder).stash)!))
+  return true
+ }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert "aggregate reference ownership unavailable" in report["metadata"]["native_flow"]["reasons"], report

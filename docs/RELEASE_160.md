@@ -123,6 +123,13 @@ zero establishes dispatch only; the original target callback, session,
 authenticated backend, transition, storage and cleanup assertions still decide
 each case. Local mock tests establish no live six-case result. The dedicated
 hosted job permits 90 minutes for 24 bounded UI-test startups and cleanup.
+For acquisition through that bridge, the first nonce-bound session URL
+cold-launches the freshly installed target. The driver verifies its journaled
+NEW UUID, installed build and absence of the five known fixture-state files
+before dispatch. A matching cold target receipt and authoritative session
+response establish the process epoch; subsequent warm receipts must retain it.
+Readiness-only controls and the simctl/companion paths retain their separate
+prelaunch checks. Fresh hosted execution remains required for six-case acceptance.
 
 The six Android controls passed on `588150f`, including both authenticated
 account switches and terminal cleanup ([owned hosted run](https://github.com/ictechgy/apsa/actions/runs/38608689172)).

@@ -14,6 +14,7 @@ from .source_analysis import (
     NESTED_INTENT_GETTERS,
     RULES,
     SQL_SINKS,
+    STRINGS,
     TRACE_PARTIAL,
     Analyzer,
     Call,
@@ -37,6 +38,8 @@ class StorageKey(Enum):
     UNKNOWN_FIELDS = "unknown-fields"
     STATIC_FIELDS = "static-fields"
     UNRESOLVED_FIELDS = "unresolved-fields"
+    AGGREGATE_ELEMENT = "aggregate-element"
+    AGGREGATE_COMPLETE = "aggregate-complete"
 
 
 SCALAR_STRING_TYPES = {"java": "java.lang.String", "kotlin": "kotlin.String", "swift": "Swift.String"}
@@ -226,6 +229,9 @@ class NativeFlow:
         self.allocations: dict[str, str] = {}
         # Storage reachability survives upcasts; it confers no dispatch proof.
         self.effect_nominals: dict[str, set[str]] = {}
+        self.effect_aggregates: set[str] = set()
+        self.reference_aggregates: set[str] = set()
+        self.scalar_aggregates: set[str] = set()
         self.uncertain_objects: set[Any] = set()
         self.call_sites: list[str] = []
         self.evaluations = 0
@@ -385,6 +391,170 @@ class NativeFlow:
         owners = self.class_owners(analyzer, declared, node)
         if len(owners) == 1 and len(self.class_definitions[next(iter(owners))]) == 1:
             self.effect_nominals.setdefault(identity, set()).update(owners)
+        if self.aggregate_type(analyzer, declared):
+            self.effect_aggregates.add(identity)
+            if analyzer.language != "swift":
+                self.reference_aggregates.add(identity)
+            elif self.scalar_aggregate_type(analyzer, declared, node):
+                self.scalar_aggregates.add(identity)
+
+    def scalar_aggregate_type(self, analyzer: Analyzer, declared: str, use: Any, depth: int = 0) -> bool:
+        """Prove only copied Swift scalar contents, with lexical identity checks."""
+        if analyzer.language != "swift" or depth >= MAX_EFFECT_DEPTH:
+            return False
+        declared = declared.strip().rstrip("?!")
+        signature = self.signature_type(analyzer, declared, use)
+        if signature == ("nominal", SCALAR_STRING_TYPES["swift"]):
+            return True
+        if signature == ("file-type", "swift", analyzer.path, declared) and declared.removeprefix(
+            "Swift."
+        ) in {
+            "Int",
+            "Int8",
+            "Int16",
+            "Int32",
+            "Int64",
+            "UInt",
+            "UInt8",
+            "UInt16",
+            "UInt32",
+            "UInt64",
+            "Bool",
+            "Float",
+            "Double",
+            "Character",
+        }:
+            return True
+        inner = ""
+        if (
+            declared.startswith("[")
+            and declared.endswith("]")
+            or declared.startswith("(")
+            and self.aggregate_type(analyzer, declared)
+        ):
+            inner = declared[1:-1]
+        elif match := re.fullmatch(r"((?:Swift\.)?(?:Array|Dictionary|Set))\s*<(.*)>", declared):
+            root = match[1]
+            if (
+                self.lexical_type(analyzer, root, use) is not None
+                or self.class_owners(analyzer, root, use)
+                or self.imported_symbols(analyzer, root.partition(".")[0], classes=True)
+            ):
+                return False
+            inner = match[2]
+        else:
+            return False
+        parts = []
+        start = level = 0
+        for index, token in enumerate(inner):
+            level += token in "([<"
+            level -= token in ")]>"
+            if token in ",:" and level == 0:
+                # Tuple labels are syntactic identifiers, not contained types.
+                part = inner[start:index].strip()
+                if token != ":" or not declared.startswith("("):
+                    parts.append(part)
+                start = index + 1
+        parts.append(inner[start:].strip())
+        return bool(inner) and all(
+            self.scalar_aggregate_type(analyzer, part, use, depth + 1) for part in parts
+        )
+
+    @staticmethod
+    def aggregate_type(analyzer: Analyzer, declared: str) -> bool:
+        declared = declared.strip().rstrip("?!")
+        if analyzer.language in {"java", "kotlin"}:
+            return (
+                declared.endswith("[]")
+                or re.fullmatch(
+                    r"(?:[\w.]+\.)?(?:Array|List|MutableList|Collection|MutableCollection|Set|MutableSet|Map|MutableMap)(?:<.*>)?"
+                    r"|(?:Byte|Short|Int|Long|Float|Double|Boolean|Char)Array",
+                    declared,
+                )
+                is not None
+            )
+        if analyzer.language != "swift":
+            return False
+        if declared in {"Any", "AnyObject", "Swift.Any", "Swift.AnyObject"}:
+            return True
+        if declared.startswith("[") and declared.endswith("]"):
+            return True
+        if re.match(r"(?:Swift\.)?(?:Array|Dictionary|Set)\s*<", declared):
+            return True
+        if declared.startswith("("):
+            depth = 0
+            for index, token in enumerate(declared):
+                depth += token == "("
+                depth -= token == ")"
+                if depth == 0:
+                    return index == len(declared) - 1
+        return False
+
+    def aggregate_value(self, analyzer: Analyzer, node: Any, frame: Frame) -> Value | None:
+        """Keep effect-only element edges, never a tuple/collection nominal type."""
+        if node.type not in {
+            "tuple_expression",
+            "array_literal",
+            "dictionary_literal",
+            "array_initializer",
+            "array_creation_expression",
+        }:
+            return None
+        if (
+            node.type in {"tuple_expression", "array_literal", "dictionary_literal"}
+            and analyzer.language != "swift"
+        ):
+            return None
+        if node.type in {"array_initializer", "array_creation_expression"} and analyzer.language != "java":
+            return None
+        if node.type == "tuple_expression" and analyzer.unwrap(node) is not node:
+            return None
+        if analyzer.language == "java":
+            initializer = node if node.type == "array_initializer" else _field(node, "value")
+            elements = list(initializer.named_children) if initializer is not None else []
+        else:
+            names = {
+                "tuple_expression": {"value"},
+                "array_literal": {"element"},
+                "dictionary_literal": {"key", "value"},
+            }[node.type]
+            elements = [
+                child
+                for index, child in enumerate(node.children)
+                if node.field_name_for_child(index) in names
+            ]
+        identity = self.binding_identity(analyzer, node, "aggregate")
+        self.effect_aggregates.add(identity)
+        if analyzer.language != "swift":
+            self.reference_aggregates.add(identity)
+        fields = {}
+        complete = len(elements) <= MAX_EFFECT_OBJECTS
+        values = []
+        for index, element in enumerate(elements[:MAX_EFFECT_OBJECTS]):
+            value = analyzer.value(element, frame)
+            values.append(value)
+            fields[(StorageKey.AGGREGATE_ELEMENT, index)] = value
+            signature = self.signature_type(analyzer, value.type_name, element)
+            scalar = (
+                value.category == "text"
+                or element.type in STRINGS
+                or signature is not None
+                and (
+                    signature[0] == "primitive"
+                    or signature == ("nominal", SCALAR_STRING_TYPES.get(analyzer.language))
+                )
+                or re.fullmatch(r"(?:true|false|\d+(?:\.\d+)?)", analyzer.text(element)) is not None
+            )
+            if (
+                not scalar
+                and value.identity not in self.effect_nominals
+                and value.identity not in self.effect_aggregates
+            ):
+                complete = False
+        if complete:
+            fields[StorageKey.AGGREGATE_COMPLETE] = Value()
+        frame.object_fields[identity] = fields
+        return Value(_union(values).traces, identity=identity)
 
     def materialize_object(
         self, analyzer: Analyzer, node: Any, declared: str, value: Value, kind: str, *, binding: bool = False
@@ -412,6 +582,8 @@ class NativeFlow:
         declared = declared or value.type_name
         if value.identity or not declared:
             return value
+        if self.aggregate_type(analyzer, declared):
+            return self.materialize_object(analyzer, node, declared, value, "aggregate-binding", binding=True)
         signature = self.signature_type(analyzer, declared, node)
         if signature == ("nominal", SCALAR_STRING_TYPES.get(analyzer.language)) or (
             signature is not None and signature[0] == "primitive"
@@ -476,8 +648,13 @@ class NativeFlow:
         else:
             declared = ""
         stored = frame.object_fields.get(identity, {}).get(StorageKey.UNKNOWN_FIELDS, Value())
+        parent_unknown = (
+            frame.object_fields.get(root.identity, {}).get(StorageKey.UNKNOWN_FIELDS, Value())
+            if root.identity in self.effect_aggregates
+            else Value()
+        )
         self.remember_effect_type(analyzer, declared, node, identity)
-        return Value(_union([root, stored]).traces, type_name=declared, identity=identity)
+        return Value(_union([root, stored, parent_unknown]).traces, type_name=declared, identity=identity)
 
     def receiver_identity(self, analyzer: Analyzer, receiver: Any, frame: Frame) -> str:
         if receiver is None or analyzer.key(receiver) in {"this", "self"}:
@@ -693,7 +870,7 @@ class NativeFlow:
             if not identity and self.object_type(analyzer, value.type_name, node) is not None:
                 identity = self.receiver_identity(analyzer, node, frame)
             self.remember_effect_type(analyzer, value.type_name, node, identity)
-            if identity in self.effect_nominals:
+            if identity in self.effect_nominals or identity in self.effect_aggregates:
                 pending.append((identity, 0, frozenset()))
         affected: set[str] = set()
         visited: set[str] = set()
@@ -713,6 +890,19 @@ class NativeFlow:
                 continue
             visited.add(identity)
             fields = frame.object_fields.setdefault(identity, {})
+            if identity in self.effect_aggregates:
+                if identity in self.reference_aggregates:
+                    affected.add(identity)
+                if StorageKey.AGGREGATE_COMPLETE not in fields and identity not in self.scalar_aggregates:
+                    self.partial("aggregate reference ownership unavailable", analyzer, call=call)
+                    affected.add(identity)
+                for key, value in fields.items():
+                    if isinstance(key, tuple) and key[0] is StorageKey.AGGREGATE_ELEMENT:
+                        if value.identity in self.effect_nominals or value.identity in self.effect_aggregates:
+                            pending.append((value.identity, depth + 1, ancestors | {identity}))
+                        elif value.identity:
+                            self.partial("aggregate reference ownership unavailable", analyzer, call=call)
+                            affected.add(value.identity)
             for owner in sorted(self.effect_nominals.get(identity, set())):
                 source, nominal = self.class_definitions[owner][0]
                 if source.language == "swift" and (
@@ -781,7 +971,7 @@ class NativeFlow:
             # Explicit field/index aliases can carry stronger effect provenance
             # than their current declaration (including an erased field type).
             for value in list(fields.values()):
-                if value.identity in self.effect_nominals:
+                if value.identity in self.effect_nominals or value.identity in self.effect_aggregates:
                     pending.append((value.identity, depth + 1, ancestors | {identity}))
         return affected
 
@@ -805,6 +995,11 @@ class NativeFlow:
         for identity in affected:
             fields = frame.object_fields.setdefault(identity, {})
             for name, previous in list(fields.items()):
+                if isinstance(name, tuple) and name[0] is StorageKey.AGGREGATE_ELEMENT:
+                    # These are possible reachable references, not modeled
+                    # index storage. Unknown mutation cannot prove their old
+                    # aliases were removed from a reference container.
+                    continue
                 written = self.weak_write(analyzer, call, previous, value, value)
                 if isinstance(name, str) and previous.identity in self.effect_nominals:
                     # An unknown mutator may replace a reference field. Keep a
@@ -817,6 +1012,8 @@ class NativeFlow:
                     frame.object_fields.setdefault(slot, {})[StorageKey.UNKNOWN_FIELDS] = value
                     written = Value(written.traces, written.category, written.type_name, slot)
                 fields[name] = written
+            if identity in self.effect_aggregates:
+                fields.pop(StorageKey.AGGREGATE_COMPLETE, None)
             fields[StorageKey.UNKNOWN_FIELDS] = value
         shared = frame.object_fields.setdefault(StorageKey.UNRESOLVED_FIELDS, {})
         shared[StorageKey.UNKNOWN_FIELDS] = self.merge(
@@ -2170,7 +2367,9 @@ class NativeFlow:
                         previous = prior_objects.get(object_identity, {})
                         if fields != previous or object_identity in affected:
                             frame.object_fields[object_identity] = {
-                                name: self.weak_write(
+                                name: fields.get(name, previous.get(name, Value()))
+                                if isinstance(name, tuple) and name[0] is StorageKey.AGGREGATE_ELEMENT
+                                else self.weak_write(
                                     analyzer,
                                     call,
                                     previous.get(name, Value()),

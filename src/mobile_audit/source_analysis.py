@@ -973,6 +973,9 @@ class Analyzer:
                 # the written cast type establishes no concrete dispatch proof.
                 return self.value(normalized, frame)
         if self.native_flow is not None:
+            aggregate = self.native_flow.aggregate_value(self, node, frame)
+            if aggregate is not None:
+                return aggregate
             projected = self.native_flow.indexed_value(self, node, frame)
             if projected is not None:
                 return projected
@@ -2418,7 +2421,15 @@ class Analyzer:
                     (
                         part
                         for part in node.named_children
-                        if part.type in {"user_type", "nullable_type", "dictionary_type", "function_type"}
+                        if part.type
+                        in {
+                            "user_type",
+                            "nullable_type",
+                            "dictionary_type",
+                            "function_type",
+                            "array_type",
+                            "tuple_type",
+                        }
                     ),
                     None,
                 )
