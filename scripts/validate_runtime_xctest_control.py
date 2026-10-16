@@ -89,9 +89,11 @@ final class CallbackTests: XCTestCase {
     func testOwnedColdAndWarmCallbacks() {
         continueAfterFailure = false
         let app = XCUIApplication(bundleIdentifier: __PACKAGE__)
-        app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
-        app.terminate()
+        if __PRELAUNCH__ {
+            app.launch()
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+            app.terminate()
+        }
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
         app.open(URL(string: __COLD_URL__)!)
         let label = app.staticTexts["owned-callback"]
@@ -129,12 +131,16 @@ def ascii_plist(value) -> str:
     return json.dumps(str(value))
 
 
-def write_project(root: Path, package: str, scheme: str, nonces: tuple[str, str]) -> dict:
+def write_project(
+    root: Path, package: str, scheme: str, nonces: tuple[str, str], initial_state: str = "prelaunched"
+) -> dict:
     """Pure source generation; does not look up or run any host tool."""
     checked_inputs(package, scheme, nonces)
+    if initial_state not in {"prelaunched", "fresh-install"}:
+        raise ValueError("NEW callback initial state differs")
     root.mkdir(exist_ok=False)
     urls = tuple(f"{scheme}://callback?nonce={nonce}" for nonce in nonces)
-    test = TEST_SOURCE
+    test = TEST_SOURCE.replace("__PRELAUNCH__", "true" if initial_state == "prelaunched" else "false")
     values = {
         "PACKAGE": package,
         "COLD_URL": urls[0],
@@ -468,9 +474,91 @@ def xcode_diagnostic(raw: bytes, action: str, status: int | None) -> dict:
     }
 
 
+def callback_diagnostic(
+    raw: bytes, package: str, urls: tuple[str, str], nonces: tuple[str, str], build: dict
+) -> dict:
+    """Partial receipts identify observed facts only; never satisfy the test gate."""
+    result = {"state": "diagnostic-only", "receipt_sha256": digest(raw), "receipt_bytes": len(raw)}
+    if not raw or len(raw) > 8192:
+        return {**result, "receipt_state": "absent-or-over-bound"}
+    try:
+        value = json.loads(raw, object_pairs_hook=transport.unique_journal_keys)
+        if (
+            not isinstance(value, dict)
+            or set(value)
+            != {
+                "schema_version",
+                "package",
+                "epoch_sha256",
+                "executable_sha256",
+                "info_plist_sha256",
+                "receipts",
+            }
+            or type(value["schema_version"]) is not int
+            or value["schema_version"] != 1
+            or not isinstance(value["receipts"], list)
+            or len(value["receipts"]) > 2
+        ):
+            raise ValueError("receipt shape")
+        receipts = []
+        for receipt in value["receipts"]:
+            if (
+                not isinstance(receipt, dict)
+                or set(receipt) != {"lifecycle", "uri_sha256", "nonce_sha256"}
+                or receipt["lifecycle"] not in {"cold-url-context", "warm-url-context"}
+                or any(
+                    not isinstance(receipt[key], str) or re.fullmatch(r"[a-f0-9]{64}", receipt[key]) is None
+                    for key in ["uri_sha256", "nonce_sha256"]
+                )
+            ):
+                raise ValueError("receipt shape")
+            matches = [
+                name
+                for name, url, nonce in zip(("cold", "warm"), urls, nonces, strict=True)
+                if receipt["uri_sha256"] == digest(url.encode())
+                and receipt["nonce_sha256"] == digest(nonce.encode())
+            ]
+            receipts.append(
+                {
+                    "lifecycle": receipt["lifecycle"],
+                    "expected_probe": matches[0] if len(matches) == 1 else "unbound",
+                }
+            )
+        return {
+            **result,
+            "receipt_state": "parsed",
+            "package_matches": value["package"] == package,
+            "build_matches": all(value.get(key) == expected for key, expected in build.items()),
+            "receipts": receipts,
+        }
+    except (ValueError, TypeError):
+        return {**result, "receipt_state": "malformed"}
+
+
+def observe_owned_callback(
+    commands, device: str, package: str, urls: tuple[str, str], nonces: tuple[str, str], build: dict
+) -> dict:
+    """Read one known NEW target file; no discovery or other app access."""
+    raw = commands.run(["/usr/bin/xcrun", "simctl", "get_app_container", device, package, "data"], timeout=30)
+    container = Path(raw.decode().strip()).resolve()
+    if not container.is_relative_to(transport.ios_default_set(commands.env) / device):
+        raise ValueError("NEW callback diagnostic container differs")
+    path = container / "Documents/callback.json"
+    if (
+        path.is_symlink()
+        or path.resolve().parent != (container / "Documents").resolve()
+        or not path.resolve().is_relative_to(container)
+    ):
+        raise ValueError("NEW callback diagnostic path differs")
+    if path.is_file() and path.stat().st_size <= 8192:
+        return callback_diagnostic(path.read_bytes(), package, urls, nonces, build)
+    return callback_diagnostic(b"", package, urls, nonces, build)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", required=True, type=Path)
+    parser.add_argument("--initial-state", choices=("prelaunched", "fresh-install"), default="prelaunched")
     args = parser.parse_args()
     root = args.work.resolve()
     env = dict(os.environ)
@@ -487,17 +575,21 @@ def main():
         "measurement": "xcode-xctest-callback-differential",
         "acquisition": "unsupported",
         "r02_acceptance": False,
+        "initial_state": args.initial_state,
         "state": "inconclusive",
         "terminal": False,
         "commit": env.get("GITHUB_SHA"),
         "source_sha256": digest(Path(__file__).read_bytes()),
     }
+    device = package = None
+    generated = build = None
+    nonces: tuple[str, str] | None = None
     try:
         package = "org.apsa.synthetic.p" + uuid.uuid4().hex
         scheme = "a" + uuid.uuid4().hex
         nonces = (uuid.uuid4().hex + uuid.uuid4().hex, uuid.uuid4().hex + uuid.uuid4().hex)
         project_root = root / "generated"
-        generated = write_project(project_root, package, scheme, nonces)
+        generated = write_project(project_root, package, scheme, nonces, args.initial_state)
         evidence["generated_source_sha256"] = generated["generated_source_sha256"]
         simctl = ["/usr/bin/xcrun", "simctl"]
         device = str(
@@ -593,6 +685,22 @@ def main():
             "recent_commands": commands.records[-4:],
         }
     finally:
+        if (
+            device is not None
+            and package is not None
+            and generated is not None
+            and nonces is not None
+            and build is not None
+        ):
+            try:
+                evidence["callback_diagnostic"] = observe_owned_callback(
+                    commands, device, package, generated["urls"], nonces, build
+                )
+            except Exception as error:
+                evidence["callback_diagnostic"] = {
+                    "state": "unmeasured",
+                    "exception_type": type(error).__name__,
+                }
         try:
             evidence["cleanup"] = transport.cleanup_owned(root, commands, resources)
         except Exception as error:

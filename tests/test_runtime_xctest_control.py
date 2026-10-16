@@ -37,9 +37,10 @@ def receipt():
     return value, urls, build
 
 
-def test_project_keeps_exact_new_identity_and_real_ui_callback_assertions(tmp_path):
+@pytest.mark.parametrize("initial_state", ["prelaunched", "fresh-install"])
+def test_project_keeps_exact_new_identity_and_real_ui_callback_assertions(tmp_path, initial_state):
     root = tmp_path / "new"
-    result = control.write_project(root, PACKAGE, SCHEME, NONCES)
+    result = control.write_project(root, PACKAGE, SCHEME, NONCES, initial_state)
     info = plistlib.loads((root / "Info.plist").read_bytes())
     assert info["CFBundleIdentifier"] == PACKAGE
     assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == [SCHEME]
@@ -51,6 +52,7 @@ def test_project_keeps_exact_new_identity_and_real_ui_callback_assertions(tmp_pa
     assert test.count("app.open(URL(string:") == 2
     assert test.count("waitForExpectations(timeout: 30)") == 2
     assert "app.terminate()" in test
+    assert ("if true {" if initial_state == "prelaunched" else "if false {") in test
     assert all(url in test for url in result["urls"])
     assert all(
         digest((root / name).read_bytes()) == checksum
@@ -155,3 +157,36 @@ def test_xcode_diagnostic_cannot_turn_success_into_callback_acceptance():
     assert "r02_acceptance" not in result
     with pytest.raises(ValueError):
         control.xcode_diagnostic(b"", "install-other-app", 0)
+
+
+def test_partial_callback_observation_keeps_wrong_origin_separate_from_absence():
+    value, urls, build = receipt()
+    value["receipts"] = [value["receipts"][0]]
+    value["receipts"][0]["lifecycle"] = "warm-url-context"
+    result = control.callback_diagnostic(json.dumps(value).encode(), PACKAGE, urls, NONCES, build)
+    assert result["state"] == "diagnostic-only"
+    assert result["package_matches"] is True and result["build_matches"] is True
+    assert result["receipts"] == [{"lifecycle": "warm-url-context", "expected_probe": "cold"}]
+    assert (
+        control.callback_diagnostic(b"", PACKAGE, urls, NONCES, build)["receipt_state"]
+        == "absent-or-over-bound"
+    )
+    with pytest.raises(ValueError):
+        control.verify_receipt(json.dumps(value).encode(), PACKAGE, urls, NONCES, build)
+
+
+@pytest.mark.parametrize(
+    "raw", [b"arbitrary synthetic prompt", b'{"unexpected":"synthetic-private-canary"}', b"x" * 8193]
+)
+def test_callback_diagnostic_rejects_unexpected_data_without_context_leak(raw):
+    _value, urls, build = receipt()
+    result = control.callback_diagnostic(raw, PACKAGE, urls, NONCES, build)
+    assert result["state"] == "diagnostic-only"
+    assert result["receipt_state"] in {"malformed", "absent-or-over-bound"}
+    assert "synthetic-private-canary" not in json.dumps(result)
+
+
+def test_unknown_initial_state_does_not_generate_a_project(tmp_path):
+    with pytest.raises(ValueError):
+        control.write_project(tmp_path / "new", PACKAGE, SCHEME, NONCES, "existing-user-app")
+    assert list(tmp_path.iterdir()) == []
