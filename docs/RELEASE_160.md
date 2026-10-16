@@ -96,6 +96,10 @@ The first hosted control on `45d5f5c` built successfully, then XCTest exited 65;
 its new simulator cleanup was confirmed. This is an inconclusive callback
 measurement. A subsequent bounded diagnostic projects only fixed failure labels
 and the generated test's line numbers, preserving the failed primary result.
+The next control reached its cold-label expectation deadline. That does not
+distinguish a missing callback from a callback with a different lifecycle.
+Separate fresh-install/prelaunched controls therefore retain bounded partial
+receipt facts without relaxing the required cold/warm lifecycle assertions.
 
 The six Android controls passed on `588150f`, including both authenticated
 account switches and terminal cleanup ([owned hosted run](https://github.com/ictechgy/apsa/actions/runs/38608689172)).

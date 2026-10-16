@@ -854,7 +854,21 @@ class Analyzer:
                 return _field(argument, "value") or argument.named_children[-1]
         return None
 
+    @staticmethod
+    def assignment_target(node: Any) -> Any:
+        """The storage expression inside a grammar's assignable-target wrapper."""
+        while (
+            node is not None
+            and node.type in {"directly_assignable_expression", "parenthesized_expression"}
+            and len(node.named_children) == 1
+        ):
+            node = node.named_children[0]
+        return node
+
     def navigation(self, node: Any) -> tuple[Any, str] | None:
+        node = self.assignment_target(node)
+        if node is None:
+            return None
         if node.type == "field_access":
             return _field(node, "object"), self.text(_field(node, "field"))
         if node.type == "navigation_expression":
@@ -2039,10 +2053,14 @@ class Analyzer:
             if type_name:
                 frame.types[name] = type_name
             return
-        if node.type in {"assignment_expression", "assignment", "directly_assignable_expression"}:
-            left = _field(node, "left") or next(iter(node.named_children), None)
-            right = _field(node, "right") or (
-                node.named_children[-1] if len(node.named_children) > 1 else None
+        if node.type in {"assignment_expression", "assignment"}:
+            left = self.assignment_target(
+                _field(node, "left") or _field(node, "target") or next(iter(node.named_children), None)
+            )
+            right = (
+                _field(node, "right")
+                or _field(node, "result")
+                or (node.named_children[-1] if len(node.named_children) > 1 else None)
             )
             if left and right and left != right:
                 self.visit(right, frame, guards, conditions)

@@ -2188,3 +2188,204 @@ class Entry {{
 """
     report = scan(("app/Entry.kt", source))
     assert {item["evidence"][0]["line"] for item in findings(report, URL)} == {14}, report
+
+
+@pytest.mark.parametrize("field", ["stash", "Holder.stash", "Self.stash", "self.stash"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_swift_static_writer_and_reader_share_normalized_storage(field, tainted):
+    argument = "incoming" if tainted else 'URL(string: "https://safe.example/")!'
+    source = f"""import WebKit
+import UIKit
+final class Holder {{
+    static var stash: URL = URL(string: "https://safe.example/")!
+    static func put(_ input: URL) {{ {field} = input }}
+    static func read() -> URL {{ return {field} }}
+}}
+class Entry {{
+    let web = WKWebView()
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        Holder.put({argument})
+        web.load(URLRequest(url: Holder.read()))
+        return true
+    }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert bool(findings(report, URL)) is tainted, report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    assert report["metadata"]["native_flow"]["reasons"] == [], report
+
+
+@pytest.mark.parametrize("suffix", ["java", "kt"])
+@pytest.mark.parametrize("field", ["stash", "Holder.stash", "this.stash"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_java_kotlin_static_writer_reader_storage_matches_assignment_target(suffix, field, tainted):
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    if suffix == "java":
+        # An instance call may refer to a Java static field through `this`.
+        source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{
+    static String stash = "https://safe.example/";
+    final void put(String value) {{ {field} = value; }}
+    final String read() {{ return {field}; }}
+}}
+class Entry {{
+    void open(Intent input, WebView web) {{
+        Holder holder = new Holder();
+        holder.put({argument});
+        web.loadUrl(holder.read());
+    }}
+}}
+"""
+    else:
+        source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+object Holder {{
+    var stash: String = "https://safe.example/"
+    fun put(value: String) {{ {field} = value }}
+    fun read(): String {{ return {field} }}
+}}
+class Entry {{
+    fun open(input: Intent, web: WebView) {{
+        Holder.put({argument})
+        web.loadUrl(Holder.read())
+    }}
+}}
+"""
+    report = scan((f"app/Entry.{suffix}", source))
+    assert bool(findings(report, URL)) is tainted, report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("explicit_self", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_swift_instance_writer_reader_preserves_assignment_storage(explicit_self, tainted):
+    field = "self.stash" if explicit_self else "stash"
+    argument = "incoming" if tainted else 'URL(string: "https://safe.example/")!'
+    source = f"""import WebKit
+import UIKit
+final class Holder {{
+    let web = WKWebView()
+    var stash: URL = URL(string: "https://safe.example/")!
+    func put(_ input: URL) {{ {field} = input }}
+    func read() -> URL {{ return {field} }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        put({argument})
+        web.load(URLRequest(url: read()))
+        return true
+    }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert bool(findings(report, URL)) is tainted, report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("shadow", ["parameter", "local"])
+def test_swift_explicit_member_assignment_does_not_overwrite_tainted_shadow(shadow):
+    parameter = "stash" if shadow == "parameter" else "input"
+    local = "let stash = input" if shadow == "local" else ""
+    source = f"""import WebKit
+import UIKit
+final class Holder {{
+    let web = WKWebView()
+    var stash: URL = URL(string: "https://safe.example/")!
+    func route(_ {parameter}: URL) -> URL {{
+        {local}
+        self.stash = URL(string: "https://safe.example/")!
+        return stash
+    }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        web.load(URLRequest(url: route(incoming)))
+        return true
+    }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("shadow", ["parameter", "local"])
+def test_swift_bare_assignment_to_shadow_does_not_write_receiver_field(shadow):
+    parameter = "stash" if shadow == "parameter" else "input"
+    local = 'var stash: URL = URL(string: "https://safe.example/")!' if shadow == "local" else ""
+    # A parameter itself is immutable in Swift, so shadow it with an explicit
+    # local before the assignment; neither declaration denotes the property.
+    if shadow == "parameter":
+        local = "var stash = stash"
+    source = f"""import WebKit
+import UIKit
+final class Holder {{
+    let web = WKWebView()
+    var stash: URL = URL(string: "https://safe.example/")!
+    func put(_ {parameter}: URL, _ value: URL) {{
+        {local}
+        stash = value
+    }}
+    func read() -> URL {{ return self.stash }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        put(URL(string: "https://safe.example/")!, incoming)
+        web.load(URLRequest(url: read()))
+        return true
+    }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("kind", ["bodyless", "overridable", "final-mutating", "final-noop"])
+@pytest.mark.parametrize("alias", [False, True])
+@pytest.mark.parametrize("explicit_constructor", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_uncertain_mutator_weakly_updates_object_arguments_without_tainting_unrelated_objects(
+    kind, alias, explicit_constructor, tainted
+):
+    declaration = {
+        "bodyless": "abstract class Mutator { abstract void put(Holder h, String value); }",
+        "overridable": "class Mutator { void put(Holder h, String value) {} }",
+        "final-mutating": "final class Mutator { final void put(Holder h, String value) { h.stash = value; } }",
+        "final-noop": "final class Mutator { final void put(Holder h, String value) {} }",
+    }[kind]
+    constructor = "Holder(String value) { stash = value; other = value; }" if explicit_constructor else ""
+    allocation = 'new Holder("https://safe.example/")' if explicit_constructor else "new Holder()"
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{
+    String stash = "https://safe.example/";
+    String other = "https://safe.example/";
+    {constructor}
+    final String read() {{ return stash; }}
+    final String readOther() {{ return other; }}
+}}
+{declaration}
+class Entry {{
+    void open(Intent input, WebView web, Mutator m) {{
+        Holder h = {allocation};
+        Holder unrelated = {allocation};
+        {"Holder alias = h;" if alias else ""}
+        m.put({"alias" if alias else "h"}, {argument});
+        web.loadUrl(h.read());
+        web.loadUrl(h.readOther());
+        web.loadUrl(unrelated.read());
+    }}
+}}
+"""
+    report = scan(("app/Entry.java", source))
+    expected = set()
+    if tainted and kind != "final-noop":
+        expected.add(18)
+        if kind != "final-mutating":
+            expected.add(19)
+    assert {item["evidence"][0]["line"] for item in findings(report, URL)} == expected, report
+    state = "partial" if kind in {"bodyless", "overridable"} else "checked"
+    assert report["metadata"]["native_flow"]["state"] == state, report
+    if kind == "bodyless":
+        assert "callable body unavailable" in report["metadata"]["native_flow"]["reasons"], report

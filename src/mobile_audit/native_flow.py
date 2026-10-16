@@ -427,6 +427,8 @@ class NativeFlow:
             fields[name] = self.merge([fields.get(name, Value()), value])
 
     def static_owner(self, analyzer: Analyzer, base: Any, member: str, frame: Frame) -> str | None:
+        if analyzer.language == "swift" and analyzer.text(base).strip() == "Self":
+            return self.owner(analyzer, analyzer.function) if member in analyzer.static_fields else None
         value = analyzer.value(base, frame)
         declared = value.type_name or analyzer.key(base)
         for owner in self.class_owners(analyzer, declared, base):
@@ -440,13 +442,34 @@ class NativeFlow:
     def unavailable_result(
         self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
     ) -> Value:
-        identity = self.receiver_identity(analyzer, call.receiver, frame)
-        stored = list(frame.object_fields.get(identity, {}).values())
+        stored = [
+            value
+            for identity in self.affected_objects(analyzer, call, args, frame)
+            for value in frame.object_fields.get(identity, {}).values()
+        ]
         declared = receiver.type_name or (analyzer.key(call.receiver) if call.receiver is not None else "")
         for owner in self.class_owners(analyzer, declared, call.node):
             stored.extend(frame.object_fields.get((StorageKey.STATIC_FIELDS, owner), {}).values())
         stored.extend(frame.object_fields.get(StorageKey.UNRESOLVED_FIELDS, {}).values())
         return analyzer.changed(call.node, _union([receiver, *args, *stored]))
+
+    def affected_objects(self, analyzer: Analyzer, call: Call, args: list[Value], frame: Frame) -> set[str]:
+        """Track only the receiver and source-bound object arguments/captured fields."""
+        affected = {self.receiver_identity(analyzer, call.receiver, frame)}
+        for node, argument in zip(call.args, args, strict=True):
+            if argument.identity:
+                affected.add(argument.identity)
+            else:
+                identity = self.receiver_identity(analyzer, node, frame)
+                if identity in frame.object_fields or self.class_owners(analyzer, argument.type_name, node):
+                    affected.add(identity)
+        if call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}:
+            affected.update(
+                value.identity
+                for name in analyzer.field_types
+                if (value := frame.values.get(name, Value())).identity
+            )
+        return affected
 
     def unavailable_write(
         self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
@@ -454,11 +477,11 @@ class NativeFlow:
         value = self.unavailable_result(analyzer, call, receiver, args, frame)
         if not value.traces:
             return
-        identity = self.receiver_identity(analyzer, call.receiver, frame)
-        fields = frame.object_fields.setdefault(identity, {})
-        for name, previous in list(fields.items()):
-            fields[name] = self.weak_write(analyzer, call, previous, value, value)
-        fields[StorageKey.UNKNOWN_FIELDS] = value
+        for identity in self.affected_objects(analyzer, call, args, frame):
+            fields = frame.object_fields.setdefault(identity, {})
+            for name, previous in list(fields.items()):
+                fields[name] = self.weak_write(analyzer, call, previous, value, value)
+            fields[StorageKey.UNKNOWN_FIELDS] = value
         shared = frame.object_fields.setdefault(StorageKey.UNRESOLVED_FIELDS, {})
         shared[StorageKey.UNKNOWN_FIELDS] = self.merge(
             [shared.get(StorageKey.UNKNOWN_FIELDS, Value()), value]
@@ -501,6 +524,7 @@ class NativeFlow:
         return result
 
     def assign_member(self, analyzer: Analyzer, left: Any, value: Value, frame: Frame) -> None:
+        left = analyzer.assignment_target(left)
         navigation = analyzer.navigation(left)
         if not navigation:
             name = analyzer.key(left)
@@ -1458,13 +1482,7 @@ class NativeFlow:
         local_receiver = (call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}) and all(
             target.owner == self.owner(analyzer, analyzer.function) for target in targets
         )
-        affected = {identity, *(argument.identity for argument in args if argument.identity)}
-        if local_receiver:
-            affected.update(
-                value.identity
-                for name in analyzer.field_types
-                if (value := frame.values.get(name, Value())).identity
-            )
+        affected = self.affected_objects(analyzer, call, args, frame)
         prior_objects = {key: fields.copy() for key, fields in frame.object_fields.items()}
         uncertain_values = [receiver, *args]
         if local_receiver:
@@ -1521,11 +1539,13 @@ class NativeFlow:
                 self.partial("recursion or call evaluation budget", analyzer, call=call)
                 self.unavailable_write(analyzer, call, receiver, args, frame)
                 results.append(self.unavailable_result(analyzer, call, receiver, args, frame))
+                writes.append(frame.object_fields.get(identity, {}).copy())
                 continue
             if target.body is None:
                 self.partial("callable body unavailable", analyzer, call=call)
                 self.unavailable_write(analyzer, call, receiver, args, frame)
                 results.append(self.unavailable_result(analyzer, call, receiver, args, frame))
+                writes.append(frame.object_fields.get(identity, {}).copy())
                 continue
             callee = target.analyzer
             saved = {name: getattr(callee, name) for name in CONTEXT}
@@ -1676,6 +1696,10 @@ class NativeFlow:
                 for name in set(previous) | set(merged) | {StorageKey.UNKNOWN_FIELDS}
             }
         frame.object_fields[identity] = merged
+        if dynamic:
+            # A bodyless target and an overridable no-op have the same unknown
+            # argument effects, including objects not yet read/materialized.
+            self.unavailable_write(analyzer, call, receiver, args, frame)
         if not constructor and local_receiver:
             frame.values.update(
                 {
