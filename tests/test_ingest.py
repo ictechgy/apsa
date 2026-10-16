@@ -118,6 +118,74 @@ def test_unidentified_results_use_exact_payload_identity_without_aliasing_named_
     assert record["deduplicated"] == 1
 
 
+@pytest.mark.parametrize(
+    ("first_tool", "second_tool"), [("Semgrep OSS", "Semgrep/OSS"), ("x" * 40 + "a", "x" * 40 + "b")]
+)
+def test_tool_label_collisions_cannot_replace_or_borrow_identity(store, tmp_path, first_tool, second_tool):
+    from mobile_audit.audit import summarize
+    from mobile_audit.core import now, uid
+
+    raw = json.dumps(document([result("Entry.java")])).encode()
+    first, _ = external_findings(raw, first_tool)
+    second, _ = external_findings(raw, second_tool)
+    assert first[0]["id"] != second[0]["id"]
+    base = {
+        "id": uid("audit"),
+        "created": now(),
+        "target": str(tmp_path),
+        "inventory": {"platforms": []},
+        "findings": [],
+        "coverage": [],
+        "warnings": [],
+        "intel_snapshot": [],
+    }
+    base["summary"] = summarize(base)
+    store.save_report(base)
+    path = tmp_path / "owned.sarif"
+    path.write_bytes(raw)
+    imported = ingest(store, base["id"], path, first_tool)
+    before = len(store.reports())
+    with pytest.raises(ValueError, match="Ambiguous external tool label"):
+        ingest(store, imported["id"], path, second_tool)
+    assert len(store.reports()) == before and store.report(imported["id"]) == imported
+    reimported = ingest(store, imported["id"], path, first_tool)
+    assert len(reimported["findings"]) == 1 and len(reimported["external_inputs"]) == 1
+
+
+def test_legacy_tool_label_without_raw_identity_is_not_guessed(store, tmp_path):
+    from mobile_audit.audit import summarize
+    from mobile_audit.core import now, uid
+
+    base = {
+        "id": uid("audit"),
+        "created": now(),
+        "target": str(tmp_path),
+        "inventory": {"platforms": []},
+        "findings": [],
+        "coverage": [],
+        "warnings": [],
+        "intel_snapshot": [],
+        "external_inputs": [{"tool": "owned"}],
+    }
+    base["summary"] = summarize(base)
+    store.save_report(base)
+    path = tmp_path / "owned.sarif"
+    path.write_text(json.dumps(document([result("Entry.java")])))
+    with pytest.raises(ValueError, match="Ambiguous external tool label"):
+        ingest(store, base["id"], path, "owned")
+    assert len(store.reports()) == 1
+
+
+@pytest.mark.parametrize(
+    "score", ["NaN", "Infinity", "-Infinity", float("nan"), float("inf"), -1, 11, True, False]
+)
+def test_invalid_security_scores_fall_back_to_result_level(score):
+    raw = document([result("Entry.java")])
+    raw["runs"][0]["tool"]["driver"]["rules"][0]["properties"]["security-severity"] = score
+    findings, _ = external_findings(json.dumps(raw).encode(), "owned")
+    assert findings[0]["severity"] == "medium"
+
+
 def document(results: list[dict]) -> dict:
     return {
         "version": "2.1.0",

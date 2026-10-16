@@ -346,6 +346,11 @@ Scan supports repeatable `--osv-exclude-ecosystem`, `--osv-exclude-name` and
 use `ecosystem:name`. MCP `dependency_check` accepts `query_mode` and the corresponding
 `exclude_ecosystems`, `exclude_names`, `exclude_coordinates` lists. Exclusions are
 applied locally before transmission and do not count as checked from old cache.
+Each MCP call uses only its supplied lists; a report's recorded scan exclusions
+are not inherited. Pass the required exclusions on every `dependency_check` call.
+SwiftURL name and coordinate exclusions match both the stored repository name
+and its canonical OSV transmission name (for example `github.com/owner/repo`).
+An unsupported repository identity stays untransmitted when such a policy is active.
 Use scan or MCP when an exclusion policy is required: `intel watch --online` neither
 accepts these controls nor carries over a scan's exclusions. No source code or builds
 are sent to OSV. The request budget counts OSV operations, including pagination and
@@ -507,10 +512,10 @@ Use `integrations` to generate a configuration with the installed executable pat
 | Any MCP client | Use the configuration from `apsa integrations`, or the MCP Registry entry `io.github.ictechgy/apsa` (PyPI package, `uvx`, required `--root`). |
 | Codex and other skill runtimes | `apsa skill install`, plus the `integrations` configuration. |
 
-Before release, Claude Code 2.1.295 (this plugin loaded from the checkout with
+During 1.4 development, Claude Code 2.1.295 (the plugin loaded from the checkout with
 `--plugin-dir`, root `${CLAUDE_PROJECT_DIR}`) and Codex CLI 0.162.0 were each
-verified calling `capabilities` and `audit_scan` against a local build of this
-version on a freshly generated synthetic project. Marketplace and MCP Registry
+verified calling `capabilities` and `audit_scan` against that historical local
+build on a freshly generated synthetic project. These are not 1.6 client checks. Marketplace and MCP Registry
 installs are checked after the package is published. Other clients are not yet verified.
 
 MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. `integrations` defaults to the current directory when no root is supplied. Roots restrict audited targets and access to their reports and jobs. `--allow-any-root` explicitly removes that restriction. APSA does not change model-client configuration automatically; client authentication belongs to the client.

@@ -36,8 +36,22 @@ class DependencyTransmissionPolicy:
         ecosystem, name = dep.get("ecosystem", ""), dep.get("name", "")
         if not isinstance(ecosystem, str) or not isinstance(name, str):
             return False
+        names = {name}
+        if ecosystem == "SwiftURL" and (self.exclude_names or self.exclude_coordinates):
+            from .source_context import osv_package_name
+
+            try:
+                names.add(osv_package_name(dep))
+            except ValueError:
+                # An unresolved transmission identity cannot bypass an active
+                # name/coordinate exclusion policy.
+                return True
         return (
             any(fnmatchcase(ecosystem, pattern) for pattern in self.exclude_ecosystems)
-            or any(fnmatchcase(name, pattern) for pattern in self.exclude_names)
-            or any(fnmatchcase(f"{ecosystem}:{name}", pattern) for pattern in self.exclude_coordinates)
+            or any(fnmatchcase(value, pattern) for value in names for pattern in self.exclude_names)
+            or any(
+                fnmatchcase(f"{ecosystem}:{value}", pattern)
+                for value in names
+                for pattern in self.exclude_coordinates
+            )
         )

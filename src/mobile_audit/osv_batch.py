@@ -49,6 +49,8 @@ def query_batch(
     found, errors = [], []
     unique, originals = {}, {}
     rank = {"unknown": 0, "declared": 1, "exact": 2}
+    state_rows = {}
+    input_limited = set()
 
     def confidence_rank(dep: dict) -> int:
         confidence = dep.get("confidence", "unknown")
@@ -64,7 +66,12 @@ def query_batch(
         for dep in originals.get(key, []):
             dep["osv_query"] = dict(result)
         if package_states is not None:
-            package_states.append({"ecosystem": key[0], "name": key[1], "version": key[2], **result})
+            row = {"ecosystem": key[0], "name": key[1], "version": key[2], **result}
+            if key in state_rows:
+                package_states[state_rows[key]] = row
+            else:
+                state_rows[key] = len(package_states)
+                package_states.append(row)
 
     for index, dep in enumerate(dependencies):
         if not isinstance(dep, dict) or any(
@@ -75,10 +82,12 @@ def query_batch(
         key = tuple(dep[k] for k in ("ecosystem", "name", "version"))
         originals.setdefault(key, []).append(dep)
         if index >= 10000:
-            state(key, "not-checked", reason="input-budget")
+            input_limited.add(key)
             continue
         if key not in unique or confidence_rank(dep) > confidence_rank(unique[key]):
             unique[key] = dep
+    for key in sorted(input_limited):
+        state(key, "not-checked", reason="input-budget")
     if len(dependencies) > 10000:
         errors.append("Dependency input limit reached; remaining packages not checked")
     health = {feed["source"]: feed for feed in source_health(store)}

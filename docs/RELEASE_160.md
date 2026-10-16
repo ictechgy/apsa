@@ -32,6 +32,11 @@ compiler module identity.
   keys are not migrated. Repeated results for one rule/location are combined
   with maximum severity, merged weakness/reference metadata and bounded
   observation provenance. Reduced duplicate counts do not prove remediation.
+  Exact import-tool identity also participates in the key. A different raw tool
+  name colliding with an existing shortened label is rejected rather than
+  deleting that import; an unidentified legacy label requires a distinct name
+  or a base report without the legacy import. Rule-less results use exact
+  descriptor/result payload identity, so volatile input fields can change IDs.
 - New candidate findings, partial reasons and stricter source input binding can
   change policy outcomes. Skipped symlinks and ambiguous report-store roots do
   not produce complete scans. Narrow the input or resolve ambiguity explicitly.

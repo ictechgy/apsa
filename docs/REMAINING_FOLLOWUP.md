@@ -144,7 +144,9 @@ currently authorized, and none was enumerated or operated.
 
 The following are separate scoped runs. Counts can overlap and must not be
 summed into a unique-test count. The final aggregate is a separate run below.
-All linked temporary artifacts were newly generated in this follow-up.
+All linked temporary artifacts were newly generated in this follow-up. They are
+unpublished local evidence, not repository artifacts; the `/private/tmp/` links
+below are not portable and are not accessible from a published checkout.
 
 | Lane | Recorded result | Fresh evidence |
 | --- | --- | --- |

@@ -158,3 +158,178 @@ def test_watch_saves_changed_query_metadata_then_deduplicates(store, tmp_path, m
         assert watch.reassess_targets(store, online=True)["reaudited_reports"] == []
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("mode", ["legacy", "batch"])
+@pytest.mark.parametrize(
+    ("field", "pattern"),
+    [
+        ("exclude_names", "https://GitHub.COM/acme-private/*"),
+        ("exclude_names", "github.com/acme-private/*"),
+        ("exclude_coordinates", "SwiftURL:https://GitHub.COM/acme-private/*"),
+        ("exclude_coordinates", "SwiftURL:github.com/acme-private/*"),
+    ],
+)
+def test_swift_exclusions_cover_declared_and_transmitted_names(store, mode, field, pattern):
+    from mobile_audit.dependency_policy import DependencyTransmissionPolicy
+
+    dep = {
+        "ecosystem": "SwiftURL",
+        "name": "https://GitHub.COM/acme-private/sdk.git",
+        "version": "1.0.0",
+        "confidence": "exact",
+    }
+    states = []
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: pytest.fail("Excluded repository was transmitted"))
+    )
+    try:
+        query_dependencies(
+            store,
+            [dep],
+            client,
+            query_mode=mode,
+            exclusion_policy=DependencyTransmissionPolicy(**{field: (pattern,)}),
+            package_states=states,
+        )
+        assert states[0]["state"] == "excluded"
+        assert states[0]["checked"] is False and states[0]["transmitted"] is False
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("mode", ["legacy", "batch"])
+def test_invalid_swift_identity_with_exclusions_cannot_be_transmitted(store, mode):
+    from mobile_audit.dependency_policy import DependencyTransmissionPolicy
+
+    dep = {
+        "ecosystem": "SwiftURL",
+        "name": "ssh://github.com/acme-private/sdk",
+        "version": "1.0.0",
+        "confidence": "exact",
+    }
+    states = []
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: pytest.fail("Unsupported repository was transmitted"))
+    )
+    try:
+        query_dependencies(
+            store,
+            [dep],
+            client,
+            query_mode=mode,
+            exclusion_policy=DependencyTransmissionPolicy(exclude_names=("github.com/acme-private/*",)),
+            package_states=states,
+        )
+        assert states[0]["checked"] is False and states[0]["transmitted"] is False
+    finally:
+        client.close()
+
+
+def test_mcp_sarif_latest_uses_the_authorized_immutable_report(store, tmp_path):
+    import ast
+    from contextlib import contextmanager
+    from pathlib import Path
+    from typing import Any
+
+    import mobile_audit
+
+    inside, outside = tmp_path / "inside", tmp_path / "outside"
+    inside.mkdir()
+    outside.mkdir()
+    allowed_report = saved_report(store, inside)
+    private_control = saved_report(store, outside)
+    sarif = inside / "owned.sarif"
+    sarif.write_text(json.dumps({"version": "2.1.0", "runs": []}))
+    source = Path(mobile_audit.__file__).with_name("mcp_server.py")
+    factory = next(
+        node
+        for node in ast.parse(source.read_text()).body
+        if isinstance(node, ast.FunctionDef) and node.name == "create_server"
+    )
+    selected = [
+        node
+        for node in factory.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"authorize", "load_report", "reports_ingest_sarif"}
+    ]
+    for node in selected:
+        node.decorator_list = []
+
+    @contextmanager
+    def database():
+        yield store
+
+    namespace: dict[str, Any] = {
+        "__package__": "mobile_audit",
+        "Any": Any,
+        "Path": Path,
+        "Store": type(store),
+        "allowed": [inside.resolve()],
+        "database": database,
+    }
+    exec(
+        compile(ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])), str(source), "exec"),
+        namespace,
+    )
+    handler = namespace["reports_ingest_sarif"]
+    response = handler("latest", str(sarif), "owned")
+    assert response["parent_report"] == allowed_report["id"]
+    assert store.report(response["report_id"])["target"] == str(inside)
+    assert private_control["id"] not in json.dumps(response)
+    assert store.report(private_control["id"]) == private_control
+    with pytest.raises(ValueError, match="outside configured MCP roots"):
+        handler(private_control["id"], str(sarif), "owned")
+
+
+def test_watch_auto_batch_persists_every_new_package_state(store, tmp_path, monkeypatch):
+    prior = saved_report(store, tmp_path)
+    prior["id"], prior["created"] = uid("audit"), now()
+    template = prior["inventory"]["dependencies"][0]
+    dependencies = [{**copy.deepcopy(template), "name": f"owned-batch-{index}"} for index in range(101)]
+    prior["inventory"]["dependencies"] = dependencies
+    prior["coverage"] = [
+        {"rule_id": "DEPENDENCY-CVE", "dependency": copy.deepcopy(dep), "state": "partial"}
+        for dep in dependencies
+    ]
+    store.save_report(prior)
+    requests, client = mocked_query(monkeypatch, watch)
+    try:
+        result = watch.reassess_targets(store, online=True)
+        assert [request.url.path for request in requests] == ["/v1/querybatch", "/v1/querybatch"]
+        current = store.report(result["reaudited_reports"][0])
+        states = current["inventory"]["dependency_query"]["packages"]
+        assert len(states) == len({row["name"] for row in states}) == 101
+        assert all(row["state"] == "complete" and row["checked"] for row in states)
+        assert all(check["state"] == "checked" for check in current["coverage"])
+    finally:
+        client.close()
+
+
+def test_batch_input_boundary_keeps_one_final_state_per_coordinate(store):
+    dep = {"ecosystem": "PyPI", "name": "owned-boundary", "version": "1.0.0", "confidence": "exact"}
+    states = []
+    writes = [0]
+
+    class OwnedDependency(dict):
+        def __setitem__(self, key, value):
+            if key == "osv_query":
+                writes[0] += 1
+            super().__setitem__(key, value)
+
+    dependencies = [OwnedDependency(dep) for _ in range(10010)]
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"results": [{}]}))
+    )
+    try:
+        query_dependencies(
+            store,
+            dependencies,
+            client,
+            query_mode="batch",
+            package_states=states,
+        )
+        assert len(states) == 1 and states[0]["state"] == "complete"
+        assert writes[0] <= 3 * len(dependencies)
+    finally:
+        client.close()

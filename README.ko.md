@@ -285,6 +285,11 @@ scan의 `--osv-exclude-ecosystem`, `--osv-exclude-name`, `--osv-exclude-coordina
 `ecosystem:name`입니다. MCP `dependency_check`는 `query_mode`와
 `exclude_ecosystems`, `exclude_names`, `exclude_coordinates` 목록을 받습니다.
 제외 정책은 전송 전에 로컬에서 적용하며 오래된 캐시로 검사 완료를 표시하지 않습니다.
+MCP는 해당 호출에 전달한 제외 목록만 사용하며 보고서에 기록된 scan 정책을 이어받지 않습니다.
+`dependency_check`를 호출할 때마다 필요한 제외 목록을 전달하세요.
+SwiftURL 이름·좌표 제외는 저장된 저장소 이름과 실제 OSV 전송 이름
+(예: `github.com/owner/repo`)을 모두 비교합니다. 정책이 적용된 상태에서
+지원하지 않는 저장소 식별자는 전송하지 않습니다.
 제외 정책이 필요하면 scan이나 MCP를 사용하세요. `intel watch --online`은 이 옵션을
 지원하지 않고 scan의 제외 정책도 이어받지 않습니다. 소스 코드나 빌드는 OSV에 보내지
 않습니다. 요청 한도는 페이지 이동·레코드 조회를 포함한 OSV 작업 수이며 HTTP 리다이렉트의
@@ -424,9 +429,9 @@ apsa context --report latest --section findings --limit 20 --json
 | 모든 MCP 클라이언트 | `apsa integrations` 설정 또는 MCP Registry 항목 `io.github.ictechgy/apsa`(PyPI 패키지, `uvx`, 필수 `--root`). |
 | Codex 등 스킬 런타임 | `apsa skill install`과 `integrations` 설정. |
 
-릴리스 전에 Claude Code 2.1.295(체크아웃의 플러그인을 `--plugin-dir`로 로드, root
-`${CLAUDE_PROJECT_DIR}`)와 Codex CLI 0.162.0에서 이 버전의 로컬 빌드로, 새로 만든 합성 프로젝트에 대해
-`capabilities`·`audit_scan` 호출을 각각 확인했습니다. 마켓플레이스와 MCP Registry 설치는 패키지 게시 후
+1.4 개발 당시 Claude Code 2.1.295(체크아웃의 플러그인을 `--plugin-dir`로 로드, root
+`${CLAUDE_PROJECT_DIR}`)와 Codex CLI 0.162.0에서 당시 로컬 빌드로, 새로 만든 합성 프로젝트에 대해
+`capabilities`·`audit_scan` 호출을 각각 확인했습니다. 이는 1.6 클라이언트 검증 결과가 아닙니다. 마켓플레이스와 MCP Registry 설치는 패키지 게시 후
 확인합니다. 다른 클라이언트는 아직 검증하지 않았습니다.
 
 MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 root는 옵션을 반복해서 지정합니다. `integrations`에 root를 주지 않으면 현재 폴더를 사용합니다. Root는 검사 대상과 해당 보고서·작업 접근을 제한합니다. `--allow-any-root`는 이 제한을 명시적으로 해제합니다. APSA는 모델 클라이언트 설정을 자동 변경하지 않으며, 클라이언트 인증은 클라이언트가 관리합니다.

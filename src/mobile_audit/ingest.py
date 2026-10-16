@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 from pathlib import Path, PurePosixPath
 
@@ -65,10 +66,10 @@ def _severity(rule: dict, result: dict) -> str:
     level = _string(result.get("level"), "result level")
     score = _object(rule.get("properties"), "rule properties").get("security-severity")
     try:
-        value = float(score) if isinstance(score, (str, int, float)) else None
+        value = float(score) if not isinstance(score, bool) and isinstance(score, (str, int, float)) else None
     except (ValueError, OverflowError):
         value = None
-    if value is not None:
+    if value is not None and math.isfinite(value) and 0 <= value <= 10:
         return "critical" if value >= 9 else "high" if value >= 7 else "medium" if value >= 4 else "low"
     level = (
         level
@@ -122,6 +123,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
 
     root = sarif_root(root) or ""
     label = _slug(tool, 40)
+    tool_key = digest(tool.encode())
     groups: dict[str, dict] = {}
     drivers, skipped, total, accepted = [], 0, 0, 0
     for run_index, run_value in enumerate(_array(document.get("runs"), "runs")):
@@ -162,7 +164,9 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
             if raw_rule_name:
                 if raw_rule_name not in named_keys:
                     named_keys[raw_rule_name] = (
-                        digest(canonical_json(["named-rule-v1", driver_key, raw_rule_name]).encode()),
+                        digest(
+                            canonical_json(["named-rule-v1", tool_key, driver_key, raw_rule_name]).encode()
+                        ),
                         _slug(raw_rule_name),
                     )
                 namespace, display_rule = named_keys[raw_rule_name]
@@ -177,6 +181,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
                     canonical_json(
                         [
                             "unnamed-result-v1",
+                            tool_key,
                             driver_key,
                             unnamed_descriptors[descriptor_index],
                             digest(canonical_json(result).encode()),
@@ -193,6 +198,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
             evidence: dict[str, object] = {
                 "path": path,
                 "external_tool": label,
+                "external_tool_key": tool_key,
                 "external_rule": _text(rule_name, 120),
                 "external_message": _text(_object(result.get("message"), "result message").get("text")),
                 "basis": "imported SARIF result; APSA did not execute this check",
@@ -259,6 +265,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
         findings.append(item)
     return findings, {
         "tool": label,
+        "tool_key": tool_key,
         "drivers": drivers[:10],
         "sha256": digest(raw),
         "results": total,
@@ -291,6 +298,21 @@ def ingest(store, report_id: str, sarif_path: Path, tool: str, root: str = "") -
 
     previous = store.report(report_id)
     imported, record = external_findings(read_bounded(sarif_path, MAX_SARIF_BYTES), tool, root)
+    existing_keys = [
+        item.get("tool_key")
+        for item in previous.get("external_inputs", [])
+        if item.get("tool") == record["tool"]
+    ] + [
+        evidence.get("external_tool_key")
+        for item in previous["findings"]
+        if item.get("origin") == "external"
+        for evidence in item.get("evidence", [])
+        if evidence.get("external_tool") == record["tool"]
+    ]
+    if any(key != record["tool_key"] for key in existing_keys):
+        raise ValueError(
+            "Ambiguous external tool label; choose a distinct tool name or a base report without that legacy import"
+        )
     report = copy.deepcopy(previous)
     report["id"] = uid("audit")
     report["created"] = now()
