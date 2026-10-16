@@ -529,11 +529,16 @@ class NativeFlow:
             self.reference_aggregates.add(identity)
         fields = {}
         complete = len(elements) <= MAX_EFFECT_OBJECTS
+        if not complete:
+            self.partial("aggregate element inventory budget", analyzer, node=node)
         values = []
-        for index, element in enumerate(elements[:MAX_EFFECT_OBJECTS]):
+        for index, element in enumerate(elements):
             value = analyzer.value(element, frame)
             values.append(value)
-            fields[(StorageKey.AGGREGATE_ELEMENT, index)] = value
+            # The edge inventory is bounded independently of ordinary value
+            # flow. Later elements still contribute their actual taint.
+            if index < MAX_EFFECT_OBJECTS:
+                fields[(StorageKey.AGGREGATE_ELEMENT, index)] = value
             signature = self.signature_type(analyzer, value.type_name, element)
             scalar = (
                 value.category == "text"

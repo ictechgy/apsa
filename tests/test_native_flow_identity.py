@@ -4624,3 +4624,105 @@ final class Entry {{
     report = scan(("app/Entry.swift", source))
     assert len(findings(report, URL)) == int(tainted), report
     assert "aggregate reference ownership unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+V22_CANONICAL_FRONTIER_SOURCE = 'import WebKit\nimport UIKit\nfinal class Entry {\n let web = WKWebView()\n func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {\n  let values: [String] = ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","",incoming.absoluteString]\n  web.load(URLRequest(url: URL(string: values.joined())!))\n  return true\n }\n}\n'
+
+
+V22_CANONICAL_SHORT_SOURCE = 'import WebKit\nimport UIKit\nfinal class Entry {\n let web = WKWebView()\n func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {\n  let values: [String] = ["",incoming.absoluteString]\n  web.load(URLRequest(url: URL(string: values.joined())!))\n  return true\n }\n}\n'
+
+
+V22_CANONICAL_LITERAL_SOURCE = 'import WebKit\nimport UIKit\nfinal class Entry {\n let web = WKWebView()\n func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {\n  let values: [String] = ["","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","https://safe.example/"]\n  web.load(URLRequest(url: URL(string: values.joined())!))\n  return true\n }\n}\n'
+
+
+@pytest.mark.parametrize("count", [127, 128, 129])
+@pytest.mark.parametrize("tainted", [False, True])
+@pytest.mark.parametrize("sink", ["joined", "description", "interpolation"])
+@pytest.mark.parametrize("binding", ["typed", "inferred", "copy"])
+def test_swift_aggregate_edge_limit_does_not_limit_ordinary_tail_value_flow(count, tainted, sink, binding):
+    tail = "incoming.absoluteString" if tainted else '"https://safe.example/"'
+    elements = ",".join(['""'] * (count - 1) + [tail])
+    annotation = "" if binding == "inferred" else ": [String]"
+    copy = "let copied = values" if binding == "copy" else ""
+    observed = "copied" if binding == "copy" else "values"
+    expression = {
+        "joined": f"{observed}.joined()",
+        "description": f"String(describing: {observed})",
+        "interpolation": '"\\(' + observed + ')"',
+    }[sink]
+    source = f"""import WebKit
+import UIKit
+final class Entry {{
+ let web = WKWebView()
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+  let values{annotation} = [{elements}]
+  {copy}
+  web.load(URLRequest(url: URL(string: {expression})!))
+  return true
+ }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == ("partial" if count > 128 else "checked"), report
+    assert ("aggregate element inventory budget" in report["metadata"]["native_flow"]["reasons"]) == (
+        count > 128
+    ), report
+    assert not any(row.get("parse_errors") for row in report["metadata"]["files"]), report
+
+
+@pytest.mark.parametrize("count", [127, 128, 129])
+@pytest.mark.parametrize("tainted", [False, True])
+@pytest.mark.parametrize("binding", ["String[]", "var"])
+@pytest.mark.parametrize("sink", ["join", "description"])
+def test_java_reference_array_edge_limit_keeps_tail_value_provenance(count, tainted, binding, sink):
+    tail = "incoming.getDataString()" if tainted else '"https://safe.example/"'
+    elements = ",".join(['""'] * (count - 1) + [tail])
+    expression = 'String.join("", values)' if sink == "join" else "Arrays.toString(values)"
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+import java.util.Arrays;
+class Entry {{
+ void open(Intent incoming, WebView web) {{
+  {binding} values = new String[] {{{elements}}};
+  web.loadUrl({expression});
+ }}
+}}
+"""
+    report = scan(("app/Entry.java", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert ("aggregate element inventory budget" in report["metadata"]["native_flow"]["reasons"]) == (
+        count > 128
+    ), report
+    assert not any(row.get("parse_errors") for row in report["metadata"]["files"]), report
+
+
+@pytest.mark.parametrize(
+    "source,expected,tainted,truncated",
+    [
+        (
+            V22_CANONICAL_FRONTIER_SOURCE,
+            "f3b7eb7f687ffd40f20cce3ee2a5d584c1a2cf51f543e1662aebb165e12a1290",
+            True,
+            True,
+        ),
+        (
+            V22_CANONICAL_SHORT_SOURCE,
+            "a06b12e1821f7a620e256f7adbeba13bb0924f16aacde7488bcfc10cad8cb99d",
+            True,
+            False,
+        ),
+        (
+            V22_CANONICAL_LITERAL_SOURCE,
+            "fa716a5d22af301daa0889902d489cfc55007606107391f3011a76c8b57ac79e",
+            False,
+            True,
+        ),
+    ],
+)
+def test_exact_independent_empty_prefix_frontier_pair(source, expected, tainted, truncated):
+    assert hashlib.sha256(source.encode()).hexdigest() == expected
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == ("partial" if truncated else "checked"), report
