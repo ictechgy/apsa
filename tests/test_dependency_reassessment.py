@@ -255,6 +255,7 @@ def test_mcp_sarif_latest_uses_the_authorized_immutable_report(store, tmp_path):
     ]
     for node in selected:
         node.decorator_list = []
+    body: list[ast.stmt] = [*selected]
 
     @contextmanager
     def database():
@@ -269,7 +270,7 @@ def test_mcp_sarif_latest_uses_the_authorized_immutable_report(store, tmp_path):
         "database": database,
     }
     exec(
-        compile(ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])), str(source), "exec"),
+        compile(ast.fix_missing_locations(ast.Module(body=body, type_ignores=[])), str(source), "exec"),
         namespace,
     )
     handler = namespace["reports_ingest_sarif"]
@@ -317,7 +318,7 @@ def test_batch_input_boundary_keeps_one_final_state_per_coordinate(store):
                 writes[0] += 1
             super().__setitem__(key, value)
 
-    dependencies = [OwnedDependency(dep) for _ in range(10010)]
+    dependencies: list[dict] = [OwnedDependency(dep) for _ in range(10010)]
     client = httpx.Client(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"results": [{}]}))
     )
