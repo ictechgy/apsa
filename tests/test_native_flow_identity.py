@@ -2389,3 +2389,815 @@ class Entry {{
     assert report["metadata"]["native_flow"]["state"] == state, report
     if kind == "bodyless":
         assert "callable body unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("suffix", ["java", "kt"])
+@pytest.mark.parametrize("formal", ["target", "h"])
+@pytest.mark.parametrize("binding", ["direct", "alias", "returned", "reassigned"])
+@pytest.mark.parametrize("kind", ["closed", "bodyless", "noop"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_parameter_object_effects_are_invariant_under_formal_renaming_and_aliases(
+    suffix, formal, binding, kind, tainted
+):
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    alias = ""
+    target = "h"
+    if binding == "alias":
+        alias, target = "Holder alias = h;", "alias"
+    elif binding == "returned":
+        target = "Identity.keep(h)"
+    elif binding == "reassigned":
+        alias, target = "Holder alias = h; alias = other;", "alias"
+    if suffix == "java":
+        mutator = (
+            f"abstract class Mutator {{ abstract void put(Holder {formal}, String value); }}"
+            if kind == "bodyless"
+            else f"final class Mutator {{ static void put(Holder {formal}, String value) {{"
+            + (f"{formal}.stash = value;" if kind == "closed" else "")
+            + "} }"
+        )
+        operation = f"{'m' if kind == 'bodyless' else 'Mutator'}.put({target}, {argument});"
+        source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{
+    String stash = "https://safe.example/";
+    final String read() {{ return stash; }}
+}}
+final class Identity {{ static Holder keep(Holder renamed) {{ return renamed; }} }}
+{mutator}
+class Entry {{
+    void open(Intent input, WebView web, Holder h, Holder other, Mutator m) {{
+        {alias}
+        {operation}
+        web.loadUrl(h.read());
+        web.loadUrl(other.read());
+    }}
+}}
+"""
+    else:
+        alias = alias.replace("Holder alias =", "var alias =").replace(";", "\n")
+        mutator = (
+            f"abstract class Mutator {{\n    abstract fun put({formal}: Holder, value: String)\n}}"
+            if kind == "bodyless"
+            else f"object Mutator {{\n    fun put({formal}: Holder, value: String) {{\n"
+            + (f"{formal}.stash = value" if kind == "closed" else "")
+            + "\n    }\n}"
+        )
+        source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+class Holder {{
+    var stash: String = "https://safe.example/"
+    fun read(): String {{ return stash }}
+}}
+object Identity {{
+    fun keep(renamed: Holder): Holder {{ return renamed }}
+}}
+{mutator}
+class Entry {{
+    fun open(input: Intent, web: WebView, h: Holder, other: Holder, m: Mutator) {{
+        {alias}
+        {"m" if kind == "bodyless" else "Mutator"}.put({target}, {argument})
+        web.loadUrl(h.read())
+        web.loadUrl(other.read())
+    }}
+}}
+"""
+    report = scan((f"app/Entry.{suffix}", source))
+    expected = "other.read()" if binding == "reassigned" else "h.read()"
+    expected_lines = {
+        index
+        for index, line in enumerate(source.strip().splitlines(), 1)
+        if "web.loadUrl(" + expected in line
+    }
+    assert {item["evidence"][0]["line"] for item in findings(report, URL)} == (
+        expected_lines if tainted and kind != "noop" else set()
+    ), report
+    assert report["metadata"]["native_flow"]["state"] == ("partial" if kind == "bodyless" else "checked"), (
+        report
+    )
+    assert "object alias identity unavailable" not in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("suffix", ["java", "kt"])
+@pytest.mark.parametrize("formal", ["target", "h"])
+def test_mutator_parameter_shadows_object_field_without_borrowing_its_storage(suffix, formal):
+    if suffix == "java":
+        source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{
+    String stash = "https://safe.example/";
+    final String read() {{ return stash; }}
+}}
+final class Mutator {{
+    static Holder {formal} = new Holder();
+    static void put(Holder {formal}, String value) {{ {formal}.stash = value; }}
+    static String stored() {{ return {formal}.read(); }}
+}}
+class Entry {{
+    void open(Intent input, WebView web, Holder h) {{
+        Mutator.put(h, input.getDataString());
+        web.loadUrl(h.read());
+        web.loadUrl(Mutator.stored());
+    }}
+}}
+"""
+    else:
+        source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+class Holder {{
+    var stash: String = "https://safe.example/"
+    fun read(): String {{ return stash }}
+}}
+object Mutator {{
+    val {formal}: Holder = Holder()
+    fun put({formal}: Holder, value: String) {{ {formal}.stash = value }}
+    fun stored(): String {{ return {formal}.read() }}
+}}
+class Entry {{
+    fun open(input: Intent, web: WebView, h: Holder) {{
+        Mutator.put(h, input.getDataString())
+        web.loadUrl(h.read())
+        web.loadUrl(Mutator.stored())
+    }}
+}}
+"""
+    report = scan((f"app/Entry.{suffix}", source))
+    assert len(findings(report, URL)) == 1, report
+    assert findings(report, URL)[0]["evidence"][0]["line"] == 16, report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("formal", ["target", "holder"])
+@pytest.mark.parametrize("binding", ["self", "alias", "returned", "captured"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_swift_reference_receiver_identity_survives_aliases_returns_and_captures(formal, binding, tainted):
+    argument = "incoming" if tainted else 'URL(string: "https://safe.example/")!'
+    local, target = "", "self"
+    if binding == "alias":
+        local, target = "let alias = self", "alias"
+    elif binding == "returned":
+        target = "Mutator.keep(self)"
+    elif binding == "captured":
+        local = f"func apply() {{ Mutator.put(self, {argument}) }}"
+    operation = "apply()" if binding == "captured" else f"Mutator.put({target}, {argument})"
+    source = f"""import WebKit
+import UIKit
+final class Holder {{
+    let web = WKWebView()
+    var stash: URL = URL(string: "https://safe.example/")!
+    func read() -> URL {{ return stash }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        {local}
+        {operation}
+        web.load(URLRequest(url: read()))
+        return true
+    }}
+}}
+final class Mutator {{
+    static func put(_ {formal}: Holder, _ value: URL) {{ {formal}.stash = value }}
+    static func keep(_ renamed: Holder) -> Holder {{ return renamed }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert bool(findings(report, URL)) is tainted, report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    assert report["metadata"]["native_flow"]["reasons"] == [], report
+
+
+def test_factory_allocation_identity_uses_call_context_without_merging_distinct_objects():
+    source = """package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {
+    String stash = "https://safe.example/";
+    final String read() { return stash; }
+}
+final class Helper {
+    static Holder make() { return new Holder(); }
+    static void put(Holder target, String value) { target.stash = value; }
+}
+class Entry {
+    void open(Intent input, WebView web) {
+        Holder first = Helper.make();
+        Holder second = Helper.make();
+        Helper.put(first, input.getDataString());
+        Helper.put(second, "https://safe.example/");
+        web.loadUrl(first.read());
+        web.loadUrl(second.read());
+    }
+}
+"""
+    report = scan(("app/Entry.java", source))
+    assert {item["evidence"][0]["line"] for item in findings(report, URL)} == {18}, report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("formal", ["target", "h"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_object_argument_identity_is_carried_across_source_files(formal, reverse):
+    sources = [
+        (
+            "app/Holder.java",
+            'package app; final class Holder { String stash = "https://safe.example/"; final String read(){return stash;} }',
+        ),
+        (
+            "app/Mutator.java",
+            f"package app; final class Mutator {{ static void put(Holder {formal},String value){{{formal}.stash=value;}} }}",
+        ),
+        (
+            "app/Entry.java",
+            "package app; import android.content.Intent; import android.webkit.WebView; class Entry { void open(Intent input,WebView web,Holder h){Mutator.put(h,input.getDataString());web.loadUrl(h.read());} }",
+        ),
+    ]
+    report = scan(*(list(reversed(sources)) if reverse else sources))
+    assert len(findings(report, URL)) == 1, report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("suffix", ["java", "kt", "swift"])
+@pytest.mark.parametrize("storage", ["local", "member", "static", "shadow"])
+@pytest.mark.parametrize("form", ["compound", "expanded", "replacement"])
+@pytest.mark.parametrize("tainted", [False, True])
+@pytest.mark.parametrize("direction", ["left", "right"])
+def test_compound_assignment_matches_expanded_read_modify_write_and_keeps_replacement_strong(
+    suffix, storage, form, tainted, direction
+):
+    field = {"local": "value", "member": "this.stash", "static": "Helper.stash", "shadow": "stash"}[storage]
+    seed = "input" if direction == "left" else '"https://safe.example/"'
+    right = '"?fixed=1"' if direction == "left" else "input"
+    operation = {
+        "compound": f"{field} += {right}",
+        "expanded": f"{field} = {field} + {right}",
+        "replacement": f'{field} = "https://safe.example/"',
+    }[form]
+    if suffix == "java":
+        local = f"String {field} = {seed};" if storage in {"local", "shadow"} else f"{field} = {seed};"
+        static = "" if storage == "member" else "static "
+        argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+        source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Helper {{
+    {static}String stash = "https://safe.example/";
+    {static}String route(String input) {{
+        {local}
+        {operation};
+        return {field};
+    }}
+    {static}String stored() {{ return stash; }}
+}}
+class Entry {{
+    void open(Intent input, WebView web) {{
+        web.loadUrl({"new Helper()" if storage == "member" else "Helper"}.route({argument}));
+        {"web.loadUrl(Helper.stored());" if storage == "shadow" else ""}
+    }}
+}}
+"""
+    elif suffix == "kt":
+        local = f"var {field}: String = {seed}" if storage in {"local", "shadow"} else f"{field} = {seed}"
+        argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+        source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+{"class" if storage == "member" else "object"} Helper {{
+    var stash: String = "https://safe.example/"
+    fun route(input: String): String {{
+        {local}
+        {operation}
+        return {field}
+    }}
+    fun stored(): String {{ return stash }}
+}}
+class Entry {{
+    fun open(input: Intent, web: WebView) {{
+        web.loadUrl({"Helper()" if storage == "member" else "Helper"}.route({argument}))
+        {"web.loadUrl(Helper.stored())" if storage == "shadow" else ""}
+    }}
+}}
+"""
+    else:
+        field = field.replace("this.", "self.")
+        operation = operation.replace("this.", "self.")
+        local = f"var {field}: String = {seed}" if storage in {"local", "shadow"} else f"{field} = {seed}"
+        argument = "incoming.absoluteString" if tainted else '"https://safe.example/"'
+        static = "" if storage == "member" else "static "
+        source = f"""import WebKit
+import UIKit
+final class Helper {{
+    let web = WKWebView()
+    {static}var stash: String = "https://safe.example/"
+    {static}func route(_ input: String) -> String {{
+        {local}
+        {operation}
+        return {field}
+    }}
+    {static}func stored() -> String {{ return stash }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        web.load(URLRequest(url: URL(string: {"self" if storage == "member" else "Helper"}.route({argument}))!))
+        {"web.load(URLRequest(url: URL(string: Helper.stored())!))" if storage == "shadow" else ""}
+        return true
+    }}
+}}
+"""
+    report = scan((f"app/Entry.{suffix}", source))
+    assert len(findings(report, URL)) == int(tainted and form != "replacement"), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+    assert report["metadata"]["native_flow"]["reasons"] == [], report
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unmodeled_compound_operator_weakens_object_alias_and_declares_partial(tainted):
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+class Holder {{
+    var stash: String = "https://safe.example/"
+    operator fun plusAssign(value: String) {{ stash = value }}
+    fun read(): String {{ return stash }}
+}}
+object Helper {{
+    fun put(target: Holder, value: String) {{ target += value }}
+}}
+class Entry {{
+    fun open(input: Intent, web: WebView, h: Holder) {{
+        val alias = h
+        Helper.put(alias, {argument})
+        web.loadUrl(h.read())
+    }}
+}}
+"""
+    report = scan(("app/Entry.kt", source))
+    assert bool(findings(report, URL)) is tainted, report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "compound assignment operator dispatch unavailable" in report["metadata"]["native_flow"]["reasons"]
+
+
+SWIFT_STORAGE_PROBES = [
+    pytest.param(
+        "struct-inout",
+        "c895a981ed6aa93bb902deae95122ba918982211720b627c52d7fbf0c3fcf6b6",
+        """import WebKit
+import UIKit
+struct Holder {
+ var stash: String = "https://safe.example/"
+ func read() -> String { return stash }
+}
+final class Mutator {
+ static func put(_ target: inout Holder, _ value: String) { target.stash = value }
+}
+class Entry {
+ let web = WKWebView()
+ var h: Holder = Holder()
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  Mutator.put(&h, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: h.read())!))
+  return true
+ }
+}
+""",
+        id="struct-inout",
+    ),
+    pytest.param(
+        "scalar-inout",
+        "0afedc19d71cb8e4f965d9cfbf7257a3b861456050a06f9caa43a6aff8caad27",
+        """import WebKit
+import UIKit
+final class Mutator {
+ static func put(_ target: inout String, _ value: String) { target = value }
+}
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  Mutator.put(&text, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="scalar-inout",
+    ),
+    pytest.param(
+        "struct-mutating",
+        "d2d34beb00527db20f6e7901986d8119d75507380543fa5cabbbbfb03f8764ad",
+        """import WebKit
+import UIKit
+struct Holder {
+ var stash: String = "https://safe.example/"
+ mutating func put(_ value: String) { self.stash = value }
+ func read() -> String { return stash }
+}
+class Entry {
+ let web = WKWebView()
+ var h: Holder = Holder()
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  h.put(incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: h.read())!))
+  return true
+ }
+}
+""",
+        id="struct-mutating",
+    ),
+    pytest.param(
+        "struct-member-compound",
+        "98bc200385dcfc80579659f8f0be80db8be52506a217340f6fce1dbd8708e9c5",
+        """import WebKit
+import UIKit
+struct Holder { var stash: String = "https://safe.example/" }
+class Entry {
+ let web = WKWebView()
+ var h: Holder = Holder()
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  h.stash += incoming.absoluteString
+  web.load(URLRequest(url: URL(string: h.stash)!))
+  return true
+ }
+}
+""",
+        id="struct-member-compound",
+    ),
+    pytest.param(
+        "struct-member-plain",
+        "399065d8fc965de02d159e8608ed4701e55c687333592b53fff6f3d0aa9427d1",
+        """import WebKit
+import UIKit
+struct Holder { var stash: String = "https://safe.example/" }
+class Entry {
+ let web = WKWebView()
+ var h: Holder = Holder()
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  h.stash = incoming.absoluteString
+  web.load(URLRequest(url: URL(string: h.stash)!))
+  return true
+ }
+}
+""",
+        id="struct-member-plain",
+    ),
+    pytest.param(
+        "class-member-compound",
+        "96343087c867f2f9816f7f599a3c4cfd2bf3d056c2dec1b82efe4e63d27a3914",
+        """import WebKit
+import UIKit
+final class Holder { var stash: String = "https://safe.example/" }
+class Entry {
+ let web = WKWebView()
+ var h: Holder = Holder()
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  h.stash += incoming.absoluteString
+  web.load(URLRequest(url: URL(string: h.stash)!))
+  return true
+ }
+}
+""",
+        id="class-member-compound",
+    ),
+    pytest.param(
+        "class-inout-reference",
+        "7f04b41915e0c3f0af83c0091c8a9c54d2f76ac707b1ce225cd2e60e1321f690",
+        """import WebKit
+import UIKit
+final class Holder {
+ var stash: String = "https://safe.example/"
+ func read() -> String { return stash }
+}
+final class Mutator {
+ static func put(_ target: inout Holder, _ value: String) { target.stash = value }
+}
+class Entry {
+ let web = WKWebView()
+ var h: Holder = Holder()
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  Mutator.put(&h, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: h.read())!))
+  return true
+ }
+}
+""",
+        id="class-inout-reference",
+    ),
+    pytest.param(
+        "class-inout-rebind",
+        "a3e4ed8d3107828315a97b149f437c430cc4d4b1a7eeeabca6c05235b4c2f91d",
+        """import WebKit
+import UIKit
+final class Holder {
+ var stash: String
+ init(_ value: String) { stash = value }
+ func read() -> String { return stash }
+}
+final class Mutator {
+ static func put(_ target: inout Holder, _ value: String) { target = Holder(value) }
+}
+class Entry {
+ let web = WKWebView()
+ var h: Holder = Holder("https://safe.example/")
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  Mutator.put(&h, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: h.read())!))
+  return true
+ }
+}
+""",
+        id="class-inout-rebind",
+    ),
+]
+
+
+@pytest.mark.parametrize("name,source_sha256,source", SWIFT_STORAGE_PROBES)
+@pytest.mark.parametrize("tainted", [False, True])
+def test_swift_unsupported_storage_preserves_exact_adversarial_candidate_and_safe_pair(
+    name, source_sha256, source, tainted
+):
+    import hashlib
+
+    assert hashlib.sha256(source.encode()).hexdigest() == source_sha256
+    if not tainted:
+        source = source.replace("incoming.absoluteString", '"https://safe.example/"')
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    if name == "class-member-compound":
+        assert report["metadata"]["native_flow"]["state"] == "checked", report
+    else:
+        assert report["metadata"]["native_flow"]["state"] == "partial", report
+        assert report["metadata"]["native_flow"]["reasons"], report
+    if "inout" in name:
+        assert "Swift inout writeback unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("suffix", ["java", "kt"])
+@pytest.mark.parametrize("owned_type", [False, True])
+@pytest.mark.parametrize("binding", ["direct", "alias", "index", "index-alias", "variable-index"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_parameter_storage_is_stable_without_type_inventory_and_through_index_projection(
+    suffix, owned_type, binding, tainted
+):
+    indexed = "index" in binding
+    access = "holders[position]" if binding == "variable-index" else "holders[0]" if indexed else "h"
+    target = "alias" if binding in {"alias", "index-alias"} else access
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    if suffix == "java":
+        declaration = "final class Holder { String stash; }" if owned_type else ""
+        parameters = "Holder[] holders" if indexed else "Holder h"
+        alias = f"Holder alias = {access};" if target == "alias" else ""
+        source = f"""package app;
+{"import external.Holder;" if not owned_type else ""}
+import android.content.Intent;
+import android.webkit.WebView;
+{declaration}
+class Entry {{
+    void open(Intent input, WebView web, {parameters}, Holder other, int position) {{
+        {alias}
+        {target}.stash = {argument};
+        web.loadUrl({access}.stash);
+        web.loadUrl(other.stash);
+    }}
+}}
+"""
+    else:
+        declaration = 'class Holder {\nvar stash: String = "https://safe.example/"\n}' if owned_type else ""
+        parameters = "holders: Array<Holder>" if indexed else "h: Holder"
+        alias = f"val alias = {access}" if target == "alias" else ""
+        source = f"""package app
+{"import external.Holder" if not owned_type else ""}
+import android.content.Intent
+import android.webkit.WebView
+{declaration}
+class Entry {{
+    fun open(input: Intent, web: WebView, {parameters}, other: Holder, position: Int) {{
+        {alias}
+        {target}.stash = {argument}
+        web.loadUrl({access}.stash)
+        web.loadUrl(other.stash)
+    }}
+}}
+"""
+    report = scan((f"app/Entry.{suffix}", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == (
+        "partial" if indexed or not owned_type else "checked"
+    ), report
+    if indexed:
+        assert "indexed object alias unavailable" in report["metadata"]["native_flow"]["reasons"], report
+    if not owned_type:
+        assert "receiver field inventory unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("binding", ["alias", "reassigned", "shadow"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_swift_uncertain_value_alias_storage_preserves_taint_without_touching_distinct_field(
+    binding, tainted
+):
+    argument = "incoming.absoluteString" if tainted else '"https://safe.example/"'
+    local = {
+        "alias": "var alias = h",
+        "reassigned": "var alias = h\n        alias = other",
+        "shadow": "var h = other",
+    }[binding]
+    target = "h" if binding == "shadow" else "alias"
+    affected = "h" if binding == "alias" else "other"
+    untouched = "other" if binding == "alias" else "self.h"
+    source = f"""import WebKit
+import UIKit
+struct Holder {{ var stash: String = "https://safe.example/" }}
+class Entry {{
+    let web = WKWebView()
+    var h: Holder = Holder()
+    var other: Holder = Holder()
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        {local}
+        {target}.stash = {argument}
+        web.load(URLRequest(url: URL(string: {affected}.stash)!))
+        web.load(URLRequest(url: URL(string: {untouched}.stash)!))
+        return true
+    }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "object storage alias unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("alias", [False, True])
+@pytest.mark.parametrize("literal_return", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_swift_enum_inout_abstains_with_provenance_and_preserves_literal_return(
+    alias, literal_return, tainted
+):
+    argument = "incoming.absoluteString" if tainted else '"https://safe.example/"'
+    body = (
+        'return "https://safe.example/"'
+        if literal_return
+        else "switch self { case .item(let value): return value }"
+    )
+    source = f"""import WebKit
+import UIKit
+enum Holder {{
+    case item(String)
+    func read() -> String {{ {body} }}
+}}
+final class Mutator {{
+    static func put(_ target: inout Holder, _ value: String) {{ target = .item(value) }}
+}}
+class Entry {{
+    let web = WKWebView()
+    var h: Holder = .item("https://safe.example/")
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        {"var alias = h" if alias else ""}
+        Mutator.put(&{"alias" if alias else "h"}, {argument})
+        web.load(URLRequest(url: URL(string: {"alias" if alias else "h"}.read())!))
+        return true
+    }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert bool(findings(report, URL)) is (tainted and not literal_return), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "Swift inout writeback unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unmaterialized_receiver_uses_scoped_weak_storage_instead_of_occurrence_identity(tainted):
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    source = f"""package app;
+import external.Holder;
+import android.content.Intent;
+import android.webkit.WebView;
+class Entry {{
+    native Holder unknown();
+    void open(Intent input, WebView web, Holder other) {{
+        unknown().stash = {argument};
+        web.loadUrl(unknown().stash);
+        web.loadUrl(other.stash);
+    }}
+}}
+"""
+    report = scan(("app/Entry.java", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "object alias identity unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("suffix", ["java", "kt"])
+@pytest.mark.parametrize("binding", ["declaration", "assignment", "member"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_factory_result_materializes_unknown_fields_at_the_actual_typed_binding(
+    suffix, binding, tainted
+):
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    if suffix == "java":
+        initialization = {
+            "declaration": f"Holder h = Helper.make({argument});",
+            "assignment": f"Holder h; h = Helper.make({argument});",
+            "member": f"Box box = new Box(); box.child = Helper.make({argument});",
+        }[binding]
+        source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{
+    String stash = "https://safe.example/";
+    final String read() {{ return stash; }}
+}}
+final class Box {{ Holder child; }}
+final class Helper {{ static native Holder make(String input); }}
+class Entry {{
+    void open(Intent input, WebView web) {{
+        {initialization}
+        web.loadUrl({"box.child" if binding == "member" else "h"}.read());
+    }}
+}}
+"""
+    else:
+        initialization = {
+            "declaration": f"val h: Holder = Helper.make({argument})",
+            "assignment": f"var h: Holder\n        h = Helper.make({argument})",
+            "member": f"val box = Box()\n        box.child = Helper.make({argument})",
+        }[binding]
+        source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+class Holder {{
+    var stash: String = "https://safe.example/"
+    fun read(): String {{ return stash }}
+}}
+class Box {{
+    var child: Holder = Holder()
+}}
+object Helper {{
+    external fun make(input: String): Holder
+}}
+class Entry {{
+    fun open(input: Intent, web: WebView) {{
+        {initialization}
+        web.loadUrl({"box.child" if binding == "member" else "h"}.read())
+    }}
+}}
+"""
+    report = scan((f"app/Entry.{suffix}", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "callable body unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("suffix", ["java", "kt"])
+@pytest.mark.parametrize("returned", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_declared_object_field_alias_uses_the_same_bound_storage_on_subsequent_read(
+    suffix, returned, tainted
+):
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    target = "Helper.keep(box.child)" if returned else "box.child"
+    if suffix == "java":
+        source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{
+    String stash = "https://safe.example/";
+    final String read() {{ return stash; }}
+}}
+final class Box {{ Holder child = new Holder(); }}
+final class Helper {{
+    static Holder keep(Holder source) {{ return source; }}
+    static void put(Holder renamed, String value) {{ renamed.stash = value; }}
+}}
+class Entry {{
+    void open(Intent input, WebView web, Box box) {{
+        Holder alias = {target};
+        Helper.put(alias, {argument});
+        web.loadUrl(box.child.read());
+    }}
+}}
+"""
+    else:
+        source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+class Holder {{
+    var stash: String = "https://safe.example/"
+    fun read(): String {{ return stash }}
+}}
+class Box {{
+    var child: Holder = Holder()
+}}
+object Helper {{
+    fun keep(source: Holder): Holder {{ return source }}
+    fun put(renamed: Holder, value: String) {{ renamed.stash = value }}
+}}
+class Entry {{
+    fun open(input: Intent, web: WebView, box: Box) {{
+        val alias = {target}
+        Helper.put(alias, {argument})
+        web.loadUrl(box.child.read())
+    }}
+}}
+"""
+    report = scan((f"app/Entry.{suffix}", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report

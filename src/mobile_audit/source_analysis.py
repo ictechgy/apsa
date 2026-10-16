@@ -956,6 +956,16 @@ class Analyzer:
     def value(self, node: Any, frame: Frame) -> Value:
         if node is None or node.type in COMMENTS:
             return Value()
+        if self.native_flow is not None:
+            projected = self.native_flow.indexed_value(self, node, frame)
+            if projected is not None:
+                return projected
+        if (
+            self.native_flow is not None
+            and node.type in {"this", "this_expression", "self_expression"}
+            and self.text(node).strip() in {"this", "self"}
+        ):
+            return self.native_flow.self_value(self, frame)
         if node.type in STRINGS:
             interpolations = [
                 part
@@ -2047,6 +2057,10 @@ class Analyzer:
             else:
                 frame.constants.pop(name, None)
             value = self.value(expression, frame).bind(self.point(node))
+            if self.native_flow is not None:
+                value = self.native_flow.local_value(
+                    self, node, type_name, value, frame, initialized=expression is not None
+                )
             frame.values[name] = Value(
                 value.traces, value.category, type_name or value.type_name, value.identity
             )
@@ -2063,10 +2077,12 @@ class Analyzer:
                 or (node.named_children[-1] if len(node.named_children) > 1 else None)
             )
             if left and right and left != right:
+                operator = self.text(_field(node, "operator"))
+                previous = self.value(left, frame) if operator != "=" else None
                 self.visit(right, frame, guards, conditions)
                 key = self.key(left)
                 if left.type in IDENTIFIERS:
-                    described = self.constant(right, frame)
+                    described = self.constant(right, frame) if operator == "=" else None
                     if described:
                         frame.constants[key] = described
                     else:
@@ -2077,10 +2093,27 @@ class Analyzer:
                     if base is not None:
                         frame.constants.pop(self.text(base), None)
                 value = self.value(right, frame).bind(self.point(node))
+                if previous is not None:
+                    value = (
+                        self.native_flow.compound_value(
+                            self, node, left, right, previous, value, operator, frame
+                        )
+                        if self.native_flow is not None
+                        else self.changed(node, _union([previous, value], type_name=previous.type_name))
+                    )
                 if self.native_flow is not None and self.navigation(left) is not None:
                     self.native_flow.assign_member(self, left, value, frame)
                     return
                 if key in frame.types or key in frame.values:
+                    if self.native_flow is not None:
+                        value = self.native_flow.local_value(
+                            self,
+                            left,
+                            frame.types.get(key, ""),
+                            value,
+                            frame,
+                            initialized=True,
+                        )
                     frame.values[key] = Value(
                         value.traces, value.category, frame.types.get(key, value.type_name), value.identity
                     )
@@ -2564,6 +2597,11 @@ class Analyzer:
             self.native_flow.initialize_fields(self, frame)
         for name, type_name, node in parameters:
             frame.local_names.add(name)
+            frame.values[name] = (
+                self.native_flow.parameter_value(self, node, type_name)
+                if self.native_flow is not None
+                else Value(type_name=type_name)
+            )
             if ARCHIVE_ENTRY.fullmatch(type_name.strip()):
                 frame.values[name] = Value(type_name=type_name, identity=f"{self.path}:{node.start_byte}")
             category = None
@@ -2593,7 +2631,9 @@ class Analyzer:
                 category, description = "url", "iOS application URL callback parameter"
             if category:
                 value = self.source(node, description, category)
-                frame.values[name] = Value(value.traces, value.category, type_name)
+                frame.values[name] = Value(
+                    value.traces, value.category, type_name, frame.values[name].identity
+                )
         return frame
 
     def finish_paths(self) -> None:

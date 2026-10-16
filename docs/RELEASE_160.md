@@ -108,10 +108,21 @@ It retains the same target/build/nonce/lifecycle assertions and cannot replace
 failed primary evidence or establish R02 acquisition.
 On `2f5d306`, both app-open controls again reached the cold expectation deadline;
 the system-open control failed at the initial URL-open test line and its target
-container could not be observed. All owned cleanup completed. The next control
-explicitly installs its newly built target and verifies its executable/plist
-hashes before running either URL driver, so app registration is an observed
-precondition. This change has no callback-success or R02 acceptance claim.
+container could not be observed. All owned cleanup completed. Control `d1af8d3`
+explicitly installed its newly built target and verified its executable/plist
+hashes before running either URL driver. Its system-open job verified distinct
+cold/warm URL and nonce receipts, the installed build and terminal cleanup
+([owned hosted control](https://github.com/ictechgy/apsa/actions/runs/38835918800/job/116764898224)).
+Both app-open controls still timed out. This establishes the system-open
+callback differential only; it does not satisfy the six R02 backend/storage
+scenarios.
+A hosted-only `--ios-url-driver xctest` bridge reuses the public system-open
+route for the existing six-case transport fixture. Its helper is built once
+per owned target, and each URL uses a bounded UI-test invocation. Runner exit
+zero establishes dispatch only; the original target callback, session,
+authenticated backend, transition, storage and cleanup assertions still decide
+each case. Local mock tests establish no live six-case result. The dedicated
+hosted job permits 90 minutes for 24 bounded UI-test startups and cleanup.
 
 The six Android controls passed on `588150f`, including both authenticated
 account switches and terminal cleanup ([owned hosted run](https://github.com/ictechgy/apsa/actions/runs/38608689172)).

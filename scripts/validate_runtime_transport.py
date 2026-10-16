@@ -747,6 +747,13 @@ FAILURE_REASONS = {
     "NEW iOS target termination unverified": "ios-target-termination-unverified",
     "NEW iOS diagnostic control readiness differs": "ios-control-readiness-unverified",
     "NEW iOS diagnostic URL control timed out": "ios-control-response-deadline",
+    "NEW XCTest dispatch ownership differs": "ios-xctest-owned-target-mismatch",
+    "NEW XCTest dispatch manifest differs": "ios-xctest-manifest-shape",
+    "NEW XCTest dispatch environment differs": "ios-xctest-environment-shape",
+    "NEW XCTest dispatch URI differs": "ios-xctest-uri-shape",
+    "NEW XCTest dispatch limit exceeded": "ios-xctest-dispatch-bound",
+    "NEW XCTest build completion unverified": "ios-xctest-build-status-unverified",
+    "NEW XCTest dispatch completion unverified": "ios-xctest-dispatch-status-unverified",
     "Installed fixture transition unsupported": "installed-session-or-transition-unavailable",
     "Installed fixture target/build/transport response differs": "installed-target-build-transport-mismatch",
     "Installed fixture HTTP/session initialization differs": "installed-session-or-http-initialization",
@@ -807,6 +814,14 @@ def command_kind(argv: list[str]) -> str:
         return "build-" + tool
     if tool == "xcrun" and "swiftc" in argv:
         return "build-swiftc"
+    if tool == "xcodebuild":
+        return (
+            "ios-xctest-build"
+            if "build-for-testing" in argv
+            else "ios-xctest-dispatch"
+            if "test-without-building" in argv
+            else "ios-xctest-unsupported"
+        )
     return "public-tool-command"
 
 
@@ -1256,8 +1271,10 @@ class IosTarget:
         device_set_mode: str = "custom",
         readiness_only: bool = False,
     ):
-        if url_driver not in {"simctl", "companion"}:
+        if url_driver not in {"simctl", "companion", "xctest"}:
             raise ValueError("NEW iOS URL driver unsupported")
+        if url_driver == "xctest" and device_set_mode != "default":
+            raise ValueError("NEW XCTest dispatch requires owned default-set target")
         self.package, self.commands, self.device = package, commands, None
         self.url_driver, self.device_set_mode = url_driver, device_set_mode
         self.readiness_only = readiness_only
@@ -1376,6 +1393,12 @@ class IosTarget:
                 raise FixtureFailure("NEW iOS registered package differs", self.registration)
             if self.url_driver == "companion":
                 self.install_dispatcher(root, sdk, arch)
+            elif self.url_driver == "xctest":
+                from scripts.ios_xctest_dispatch import IosXCTestDispatcher
+
+                self.xctest_dispatcher = IosXCTestDispatcher(
+                    root / "xctest-dispatch", commands, self.device, self.package, self.scheme
+                )
             # Establish a ready NEW scene before delivering the session URL through the OS.
             self.require_installed_contract()
             raw = commands.run(self.simctl + ["launch", self.device, self.package])
@@ -1523,6 +1546,13 @@ class IosTarget:
         self.require_installed_contract()
         if self.url_driver == "simctl":
             self.commands.run(self.simctl + ["openurl", self.device, url])
+            return
+        if self.url_driver == "xctest":
+            if self.installed_build() != self.build:
+                raise ValueError("NEW installed iOS executable differs")
+            self.xctest_dispatcher.dispatch(url)
+            # Runner completion establishes no callback, session, HTTP or state
+            # verdict. deliver() still requires the authoritative target proof.
             return
         if self.helper_installed_build() != self.helper_build:
             raise ValueError("NEW installed iOS dispatcher differs")
@@ -1765,6 +1795,9 @@ class IosTarget:
         )
 
     def dispatcher_observation(self):
+        xctest = getattr(self, "xctest_dispatcher", None)
+        if xctest is not None:
+            return xctest.latest.copy()
         path = getattr(self, "helper_receipt", None)
         if path is None:
             return {"state": "not-selected"}
@@ -2560,9 +2593,15 @@ def ios_url_diagnostic_projection(observation: dict) -> dict:
             **{
                 key: item
                 for key, item in value.items()
-                if key in {"can_open_url", "open_completion", "uri_matches"} and type(item) is bool
+                if key in {"can_open_url", "open_completion", "uri_matches", "xctest_exit_success"}
+                and type(item) is bool
             },
         }
+        for key in ("uri_sha256", "manifest_sha256", "device_sha256", "target_package_sha256"):
+            if isinstance(value.get(key), str) and re.fullmatch(r"[a-f0-9]{64}", value[key]):
+                result["dispatcher"][key] = value[key]
+        if type(value.get("invocation")) is int and 1 <= value["invocation"] <= 8:
+            result["dispatcher"]["invocation"] = value["invocation"]
         if isinstance(value.get("phase"), str) and value.get("phase") in {
             "rejected-owned-uri",
             "validated-owned-uri",
@@ -2711,6 +2750,8 @@ def runtime_projection(evidence: dict) -> dict:
                 "runtime_transport.py",
                 "runtime_acquisition.py",
                 "runtime_evidence.py",
+                "ios_xctest_dispatch.py",
+                "validate_runtime_xctest_control.py",
             }
             and hash_value(value)
         },
@@ -2746,7 +2787,7 @@ def main():
     parser.add_argument("--cleanup-only", action="store_true")
     parser.add_argument("--sdk", type=Path)
     parser.add_argument("--jdk", type=Path)
-    parser.add_argument("--ios-url-driver", choices=["simctl", "companion"], default="simctl")
+    parser.add_argument("--ios-url-driver", choices=["simctl", "companion", "xctest"], default="simctl")
     parser.add_argument("--ios-device-set", choices=["custom", "default"], default="custom")
     parser.add_argument("--ios-runtime")
     parser.add_argument("--ios-device-type", default=IOS_PINNED_DEVICE_TYPE)
@@ -2760,6 +2801,8 @@ def main():
         parser.error("NEW default-set control requires iOS")
     if args.ios_os_url_control and args.platform != "ios":
         parser.error("NEW OS URL diagnostic control requires iOS")
+    if args.ios_url_driver == "xctest" and (args.platform != "ios" or args.ios_device_set != "default"):
+        parser.error("NEW XCTest dispatch requires iOS and an owned default-set target")
     # Never offer a flag that lets local workspace execution bypass this boundary.
     if (
         os.environ.get("GITHUB_ACTIONS") != "true"
@@ -2837,6 +2880,14 @@ def main():
                 Path(__file__).parents[1] / "tests/support/runtime_transport.py",
                 Path(__file__).parents[1] / "src/mobile_audit/runtime_acquisition.py",
                 Path(__file__).parents[1] / "src/mobile_audit/runtime_evidence.py",
+                *(
+                    (
+                        Path(__file__).with_name("ios_xctest_dispatch.py"),
+                        Path(__file__).with_name("validate_runtime_xctest_control.py"),
+                    )
+                    if args.platform == "ios" and args.ios_url_driver == "xctest"
+                    else ()
+                ),
             )
         },
         "scope": "NEW synthetic apps/devices only; no physical device or real backend claim",
