@@ -566,6 +566,23 @@ def observe_owned_callback(
     return callback_diagnostic(b"", package, urls, nonces, build)
 
 
+def installed_owned_build(commands, device: str, package: str, expected: dict) -> dict:
+    """Bind the NEW installed target before either public URL driver runs."""
+    if re.fullmatch(r"org\.apsa\.synthetic\.p[a-f0-9]{32}", package) is None:
+        raise ValueError("NEW installed callback package differs")
+    raw = commands.run(["/usr/bin/xcrun", "simctl", "get_app_container", device, package, "app"])
+    container = Path(raw.decode().strip()).resolve()
+    if not container.is_relative_to(transport.ios_default_set(commands.env) / device):
+        raise ValueError("NEW installed callback container differs")
+    actual = {
+        "executable_sha256": digest((container / "Callback").read_bytes()),
+        "info_plist_sha256": digest((container / "Info.plist").read_bytes()),
+    }
+    if actual != expected:
+        raise ValueError("NEW installed callback build differs")
+    return {"state": "verified", "build": actual}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", required=True, type=Path)
@@ -655,6 +672,8 @@ def main():
             "executable_sha256": digest((built / "Callback").read_bytes()),
             "info_plist_sha256": digest((built / "Info.plist").read_bytes()),
         }
+        commands.run(simctl + ["install", device, str(built)])
+        evidence["installed_before_test"] = installed_owned_build(commands, device, package, build)
         output = commands.run(
             xcode
             + [

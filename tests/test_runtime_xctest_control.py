@@ -74,6 +74,51 @@ def test_callback_receipt_requires_both_bound_lifecycles_and_installed_build():
     assert [r["lifecycle"] for r in result["receipts"]] == ["cold-url-context", "warm-url-context"]
 
 
+@pytest.mark.parametrize("mutation", ["none", "executable", "plist", "outside", "package"])
+def test_installed_target_is_bound_before_url_dispatch(tmp_path, monkeypatch, mutation):
+    device = "new-device"
+    default_set = tmp_path / "new-simulators"
+    container = default_set / device / "new-app"
+    container.mkdir(parents=True)
+    (container / "Callback").write_bytes(b"new-synthetic-executable")
+    (container / "Info.plist").write_bytes(b"new-synthetic-plist")
+    expected = {
+        "executable_sha256": digest((container / "Callback").read_bytes()),
+        "info_plist_sha256": digest((container / "Info.plist").read_bytes()),
+    }
+    returned = container
+    package = PACKAGE
+    if mutation in {"executable", "plist"}:
+        (container / ("Callback" if mutation == "executable" else "Info.plist")).write_bytes(b"changed")
+    elif mutation == "outside":
+        returned = tmp_path / "unowned-app"
+    elif mutation == "package":
+        package = "existing.app"
+    calls = []
+
+    class NewCommands:
+        env = {}
+
+        def run(self, argv):
+            calls.append(argv)
+            return str(returned).encode()
+
+    monkeypatch.setattr(control.transport, "ios_default_set", lambda env: default_set)
+    if mutation == "none":
+        assert control.installed_owned_build(NewCommands(), device, package, expected) == {
+            "state": "verified",
+            "build": expected,
+        }
+    else:
+        with pytest.raises(ValueError):
+            control.installed_owned_build(NewCommands(), device, package, expected)
+    assert calls == (
+        []
+        if mutation == "package"
+        else [["/usr/bin/xcrun", "simctl", "get_app_container", device, PACKAGE, "app"]]
+    )
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

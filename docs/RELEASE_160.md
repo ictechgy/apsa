@@ -100,6 +100,18 @@ The next control reached its cold-label expectation deadline. That does not
 distinguish a missing callback from a callback with a different lifecycle.
 Separate fresh-install/prelaunched controls therefore retain bounded partial
 receipt facts without relaxing the required cold/warm lifecycle assertions.
+Both setup controls on `08895b3` failed the cold expectation without a readable
+callback receipt; owned cleanup was confirmed. A separate public
+[`XCUISystem.open(_:)`](https://developer.apple.com/documentation/xcuiautomation/xcuisystem)
+driver exercises OS-default routing to the newly registered random scheme.
+It retains the same target/build/nonce/lifecycle assertions and cannot replace
+failed primary evidence or establish R02 acquisition.
+On `2f5d306`, both app-open controls again reached the cold expectation deadline;
+the system-open control failed at the initial URL-open test line and its target
+container could not be observed. All owned cleanup completed. The next control
+explicitly installs its newly built target and verifies its executable/plist
+hashes before running either URL driver, so app registration is an observed
+precondition. This change has no callback-success or R02 acceptance claim.
 
 The six Android controls passed on `588150f`, including both authenticated
 account switches and terminal cleanup ([owned hosted run](https://github.com/ictechgy/apsa/actions/runs/38608689172)).
