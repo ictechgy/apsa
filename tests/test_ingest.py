@@ -14,6 +14,77 @@ from mobile_audit.maswe import coverage_matrix
 from mobile_audit.verify import verify_claim
 
 
+@pytest.mark.parametrize("limit", ["comparisons", "links"])
+def test_corroboration_limits_reject_atomically_and_keep_bounded_matches(store, tmp_path, monkeypatch, limit):
+    import mobile_audit.ingest as module
+    from mobile_audit.audit import summarize
+    from mobile_audit.core import finding, now, uid
+
+    native = [
+        finding(
+            "AST-WEBVIEW-SSL-BYPASS",
+            "Owned native candidate",
+            "medium",
+            "candidate",
+            [{"path": f"module{index}/app/Entry.java", "line": 1}],
+            "Review owned source",
+        )
+        for index in range(24)
+    ]
+    base = {
+        "id": uid("audit"),
+        "created": now(),
+        "target": str(tmp_path),
+        "inventory": {"platforms": []},
+        "findings": native,
+        "coverage": [],
+        "warnings": [],
+        "intel_snapshot": [],
+    }
+    base["summary"] = summarize(base)
+    store.save_report(base)
+    raw = document([result("app/Entry.java", line=1, rule=f"owned-{index}") for index in range(4)])
+    driver = raw["runs"][0]["tool"]["driver"]
+    template = copy.deepcopy(driver["rules"][0])
+    driver["rules"] = [{**template, "id": f"owned-{index}"} for index in range(4)]
+    path = tmp_path / "owned.sarif"
+    path.write_text(json.dumps(raw))
+    attr = "MAX_CORROBORATION_COMPARISONS" if limit == "comparisons" else "MAX_CORROBORATION_LINKS"
+    with monkeypatch.context() as context:
+        context.setattr(module, attr, 50 if limit == "comparisons" else 8)
+        with pytest.raises(ValueError, match="corroboration .* limit exceeded"):
+            ingest(store, base["id"], path, "owned")
+    assert len(store.reports()) == 1 and store.report(base["id"]) == base
+    derived = ingest(store, base["id"], path, "owned")
+    assert sum(len(row.get("external_corroboration", [])) for row in derived["findings"]) == 96
+    assert store.report(base["id"]) == base
+
+
+@pytest.mark.parametrize("score", ["9.8", "1." + "0" * 8192])
+def test_shared_severity_is_parsed_once_and_invalid_score_keeps_result_levels(monkeypatch, score):
+    import mobile_audit.ingest as module
+
+    rows = [result(f"Entry{index}.java") for index in range(64)]
+    for index, row in enumerate(rows):
+        row["level"] = "error" if index % 2 else "warning"
+    raw = document(rows)
+    raw["runs"][0]["tool"]["driver"]["rules"][0]["properties"]["security-severity"] = score
+    original = module._security_severity
+    calls = []
+
+    def counted(rule):
+        calls.append(rule)
+        return original(rule)
+
+    monkeypatch.setattr(module, "_security_severity", counted)
+    findings, _ = external_findings(json.dumps(raw).encode(), "owned")
+    assert len(calls) == 1 and len(findings) == 64
+    if score == "9.8":
+        assert {item["severity"] for item in findings} == {"critical"}
+    else:
+        assert [item["severity"] for item in findings] == ["low", "medium"] * 32
+
+
 @pytest.mark.parametrize("field", ["reference", "path", "tags", "tag-bytes"])
 def test_shared_sarif_metadata_has_field_bounds(field):
     from mobile_audit.ingest import MAX_PATH_BYTES, MAX_REFERENCE_BYTES, MAX_RULE_TAGS, MAX_TAG_BYTES

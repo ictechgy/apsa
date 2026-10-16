@@ -27,6 +27,8 @@ MAX_PATH_BYTES = 4096
 MAX_RULE_TAGS = 64
 MAX_TAG_BYTES = 256
 MAX_EXPANDED_BYTES = 8 * 1024 * 1024
+MAX_CORROBORATION_COMPARISONS = 100_000
+MAX_CORROBORATION_LINKS = 10_000
 
 
 def _bounded_string(value: object, label: str, limit: int) -> str:
@@ -78,7 +80,7 @@ class _ExpansionBudget:
         except UnicodeError:
             raise ValueError("Invalid SARIF: metadata contains invalid Unicode") from None
         if self.used > MAX_EXPANDED_BYTES:
-            raise ValueError("SARIF expanded metadata exceeds 8 MiB; split the import")
+            raise ValueError("SARIF expanded metadata exceeds 8 MiB; reduce the import size")
         return text
 
 
@@ -121,15 +123,23 @@ def _text(value: object, limit: int = 300) -> str:
     return redact(CREDENTIAL.sub(r"\1[REDACTED]", text)).replace("\n", " ")[:limit]
 
 
-def _severity(rule: dict, result: dict) -> str:
-    level = _string(result.get("level"), "result level")
+def _security_severity(rule: dict) -> str | None:
     score = _object(rule.get("properties"), "rule properties").get("security-severity")
+    if isinstance(score, str) and len(score) > 64:
+        return None
     try:
         value = float(score) if not isinstance(score, bool) and isinstance(score, (str, int, float)) else None
     except (ValueError, OverflowError):
         value = None
     if value is not None and math.isfinite(value) and 0 <= value <= 10:
         return "critical" if value >= 9 else "high" if value >= 7 else "medium" if value >= 4 else "low"
+    return None
+
+
+def _severity(rule: dict, result: dict, score: str | None) -> str:
+    level = _string(result.get("level"), "result level")
+    if score is not None:
+        return score
     level = (
         level
         or _string(
@@ -201,7 +211,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
             drivers.append(public_driver)
         named_keys: dict[str, tuple[str, str]] = {}
         unnamed_descriptors: dict[int | None, str] = {}
-        metadata: dict[int, tuple[list[str], list[str]]] = {}
+        metadata: dict[int, tuple[list[str], list[str], str | None]] = {}
         # Keep positional slots: dropping malformed entries changes the meaning of ruleIndex.
         rules = _array(driver.get("rules"), "rules")
         by_id = {}
@@ -259,8 +269,8 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
                 skipped += 1
                 continue
             if id(rule) not in metadata:
-                metadata[id(rule)] = (_cwes(rule), _reference(rule))
-            cwes, references = metadata[id(rule)]
+                metadata[id(rule)] = (_cwes(rule), _reference(rule), _security_severity(rule))
+            cwes, references, score = metadata[id(rule)]
             maswe = sorted({w for cwe in cwes for w in cwe_to_maswe.get(cwe, [])})
             evidence: dict[str, object] = {
                 "path": path,
@@ -279,7 +289,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
             item = finding(
                 f"EXT-{label}-{display_rule}-{namespace}",
                 _text(title, 160),
-                _severity(rule, result),
+                _severity(rule, result, score),
                 "candidate",
                 [evidence],
                 "Review the imported result in its tool; APSA did not verify it.",
@@ -402,21 +412,30 @@ def ingest(store, report_id: str, sarif_path: Path, tool: str, root: str = "") -
                 c for c in item["external_corroboration"] if c.get("tool") != record["tool"]
             ]
     native = [f for f in report["findings"] if f.get("origin") != "external"]
+    native_weaknesses = [(item, set(finding_weaknesses(item))) for item in native]
+    comparisons, links = 0, 0
+    backlink_budget = _ExpansionBudget()
     for external in imported:
-        matches = [
-            f
-            for f in native
-            if set(external.get("maswe") or []) & set(finding_weaknesses(f)) and _near(external, f)
-        ]
+        matches = []
+        weaknesses = set(external.get("maswe") or [])
+        for item, related in native_weaknesses:
+            comparisons += 1
+            if comparisons > MAX_CORROBORATION_COMPARISONS:
+                raise ValueError("SARIF corroboration comparison limit exceeded; narrow the import")
+            if weaknesses & related and _near(external, item):
+                links += 1
+                if links > MAX_CORROBORATION_LINKS:
+                    raise ValueError("SARIF corroboration link limit exceeded; narrow the import")
+                matches.append(item)
         external["evidence"][0]["corroborated_by"] = [f["id"] for f in matches][:20]
         for match in matches:
-            match.setdefault("external_corroboration", []).append(
-                {
-                    "tool": record["tool"],
-                    "rule": external["evidence"][0]["external_rule"],
-                    "finding_id": external["id"],
-                }
-            )
+            backlink = {
+                "tool": record["tool"],
+                "rule": external["evidence"][0]["external_rule"],
+                "finding_id": external["id"],
+            }
+            backlink_budget.encode(backlink)
+            match.setdefault("external_corroboration", []).append(backlink)
     report["findings"] = sorted(report["findings"] + imported, key=lambda f: -severity_rank(f["severity"]))
     report["coverage"] = [c for c in report["coverage"] if c.get("rule_id") != f"EXTERNAL-{record['tool']}"]
     report["coverage"].append(

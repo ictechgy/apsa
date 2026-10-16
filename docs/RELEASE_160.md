@@ -40,9 +40,15 @@ compiler module identity.
   Imports reject help URLs above 2,048 UTF-8 bytes, paths above 4,096 bytes,
   more than 64 descriptor tags or tags above 256 bytes. Both accumulated
   candidate/provenance expansion and final finding output have separate 8 MiB
-  budgets; split an oversized import. Rejection saves no derived report.
+  budgets. Corroboration also rejects more than 100,000 native/external
+  comparisons, 10,000 new links or 8 MiB of new serialized backlinks.
+  Rejection saves no derived report and preserves the base report. Narrow or
+  re-export an oversized import; if partitioning, use distinct tool names
+  because reusing a tool name replaces its previous import.
   HTTPS help URLs reject userinfo and credential-like paths; query strings and
   fragments are removed before references enter reports or assistant context.
+  Shared numeric severity is normalized once per descriptor; strings above
+  64 characters are invalid scores and use each result's level fallback.
 - New candidate findings, partial reasons and stricter source input binding can
   change policy outcomes. Skipped symlinks and ambiguous report-store roots do
   not produce complete scans. Narrow the input or resolve ambiguity explicitly.
