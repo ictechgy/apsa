@@ -3659,3 +3659,194 @@ class Entry {{
     assert len(findings(report, URL)) == int(tainted), report
     assert report["metadata"]["native_flow"]["state"] == "partial", report
     assert "Swift inout writeback unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize(
+    "callee", ["ExternalMutator.put", "External.ExternalMutator.put", "put", "operation"]
+)
+@pytest.mark.parametrize("binding", ["field", "alias", "member"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_swift_callable_preserves_possible_reference_argument_field_effects(callee, binding, tainted):
+    argument = "incoming.absoluteString" if tainted else '"https://fresh-safe.example/"'
+    target = {"field": "slot", "alias": "alias", "member": "box.child"}[binding]
+    observed = "box.child" if binding == "member" else "slot"
+    source = f"""import WebKit
+import UIKit
+import External
+final class Holder {{
+ var stash: String = "https://safe.example/"
+ func read() -> String {{ return stash }}
+}}
+final class Box {{ let child: Holder = Holder() }}
+final class Entry {{
+ let web = WKWebView()
+ let slot: Holder = Holder()
+ let separate: Holder = Holder()
+ let box: Box = Box()
+ func application(_ app: UIApplication, open incoming: URL,
+                  operation: (Holder, String) -> Void, options: [String: Any]) -> Bool {{
+  let alias = slot
+  {callee}({target}, {argument})
+  web.load(URLRequest(url: URL(string: {observed}.read())!))
+  web.load(URLRequest(url: URL(string: separate.read())!))
+  return true
+ }}
+}}
+"""
+    report = scan(("Entry.swift", source))
+    matches = findings(report, URL)
+    assert len(matches) == int(tainted), report
+    if tainted:
+        assert observed + ".read()" in matches[0]["evidence"][0]["excerpt"], report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert not any(item.get("parse_errors") for item in report["metadata"]["files"]), report
+
+
+@pytest.mark.parametrize("suffix", ["java", "kt"])
+@pytest.mark.parametrize("callee", ["ExternalMutator.put", "vendor.ExternalMutator.put", "put"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_callable_reference_argument_mutation_is_independent_of_qualification(
+    suffix, callee, tainted
+):
+    argument = "incoming.getDataString()" if tainted else '"https://fresh-safe.example/"'
+    if suffix == "java":
+        source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{
+ String stash = "https://safe.example/";
+ final String read() {{ return stash; }}
+}}
+class Entry {{
+ void open(Intent incoming, WebView web) {{
+  Holder slot = new Holder();
+  Holder separate = new Holder();
+  Holder alias = slot;
+  {callee}(alias, {argument});
+  web.loadUrl(slot.read());
+  web.loadUrl(separate.read());
+ }}
+}}
+"""
+    else:
+        source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+class Holder {{
+ var stash: String = "https://safe.example/"
+ fun read(): String {{ return stash }}
+}}
+class Entry {{
+ fun open(incoming: Intent, web: WebView) {{
+  val slot = Holder()
+  val separate = Holder()
+  val alias = slot
+  {callee}(alias, {argument})
+  web.loadUrl(slot.read())
+  web.loadUrl(separate.read())
+ }}
+}}
+"""
+    report = scan((f"app/Entry.{suffix}", source))
+    matches = findings(report, URL)
+    assert len(matches) == int(tainted), report
+    if tainted:
+        assert "slot.read()" in matches[0]["evidence"][0]["excerpt"], report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+    assert not any(item.get("parse_errors") for item in report["metadata"]["files"]), report
+
+
+@pytest.mark.parametrize("kind", ["struct", "scalar"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_swift_byvalue_argument_does_not_gain_reference_writeback(kind, tainted):
+    argument = "incoming.absoluteString" if tainted else '"https://fresh-safe.example/"'
+    declaration = 'var slot: String = "https://safe.example/"'
+    observed = "slot"
+    if kind == "struct":
+        declaration = "var slot: Holder = Holder()"
+        observed = "slot.read()"
+    source = f"""import WebKit
+import UIKit
+import External
+struct Holder {{
+ var stash: String = "https://safe.example/"
+ func read() -> String {{ return stash }}
+}}
+final class Entry {{
+ let web = WKWebView()
+ {declaration}
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+  ExternalMutator.put(slot, {argument})
+  web.load(URLRequest(url: URL(string: {observed})!))
+  return true
+ }}
+}}
+"""
+    report = scan(("Entry.swift", source))
+    assert not findings(report, URL), report
+
+
+@pytest.mark.parametrize("mutates", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_source_known_swift_reference_summary_keeps_safe_and_separate_objects(mutates, tainted):
+    argument = "incoming.absoluteString" if tainted else '"https://fresh-safe.example/"'
+    body = "target.stash = value" if mutates else ""
+    source = f"""import WebKit
+import UIKit
+final class Holder {{
+ var stash: String = "https://safe.example/"
+ func read() -> String {{ return stash }}
+}}
+final class Helper {{ static func put(_ target: Holder, _ value: String) {{ {body} }} }}
+final class Entry {{
+ let web = WKWebView()
+ let slot: Holder = Holder()
+ let separate: Holder = Holder()
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+  Helper.put(slot, {argument})
+  web.load(URLRequest(url: URL(string: slot.read())!))
+  web.load(URLRequest(url: URL(string: separate.read())!))
+  return true
+ }}
+}}
+"""
+    report = scan(("Entry.swift", source))
+    assert len(findings(report, URL)) == int(mutates and tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_swift_mixed_reference_and_value_arguments_only_weaken_reference_storage(tainted):
+    argument = "incoming.absoluteString" if tainted else '"https://fresh-safe.example/"'
+    source = f"""import WebKit
+import UIKit
+import External
+final class Holder {{
+ var stash: String = "https://safe.example/"
+ func read() -> String {{ return stash }}
+}}
+struct ValueBox {{
+ var stash: String = "https://safe.example/"
+ func read() -> String {{ return stash }}
+}}
+final class Entry {{
+ let web = WKWebView()
+ let slot: Holder = Holder()
+ var value: ValueBox = ValueBox()
+ var scalar: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+  ExternalMutator.put(slot, value, scalar, {argument})
+  web.load(URLRequest(url: URL(string: slot.read())!))
+  web.load(URLRequest(url: URL(string: value.read())!))
+  web.load(URLRequest(url: URL(string: scalar)!))
+  return true
+ }}
+}}
+"""
+    report = scan(("Entry.swift", source))
+    matches = findings(report, URL)
+    assert len(matches) == int(tainted), report
+    if tainted:
+        assert "slot.read()" in matches[0]["evidence"][0]["excerpt"], report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report

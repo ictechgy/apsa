@@ -662,12 +662,19 @@ class NativeFlow:
         return affected
 
     def unavailable_write(
-        self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
+        self,
+        analyzer: Analyzer,
+        call: Call,
+        receiver: Value,
+        args: list[Value],
+        frame: Frame,
+        *,
+        affected: set[str] | None = None,
     ) -> None:
         value = self.unavailable_result(analyzer, call, receiver, args, frame)
         if not value.traces:
             return
-        for identity in self.affected_objects(analyzer, call, args, frame):
+        for identity in self.affected_objects(analyzer, call, args, frame) if affected is None else affected:
             fields = frame.object_fields.setdefault(identity, {})
             for name, previous in list(fields.items()):
                 fields[name] = self.weak_write(analyzer, call, previous, value, value)
@@ -676,6 +683,27 @@ class NativeFlow:
         shared[StorageKey.UNKNOWN_FIELDS] = self.merge(
             [shared.get(StorageKey.UNKNOWN_FIELDS, Value()), value]
         )
+
+    def unresolved_reference_effects(
+        self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
+    ) -> Value | None:
+        # Reference objects can be mutated through an unavailable callable even
+        # when name resolution has no candidate inventory. Swift value arguments
+        # without `&` supply no such writeback; syntactic inout is handled first.
+        objects = [*zip(call.args, args, strict=True)]
+        if call.receiver is not None:
+            objects.append((call.receiver, receiver))
+        affected = {
+            value.identity or self.receiver_identity(analyzer, node, frame)
+            for node, value in objects
+            if self.reference_type(analyzer, value.type_name, node)
+        }
+        if not affected:
+            return None
+        self.partial("unresolved reference argument effects", analyzer, call=call)
+        value = self.unavailable_result(analyzer, call, receiver, args, frame)
+        self.unavailable_write(analyzer, call, receiver, args, frame, affected=affected)
+        return value
 
     def compound_value(
         self,
@@ -1709,7 +1737,8 @@ class NativeFlow:
             if syntactic_inout:
                 return self.inout_effects(analyzer, call, receiver, args, syntactic_inout, frame)
             self.partial("callable value binding unresolved", analyzer, call=call)
-            return analyzer.changed(call.node, _union([binding, *args]))
+            effects = self.unresolved_reference_effects(analyzer, call, receiver, args, frame)
+            return analyzer.changed(call.node, _union([binding, *args, effects or Value()]))
         targets, relevant = self.resolve(analyzer, call, receiver, frame)
         admitted = []
         for target in targets:
@@ -1754,6 +1783,9 @@ class NativeFlow:
                 unknown = self.incomplete(analyzer.changed(call.node, _union(args)))
                 frame.object_fields[identity] = {StorageKey.UNKNOWN_FIELDS: unknown}
                 return Value(unknown.traces, type_name=constructor_type or call.name, identity=identity)
+            effects = self.unresolved_reference_effects(analyzer, call, receiver, args, frame)
+            if effects is not None:
+                return effects
             if (
                 any(argument.traces for argument in args)
                 and call.receiver is None

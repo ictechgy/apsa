@@ -615,6 +615,54 @@ class OwnedResources:
         self.save()
 
 
+def acquisition_cleanup_state(journal: dict | None, results: list[dict]) -> dict:
+    """Require explicit outcomes and closed NEW ownership; never trust all([])."""
+    value = {"scope": "only NEW resources", "state": "unconfirmed", "journal_state": "unconfirmed"}
+    if (
+        not isinstance(journal, dict)
+        or set(journal) != {"root", "run_id", "commit", "android", "ios"}
+        or not isinstance(journal["ios"], dict)
+    ):
+        return value
+    try:
+        ios_closed = all(
+            isinstance(device, str)
+            and str(uuid.UUID(device)).upper() == device
+            and isinstance(record, dict)
+            and set(record) == {"deleted", "selector"}
+            and record["deleted"] is True
+            and record["selector"] in {"custom", "default"}
+            for device, record in journal["ios"].items()
+        )
+    except (ValueError, TypeError, AttributeError):
+        return value
+    android = journal["android"]
+    android_closed = android is None
+    if isinstance(android, dict):
+        android_closed = (
+            {"avd", "sdk"}.issubset(android)
+            and set(android) <= {"avd", "sdk", "emulator", "adb", "emulator_closed", "adb_closed"}
+            and isinstance(android["avd"], str)
+            and re.fullmatch(r"apsa-new-[a-f0-9]{32}", android["avd"]) is not None
+            and isinstance(android["sdk"], str)
+            and all(type(android[key]) is bool for key in set(android) - {"avd", "sdk"})
+            and all(
+                not android.get(kind) or android.get(kind + "_closed") is True for kind in ("emulator", "adb")
+            )
+            and any(
+                isinstance(item, dict)
+                and item.get("resource_kind") == "android-device"
+                and item.get("state") == "confirmed"
+                for item in results
+            )
+        )
+    if ios_closed and android_closed:
+        value["journal_state"] = "confirmed"
+        if all(isinstance(item, dict) and item.get("state") == "confirmed" for item in results):
+            value["state"] = "confirmed"
+    return value
+
+
 def cleanup_owned(root: Path, commands: "Commands", resources: OwnedResources) -> dict:
     """Idempotent fallback, only explicitly journaled new resources and paths."""
     results = []
@@ -1170,12 +1218,13 @@ class NewAndroidDevice:
             if self.commands.last_status == 0 and self.commands.resources:
                 self.commands.resources.android(adb_closed=True)
         # All AVD state lives within the NEW driver root; delete this name only.
-        if self.avd_created:
-            self.commands.run(
-                [str(self.sdk / "cmdline-tools/latest/bin/avdmanager"), "delete", "avd", "--name", self.name],
-                optional=True,
-            )
-            statuses.append(self.commands.last_status)
+        # A failed/timed-out create may have left partial state. This name was
+        # reserved in our isolated NEW root before any creation was attempted.
+        self.commands.run(
+            [str(self.sdk / "cmdline-tools/latest/bin/avdmanager"), "delete", "avd", "--name", self.name],
+            optional=True,
+        )
+        statuses.append(self.commands.last_status)
         return {
             "scope": "only NEW AVD and isolated adb server",
             "avd": self.name,
@@ -3021,15 +3070,26 @@ def main():
     finally:
         if device:
             try:
-                evidence["cleanup_results"].append(device.close())
+                evidence["cleanup_results"].append({**device.close(), "resource_kind": "android-device"})
             except Exception:
-                evidence["cleanup_results"].append({"scope": "NEW AVD", "state": "unconfirmed"})
-        evidence["cleanup"] = {
-            "scope": "only NEW resources",
-            "state": "confirmed"
-            if all(result["state"] == "confirmed" for result in evidence["cleanup_results"])
-            else "unconfirmed",
-        }
+                evidence["cleanup_results"].append(
+                    {"scope": "NEW AVD", "state": "unconfirmed", "resource_kind": "android-device"}
+                )
+        constructor = commands.pre_cleanup_failure
+        if isinstance(constructor, dict) and "constructor_cleanup" in constructor:
+            observed = constructor["constructor_cleanup"]
+            evidence["cleanup_results"].append(
+                {
+                    "scope": "NEW constructor resources",
+                    "state": "confirmed"
+                    if isinstance(observed, dict) and observed.get("state") == "confirmed"
+                    else "unconfirmed",
+                }
+            )
+        evidence["cleanup"] = acquisition_cleanup_state(
+            commands.resources.value if commands.resources is not None else None,
+            evidence["cleanup_results"],
+        )
         if evidence["cleanup"]["state"] != "confirmed":
             evidence["state"] = "inconclusive"
         evidence["commands_sha256"] = digest(json.dumps(commands.records, sort_keys=True).encode())

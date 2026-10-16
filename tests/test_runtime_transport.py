@@ -31,6 +31,7 @@ from scripts.validate_runtime_transport import (
     IosTarget,
     NewAndroidDevice,
     OwnedResources,
+    acquisition_cleanup_state,
     cleanup_owned,
     execute_case,
     failure_observation,
@@ -1112,6 +1113,275 @@ def test_workflow_cleanup_writes_terminal_inconclusive_after_driver_interruption
     assert evidence["failure_observation"]["reason"] == "driver-terminal-evidence-unavailable"
     assert evidence["workflow_cleanup"]["state"] == "confirmed"
     assert preserved.read_text() == "new-command-digests-preserved"
+
+
+def synthetic_cleanup_journal() -> dict:
+    return {"root": "NEW synthetic root", "run_id": "new", "commit": "a" * 40, "android": None, "ios": {}}
+
+
+@pytest.mark.parametrize(
+    "mutation,expected",
+    [
+        ("empty", "confirmed"),
+        ("missing", "unconfirmed"),
+        ("ios-pending", "unconfirmed"),
+        ("ios-deleted", "confirmed"),
+        ("ios-unknown", "unconfirmed"),
+        ("explicit-failure", "unconfirmed"),
+        ("android-no-cleanup", "unconfirmed"),
+        ("android-cleaned", "confirmed"),
+        ("android-adb-pending", "unconfirmed"),
+        ("android-emulator-pending", "unconfirmed"),
+        ("android-invalid-flag", "unconfirmed"),
+    ],
+)
+def test_acquisition_cleanup_requires_closed_owned_journal_and_explicit_outcomes(mutation, expected):
+    journal = synthetic_cleanup_journal()
+    results = []
+    device = "11111111-2222-4333-8444-555555555555"
+    if mutation == "missing":
+        journal = None
+    elif mutation.startswith("ios-"):
+        journal["ios"][device] = {"deleted": mutation == "ios-deleted", "selector": "custom"}
+        if mutation == "ios-unknown":
+            journal["ios"][device] = {"deleted": True}
+    elif mutation == "explicit-failure":
+        results = [{"state": "unconfirmed"}]
+    elif mutation.startswith("android-"):
+        android: dict = {"avd": "apsa-new-" + "1" * 32, "sdk": "NEW synthetic SDK"}
+        journal["android"] = android
+        if mutation != "android-no-cleanup":
+            results = [{"resource_kind": "android-device", "state": "confirmed"}]
+        if mutation in {"android-adb-pending", "android-emulator-pending"}:
+            journal["android"][mutation.split("-")[1]] = True
+        elif mutation == "android-invalid-flag":
+            journal["android"]["adb"] = "unknown"
+    assert acquisition_cleanup_state(journal, results)["state"] == expected
+
+
+def run_mock_ios_cleanup_case(tmp_path, monkeypatch, *, failure_at=None, constructor_cleanup="unconfirmed"):
+    root = tmp_path / "NEW-constructor-cleanup"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["validator", "--platform", "ios", "--work", str(root)])
+    created = []
+
+    class Target:
+        def __init__(self, case_root, package, commands, *args, **kwargs):
+            self.commands = commands
+            index = len(created)
+            self.device = f"11111111-2222-4333-8444-{index:012d}"
+            created.append(self.device)
+            commands.resources.ios(self.device)
+            if index == failure_at:
+                if constructor_cleanup in {"confirmed", "partial"}:
+                    commands.resources.ios(self.device, deleted=True)
+                if constructor_cleanup == "partial":
+                    commands.resources.ios("AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE")
+                commands.pre_cleanup_failure = failure_observation(
+                    ValueError("NEW synthetic constructor failure"), "ios-target-create-boot-install", []
+                )
+                if constructor_cleanup != "missing":
+                    commands.pre_cleanup_failure["constructor_cleanup"] = (
+                        {"state": "confirmed"} if constructor_cleanup == "confirmed" else "unconfirmed"
+                    )
+                raise ValueError("NEW synthetic constructor failure")
+
+        def close(self):
+            self.commands.resources.ios(self.device, deleted=True)
+            return {"scope": "only NEW simulator UUID", "uuid": self.device, "state": "confirmed"}
+
+        def url_contract_diagnostics(self):
+            return {}
+
+    def mock_case(target, *, evidence, **kwargs):
+        evidence["state"] = "passed"
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.IosTarget", Target)
+    monkeypatch.setattr("scripts.validate_runtime_transport.execute_case", mock_case)
+    if failure_at is None:
+        main()
+    else:
+        with pytest.raises(SystemExit) as stopped:
+            main()
+        assert stopped.value.code == 1
+    return root, json.loads((root / "evidence.json").read_text())
+
+
+@pytest.mark.parametrize("failure_at", [0, 2])
+@pytest.mark.parametrize("constructor_cleanup", ["confirmed", "unconfirmed", "missing", "partial"])
+def test_failed_ios_constructor_cleanup_cannot_be_masked_by_empty_or_prior_successful_results(
+    tmp_path, monkeypatch, failure_at, constructor_cleanup
+):
+    _, evidence = run_mock_ios_cleanup_case(
+        tmp_path, monkeypatch, failure_at=failure_at, constructor_cleanup=constructor_cleanup
+    )
+    assert len(evidence["cases"]) == failure_at
+    assert evidence["state"] == "inconclusive" and evidence["terminal"] is True
+    assert evidence["cleanup"]["state"] == (
+        "confirmed" if constructor_cleanup == "confirmed" else "unconfirmed"
+    )
+    carried = [r for r in evidence["cleanup_results"] if r["scope"] == "NEW constructor resources"]
+    assert len(carried) == (constructor_cleanup != "missing")
+    assert "workflow_cleanup" not in evidence
+
+
+def test_all_successful_ios_constructor_cleanup_requires_all_six_journal_closures(tmp_path, monkeypatch):
+    _, evidence = run_mock_ios_cleanup_case(tmp_path, monkeypatch)
+    assert evidence["state"] == "passed" and len(evidence["cases"]) == 6
+    assert evidence["cleanup"]["state"] == "confirmed"
+    assert evidence["cleanup"]["journal_state"] == "confirmed"
+    assert len(evidence["cleanup_results"]) == 6
+
+
+def test_workflow_cleanup_repair_preserves_original_unconfirmed_acquisition_cleanup(tmp_path, monkeypatch):
+    root, original = run_mock_ios_cleanup_case(tmp_path, monkeypatch, failure_at=0)
+    assert original["cleanup"]["state"] == "unconfirmed"
+
+    def repaired_cleanup(root, commands, resources):
+        for device in resources.value["ios"]:
+            resources.ios(device, deleted=True)
+        return {"scope": "only journaled NEW resources", "state": "confirmed", "results": []}
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.cleanup_owned", repaired_cleanup)
+    monkeypatch.setattr(
+        sys, "argv", ["validator", "--platform", "ios", "--cleanup-only", "--work", str(root)]
+    )
+    main()
+    repaired = json.loads((root / "evidence.json").read_text())
+    assert repaired["cleanup"] == original["cleanup"]
+    assert repaired["failure_observation"] == original["failure_observation"]
+    assert repaired["workflow_cleanup"]["state"] == "confirmed"
+    assert repaired["state"] == "inconclusive"
+
+
+@pytest.mark.parametrize("resource", ["none", "reserved-avd", "adb", "emulator"])
+def test_failed_android_constructor_never_confirms_unclosed_owned_resources(tmp_path, monkeypatch, resource):
+    root = tmp_path / "NEW-android-constructor-cleanup"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validator",
+            "--platform",
+            "android",
+            "--sdk",
+            str(tmp_path / "NEW-sdk"),
+            "--jdk",
+            str(tmp_path / "NEW-jdk"),
+            "--work",
+            str(root),
+        ],
+    )
+
+    def fail_constructor(root, sdk, commands):
+        if resource != "none":
+            fields: dict = {"avd": "apsa-new-" + "1" * 32, "sdk": str(sdk)}
+            if resource in {"adb", "emulator"}:
+                fields[resource] = True
+            commands.resources.android(**fields)
+        raise ValueError("NEW synthetic Android constructor failure")
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.NewAndroidDevice", fail_constructor)
+    with pytest.raises(SystemExit):
+        main()
+    evidence = json.loads((root / "evidence.json").read_text())
+    assert evidence["cleanup"]["state"] == ("confirmed" if resource == "none" else "unconfirmed")
+    assert evidence["state"] == "inconclusive"
+
+
+@pytest.mark.parametrize(
+    "cleanup_mode", ["confirmed", "missing-adb", "missing-emulator", "nonzero", "raises"]
+)
+def test_android_device_cleanup_needs_both_result_and_closed_daemon_journal(
+    tmp_path, monkeypatch, cleanup_mode
+):
+    root = tmp_path / "NEW-android-device-cleanup"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validator",
+            "--platform",
+            "android",
+            "--sdk",
+            str(tmp_path / "NEW-sdk"),
+            "--jdk",
+            str(tmp_path / "NEW-jdk"),
+            "--work",
+            str(root),
+        ],
+    )
+
+    class Device:
+        name = "apsa-new-" + "1" * 32
+        serial = "NEW-synthetic-serial"
+
+        def __init__(self, root, sdk, commands):
+            self.commands = commands
+            commands.resources.android(avd=self.name, sdk=str(sdk), adb=True, emulator=True)
+
+        def start(self):
+            pass
+
+        def close(self):
+            if cleanup_mode == "raises":
+                raise ValueError("NEW synthetic daemon cleanup failure")
+            self.commands.resources.android(
+                adb_closed=cleanup_mode != "missing-adb",
+                emulator_closed=cleanup_mode != "missing-emulator",
+            )
+            return {
+                "scope": "only NEW AVD",
+                "state": "unconfirmed" if cleanup_mode == "nonzero" else "confirmed",
+            }
+
+    def fail_new_build(*args, **kwargs):
+        raise ValueError("NEW synthetic fixture build failure")
+
+    monkeypatch.setattr("scripts.validate_runtime_transport.NewAndroidDevice", Device)
+    monkeypatch.setattr("scripts.validate_runtime_transport.build_android", fail_new_build)
+    with pytest.raises(SystemExit):
+        main()
+    evidence = json.loads((root / "evidence.json").read_text())
+    assert evidence["cleanup"]["state"] == ("confirmed" if cleanup_mode == "confirmed" else "unconfirmed")
+    assert len(evidence["cleanup_results"]) == 1
+    assert evidence["cleanup_results"][0]["resource_kind"] == "android-device"
+
+
+@pytest.mark.parametrize("delete_status", [0, 1, None])
+def test_android_partial_create_still_deletes_only_reserved_new_avd(tmp_path, monkeypatch, delete_status):
+    commands = Commands(tmp_path, env={})
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        commands.last_status = delete_status
+        return b""
+
+    monkeypatch.setattr(commands, "run", run)
+    device = NewAndroidDevice.__new__(NewAndroidDevice)
+    device.sdk, device.commands = tmp_path / "NEW-sdk", commands
+    device.name = "apsa-new-" + "1" * 32
+    device.process, device.avd_created, device.adb_started = None, False, False
+    result = device.close()
+    assert result["state"] == ("confirmed" if delete_status == 0 else "unconfirmed")
+    assert len(calls) == 1
+    assert calls[0][0] == [
+        str(device.sdk / "cmdline-tools/latest/bin/avdmanager"),
+        "delete",
+        "avd",
+        "--name",
+        device.name,
+    ]
+    assert calls[0][1] == {"optional": True}
 
 
 def test_unexpected_driver_error_records_terminal_failure_without_raw_text(tmp_path, monkeypatch, capsys):
