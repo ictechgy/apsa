@@ -688,6 +688,16 @@ class Analyzer:
         while node is not None:
             if node.type == "value_argument":
                 node = _field(node, "value") or (node.named_children[-1] if node.named_children else None)
+            elif (
+                self.language == "swift"
+                and node.type == "tuple_expression"
+                and len(node.named_children) == 1
+                and not any(child.type == "," for child in node.children)
+                and _field(node, "name") is None
+            ):
+                # Swift uses this node for ordinary parentheses too. Preserve
+                # the enclosed binding/cast identity without flattening tuples.
+                node = node.named_children[0]
             elif node.type in {
                 "parenthesized_expression",
                 "try_expression",
@@ -956,6 +966,12 @@ class Analyzer:
     def value(self, node: Any, frame: Frame) -> Value:
         if node is None or node.type in COMMENTS:
             return Value()
+        if self.language == "swift" and node.type in {"tuple_expression", "as_expression"}:
+            normalized = self.unwrap(node)
+            if normalized is not node:
+                # Parentheses/casts preserve the existing storage binding;
+                # the written cast type establishes no concrete dispatch proof.
+                return self.value(normalized, frame)
         if self.native_flow is not None:
             projected = self.native_flow.indexed_value(self, node, frame)
             if projected is not None:

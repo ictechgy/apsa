@@ -1439,6 +1439,273 @@ def test_generated_ios_registration_has_required_role_and_target_identifier(tmp_
     assert not any("boot" in argv or "openurl" in argv for argv in calls)
 
 
+def new_deferred_ios_target(tmp_path, monkeypatch):
+    target = IosTarget.__new__(IosTarget)
+    target.device = "11111111-2222-4333-8444-555555555555"
+    target.device_set_mode, target.url_driver = "default", "xctest"
+    target.device_set = (tmp_path / "NEW-simulator-set").resolve()
+    documents = target.device_set / target.device / "NEW-data" / "Documents"
+    documents.mkdir(parents=True)
+    target.package, target.scheme = "apsa.fixture.new", "a" + "1" * 32
+    target.build = {"executable_sha256": "1" * 64, "info_plist_sha256": "2" * 64}
+    target.commands = Commands(tmp_path, env={})
+    target.commands.resources = OwnedResources(tmp_path)
+    target.commands.resources.ios(target.device, selector="default")
+    monkeypatch.setattr(target.commands, "run", lambda *a, **k: pytest.fail("No SDK command may execute"))
+    monkeypatch.setattr(target, "require_installed_contract", lambda **kwargs: None)
+    monkeypatch.setattr(target, "installed_build", lambda: target.build.copy())
+    target.response = documents / "response.json"
+    target.stage_path, target.events_path = documents / "stage.txt", documents / "events.json"
+    target.delivery_observations = []
+    target.initial_launch_mode = "deferred-first-os-url"
+    target.readiness_epoch, target.readiness_entry_epoch, target.session_epoch = None, None, None
+    target.process_observations = {"initial": {"state": "unmeasured", "launch_requested": False}}
+    target.fresh_install = target.fresh_install_observation()
+    target.readiness_entry = target.entry_observation()
+    monkeypatch.setattr(
+        target,
+        "xctest_dispatcher",
+        SimpleNamespace(
+            latest={"state": "diagnostic-only", "xctest_exit_success": True},
+            dispatch=lambda *args: pytest.fail("No XCTest may run without a pure dispatch double"),
+        ),
+        raising=False,
+    )
+    return target
+
+
+def test_xctest_constructor_defers_target_launch_until_first_owned_os_url(tmp_path, monkeypatch):
+    commands = Commands(tmp_path, env={})
+    commands.resources = OwnedResources(tmp_path)
+    device = "11111111-2222-4333-8444-555555555555"
+    new_set = (tmp_path / "NEW-simulator-set").resolve()
+    root = tmp_path / "NEW-target"
+    calls = []
+    monkeypatch.setattr("scripts.validate_runtime_transport.platform.machine", lambda: "arm64")
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.ios_selector",
+        lambda *args: (["/usr/bin/xcrun", "simctl"], new_set),
+    )
+    monkeypatch.setattr(
+        "scripts.validate_runtime_transport.ios_process_identity",
+        lambda *args: pytest.fail("No prelaunch PID may be inspected"),
+    )
+
+    class Helper:
+        def __init__(self, helper_root, new_commands, new_device, package, scheme):
+            assert new_commands is commands and new_device == device
+
+    monkeypatch.setattr("scripts.ios_xctest_dispatch.IosXCTestDispatcher", Helper)
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        commands.last_status = 0
+        if "--show-sdk-path" in argv:
+            return b"/NEW/syntheticSDK"
+        if "swiftc" in argv:
+            Path(argv[argv.index("-o") + 1]).write_bytes(b"NEW synthetic executable stand-in")
+        if "simctl" in argv:
+            operation = argv[argv.index("simctl") + 1]
+            assert operation not in {"launch", "terminate", "openurl"}
+            if operation == "create":
+                return device.encode()
+            if operation == "get_app_container":
+                container = new_set / device / ("NEW-app" if argv[-1] == "app" else "NEW-data")
+                container.mkdir(parents=True, exist_ok=True)
+                if argv[-1] == "app":
+                    for name in ("TransportFixture", "Info.plist"):
+                        (container / name).write_bytes((root / "TransportFixture.app" / name).read_bytes())
+                else:
+                    (container / "Documents").mkdir(exist_ok=True)
+                return str(container).encode()
+        return b""
+
+    monkeypatch.setattr(commands, "run", run)
+    target = IosTarget(
+        root,
+        "apsa.fixture.new",
+        commands,
+        IOS_PINNED_RUNTIME,
+        IOS_PINNED_DEVICE_TYPE,
+        url_driver="xctest",
+        device_set_mode="default",
+    )
+    assert target.initial_launch_mode == "deferred-first-os-url"
+    assert target.fresh_install["known_fixture_files_absent"] is True
+    assert target.installed_build() == target.build
+    assert target.session_epoch is None and target.readiness_epoch is None
+    assert "after_terminate" not in target.process_observations
+    assert target.delivery_observations == []
+    assert sum("install" in argv for argv in calls) == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "response.json",
+        "events.json",
+        "process-entry.json",
+        "stage.txt",
+        "state.dat",
+        "symlink",
+        "unowned",
+        "journal",
+    ],
+)
+def test_deferred_first_dispatch_rejects_existing_or_unowned_fixture_state_before_xctest(
+    tmp_path, monkeypatch, mutation
+):
+    target = new_deferred_ios_target(tmp_path, monkeypatch)
+    target.dispatch_expectation = {"action": "session"}
+    monkeypatch.setattr(
+        target.xctest_dispatcher,
+        "dispatch",
+        lambda url: pytest.fail("No dispatch before fresh install proof"),
+    )
+    if mutation in {"response.json", "events.json", "process-entry.json", "stage.txt", "state.dat"}:
+        (target.response.parent / mutation).write_text("NEW unexpected synthetic state")
+    elif mutation == "symlink":
+        (target.response.parent / "state.dat").symlink_to(tmp_path / "NEW-missing-target")
+    elif mutation == "unowned":
+        target.response = tmp_path / "NEW-outside" / "Documents" / "response.json"
+    else:
+        assert target.commands.resources is not None and target.device is not None
+        target.commands.resources.ios(target.device, deleted=True)
+    with pytest.raises(ValueError, match="deferred launch baseline differs"):
+        target.dispatch(target.scheme + "://fixture?action=session")
+
+
+def test_deferred_first_dispatch_requires_session_and_actual_target_response(tmp_path, monkeypatch):
+    target = new_deferred_ios_target(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(target.xctest_dispatcher, "dispatch", lambda url: calls.append(url))
+    target.dispatch_expectation = {"action": "capture"}
+    with pytest.raises(ValueError, match="first deferred dispatch is not a session"):
+        target.dispatch(target.scheme + "://fixture?action=capture")
+    assert calls == []
+    clock = iter((0, 100))
+    monkeypatch.setattr("scripts.validate_runtime_transport.time.monotonic", lambda: next(clock))
+    with pytest.raises(FixtureFailure, match="response challenge timed out"):
+        target.deliver(
+            "apsatransport://fixture?action=session&session=" + "3" * 64,
+            {"action": "session", "session": "3" * 64},
+        )
+    assert len(calls) == 1 and target.delivery_observations == []
+    assert target.session_epoch is None
+
+
+def deferred_protocol_target(tmp_path, monkeypatch, transition_kind, *, mutation=None):
+    target = new_deferred_ios_target(tmp_path, monkeypatch)
+    placeholder = OwnedAuthority(target.package, target.build["executable_sha256"], invalidate=True)
+    if transition_kind == "account_switch":
+        from tests.test_account_switch_transport import NewSwitchTarget
+
+        model = NewSwitchTarget("ios", placeholder)
+    else:
+        model = NewMemoryTarget("ios", placeholder)
+    events: dict = {"schema_version": 1, "complete": True, "events": [], "launch_epoch_sha256": "e" * 64}
+
+    def server_factory(authority):
+        model.authority = authority
+        server = server_without_socket(authority, monkeypatch)
+        server.close = lambda: None
+        return server
+
+    def dispatch(url):
+        fields = {
+            key: values[0] for key, values in parse_qs(urlparse(url).query, keep_blank_values=True).items()
+        }
+        response = model.deliver(url, fields)
+        lifecycle = "cold-url-context" if fields["action"] == "session" else "warm-url-context"
+        response["delivery_lifecycle"] = lifecycle
+        phases = (
+            ("startup-app", "scene-connect-url-present", "startup-scene", "os-cold-url-context-received")
+            if fields["action"] == "session"
+            else ("os-url-context-received", "warm-context-url-present")
+        )
+        for phase in phases:
+            if mutation == "missing-cold-context" and phase == "os-cold-url-context-received":
+                continue
+            events["events"].append(
+                {"sequence": len(events["events"]) + 1, "phase": phase, "main_thread": True}
+            )
+        receipt: dict = {
+            "sequence": len(events["events"]) + 1,
+            "phase": "os-dispatch",
+            "main_thread": True,
+            "action": fields["action"],
+            "lifecycle": lifecycle,
+            "uri_sha256": digest(url.encode()),
+            "session_sha256": digest(fields["session"].encode()),
+            "nonce_sha256": digest(fields["nonce"].encode()) if "nonce" in fields else None,
+        }
+        if mutation == "wrong-uri":
+            receipt["uri_sha256"] = "f" * 64
+        elif mutation == "wrong-session":
+            receipt["session_sha256"] = "f" * 64
+        elif mutation == "warm-session" and fields["action"] == "session":
+            receipt["lifecycle"] = response["delivery_lifecycle"] = "warm-url-context"
+        if mutation != "missing-receipt":
+            events["events"].append(receipt)
+        if mutation == "warm-new-process" and fields["action"] != "session":
+            events["launch_epoch_sha256"] = "f" * 64
+        target.events_path.write_text(json.dumps(events))
+        target.response.write_text(json.dumps(response))
+        (target.response.parent / "state.dat").write_text(response.get("storage", ""))
+
+    monkeypatch.setattr(target.xctest_dispatcher, "dispatch", dispatch)
+    monkeypatch.setattr("scripts.validate_runtime_transport.AuthorityServer", server_factory)
+    return target
+
+
+@pytest.mark.parametrize(
+    "transition_kind,invalidate,retain",
+    [
+        ("logout", True, False),
+        ("logout", True, True),
+        ("logout", False, False),
+        ("logout", False, True),
+        ("account_switch", True, False),
+        ("account_switch", True, True),
+    ],
+)
+def test_deferred_os_first_launch_preserves_all_six_authority_storage_and_workflow_policies(
+    tmp_path, monkeypatch, transition_kind, invalidate, retain
+):
+    target = deferred_protocol_target(tmp_path, monkeypatch, transition_kind)
+    evidence = execute_case(target, invalidate=invalidate, retain=retain, transition_kind=transition_kind)
+    assert evidence["state"] == "passed" and all(evidence["verified_fields"].values())
+    assert evidence["authority_cleanup"] == "confirmed"
+    assert evidence["authority_issue_diagnostic"]["accepted"] == 1
+    assert evidence["authority_issue_diagnostic"]["bound"] == 1
+    assert len(target.delivery_observations) == 4
+    assert target.delivery_observations[0]["lifecycle"] == "cold-url-context"
+    assert all(item["lifecycle"] == "warm-url-context" for item in target.delivery_observations[1:])
+    assert target.session_epoch == "e" * 64
+    assert all(item["session_epoch_sha256"] == target.session_epoch for item in target.delivery_observations)
+    assert "after_terminate" not in target.process_observations
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "wrong-uri",
+        "wrong-session",
+        "warm-session",
+        "missing-receipt",
+        "missing-cold-context",
+        "warm-new-process",
+    ],
+)
+def test_deferred_first_launch_still_rejects_missing_or_wrong_cold_and_warm_binding(
+    tmp_path, monkeypatch, mutation
+):
+    target = deferred_protocol_target(tmp_path, monkeypatch, "logout", mutation=mutation)
+    with pytest.raises(FixtureFailure):
+        execute_case(target, invalidate=True, retain=False)
+    assert len(target.delivery_observations) == (1 if mutation == "warm-new-process" else 0)
+
+
 @pytest.mark.parametrize(
     "action,lifecycle,accepted",
     [

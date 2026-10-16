@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from tests.test_native_flow import URL, findings, scan
@@ -3850,3 +3852,396 @@ final class Entry {{
     if tainted:
         assert "slot.read()" in matches[0]["evidence"][0]["excerpt"], report
     assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+# Verbatim independent v20 source controls; only synthetic strings.
+V20_VALUE_REFERENCE_SOURCE = 'import WebKit\nimport UIKit\nimport External\nfinal class Holder {\n var stash: String = "https://safe.example/"\n func read() -> String { return stash }\n}\nstruct Box {\n let child: Holder = Holder()\n func read() -> String { return child.read() }\n}\n\nfinal class Entry {\n let web = WKWebView()\n let box: Box = Box()\n let separate: Box = Box()\n func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {\n  ExternalMutator.put(box, incoming.absoluteString)\n  web.load(URLRequest(url: URL(string: box.read())!))\n  web.load(URLRequest(url: URL(string: separate.read())!))\n  return true\n }\n}\n'
+
+V20_JAVA_ERASED_REFERENCE_SOURCE = 'package app;\nimport android.content.Intent;\nimport android.webkit.WebView;\nfinal class Holder { String stash="https://safe.example/"; final String read(){return stash;} }\n\nfinal class Entry { static void open(Intent incoming, WebView web) { Holder slot=new Holder(); Holder separate=new Holder(); Object alias=slot; ExternalMutator.put(alias,incoming.getDataString()); web.loadUrl(slot.read()); web.loadUrl(separate.read()); } }\n'
+
+V20_SWIFT_ERASED_REFERENCE_SOURCE = 'import WebKit\nimport UIKit\nimport External\nfinal class Holder {\n var stash: String = "https://safe.example/"\n func read() -> String { return stash }\n}\n\nfinal class Entry {\n let web = WKWebView()\n let slot: Holder = Holder()\n let separate: Holder = Holder()\n func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {\n  let alias: Any = slot\n  ExternalMutator.put(alias, incoming.absoluteString)\n  web.load(URLRequest(url: URL(string: slot.read())!))\n  web.load(URLRequest(url: URL(string: separate.read())!))\n  return true\n }\n}'
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+@pytest.mark.parametrize("binding", ["direct", "copy", "Any", "AnyObject"])
+@pytest.mark.parametrize("nesting", ["value", "value-value", "value-reference"])
+def test_unknown_swift_effect_reaches_shared_reference_children_of_copied_values(binding, nesting, tainted):
+    source = V20_VALUE_REFERENCE_SOURCE
+    if nesting != "value":
+        nominal = "struct" if nesting == "value-value" else "final class"
+        source = source.replace(
+            "struct Box {",
+            f"{nominal} Inner {{\n let child: Holder = Holder()\n}}\nstruct Box {{",
+        ).replace("let child: Holder = Holder()\n func read()", "let inner: Inner = Inner()\n func read()")
+        source = source.replace("return child.read()", "return inner.child.read()")
+    if binding != "direct":
+        # AnyObject erases the contained reference, not the value itself.
+        expression = "box.child" if binding == "AnyObject" else "box"
+        if nesting != "value" and binding == "AnyObject":
+            expression = "box.inner.child"
+        annotation = "" if binding == "copy" else f": {binding}"
+        source = source.replace(
+            "ExternalMutator.put(box,", f"let alias{annotation} = {expression}\n  ExternalMutator.put(alias,"
+        )
+    if not tainted:
+        source = source.replace(
+            "put(box, incoming.absoluteString)", 'put(box, "https://fresh-safe.example/")'
+        )
+        source = source.replace(
+            "put(alias, incoming.absoluteString)", 'put(alias, "https://fresh-safe.example/")'
+        )
+    report = scan(("app/Entry.swift", source))
+    matches = findings(report, URL)
+    assert len(matches) == int(tainted), report
+    if tainted:
+        assert "box.read()" in matches[0]["evidence"][0]["excerpt"], report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert not any(item.get("parse_errors") for item in report["metadata"]["files"]), report
+
+
+@pytest.mark.parametrize("suffix,erased", [("java", "Object"), ("swift", "Any"), ("swift", "AnyObject")])
+@pytest.mark.parametrize("tainted", [False, True])
+@pytest.mark.parametrize("binding", ["local", "field", "return"])
+def test_unknown_effect_uses_materialized_identity_through_erased_reference_bindings(
+    suffix, erased, tainted, binding
+):
+    source = V20_JAVA_ERASED_REFERENCE_SOURCE if suffix == "java" else V20_SWIFT_ERASED_REFERENCE_SOURCE
+    source = source.replace("let alias: Any = slot", f"let alias: {erased} = slot")
+    if binding == "field":
+        if suffix == "java":
+            source = source.replace("final class Entry {", "final class Entry { static Object erased;")
+            source = source.replace("Object alias=slot;", "erased=slot; Object alias=erased;")
+        else:
+            source = source.replace("let web = WKWebView()", f"var erased: {erased}?\n let web = WKWebView()")
+            source = source.replace(
+                f"let alias: {erased} = slot", f"erased = slot\n  let alias: {erased} = erased!"
+            )
+    elif binding == "return":
+        if suffix == "java":
+            source = source.replace(
+                "final class Entry {", "final class Entry { static Object erase(Holder value){return value;}"
+            )
+            source = source.replace("Object alias=slot;", "Object alias=erase(slot);")
+        else:
+            source = source.replace(
+                "final class Entry {",
+                f"final class Entry {{\n static func erase(_ value: Holder) -> {erased} {{ return value }}",
+            )
+            source = source.replace(f"let alias: {erased} = slot", f"let alias: {erased} = Entry.erase(slot)")
+    if not tainted:
+        source = source.replace("incoming.getDataString()", '"https://fresh-safe.example/"')
+        source = source.replace(
+            "put(alias, incoming.absoluteString)", 'put(alias, "https://fresh-safe.example/")'
+        )
+    if suffix == "java":
+        source = source.replace("; ", ";\n")
+    report = scan((f"app/Entry.{suffix}", source))
+    matches = findings(report, URL)
+    assert len(matches) == int(tainted), report
+    if tainted:
+        assert "slot.read()" in matches[0]["evidence"][0]["excerpt"], report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert not any(item.get("parse_errors") for item in report["metadata"]["files"]), report
+
+
+@pytest.mark.parametrize("mutates", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_known_value_contained_reference_summary_retains_body_precision(mutates, tainted):
+    body = "target.child.stash = value" if mutates else ""
+    source = V20_VALUE_REFERENCE_SOURCE.replace(
+        "final class Entry {",
+        f"final class ExternalMutator {{ static func put(_ target: Box, _ value: String) {{ {body} }} }}\nfinal class Entry {{",
+    )
+    if not tainted:
+        source = source.replace(
+            "put(box, incoming.absoluteString)", 'put(box, "https://fresh-safe.example/")'
+        )
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(mutates and tainted), report
+    if mutates and tainted:
+        assert "box.read()" in findings(report, URL)[0]["evidence"][0]["excerpt"], report
+
+
+@pytest.mark.parametrize(
+    "field", ["var opaque: ExternalHolder?", "var optional: ExternalHolder?", "var children: [Holder] = []"]
+)
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_reachable_field_ownership_retains_affected_value_storage(field, tainted):
+    # Unsupported container/optional/external ownership cannot imply read-only.
+    source = V20_VALUE_REFERENCE_SOURCE.replace(
+        "let child: Holder = Holder()", field + '\n var text: String = "https://safe.example/"'
+    )
+    source = source.replace("return child.read()", "return text")
+    if not tainted:
+        source = source.replace(
+            "put(box, incoming.absoluteString)", 'put(box, "https://fresh-safe.example/")'
+        )
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert "reachable field ownership unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("budget", ["MAX_EFFECT_DEPTH", "MAX_EFFECT_OBJECTS"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_reference_reachability_budget_retains_lazy_child_taint(monkeypatch, budget, tainted):
+    from mobile_audit import native_flow
+
+    monkeypatch.setattr(native_flow, budget, 1)
+    source = V20_VALUE_REFERENCE_SOURCE
+    if not tainted:
+        source = source.replace(
+            "put(box, incoming.absoluteString)", 'put(box, "https://fresh-safe.example/")'
+        )
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert "reference effect inventory budget" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (V20_VALUE_REFERENCE_SOURCE, "db39ad5d090332358bd762ff2dcc8e9d7e69ce5b39bc2c92825fa5a2c776e40e"),
+        (
+            V20_JAVA_ERASED_REFERENCE_SOURCE,
+            "f9d07bd479ffc1345c74fcc9f1f45097cfc85a69c32eab842e2b9d7ae4a40d25",
+        ),
+        (
+            V20_SWIFT_ERASED_REFERENCE_SOURCE,
+            "3d860734305bdcc5cfd2cebe39448dd6e7b083b8a91b7d190e4428a5b22541cf",
+        ),
+    ],
+)
+def test_independent_v20_reachable_reference_sources_are_preserved(source, expected):
+    assert hashlib.sha256(source.encode()).hexdigest() == expected
+
+
+@pytest.mark.parametrize(
+    "declaration", ['var stash = "https://safe.example/"', 'var stash: String = "https://safe.example/"']
+)
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_copied_scalar_value_has_no_caller_writeback(declaration, tainted):
+    argument = "incoming.absoluteString" if tainted else '"https://fresh-safe.example/"'
+    source = f"""import WebKit
+import UIKit
+import External
+struct Plain {{
+ {declaration}
+ func read() -> String {{ return stash }}
+}}
+final class Entry {{
+ let web = WKWebView()
+ let plain: Plain = Plain()
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+  ExternalMutator.put(plain, {argument})
+  web.load(URLRequest(url: URL(string: plain.read())!))
+  return true
+ }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+def test_static_reference_field_is_not_part_of_a_copied_value(tainted):
+    source = V20_VALUE_REFERENCE_SOURCE.replace("let child: Holder", "static let child: Holder")
+    source = source.replace("return child.read()", "return Box.child.read()")
+    if not tainted:
+        source = source.replace(
+            "put(box, incoming.absoluteString)", 'put(box, "https://fresh-safe.example/")'
+        )
+    report = scan(("app/Entry.swift", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+def test_materialized_index_reference_survives_type_erasure(tainted):
+    argument = "incoming.getDataString()" if tainted else '"https://fresh-safe.example/"'
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{ String stash = "https://safe.example/"; final String read() {{ return stash; }} }}
+class Entry {{
+ void open(Intent incoming, WebView web, Holder[] slots, Holder separate) {{
+  Object alias = slots[0];
+  ExternalMutator.put(alias, {argument});
+  web.loadUrl(slots[0].read());
+  web.loadUrl(separate.read());
+ }}
+}}
+"""
+    report = scan(("app/Entry.java", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+def test_kotlin_any_alias_keeps_reference_effect_storage(tainted):
+    argument = "incoming.getDataString()" if tainted else '"https://fresh-safe.example/"'
+    source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+class Holder {{
+ var stash: String = "https://safe.example/"
+ fun read(): String {{ return stash }}
+}}
+class Entry {{
+ fun open(incoming: Intent, web: WebView, slot: Holder, separate: Holder) {{
+  val alias: Any = slot
+  ExternalMutator.put(alias, {argument})
+  web.loadUrl(slot.read())
+  web.loadUrl(separate.read())
+ }}
+}}
+"""
+    report = scan(("app/Entry.kt", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+def test_cyclic_reference_inventory_is_bounded_and_retains_effects(tainted):
+    argument = "incoming.getDataString()" if tainted else '"https://fresh-safe.example/"'
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+final class Holder {{
+ Holder next;
+ String stash = "https://safe.example/";
+ final String read() {{ return stash; }}
+}}
+class Entry {{
+ void open(Intent incoming, WebView web) {{
+  Holder slot = new Holder();
+  slot.next = slot;
+  Holder separate = new Holder();
+  ExternalMutator.put(slot, {argument});
+  web.loadUrl(slot.next.read());
+  web.loadUrl(separate.read());
+ }}
+}}
+"""
+    report = scan(("app/Entry.java", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert "cyclic reference effect inventory" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_reference_field_replacement_does_not_reuse_old_allocation_dispatch_proof(tainted):
+    argument = "incoming.getDataString()" if tainted else '"https://fresh-safe.example/"'
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+class Holder {{ String read() {{ return "https://safe.example/"; }} }}
+class Attacker extends Holder {{ String read() {{ return "https://attacker.example/"; }} }}
+final class Box {{ Holder child; }}
+class Entry {{
+ void open(Intent incoming, WebView web) {{
+  Box box = new Box();
+  box.child = new Holder();
+  ExternalMutator.put(box, {argument});
+  web.loadUrl(box.child.read());
+ }}
+}}
+"""
+    report = scan(("app/Entry.java", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    if tainted:
+        assert "receiver runtime dispatch unresolved" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("known", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_inferred_reference_field_inventory_uses_constructor_syntax_without_getter_execution(known, tainted):
+    source = V20_VALUE_REFERENCE_SOURCE.replace("let child: Holder = Holder()", "let child = Holder()")
+    if known:
+        source = source.replace(
+            "final class Entry {",
+            "final class ExternalMutator { static func put(_ target: Box, _ value: String) {} }\nfinal class Entry {",
+        )
+    if not tainted:
+        source = source.replace(
+            "put(box, incoming.absoluteString)", 'put(box, "https://fresh-safe.example/")'
+        )
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted and not known), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    if known:
+        assert "unresolved reference argument effects" not in report["metadata"]["native_flow"]["reasons"], (
+            report
+        )
+
+
+@pytest.mark.parametrize("kind", ["protocol", "enum-payload"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unsupported_swift_payload_or_protocol_ownership_does_not_imply_readonly(kind, tainted):
+    argument = "incoming.absoluteString" if tainted else '"https://fresh-safe.example/"'
+    declaration = "protocol Box { func read() -> String }"
+    if kind == "enum-payload":
+        declaration = """enum Box {
+ case child(Holder)
+ func read() -> String {
+  switch self { case let .child(value): return value.read() }
+ }
+}"""
+    source = f"""import WebKit
+import UIKit
+import External
+final class Holder {{ var stash: String = "https://safe.example/"; func read() -> String {{ return stash }} }}
+{declaration}
+final class Entry {{
+ let web = WKWebView()
+ func application(_ app: UIApplication, open incoming: URL, box: Box, options: [String: Any]) -> Bool {{
+  ExternalMutator.put(box, {argument})
+  web.load(URLRequest(url: URL(string: box.read())!))
+  return true
+ }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert "reachable field ownership unavailable" in report["metadata"]["native_flow"]["reasons"], report
+    assert not any(item.get("parse_errors") for item in report["metadata"]["files"]), report
+
+
+@pytest.mark.parametrize("erased", ["Any", "AnyObject"])
+@pytest.mark.parametrize("tainted", [False, True])
+@pytest.mark.parametrize("binding", ["parentheses", "forced-cast-write", "forced-cast-read"])
+def test_swift_parenthesized_erased_reference_preserves_actual_storage_not_cast_dispatch_proof(
+    erased, tainted, binding
+):
+    source = V20_SWIFT_ERASED_REFERENCE_SOURCE.replace("let alias: Any", f"let alias: {erased}")
+    if binding == "parentheses":
+        source = source.replace("= slot\n", "= (slot)\n")
+    else:
+        source = source.replace(
+            "final class Entry {",
+            f"final class ExternalMutator {{ static func put(_ target: {erased}, _ value: String) {{ (target as! Holder).stash = value }} }}\nfinal class Entry {{",
+        )
+        if binding == "forced-cast-read":
+            source = source.replace("URL(string: slot.read())", "URL(string: (alias as! Holder).read())")
+    if not tainted:
+        source = source.replace(
+            "put(alias, incoming.absoluteString)", 'put(alias, "https://fresh-safe.example/")'
+        )
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+def test_swift_parentheses_normalization_does_not_flatten_real_tuple_storage():
+    import tree_sitter
+    import tree_sitter_swift
+
+    from mobile_audit.source_analysis import Analyzer
+
+    parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_swift.language()))
+    source = b"let a = (slot)\nlet b = (slot,)\nlet c = (slot, other)\nlet d = (label: slot)"
+    root = parser.parse(source).root_node
+    analyzer = Analyzer("fresh/Entry.swift", source.decode(), "swift")
+    nodes = [declaration.named_children[-1] for declaration in root.named_children]
+    assert analyzer.text(analyzer.unwrap(nodes[0])) == "slot"
+    for node in nodes[1:]:
+        assert analyzer.unwrap(node) == node

@@ -792,6 +792,9 @@ FAILURE_REASONS = {
     "NEW iOS installed URL contract differs": "ios-installed-url-contract-mismatch",
     "NEW iOS callback receipt differs": "ios-callback-receipt-mismatch",
     "NEW iOS cold process epoch differs": "ios-cold-process-epoch-mismatch",
+    "NEW iOS deferred launch baseline differs": "ios-fresh-install-baseline-mismatch",
+    "NEW iOS first deferred dispatch is not a session": "ios-first-session-dispatch-required",
+    "NEW iOS deferred session process differs": "ios-session-process-epoch-mismatch",
     "NEW iOS target termination unverified": "ios-target-termination-unverified",
     "NEW iOS diagnostic control readiness differs": "ios-control-readiness-unverified",
     "NEW iOS diagnostic URL control timed out": "ios-control-response-deadline",
@@ -1448,6 +1451,20 @@ class IosTarget:
                 self.xctest_dispatcher = IosXCTestDispatcher(
                     root / "xctest-dispatch", commands, self.device, self.package, self.scheme
                 )
+                if not readiness_only:
+                    # No target launch has occurred on this CREATE-owned device.
+                    # The first session challenge must cold-launch it through
+                    # the public OS URL route; helper success is never delivery.
+                    self.initial_launch_mode = "deferred-first-os-url"
+                    self.fresh_install = self.fresh_install_observation()
+                    self.readiness_epoch = None
+                    self.readiness_entry = self.entry_observation()
+                    self.readiness_entry_epoch = None
+                    self.process_observations = {
+                        "initial": {"state": "unmeasured", "launch_requested": False}
+                    }
+                    self.session_epoch = None
+                    return
             # Establish a ready NEW scene before delivering the session URL through the OS.
             self.require_installed_contract()
             raw = commands.run(self.simctl + ["launch", self.device, self.package])
@@ -1599,6 +1616,14 @@ class IosTarget:
         if self.url_driver == "xctest":
             if self.installed_build() != self.build:
                 raise ValueError("NEW installed iOS executable differs")
+            if (
+                getattr(self, "initial_launch_mode", None) == "deferred-first-os-url"
+                and not self.delivery_observations
+            ):
+                if getattr(self, "dispatch_expectation", {}).get("action") != "session":
+                    raise ValueError("NEW iOS first deferred dispatch is not a session")
+                # Recheck immediately before the first nonce-bound OS dispatch.
+                self.fresh_install = self.fresh_install_observation()
             self.xctest_dispatcher.dispatch(url)
             # Runner completion establishes no callback, session, HTTP or state
             # verdict. deliver() still requires the authoritative target proof.
@@ -1709,6 +1734,41 @@ class IosTarget:
         return {
             "executable_sha256": digest((self.installed / "TransportFixture").read_bytes()),
             "info_plist_sha256": digest((self.installed / "Info.plist").read_bytes()),
+        }
+
+    def fresh_install_observation(self):
+        """Inspect only five known NEW fixture paths; never list/read app data."""
+        if (
+            self.device is None
+            or self.url_driver != "xctest"
+            or self.device_set_mode != "default"
+            or self.commands.resources is None
+            or self.commands.resources.value["ios"].get(self.device)
+            != {"deleted": False, "selector": "default"}
+        ):
+            raise ValueError("NEW iOS deferred launch baseline differs")
+        owned = (self.device_set / self.device).resolve()
+        documents, data = self.response.parent, self.response.parent.parent
+        if (
+            data == owned
+            or not data.is_relative_to(owned)
+            or data.is_symlink()
+            or data.resolve() != data
+            or documents.is_symlink()
+            or documents.resolve() != data / "Documents"
+            or (documents.exists() and not documents.is_dir())
+        ):
+            raise ValueError("NEW iOS deferred launch baseline differs")
+        for name in ("response.json", "events.json", "process-entry.json", "stage.txt", "state.dat"):
+            path = documents / name
+            if path.is_symlink() or path.exists():
+                raise ValueError("NEW iOS deferred launch baseline differs")
+        return {
+            "state": "verified-fresh-install",
+            "mode": "deferred-first-os-url",
+            "known_fixture_files_absent": True,
+            "device_sha256": digest(self.device.encode()),
+            "data_container_sha256": digest(str(data).encode()),
         }
 
     def installed_contract_observation(self, *, helper=False):
@@ -1897,7 +1957,10 @@ class IosTarget:
         primary["registration"] = getattr(self, "registration", {"state": "unmeasured"})
         primary["tool_help"] = getattr(self, "tool_help", {})
         # Save the original cold challenge evidence before any tail command can change files.
-        if expected["action"] == "session":
+        if (
+            expected["action"] == "session"
+            and getattr(self, "initial_launch_mode", None) != "deferred-first-os-url"
+        ):
             self.cold_diagnostic_progress = {
                 "process_epoch_observed": None,
                 "scene_active_observed": None,
@@ -2184,10 +2247,26 @@ class IosTarget:
         ):
             raise FixtureFailure("NEW iOS callback receipt differs", self.lifecycle_observation())
         if expected["action"] == "session":
-            if events.get("process_epoch_relation") != "new-since-readiness":
-                raise FixtureFailure("NEW iOS cold process epoch differs", self.lifecycle_observation())
-            if self.process_observations.get("after_terminate", {}).get("state") != "exited":
-                raise FixtureFailure("NEW iOS target termination unverified", self.lifecycle_observation())
+            if getattr(self, "initial_launch_mode", None) == "deferred-first-os-url":
+                if (
+                    getattr(self, "fresh_install", {}).get("state") != "verified-fresh-install"
+                    or self.delivery_observations
+                    or getattr(self, "session_epoch", None) is not None
+                    or events.get("counters", {}).get("scene-connect-url-present", 0) < 1
+                    or events.get("counters", {}).get("os-cold-url-context-received", 0) < 1
+                ):
+                    raise FixtureFailure("NEW iOS cold process epoch differs", self.lifecycle_observation())
+                self.session_epoch = events["launch_epoch_sha256"]
+            else:
+                if events.get("process_epoch_relation") != "new-since-readiness":
+                    raise FixtureFailure("NEW iOS cold process epoch differs", self.lifecycle_observation())
+                if self.process_observations.get("after_terminate", {}).get("state") != "exited":
+                    raise FixtureFailure(
+                        "NEW iOS target termination unverified", self.lifecycle_observation()
+                    )
+        elif getattr(self, "initial_launch_mode", None) == "deferred-first-os-url":
+            if getattr(self, "session_epoch", None) != events["launch_epoch_sha256"]:
+                raise FixtureFailure("NEW iOS deferred session process differs", self.lifecycle_observation())
         self.delivery_observations.append(
             {
                 "action": expected["action"],
@@ -2204,6 +2283,9 @@ class IosTarget:
                 "dispatcher": self.dispatcher_observation(),
                 "process_entry": self.entry_observation(),
                 "process_entry_readiness": getattr(self, "readiness_entry", {"state": "unmeasured"}),
+                "initial_launch_mode": getattr(self, "initial_launch_mode", "prelaunch-terminate"),
+                "fresh_install": getattr(self, "fresh_install", None),
+                "session_epoch_sha256": getattr(self, "session_epoch", None),
             }
         )
 

@@ -29,6 +29,8 @@ MAX_CALL_EVALUATIONS = 1024
 MAX_CALLABLES = 4096
 MAX_FIELD_ROUNDS = 4
 MAX_PARTIAL_DETAILS = 256
+MAX_EFFECT_DEPTH = 8
+MAX_EFFECT_OBJECTS = 128
 
 
 class StorageKey(Enum):
@@ -222,6 +224,8 @@ class NativeFlow:
         self.receiver_field_context: list[str | None] = []
         self.field_inputs: list[tuple[Analyzer, Call, Value]] = []
         self.allocations: dict[str, str] = {}
+        # Storage reachability survives upcasts; it confers no dispatch proof.
+        self.effect_nominals: dict[str, set[str]] = {}
         self.uncertain_objects: set[Any] = set()
         self.call_sites: list[str] = []
         self.evaluations = 0
@@ -375,6 +379,13 @@ class NativeFlow:
     def reference_type(self, analyzer: Analyzer, declared: str, node: Any) -> bool:
         return self.object_type(analyzer, declared, node) == "reference"
 
+    def remember_effect_type(self, analyzer: Analyzer, declared: str, node: Any, identity: str) -> None:
+        if not identity:
+            return
+        owners = self.class_owners(analyzer, declared, node)
+        if len(owners) == 1 and len(self.class_definitions[next(iter(owners))]) == 1:
+            self.effect_nominals.setdefault(identity, set()).update(owners)
+
     def materialize_object(
         self, analyzer: Analyzer, node: Any, declared: str, value: Value, kind: str, *, binding: bool = False
     ) -> Value:
@@ -382,6 +393,7 @@ class NativeFlow:
         if classification is None and not binding:
             return value
         identity = value.identity or self.binding_identity(analyzer, node, kind)
+        self.remember_effect_type(analyzer, declared, node, identity)
         if classification == "value":
             # These IDs preserve possible storage relationships, never a proof
             # of Swift value-copy/inout semantics. All their effects stay weak.
@@ -464,6 +476,7 @@ class NativeFlow:
         else:
             declared = ""
         stored = frame.object_fields.get(identity, {}).get(StorageKey.UNKNOWN_FIELDS, Value())
+        self.remember_effect_type(analyzer, declared, node, identity)
         return Value(_union([root, stored]).traces, type_name=declared, identity=identity)
 
     def receiver_identity(self, analyzer: Analyzer, receiver: Any, frame: Frame) -> str:
@@ -634,6 +647,7 @@ class NativeFlow:
         stored = [
             value
             for identity in self.affected_objects(analyzer, call, args, frame)
+            | self.reachable_reference_objects(analyzer, call, receiver, args, frame)
             for value in frame.object_fields.get(identity, {}).values()
         ]
         declared = receiver.type_name or (analyzer.key(call.receiver) if call.receiver is not None else "")
@@ -661,6 +675,116 @@ class NativeFlow:
             )
         return affected
 
+    def reachable_reference_objects(
+        self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
+    ) -> set[str]:
+        """Inventory possible reference effects, without evaluating field initializers/getters.
+
+        A Swift value copy can still contain shared references. Conversely its
+        scalar slots are not caller writeback. Nominal evidence belongs to the
+        storage ID, so an Object/Any alias cannot erase reachable storage.
+        """
+        objects = [*zip(call.args, args, strict=True)]
+        if call.receiver is not None:
+            objects.append((call.receiver, receiver))
+        pending = []
+        for node, value in objects:
+            identity = value.identity
+            if not identity and self.object_type(analyzer, value.type_name, node) is not None:
+                identity = self.receiver_identity(analyzer, node, frame)
+            self.remember_effect_type(analyzer, value.type_name, node, identity)
+            if identity in self.effect_nominals:
+                pending.append((identity, 0, frozenset()))
+        affected: set[str] = set()
+        visited: set[str] = set()
+        while pending:
+            identity, depth, ancestors = pending.pop()
+            if identity in ancestors:
+                self.partial("cyclic reference effect inventory", analyzer, call=call)
+                affected.add(identity)
+                continue
+            if identity in visited:
+                continue
+            if depth >= MAX_EFFECT_DEPTH or len(visited) >= MAX_EFFECT_OBJECTS:
+                # Weakly taint the frontier as well: merely marking partial
+                # would leave later lazy field reads falsely clean.
+                self.partial("reference effect inventory budget", analyzer, call=call)
+                affected.add(identity)
+                continue
+            visited.add(identity)
+            fields = frame.object_fields.setdefault(identity, {})
+            for owner in sorted(self.effect_nominals.get(identity, set())):
+                source, nominal = self.class_definitions[owner][0]
+                if source.language == "swift" and (
+                    nominal.type == "protocol_declaration"
+                    or any(
+                        child.type == "enum_type_parameters"
+                        for body in nominal.named_children
+                        if body.type in NOMINAL_BODIES
+                        for entry in body.named_children
+                        if entry.type == "enum_entry"
+                        for child in entry.named_children
+                    )
+                ):
+                    # Protocol conformers and enum payloads can hide shared
+                    # references outside the represented stored-field inventory.
+                    self.partial("reachable field ownership unavailable", analyzer, call=call)
+                    affected.add(identity)
+                if source.language != "swift" or self.declaration_tokens(nominal) & {"class", "actor"}:
+                    affected.add(identity)
+                for offset, (name, expression, declared, static) in enumerate(source.nominal_fields(nominal)):
+                    if static:
+                        continue
+                    if offset >= MAX_EFFECT_OBJECTS:
+                        self.partial("reference effect inventory budget", analyzer, call=call)
+                        affected.add(identity)
+                        break
+                    previous = fields.get(name, Value(type_name=declared))
+                    kind = declared or previous.type_name
+                    # Constructor syntax can identify an inferred field type;
+                    # no initializer body is executed to build this inventory.
+                    if not kind and expression is not None:
+                        initializer = source.call(source.unwrap(expression))
+                        if initializer is not None:
+                            kind = self.constructor_type(source, initializer, Frame()) or ""
+                    signature = self.signature_type(source, kind, nominal)
+                    scalar = (
+                        signature is not None
+                        and (
+                            signature[0] == "primitive"
+                            or signature == ("nominal", SCALAR_STRING_TYPES.get(source.language))
+                        )
+                    ) or (
+                        not kind
+                        and expression is not None
+                        and (
+                            source.literal(source.unwrap(expression)) is not None
+                            or re.fullmatch(r"(?:true|false|\d+(?:\.\d+)?)", source.text(expression))
+                            is not None
+                        )
+                    )
+                    if scalar:
+                        continue
+                    child = previous.identity
+                    if self.object_type(source, kind, nominal) is not None:
+                        child = child or "@native-field:" + repr((identity, name))
+                        self.remember_effect_type(source, kind, nominal, child)
+                        fields[name] = Value(previous.traces, previous.category, kind, child)
+                    if child in self.effect_nominals:
+                        pending.append((child, depth + 1, ancestors | {identity}))
+                    else:
+                        # Optional/container/protocol/external field ownership
+                        # is unavailable. Fence this containing storage rather
+                        # than assuming it holds only copied scalar values.
+                        self.partial("reachable field ownership unavailable", analyzer, call=call)
+                        affected.add(identity)
+            # Explicit field/index aliases can carry stronger effect provenance
+            # than their current declaration (including an erased field type).
+            for value in list(fields.values()):
+                if value.identity in self.effect_nominals:
+                    pending.append((value.identity, depth + 1, ancestors | {identity}))
+        return affected
+
     def unavailable_write(
         self,
         analyzer: Analyzer,
@@ -674,10 +798,25 @@ class NativeFlow:
         value = self.unavailable_result(analyzer, call, receiver, args, frame)
         if not value.traces:
             return
-        for identity in self.affected_objects(analyzer, call, args, frame) if affected is None else affected:
+        if affected is None:
+            affected = self.affected_objects(analyzer, call, args, frame) | self.reachable_reference_objects(
+                analyzer, call, receiver, args, frame
+            )
+        for identity in affected:
             fields = frame.object_fields.setdefault(identity, {})
             for name, previous in list(fields.items()):
-                fields[name] = self.weak_write(analyzer, call, previous, value, value)
+                written = self.weak_write(analyzer, call, previous, value, value)
+                if isinstance(name, str) and previous.identity in self.effect_nominals:
+                    # An unknown mutator may replace a reference field. Keep a
+                    # weak slot identity (never its old exact allocation proof)
+                    # so a subsequent known reader sees possible child effects.
+                    slot = "@native-field:" + repr((identity, name))
+                    self.effect_nominals.setdefault(slot, set()).update(
+                        self.effect_nominals[previous.identity]
+                    )
+                    frame.object_fields.setdefault(slot, {})[StorageKey.UNKNOWN_FIELDS] = value
+                    written = Value(written.traces, written.category, written.type_name, slot)
+                fields[name] = written
             fields[StorageKey.UNKNOWN_FIELDS] = value
         shared = frame.object_fields.setdefault(StorageKey.UNRESOLVED_FIELDS, {})
         shared[StorageKey.UNKNOWN_FIELDS] = self.merge(
@@ -687,17 +826,7 @@ class NativeFlow:
     def unresolved_reference_effects(
         self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
     ) -> Value | None:
-        # Reference objects can be mutated through an unavailable callable even
-        # when name resolution has no candidate inventory. Swift value arguments
-        # without `&` supply no such writeback; syntactic inout is handled first.
-        objects = [*zip(call.args, args, strict=True)]
-        if call.receiver is not None:
-            objects.append((call.receiver, receiver))
-        affected = {
-            value.identity or self.receiver_identity(analyzer, node, frame)
-            for node, value in objects
-            if self.reference_type(analyzer, value.type_name, node)
-        }
+        affected = self.reachable_reference_objects(analyzer, call, receiver, args, frame)
         if not affected:
             return None
         self.partial("unresolved reference argument effects", analyzer, call=call)
@@ -1362,6 +1491,7 @@ class NativeFlow:
         return False
 
     def allocation(self, analyzer: Analyzer, call: Call, declared: str, identity: str) -> None:
+        self.remember_effect_type(analyzer, declared, call.node, identity)
         # A non-anonymous Java `new` proves the concrete nominal type. Other forms
         # retain field identity but do not establish exact dispatch here.
         if analyzer.language == "java" and call.node.type == "object_creation_expression":
@@ -2129,6 +2259,8 @@ class NativeFlow:
     def metadata(self) -> dict:
         return {
             "method": "bounded-direct-native-calls",
+            "max_effect_depth": MAX_EFFECT_DEPTH,
+            "max_effect_objects": MAX_EFFECT_OBJECTS,
             "state": "partial" if self.reasons else "checked",
             "reasons": sorted(self.reasons),
             "partial_details": [
