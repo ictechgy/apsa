@@ -127,3 +127,31 @@ def test_generation_rejects_external_identity_before_any_file_write(tmp_path, pa
     with pytest.raises(ValueError):
         control.write_project(tmp_path / "new", package, scheme, nonces)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_xcode_failure_projection_exposes_only_fixed_labels_and_own_line_numbers():
+    waits = [
+        n for n, line in enumerate(control.TEST_SOURCE.splitlines(), 1) if "waitForExpectations(" in line
+    ]
+    raw = (
+        f'/new/CallbackTests.swift:{waits[0]}: error: Asynchronous wait failed: unfulfilled expectations: "synthetic-private-canary"\n'
+        + f'/new/CallbackTests.swift:{waits[1]}: error: XCTAssertTrue failed "synthetic-private-canary"\n'
+        + "/other/Existing.swift:1: error: synthetic-private-canary\n"
+        + "arbitrary prompt synthetic-private-canary\n"
+    ).encode()
+    result = control.xcode_diagnostic(raw, "test-without-building", 65)
+    assert result["own_test_issues"] == [
+        {"source_line": waits[0], "category": "expectation-timeout", "probe": "cold"},
+        {"source_line": waits[1], "category": "assertion-failed", "probe": "warm"},
+    ]
+    assert "synthetic-private-canary" not in json.dumps(result)
+    assert "/new" not in json.dumps(result)
+    assert result["exit_status"] == 65 and result["state"] == "diagnostic-only"
+
+
+def test_xcode_diagnostic_cannot_turn_success_into_callback_acceptance():
+    result = control.xcode_diagnostic(b"", "test-without-building", 0)
+    assert result["state"] == "diagnostic-only"
+    assert "r02_acceptance" not in result
+    with pytest.raises(ValueError):
+        control.xcode_diagnostic(b"", "install-other-app", 0)

@@ -459,8 +459,9 @@ class Frame:
     javascript: dict[str, str] = field(default_factory=dict)
     # Local names bound to constant key, IV or byte material in this function: name -> description.
     constants: dict[str, str] = field(default_factory=dict)
-    object_fields: dict[str, dict[str, Value]] = field(default_factory=dict)
+    object_fields: dict[Any, dict[Any, Value]] = field(default_factory=dict)
     call_results: dict[tuple, Value] = field(default_factory=dict)
+    local_names: set[str] = field(default_factory=set)
 
     def copy(self) -> Frame:
         return Frame(
@@ -471,6 +472,7 @@ class Frame:
             self.constants.copy(),
             {key: values.copy() for key, values in self.object_fields.items()},
             self.call_results.copy(),
+            self.local_names.copy(),
         )
 
 
@@ -524,6 +526,8 @@ class Analyzer:
         self.finding_ids: set[str] = set()
         self.scope = ""
         self.field_types: dict[str, str] = {}
+        self.static_fields: set[str] = set()
+        self.unavailable_fields: set[str] = set()
         self.class_field_nodes: dict[tuple[int, int], list[Any]] = {}
         self.parameter_types: dict[str, str] = {}
         self.activity_scope = False
@@ -958,6 +962,10 @@ class Analyzer:
                 and self.activity_scope
             ):
                 return self.source(node, "Activity.intent property", "intent")
+            if self.native_flow is not None:
+                stored = self.native_flow.identifier(self, name, frame, node)
+                if stored is not None:
+                    return stored
             return frame.values.get(
                 name, Value(type_name=frame.types.get(name, self.field_types.get(name, "")))
             )
@@ -2016,6 +2024,7 @@ class Analyzer:
         declaration = self.declaration(node)
         if declaration:
             name, expression, type_name = declaration
+            frame.local_names.add(name)
             if expression:
                 self.visit(expression, frame, guards, conditions)
             described = self.constant(expression, frame) if expression is not None else None
@@ -2050,10 +2059,18 @@ class Analyzer:
                     if base is not None:
                         frame.constants.pop(self.text(base), None)
                 value = self.value(right, frame).bind(self.point(node))
+                if self.native_flow is not None and self.navigation(left) is not None:
+                    self.native_flow.assign_member(self, left, value, frame)
+                    return
                 if key in frame.types or key in frame.values:
                     frame.values[key] = Value(
                         value.traces, value.category, frame.types.get(key, value.type_name), value.identity
                     )
+                    if self.native_flow is not None:
+                        if left.type in IDENTIFIERS:
+                            self.native_flow.assign_identifier(self, key, frame.values[key], frame)
+                        else:
+                            self.native_flow.assign_member(self, left, value, frame)
                 elif self.native_flow is not None:
                     self.native_flow.assign_member(self, left, value, frame)
                 return
@@ -2107,7 +2124,13 @@ class Analyzer:
             for identity in branch.object_fields.keys() | alternative.object_fields.keys():
                 one, two = branch.object_fields.get(identity, {}), alternative.object_fields.get(identity, {})
                 frame.object_fields[identity] = {
-                    key: _union([one.get(key, Value()), two.get(key, Value())])
+                    key: _union(
+                        [one.get(key, Value()), two.get(key, Value())],
+                        one.get(key, Value()).category
+                        if one.get(key, Value()).category == two.get(key, Value()).category
+                        else "unknown",
+                        one.get(key, Value()).type_name or two.get(key, Value()).type_name,
+                    )
                     for key in one.keys() | two.keys()
                 }
             frame.constants = {
@@ -2363,32 +2386,104 @@ class Analyzer:
                 if described and described != "zero-filled array":
                     self.constants[name] = (described, self.literal(self.unwrap(expression)))
 
-    def class_fields(self, function: Any) -> dict[str, str]:
-        parent = function.parent
-        while parent and parent.type not in {"class_body", "enum_body"}:
-            parent = parent.parent
-        fields = {}
-        if parent:
-            key = (parent.start_byte, parent.end_byte)
-            if key not in self.class_field_nodes:
-                # Avoid scanning every method in a large class again for each function.
-                # Only declarations are cached: value/type inference still uses the
-                # current function's context, as before.
-                self.class_field_nodes[key] = [
-                    node
-                    for node in parent.named_children
-                    if node.type in {"field_declaration", "property_declaration"}
-                ]
-            for declaration in self.class_field_nodes[key]:
-                nodes = (
-                    declaration.named_children if declaration.type == "field_declaration" else [declaration]
+    def nominal_fields(self, nominal: Any) -> list[tuple[str, Any, str, bool]]:
+        from .native_flow import NOMINAL_BODIES
+
+        key = (nominal.start_byte, nominal.end_byte)
+        if key not in self.class_field_nodes:
+            declarations = []
+            for body in nominal.named_children:
+                if body.type in NOMINAL_BODIES:
+                    for node in body.named_children:
+                        if node.type == "enum_body_declarations":
+                            declarations.extend(node.named_children)
+                        else:
+                            declarations.append(node)
+                elif body.type == "formal_parameters" and nominal.type == "record_declaration":
+                    declarations.extend(body.named_children)
+                elif body.type == "primary_constructor":
+                    for parameters in body.named_children:
+                        if parameters.type == "class_parameters":
+                            declarations.extend(
+                                node
+                                for node in parameters.named_children
+                                if any(child.type in {"val", "var"} for child in node.children)
+                            )
+            self.class_field_nodes[key] = [
+                node
+                for node in declarations
+                if node.type
+                in {"field_declaration", "property_declaration", "formal_parameter", "class_parameter"}
+            ]
+        result = []
+        implicit_static = nominal.type in {
+            "interface_declaration",
+            "annotation_type_declaration",
+            "object_declaration",
+        }
+        for declaration in self.class_field_nodes[key]:
+            modifiers = next(
+                (child for child in declaration.named_children if child.type == "modifiers"), None
+            )
+            static = implicit_static or bool(
+                modifiers is not None and re.search(r"\b(?:static|class)\b", self.text(modifiers))
+            )
+            if declaration.type == "formal_parameter":
+                result.append(
+                    (
+                        self.text(_field(declaration, "name")),
+                        None,
+                        self.text(_field(declaration, "type")),
+                        False,
+                    )
                 )
-                for node in nodes:
-                    parsed = self.declaration(node)
+                continue
+            if declaration.type == "class_parameter":
+                name = next(
+                    (child for child in declaration.named_children if child.type in IDENTIFIERS), None
+                )
+                type_node = next(
+                    (
+                        child
+                        for child in declaration.named_children
+                        if child.type in {"user_type", "nullable_type", "function_type"}
+                    ),
+                    None,
+                )
+                result.append((self.text(name), None, self.text(type_node), False))
+                continue
+            nodes = declaration.named_children if declaration.type == "field_declaration" else [declaration]
+            for node in nodes:
+                parsed = self.declaration(node)
+                if parsed:
+                    result.append((*parsed, static))
+        return result
+
+    def class_fields(self, function: Any) -> dict[str, str]:
+        from .native_flow import NativeFlow
+
+        boundary = NativeFlow.enclosing_scope(function)
+        self.static_fields = set()
+        self.unavailable_fields = set()
+        fields = {}
+        if boundary is not None and boundary.kind == "nominal":
+            modifiers = NativeFlow.declaration_tokens(function)
+            static_method = bool(modifiers & {"static", "class"})
+            for name, expression, type_name, static in self.nominal_fields(boundary.node):
+                if static_method and not static:
+                    continue
+                if static:
+                    self.static_fields.add(name)
+                fields[name] = type_name or self.value(expression, Frame()).type_name
+            key = (boundary.node.start_byte, boundary.node.end_byte)
+            for declaration in self.class_field_nodes.get(key, []):
+                if declaration.type == "property_declaration" and any(
+                    child.type in {"computed_property", "getter", "setter", "property_delegate"}
+                    for child in declaration.named_children
+                ):
+                    parsed = self.declaration(declaration)
                     if parsed:
-                        name, expression, type_name = parsed
-                        value = self.value(expression, Frame())
-                        fields[name] = type_name or value.type_name
+                        self.unavailable_fields.add(parsed[0])
         return fields
 
     def start_function(self, function: Any) -> Frame:
@@ -2448,7 +2543,9 @@ class Analyzer:
         )
         if self.native_flow is not None:
             frame.values.update(self.native_flow.initial_fields(self, function))
+            self.native_flow.initialize_fields(self, frame)
         for name, type_name, node in parameters:
+            frame.local_names.add(name)
             if ARCHIVE_ENTRY.fullmatch(type_name.strip()):
                 frame.values[name] = Value(type_name=type_name, identity=f"{self.path}:{node.start_byte}")
             category = None

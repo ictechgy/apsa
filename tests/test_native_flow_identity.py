@@ -1887,3 +1887,304 @@ fun route(input: String): String {{ return input }}
         reason in report["metadata"]["native_flow"]["reasons"]
         for reason in ["nominal callable scope unavailable", "anonymous callable scope unavailable"]
     ), report
+
+
+@pytest.mark.parametrize("container", ["class", "enum"])
+@pytest.mark.parametrize("explicit_this", [False, True])
+@pytest.mark.parametrize("safe", [False, True])
+def test_nominal_field_write_read_keeps_input_while_literal_return_remains_safe(
+    container, explicit_this, safe
+):
+    field = "this.stash" if explicit_this else "stash"
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+{container} Holder {{
+    {"ONE;" if container == "enum" else ""}
+    String stash;
+    private String route(String input) {{ {field} = input; return {'"https://safe.example/"' if safe else field}; }}
+    static class Entry {{
+        void open(Intent input, WebView web, Holder helper) {{ web.loadUrl(helper.route(input.getDataString())); }}
+    }}
+}}
+"""
+    report = scan(("app/Holder.java", source))
+    assert bool(findings(report, URL)) is not safe, report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("explicit_constructor", [False, True])
+@pytest.mark.parametrize("access", ["value", "this.value", "generated", "literal"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_record_component_and_unknown_receiver_fields_survive_summary_admission(
+    explicit_constructor, access, tainted
+):
+    constructor = "Holder(String value) { this.value = value; }" if explicit_constructor else ""
+    body = '"https://safe.example/"' if access == "literal" else access
+    method = "" if access == "generated" else f"private String route() {{ return {body}; }}"
+    call = "value" if access == "generated" else "route"
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+record Holder(String value) {{
+    {constructor}
+    {method}
+    static class Entry {{
+        void open(Intent input, WebView web) {{
+            Holder helper = new Holder({argument});
+            web.loadUrl(helper.{call}());
+        }}
+    }}
+}}
+"""
+    report = scan(("app/Holder.java", source))
+    assert bool(findings(report, URL)) is (tainted and access != "literal"), report
+
+
+@pytest.mark.parametrize("shadow", ["parameter", "local"])
+def test_explicit_this_field_does_not_read_a_shadowing_safe_local(shadow):
+    parameter = "String value" if shadow == "parameter" else ""
+    local = 'String value = "https://safe.example/";' if shadow == "local" else ""
+    argument = '"https://safe.example/"' if shadow == "parameter" else ""
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+class Holder {{
+    String value;
+    Holder(String value) {{ this.value = value; }}
+    private String route({parameter}) {{ {local} return this.value; }}
+    static class Entry {{
+        void open(Intent input, WebView web) {{
+            Holder helper = new Holder(input.getDataString());
+            web.loadUrl(helper.route({argument}));
+        }}
+    }}
+}}
+"""
+    report = scan(("app/Holder.java", source))
+    assert findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+def test_explicit_this_write_cannot_overwrite_shadowing_parameter_provenance():
+    source = """package app;
+import android.content.Intent;
+import android.webkit.WebView;
+class Holder {
+    String value;
+    private String route(String value) { this.value = "https://safe.example/"; return value; }
+    static class Entry {
+        void open(Intent input, WebView web, Holder helper) { web.loadUrl(helper.route(input.getDataString())); }
+    }
+}
+"""
+    report = scan(("app/Holder.java", source))
+    assert findings(report, URL), report
+
+
+def test_unknown_constructor_multifield_state_keeps_sentinel_and_explicit_field_overrides():
+    source = """package app
+import android.content.Intent
+import android.webkit.WebView
+class Holder(var first: String, var second: String) {
+    fun clear() { this.first = "https://safe.example/" }
+    fun readFirst(): String { return first }
+    fun readSecond(): String { return this.second }
+}
+class Entry {
+    fun open(input: Intent, web: WebView) {
+        val helper = Holder(input.getDataString(), input.getDataString())
+        helper.clear()
+        web.loadUrl(helper.readFirst())
+        web.loadUrl(helper.readSecond())
+        web.loadUrl(helper.readSecond())
+    }
+}
+"""
+    report = scan(("app/Entry.kt", source))
+    assert {item["evidence"][0]["line"] for item in findings(report, URL)} == {14, 15}, report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+
+
+@pytest.mark.parametrize("static_write", ["bare", "this", "qualified"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_static_field_state_is_shared_across_receiver_instances(static_write, tainted):
+    field = {"bare": "stash", "this": "this.stash", "qualified": "Holder.stash"}[static_write]
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+class Holder {{
+    static String stash;
+    private void put(String input) {{ {field} = input; }}
+    private String read() {{ return {field}; }}
+    static class Entry {{
+        void open(Intent input, WebView web) {{
+            Holder first = new Holder();
+            Holder second = new Holder();
+            first.put({argument});
+            web.loadUrl(second.read());
+        }}
+    }}
+}}
+"""
+    report = scan(("app/Holder.java", source))
+    assert bool(findings(report, URL)) is tainted, report
+
+
+@pytest.mark.parametrize("container", ["class", "interface", "record", "annotation"])
+def test_static_field_taint_survives_distinct_entry_functions(container):
+    declaration = {
+        "class": "class Holder",
+        "interface": "interface Holder",
+        "record": "record Holder()",
+        "annotation": "@interface Holder",
+    }[container]
+    # Java interface/annotation fields cannot be reassigned. A final array is
+    # therefore not modeled as an ordinary mutable static scalar here.
+    if container in {"interface", "annotation"}:
+        source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+{declaration} {{
+    static class Nested {{
+        static String stash;
+    }}
+}}
+class Entry {{
+    void store(Intent input) {{ Holder.Nested.stash = input.getDataString(); }}
+    void read(WebView web) {{ web.loadUrl(Holder.Nested.stash); }}
+}}
+"""
+    else:
+        source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+{declaration} {{ static String stash; }}
+class Entry {{
+    void store(Intent input) {{ Holder.stash = input.getDataString(); }}
+    void read(WebView web) {{ web.loadUrl(Holder.stash); }}
+}}
+"""
+    report = scan(("app/Entry.java", source))
+    assert findings(report, URL), report
+
+
+@pytest.mark.parametrize("explicit_this", [False, True])
+@pytest.mark.parametrize("base_provided", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unavailable_inherited_static_or_instance_fields_keep_provenance_across_receivers(
+    explicit_this, base_provided, tainted
+):
+    field = "this.stash" if explicit_this else "stash"
+    argument = "input.getDataString()" if tainted else '"https://safe.example/"'
+    source = f"""package app;
+import android.content.Intent;
+import android.webkit.WebView;
+class Holder extends Base {{
+    private void put(String value) {{ {field} = value; }}
+    private String read() {{ return {field}; }}
+    void open(Intent input, WebView web, Holder other) {{
+        String value = {argument};
+        this.put(value);
+        web.loadUrl(other.read());
+    }}
+}}
+"""
+    sources = [("app/Holder.java", source)]
+    if base_provided:
+        sources.append(("app/Base.java", "package app; class Base { protected static String stash; }"))
+    report = scan(*sources)
+    assert bool(findings(report, URL)) is tainted, report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "receiver field inventory unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("suffix", ["kt", "swift"])
+@pytest.mark.parametrize("safe", [False, True])
+def test_computed_property_mapping_abstains_without_tainting_literal_safe_returns(suffix, safe):
+    if suffix == "kt":
+        returned = '"https://safe.example/"' if safe else "this.computed"
+        source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+class Holder {{
+    var stash: String = ""
+    val computed: String
+        get() = stash
+    fun route(input: String): String {{ this.stash = input; return {returned} }}
+}}
+class Entry {{
+    fun open(input: Intent, web: WebView) {{ web.loadUrl(Holder().route(input.getDataString())) }}
+}}
+"""
+    else:
+        returned = 'URL(string: "https://safe.example/")!' if safe else "self.computed"
+        source = f"""import WebKit
+final class Holder {{
+    var stash: URL = URL(string: "https://safe.example/")!
+    var computed: URL {{ return stash }}
+    func route(_ input: URL) -> URL {{ self.stash = input; return {returned} }}
+}}
+class Entry {{
+    let web = WKWebView()
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        web.load(URLRequest(url: Holder().route(incoming)))
+        return true
+    }}
+}}
+"""
+    report = scan((f"app/Entry.{suffix}", source))
+    assert bool(findings(report, URL)) is not safe, report
+    if not safe:
+        assert "receiver field inventory unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+def test_static_field_changes_invalidate_nested_helper_call_cache():
+    source = """package app;
+import android.content.Intent;
+import android.webkit.WebView;
+class Holder {
+    static String stash;
+    private String read() { return stash; }
+    private String forward() { return read(); }
+    private void put(String value) { stash = value; }
+    static class Entry {
+        void open(Intent input, WebView web) {
+            Holder first = new Holder();
+            Holder second = new Holder();
+            first.put("https://safe.example/");
+            web.loadUrl(second.forward());
+            first.put(input.getDataString());
+            web.loadUrl(second.forward());
+        }
+    }
+}
+"""
+    report = scan(("app/Holder.java", source))
+    assert {item["evidence"][0]["line"] for item in findings(report, URL)} == {16}, report
+
+
+@pytest.mark.parametrize("explicit_this", [False, True])
+def test_user_field_named_unknown_fields_cannot_clear_internal_unknown_provenance(explicit_this):
+    field = "this.__unknown_fields__" if explicit_this else "__unknown_fields__"
+    source = f"""package app
+import android.content.Intent
+import android.webkit.WebView
+class Holder(var __unknown_fields__: String, var value: String) {{
+    fun clear() {{ {field} = "https://safe.example/" }}
+    fun named(): String {{ return {field} }}
+    fun read(): String {{ return value }}
+}}
+class Entry {{
+    fun open(input: Intent, web: WebView) {{
+        val helper = Holder(input.getDataString(), input.getDataString())
+        helper.clear()
+        web.loadUrl(helper.named())
+        web.loadUrl(helper.read())
+    }}
+}}
+"""
+    report = scan(("app/Entry.kt", source))
+    assert {item["evidence"][0]["line"] for item in findings(report, URL)} == {14}, report

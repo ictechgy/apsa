@@ -10,6 +10,12 @@ Rule version: `2026.10.15.apsa.160`.
 Native call summaries now require matching package/import/file identity.
 Nested nominal containers keep independent lexical ownership; unresolved
 ownership preserves taint and partial coverage.
+Field summaries use the same nearest nominal ownership, including enum
+declaration wrappers, record components and represented constructor properties.
+Explicit receiver fields remain distinct from same-named parameters and locals;
+unmapped constructor state retains provenance. Shared static storage and unknown
+field markers use separate internal identities. Unsupported field semantics
+retain candidates and partial coverage instead of supplying a clean helper result.
 An unrelated module's same-named function or constructor cannot supply a
 sanitizer. Unknown or ambiguous identities preserve argument/field taint and
 partial coverage. Swift cross-file summaries remain unavailable without
@@ -50,8 +56,9 @@ four package/MCP jobs. Those observations are historical; the 1.6 candidate
 requires its own supported CI, repeated package-content checks, clean install
 and two independent reviews before publication.
 
-Synthetic benchmark execution preserves incomplete controls: the fresh corpus
-reports `passed=false` while its declared regression contract passes. Public
+Synthetic benchmark execution preserves incomplete controls. An earlier
+baseline reported `passed=false` while its declared regression contract passed;
+this does not describe the stricter candidate's quality result. Public
 CVE alias overlap cases remain unscored; the component benchmark's failure is
 preserved. Comparator partial results establish no accuracy or product ranking.
 The stricter inherited-type boundary's direct source-only replay also observed
@@ -61,8 +68,11 @@ native-flow coverage instead of an empty finding list. This is a measured
 support-contract impact, not a passing accuracy result. Frozen labels and the
 official hosted quality gate remain unchanged; that gate must be assessed on
 the final candidate.
-On `d86172b`, the unchanged official test runs failed the existing benchmark
-expectations and regression contract. These failures remain release blockers.
+On `3181dfd`, the unchanged official 30-case replay matched 25 cases and measured
+TP19/FP3/FN0 with five partial/disagreement cases. Its regression contract and
+three existing benchmark tests failed. Those results remain release blockers
+until a supported correction or an explicit requirement decision resolves them;
+the final candidate still requires its own measurement.
 Validation preserves independent benchmark, stdio and package measurements
 after an earlier failed check; the overall job still fails, and publication
 gates are unchanged.
@@ -75,6 +85,17 @@ iOS OS URL delivery and live account-switch coverage remain explicit open
 validation items until a new installed target supplies bound observations.
 Transport dispatch, process startup and HTTP backend-only success cannot
 substitute for target acquisition.
+
+A separate hosted callback differential builds a new scene app with Xcode and
+uses public `XCUIApplication.open(_:)` through an actual UI test. It requires
+both cold and warm callback receipts, exact installed executable/plist identity,
+distinct nonces and cleanup of its CREATE-returned simulator UUID. This control
+contains no login/backend/storage scenario and never satisfies R02. Source and
+mock tests alone do not establish that the hosted control has run or succeeded.
+The first hosted control on `45d5f5c` built successfully, then XCTest exited 65;
+its new simulator cleanup was confirmed. This is an inconclusive callback
+measurement. A subsequent bounded diagnostic projects only fixed failure labels
+and the generated test's line numbers, preserving the failed primary result.
 
 The six Android controls passed on `588150f`, including both authenticated
 account switches and terminal cleanup ([owned hosted run](https://github.com/ictechgy/apsa/actions/runs/38608689172)).

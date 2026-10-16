@@ -3,6 +3,7 @@
 import copy
 import json
 import sys
+from collections.abc import Callable
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -22,15 +23,17 @@ from tests.test_runtime_transport import NewMemoryTarget, server_without_socket
 class NewSwitchTarget(NewMemoryTarget):
     """Model native fixture requests in memory; HTTP authority decides credentials."""
 
-    def __init__(self, platform, authority):
+    platform: str
+
+    def __init__(self, platform: str, authority: OwnedAuthority):
         super().__init__(platform, authority)
         self.delivery_observations = []
-        self.change_receipt = None
+        self.change_receipt: Callable[[dict], None] | None = None
         self.no_b_authentication = False
         self.ambiguous = False
         self.partial = False
 
-    def deliver(self, url, expected):
+    def deliver(self, url: str, expected: dict) -> dict:
         fields = {
             key: value[0] for key, value in parse_qs(urlparse(url).query, keep_blank_values=True).items()
         }
@@ -267,9 +270,9 @@ def test_incomplete_or_ambiguous_switch_capture_stays_inconclusive(failure, monk
     elif failure == "ambiguous-login":
         target.ambiguous = True
     elif failure == "stale-proof":
-        target.change_receipt = lambda response: response["account_authentication"].update(
-            adapter.account_b_authentication
-        )
+        authentication = adapter.account_b_authentication
+        assert authentication is not None
+        target.change_receipt = lambda response: response["account_authentication"].update(authentication)
     else:
         target.change_receipt = lambda response: response.update(transition="logout")
     after = recorder.capture("after", {"account": "b", "state": "authenticated"}, "account_switch")
@@ -298,6 +301,7 @@ def test_transition_kind_enum_has_no_fallback(kind, monkeypatch):
 )
 def test_nonce_and_transition_state_binding_rejects_before_target_delivery(failure, monkeypatch):
     _authority, target, adapter, recorder, _scenario = new_switch("android", False, monkeypatch)
+    assert recorder.session is not None
     nonce = "d" * 64
     request = CaptureRequest(recorder.session, nonce, "before", "a", "authenticated", None)
     adapter.capture(request)
@@ -312,7 +316,11 @@ def test_nonce_and_transition_state_binding_rejects_before_target_delivery(failu
     else:
         adapter.open_url("synthetic://transition")
         request = CaptureRequest(recorder.session, "c" * 64, "after", None, "logged_out", "logout")
-    target.deliver = lambda *_args: pytest.fail("rejected capture must not reach target")
+
+    def reject_delivery(url: str, expected: dict) -> dict:
+        pytest.fail("rejected capture must not reach target")
+
+    target.deliver = reject_delivery
     with pytest.raises(ValueError):
         adapter.capture(request)
 
@@ -326,6 +334,7 @@ def test_old_a_backend_probe_cannot_be_replaced_by_b_or_incomplete_data(field, m
         recorder.capture("after", {"account": "b", "state": "authenticated"}, "account_switch")
     )
     if field == "credential":
+        assert adapter.account_b_authentication is not None
         after["backend_probe"]["credential_sha256"] = adapter.account_b_authentication["credential_sha256"]
     elif field == "authority":
         after["backend_probe"]["authority_sha256"] = "f" * 64

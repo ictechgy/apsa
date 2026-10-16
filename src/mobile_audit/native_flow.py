@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from .source_analysis import (
@@ -28,6 +29,14 @@ MAX_CALL_EVALUATIONS = 1024
 MAX_CALLABLES = 4096
 MAX_FIELD_ROUNDS = 4
 MAX_PARTIAL_DETAILS = 256
+
+
+class StorageKey(Enum):
+    UNKNOWN_FIELDS = "unknown-fields"
+    STATIC_FIELDS = "static-fields"
+    UNRESOLVED_FIELDS = "unresolved-fields"
+
+
 SCALAR_STRING_TYPES = {"java": "java.lang.String", "kotlin": "kotlin.String", "swift": "Swift.String"}
 NOMINAL_DECLARATIONS = {
     "class_declaration",
@@ -161,6 +170,8 @@ CONTEXT = (
     "function",
     "function_source",
     "field_types",
+    "static_fields",
+    "unavailable_fields",
     "parameter_types",
     "activity_scope",
     "path_guarded",
@@ -208,6 +219,8 @@ class NativeFlow:
         self.namespaces: dict[int, str] = {}
         self.stack: list[tuple] = []
         self.receiver_context: list[tuple[str, str] | None] = []
+        self.receiver_field_context: list[str | None] = []
+        self.field_inputs: list[tuple[Analyzer, Call, Value]] = []
         self.allocations: dict[str, str] = {}
         self.call_sites: list[str] = []
         self.evaluations = 0
@@ -334,6 +347,8 @@ class NativeFlow:
 
     def receiver_identity(self, analyzer: Analyzer, receiver: Any, frame: Frame) -> str:
         if receiver is None or analyzer.key(receiver) in {"this", "self"}:
+            if self.receiver_field_context and self.receiver_field_context[-1] is not None:
+                return self.receiver_field_context[-1]
             if self.receiver_context and self.receiver_context[-1] is not None:
                 return self.receiver_context[-1][1]
             return self.owner(analyzer, analyzer.function) + ":self"
@@ -343,32 +358,187 @@ class NativeFlow:
     def initial_fields(self, analyzer: Analyzer, function: Any) -> dict[str, Value]:
         return self.fields.get(self.owner(analyzer, function), {}).copy()
 
+    def field_identity(self, analyzer: Analyzer, name: str, frame: Frame) -> Any:
+        if name in analyzer.static_fields:
+            return (StorageKey.STATIC_FIELDS, self.owner(analyzer, analyzer.function))
+        return self.receiver_identity(analyzer, None, frame)
+
+    def initialize_fields(self, analyzer: Analyzer, frame: Frame) -> None:
+        initial = self.initial_fields(analyzer, analyzer.function)
+        receiver_fields = frame.object_fields.get(self.receiver_identity(analyzer, None, frame), {})
+        unknown = receiver_fields.get(StorageKey.UNKNOWN_FIELDS)
+        for name, type_name in analyzer.field_types.items():
+            storage = frame.object_fields.setdefault(self.field_identity(analyzer, name, frame), {})
+            if name not in storage:
+                storage[name] = (
+                    unknown
+                    if unknown is not None and name not in analyzer.static_fields
+                    else initial.get(name, Value(type_name=type_name))
+                )
+            if name not in frame.local_names:
+                frame.values[name] = storage[name]
+
+    def unavailable_field(self, analyzer: Analyzer, frame: Frame, node: Any) -> Value:
+        node = node if node is not None else analyzer.function
+        caller, call, incoming = self.field_inputs[-1] if self.field_inputs else (analyzer, None, Value())
+        self.partial("receiver field inventory unavailable", caller, call=call, node=node)
+        values = [
+            incoming,
+            *frame.object_fields.get(self.receiver_identity(analyzer, None, frame), {}).values(),
+        ]
+        values.extend(frame.object_fields.get(StorageKey.UNRESOLVED_FIELDS, {}).values())
+        for key, fields in frame.object_fields.items():
+            if isinstance(key, tuple) and key[0] is StorageKey.STATIC_FIELDS:
+                values.extend(fields.values())
+        return analyzer.changed(node, self.merge(values))
+
+    def identifier(self, analyzer: Analyzer, name: str, frame: Frame, node: Any = None) -> Value | None:
+        if name in frame.local_names:
+            return None
+        if name in analyzer.unavailable_fields:
+            return self.unavailable_field(analyzer, frame, node)
+        if name in analyzer.field_types:
+            storage = frame.object_fields.get(self.field_identity(analyzer, name, frame), {})
+            return storage.get(name, frame.values.get(name))
+        if name not in frame.values and name not in frame.types:
+            unknown = frame.object_fields.get(self.receiver_identity(analyzer, None, frame), {}).get(
+                StorageKey.UNKNOWN_FIELDS
+            )
+            if unknown is not None:
+                return unknown
+            if (
+                self.field_inputs
+                and node is not None
+                and not analyzer.type_reference(node)
+                and analyzer.string_value(node, frame) is None
+            ):
+                return self.unavailable_field(analyzer, frame, node)
+        return None
+
+    def assign_identifier(self, analyzer: Analyzer, name: str, value: Value, frame: Frame) -> None:
+        if name in analyzer.field_types and name not in frame.local_names:
+            frame.object_fields.setdefault(self.field_identity(analyzer, name, frame), {})[name] = value
+            if name in analyzer.static_fields:
+                self.remember_static(self.owner(analyzer, analyzer.function), name, value)
+
+    def remember_static(self, owner: str, name: str, value: Value) -> None:
+        if value.traces:
+            fields = self.fields.setdefault(owner, {})
+            fields[name] = self.merge([fields.get(name, Value()), value])
+
+    def static_owner(self, analyzer: Analyzer, base: Any, member: str, frame: Frame) -> str | None:
+        value = analyzer.value(base, frame)
+        declared = value.type_name or analyzer.key(base)
+        for owner in self.class_owners(analyzer, declared, base):
+            for source, nominal in self.class_definitions[owner]:
+                if any(
+                    name == member and static for name, _expr, _type, static in source.nominal_fields(nominal)
+                ):
+                    return owner
+        return None
+
+    def unavailable_result(
+        self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
+    ) -> Value:
+        identity = self.receiver_identity(analyzer, call.receiver, frame)
+        stored = list(frame.object_fields.get(identity, {}).values())
+        declared = receiver.type_name or (analyzer.key(call.receiver) if call.receiver is not None else "")
+        for owner in self.class_owners(analyzer, declared, call.node):
+            stored.extend(frame.object_fields.get((StorageKey.STATIC_FIELDS, owner), {}).values())
+        stored.extend(frame.object_fields.get(StorageKey.UNRESOLVED_FIELDS, {}).values())
+        return analyzer.changed(call.node, _union([receiver, *args, *stored]))
+
+    def unavailable_write(
+        self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
+    ) -> None:
+        value = self.unavailable_result(analyzer, call, receiver, args, frame)
+        if not value.traces:
+            return
+        identity = self.receiver_identity(analyzer, call.receiver, frame)
+        fields = frame.object_fields.setdefault(identity, {})
+        for name, previous in list(fields.items()):
+            fields[name] = self.weak_write(analyzer, call, previous, value, value)
+        fields[StorageKey.UNKNOWN_FIELDS] = value
+        shared = frame.object_fields.setdefault(StorageKey.UNRESOLVED_FIELDS, {})
+        shared[StorageKey.UNKNOWN_FIELDS] = self.merge(
+            [shared.get(StorageKey.UNKNOWN_FIELDS, Value()), value]
+        )
+
     def finish(self, analyzer: Analyzer, function: Any, frame: Frame) -> None:
         owner = self.owner(analyzer, function)
         fields = self.fields.setdefault(owner, {})
         for name in analyzer.field_types:
-            value = frame.values.get(name, Value())
+            value = frame.object_fields.get(self.field_identity(analyzer, name, frame), {}).get(
+                name, frame.values.get(name, Value())
+            )
             if value.traces:
                 previous = fields.get(name, Value())
                 fields[name] = _union([previous, value], value.category, value.type_name)
 
     def member(self, analyzer: Analyzer, base: Any, member: str, frame: Frame) -> Value | None:
         if analyzer.key(base) in {"this", "self"}:
-            return None
-        identity = self.receiver_identity(analyzer, base, frame)
+            if member in analyzer.unavailable_fields:
+                return self.unavailable_field(analyzer, frame, base)
+            identity = self.field_identity(analyzer, member, frame)
+        else:
+            static = self.static_owner(analyzer, base, member, frame)
+            identity = (
+                (StorageKey.STATIC_FIELDS, static)
+                if static is not None
+                else self.receiver_identity(analyzer, base, frame)
+            )
         fields = frame.object_fields.get(identity, {})
-        return fields.get(member, fields.get("__unknown_fields__"))
+        result = fields.get(member, fields.get(StorageKey.UNKNOWN_FIELDS))
+        if result is None and isinstance(identity, tuple) and identity[0] is StorageKey.STATIC_FIELDS:
+            return self.fields.get(identity[1], {}).get(member)
+        if (
+            result is None
+            and analyzer.key(base) in {"this", "self"}
+            and member not in analyzer.field_types
+            and self.field_inputs
+        ):
+            return self.unavailable_field(analyzer, frame, base)
+        return result
 
     def assign_member(self, analyzer: Analyzer, left: Any, value: Value, frame: Frame) -> None:
         navigation = analyzer.navigation(left)
         if not navigation:
+            name = analyzer.key(left)
+            if name and name not in frame.local_names:
+                frame.object_fields.setdefault(self.receiver_identity(analyzer, None, frame), {})[name] = (
+                    value
+                )
+                frame.object_fields.setdefault(StorageKey.UNRESOLVED_FIELDS, {})[name] = value
+                storage = frame.object_fields.setdefault(self.receiver_identity(analyzer, None, frame), {})
+                storage[StorageKey.UNKNOWN_FIELDS] = self.merge(
+                    [storage.get(StorageKey.UNKNOWN_FIELDS, Value()), value]
+                )
+                caller, call, _incoming = (
+                    self.field_inputs[-1] if self.field_inputs else (analyzer, None, Value())
+                )
+                self.partial("receiver field inventory unavailable", caller, call=call, node=left)
             return
         base, member = navigation
-        if analyzer.key(base) in {"this", "self"} and member in analyzer.field_types:
-            frame.values[member] = value
+        if analyzer.key(base) in {"this", "self"}:
+            identity = self.field_identity(analyzer, member, frame)
+            if member in analyzer.field_types and member not in frame.local_names:
+                frame.values[member] = value
+            if member not in analyzer.field_types:
+                frame.object_fields.setdefault(StorageKey.UNRESOLVED_FIELDS, {})[member] = value
+                caller, call, _incoming = (
+                    self.field_inputs[-1] if self.field_inputs else (analyzer, None, Value())
+                )
+                self.partial("receiver field inventory unavailable", caller, call=call, node=left)
         else:
-            identity = self.receiver_identity(analyzer, base, frame)
-            frame.object_fields.setdefault(identity, {})[member] = value
+            static = self.static_owner(analyzer, base, member, frame)
+            identity = (
+                (StorageKey.STATIC_FIELDS, static)
+                if static is not None
+                else self.receiver_identity(analyzer, base, frame)
+            )
+        frame.object_fields.setdefault(identity, {})[member] = value
+        if isinstance(identity, tuple) and identity[0] is StorageKey.STATIC_FIELDS:
+            self.remember_static(identity[1], member, value)
 
     @staticmethod
     def enclosing(node: Any, types: set[str]) -> Any:
@@ -1199,7 +1369,7 @@ class NativeFlow:
                 if args:
                     self.partial("constructor field mapping unavailable", analyzer, call=call)
                     unknown = self.incomplete(analyzer.changed(call.node, _union(args)))
-                    frame.object_fields[identity] = {"__unknown_fields__": unknown}
+                    frame.object_fields[identity] = {StorageKey.UNKNOWN_FIELDS: unknown}
                     return Value(unknown.traces, type_name=constructor_type, identity=identity)
                 return Value(type_name=constructor_type, identity=identity)
             if (
@@ -1213,7 +1383,7 @@ class NativeFlow:
                 self.partial("constructor field mapping unavailable", analyzer, call=call)
                 identity = f"{analyzer.path}:{call.node.start_byte}"
                 unknown = self.incomplete(analyzer.changed(call.node, _union(args)))
-                frame.object_fields[identity] = {"__unknown_fields__": unknown}
+                frame.object_fields[identity] = {StorageKey.UNKNOWN_FIELDS: unknown}
                 return Value(unknown.traces, type_name=constructor_type or call.name, identity=identity)
             if (
                 any(argument.traces for argument in args)
@@ -1259,10 +1429,11 @@ class NativeFlow:
                 identity = f"{analyzer.path}:{call.node.start_byte}"
                 self.allocation(analyzer, call, constructor_type, identity)
                 unknown = self.incomplete(analyzer.changed(call.node, _union([receiver, *args])))
-                frame.object_fields[identity] = {"__unknown_fields__": unknown}
+                frame.object_fields[identity] = {StorageKey.UNKNOWN_FIELDS: unknown}
                 return Value(unknown.traces, type_name=constructor_type, identity=identity)
             self.partial("unresolved callable identity or argument signature", analyzer, call=call)
-            return analyzer.changed(call.node, _union([receiver, *args]))
+            self.unavailable_write(analyzer, call, receiver, args, frame)
+            return self.unavailable_result(analyzer, call, receiver, args, frame)
         if len(targets) > 1:
             self.partial("ambiguous direct call", analyzer, call=call)
         constructor = all(target.node.type == "constructor_declaration" for target in targets)
@@ -1303,7 +1474,24 @@ class NativeFlow:
         unknown_write = analyzer.changed(call.node, _union(uncertain_values))
         state = tuple(
             sorted(
-                (name, self.signature(value)) for name, value in frame.object_fields.get(identity, {}).items()
+                (
+                    (name, self.signature(value))
+                    for name, value in frame.object_fields.get(identity, {}).items()
+                ),
+                key=repr,
+            )
+        )
+        shared_state = tuple(
+            sorted(
+                (
+                    (key, name, self.signature(value))
+                    for key, fields in frame.object_fields.items()
+                    if key is StorageKey.UNRESOLVED_FIELDS
+                    or isinstance(key, tuple)
+                    and key[0] is StorageKey.STATIC_FIELDS
+                    for name, value in fields.items()
+                ),
+                key=repr,
             )
         )
         guards = tuple(
@@ -1316,6 +1504,7 @@ class NativeFlow:
             call.node.start_byte,
             tuple(self.signature(value) for value in [receiver, *args]),
             state,
+            shared_state,
             guards,
             concrete,
         )
@@ -1330,11 +1519,13 @@ class NativeFlow:
                 or self.evaluations >= MAX_CALL_EVALUATIONS
             ):
                 self.partial("recursion or call evaluation budget", analyzer, call=call)
-                results.append(analyzer.changed(call.node, _union([receiver, *args])))
+                self.unavailable_write(analyzer, call, receiver, args, frame)
+                results.append(self.unavailable_result(analyzer, call, receiver, args, frame))
                 continue
             if target.body is None:
                 self.partial("callable body unavailable", analyzer, call=call)
-                results.append(analyzer.changed(call.node, _union([receiver, *args])))
+                self.unavailable_write(analyzer, call, receiver, args, frame)
+                results.append(self.unavailable_result(analyzer, call, receiver, args, frame))
                 continue
             callee = target.analyzer
             saved = {name: getattr(callee, name) for name in CONTEXT}
@@ -1347,6 +1538,10 @@ class NativeFlow:
             ):
                 context = None
             self.receiver_context.append(context)
+            self.receiver_field_context.append(
+                None if self.declaration_tokens(target.node) & {"static", "class"} else identity
+            )
+            self.field_inputs.append((analyzer, call, unknown_write))
             self.call_sites.append(f"{analyzer.path}:{call.node.start_byte}")
             self.evaluations += 1
             try:
@@ -1358,16 +1553,11 @@ class NativeFlow:
                     local.values.update(frame.values)
                     local.types.update(frame.types)
                     local.constants.update(frame.constants)
-                if not constructor and local_receiver:
-                    local.values.update(
-                        {name: frame.values[name] for name in callee.field_types if name in frame.values}
-                    )
-                else:
-                    local.values.update(frame.object_fields.get(identity, {}))
-                    unknown = local.values.pop("__unknown_fields__", None)
-                    if unknown is not None:
-                        for name in callee.field_types:
-                            local.values[name] = unknown
+                    local.local_names.update(frame.local_names)
+                # Populate from the actual receiver, retaining the unknown-field
+                # sentinel and explicit field overrides. Parameters remain
+                # separate from `this`/`self` even when names coincide.
+                self.initialize_fields(callee, local)
                 for (name, type_name, parameter), argument in zip(target.parameters, args, strict=True):
                     bound = argument.bind(analyzer.point(call.node)).bind(callee.point(parameter))
                     local.values[name] = Value(
@@ -1436,9 +1626,7 @@ class NativeFlow:
                         for owner, identity, origins in callee.pending_paths
                         if origins <= returned_origins
                     )
-                writes.append(
-                    {name: local.values[name] for name in callee.field_types if name in local.values}
-                )
+                writes.append(local.object_fields.get(identity, {}).copy())
                 if dynamic:
                     for object_identity, fields in local.object_fields.items():
                         previous = prior_objects.get(object_identity, {})
@@ -1451,7 +1639,7 @@ class NativeFlow:
                                     fields.get(name, Value()),
                                     unknown_write,
                                 )
-                                for name in set(previous) | set(fields) | {"__unknown_fields__"}
+                                for name in set(previous) | set(fields) | {StorageKey.UNKNOWN_FIELDS}
                             }
                         else:
                             frame.object_fields[object_identity] = fields
@@ -1460,6 +1648,8 @@ class NativeFlow:
             finally:
                 self.stack.pop()
                 self.receiver_context.pop()
+                self.receiver_field_context.pop()
+                self.field_inputs.pop()
                 self.call_sites.pop()
                 self.active_guards = saved_guards
                 self.active_conditions = saved_conditions
@@ -1483,12 +1673,18 @@ class NativeFlow:
                 name: self.weak_write(
                     analyzer, call, previous.get(name, Value()), merged.get(name, Value()), unknown_write
                 )
-                for name in set(previous) | set(merged) | {"__unknown_fields__"}
+                for name in set(previous) | set(merged) | {StorageKey.UNKNOWN_FIELDS}
             }
         frame.object_fields[identity] = merged
         if not constructor and local_receiver:
             frame.values.update(
-                {name: value for name, value in merged.items() if name in analyzer.field_types}
+                {
+                    name: value
+                    for name, value in merged.items()
+                    if isinstance(name, str)
+                    and name in analyzer.field_types
+                    and name not in frame.local_names
+                }
             )
         result = (
             Value(type_name=targets[0].owner if len(targets) == 1 else call.name, identity=identity)

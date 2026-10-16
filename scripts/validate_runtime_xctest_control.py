@@ -419,6 +419,55 @@ def verify_receipt(
     }
 
 
+def xcode_diagnostic(raw: bytes, action: str, status: int | None) -> dict:
+    """Only fixed labels and own test line numbers leave NEW Xcode output."""
+    if action not in {"build-for-testing", "test-without-building"}:
+        raise ValueError("NEW Xcode action differs")
+    text = raw[: transport.MAX_OUTPUT].decode(errors="replace")
+    test_lines = TEST_SOURCE.splitlines()
+    waits = [i for i, line in enumerate(test_lines, 1) if "waitForExpectations(" in line]
+    issues = []
+    for line in text.splitlines():
+        match = re.search(r"CallbackTests\.swift:(\d+)(?::\d+)?:\s+error:", line)
+        if match is None:
+            continue
+        number = int(match[1])
+        if not 1 <= number <= len(test_lines):
+            continue
+        category = (
+            "expectation-timeout"
+            if "Asynchronous wait failed" in line or "unfulfilled expectations" in line
+            else "assertion-failed"
+            if "XCTAssert" in line
+            else "own-test-error"
+        )
+        issues.append(
+            {
+                "source_line": number,
+                "category": category,
+                "probe": "cold" if number == waits[0] else "warm" if number == waits[1] else "setup-or-other",
+            }
+        )
+        if len(issues) == 16:
+            break
+    phrases = {
+        "runner-never-started": "never began executing tests",
+        "early-runner-exit": "Early unexpected exit",
+        "app-launch-failed": "Failed to launch",
+        "destination-unavailable": "Unable to find a destination",
+        "test-failed": "** TEST EXECUTE FAILED **",
+    }
+    return {
+        "state": "diagnostic-only",
+        "action": action,
+        "exit_status": status,
+        "stdout_sha256": digest(raw),
+        "stdout_bytes": len(raw),
+        "own_test_issues": issues,
+        "categories": [key for key, phrase in phrases.items() if phrase in text],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", required=True, type=Path)
@@ -492,13 +541,16 @@ def main():
             "-disableAutomaticPackageResolution",
             "-skipPackageUpdates",
         ]
-        commands.run(xcode + ["build-for-testing"], timeout=600)
+        output = commands.run(xcode + ["build-for-testing"], timeout=600, optional=True)
+        evidence["xcode_build"] = xcode_diagnostic(output, "build-for-testing", commands.last_status)
+        if commands.last_status != 0:
+            raise ValueError("NEW Xcode build failed")
         built = derived / "Build/Products/Debug-iphonesimulator/Callback.app"
         build = {
             "executable_sha256": digest((built / "Callback").read_bytes()),
             "info_plist_sha256": digest((built / "Info.plist").read_bytes()),
         }
-        commands.run(
+        output = commands.run(
             xcode
             + [
                 "test-without-building",
@@ -507,7 +559,11 @@ def main():
                 str(root / "test-result.xcresult"),
             ],
             timeout=600,
+            optional=True,
         )
+        evidence["xcode_test"] = xcode_diagnostic(output, "test-without-building", commands.last_status)
+        if commands.last_status != 0:
+            raise ValueError("NEW Xcode callback test failed")
         evidence["xctest_exit_success"] = True
         default_set = transport.ios_default_set(env)
         containers = {}
