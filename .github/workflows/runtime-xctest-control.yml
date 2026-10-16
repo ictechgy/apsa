@@ -1,0 +1,49 @@
+name: NEW hosted Xcode UI callback control
+
+on:
+  push:
+    branches: ["validation/apsa-final-*"]
+    paths:
+      - scripts/validate_runtime_xctest_control.py
+      - tests/test_runtime_xctest_control.py
+      - .github/workflows/runtime-xctest-control.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  callback-control:
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: "0.12.1"
+          python-version: "3.12.13"
+          enable-cache: false
+      - run: uv sync --locked --extra dev
+      - name: Pure generation and receipt binding controls
+        run: .venv/bin/python -B -m pytest -q tests/test_runtime_xctest_control.py --basetemp "$RUNNER_TEMP/xctest-pure"
+      - name: NEW Xcode-built scene app and actual XCUITest cold and warm callbacks
+        run: .venv/bin/python -B -m scripts.validate_runtime_xctest_control --work "$RUNNER_TEMP/runtime-new-xctest"
+      - name: Cleanup only journaled NEW device after interruption
+        if: always()
+        timeout-minutes: 5
+        run: .venv/bin/python -B scripts/validate_runtime_transport.py --platform ios --cleanup-only --work "$RUNNER_TEMP/runtime-new-xctest"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: new-xctest-callback-control-digests
+          path: |
+            ${{ runner.temp }}/runtime-new-xctest/xctest-control.json
+            ${{ runner.temp }}/runtime-new-xctest/commands.json
+            ${{ runner.temp }}/runtime-new-xctest/cleanup.json
+            ${{ runner.temp }}/runtime-new-xctest/cleanup-commands.json
+          if-no-files-found: warn
+          retention-days: 14
