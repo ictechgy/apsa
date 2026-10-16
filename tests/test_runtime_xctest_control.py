@@ -38,9 +38,12 @@ def receipt():
 
 
 @pytest.mark.parametrize("initial_state", ["prelaunched", "fresh-install"])
-def test_project_keeps_exact_new_identity_and_real_ui_callback_assertions(tmp_path, initial_state):
+@pytest.mark.parametrize("url_driver", ["app-open", "system-open"])
+def test_project_keeps_exact_new_identity_and_real_ui_callback_assertions(
+    tmp_path, initial_state, url_driver
+):
     root = tmp_path / "new"
-    result = control.write_project(root, PACKAGE, SCHEME, NONCES, initial_state)
+    result = control.write_project(root, PACKAGE, SCHEME, NONCES, initial_state, url_driver)
     info = plistlib.loads((root / "Info.plist").read_bytes())
     assert info["CFBundleIdentifier"] == PACKAGE
     assert info["CFBundleURLTypes"][0]["CFBundleURLSchemes"] == [SCHEME]
@@ -49,7 +52,10 @@ def test_project_keeps_exact_new_identity_and_real_ui_callback_assertions(tmp_pa
     assert testable is not None
     assert testable.get("parallelizable") == "NO"
     test = (root / "CallbackTests.swift").read_text()
-    assert test.count("app.open(URL(string:") == 2
+    dispatch = (
+        "app.open(URL(string:" if url_driver == "app-open" else "XCUIDevice.shared.system.open(URL(string:"
+    )
+    assert test.count(dispatch) == 2
     assert test.count("waitForExpectations(timeout: 30)") == 2
     assert "app.terminate()" in test
     assert ("if true {" if initial_state == "prelaunched" else "if false {") in test
@@ -189,4 +195,10 @@ def test_callback_diagnostic_rejects_unexpected_data_without_context_leak(raw):
 def test_unknown_initial_state_does_not_generate_a_project(tmp_path):
     with pytest.raises(ValueError):
         control.write_project(tmp_path / "new", PACKAGE, SCHEME, NONCES, "existing-user-app")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_unknown_url_driver_does_not_generate_a_project(tmp_path):
+    with pytest.raises(ValueError):
+        control.write_project(tmp_path / "new", PACKAGE, SCHEME, NONCES, "fresh-install", "external-browser")
     assert list(tmp_path.iterdir()) == []

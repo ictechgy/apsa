@@ -132,15 +132,26 @@ def ascii_plist(value) -> str:
 
 
 def write_project(
-    root: Path, package: str, scheme: str, nonces: tuple[str, str], initial_state: str = "prelaunched"
+    root: Path,
+    package: str,
+    scheme: str,
+    nonces: tuple[str, str],
+    initial_state: str = "prelaunched",
+    url_driver: str = "app-open",
 ) -> dict:
     """Pure source generation; does not look up or run any host tool."""
     checked_inputs(package, scheme, nonces)
     if initial_state not in {"prelaunched", "fresh-install"}:
         raise ValueError("NEW callback initial state differs")
+    if url_driver not in {"app-open", "system-open"}:
+        raise ValueError("NEW callback URL driver differs")
     root.mkdir(exist_ok=False)
     urls = tuple(f"{scheme}://callback?nonce={nonce}" for nonce in nonces)
     test = TEST_SOURCE.replace("__PRELAUNCH__", "true" if initial_state == "prelaunched" else "false")
+    if url_driver == "system-open":
+        # Public OS-default routing to this newly registered random scheme only.
+        # https://developer.apple.com/documentation/xcuiautomation/xcuisystem
+        test = test.replace("app.open(URL(string:", "XCUIDevice.shared.system.open(URL(string:")
     values = {
         "PACKAGE": package,
         "COLD_URL": urls[0],
@@ -559,6 +570,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--initial-state", choices=("prelaunched", "fresh-install"), default="prelaunched")
+    parser.add_argument("--url-driver", choices=("app-open", "system-open"), default="app-open")
     args = parser.parse_args()
     root = args.work.resolve()
     env = dict(os.environ)
@@ -576,6 +588,7 @@ def main():
         "acquisition": "unsupported",
         "r02_acceptance": False,
         "initial_state": args.initial_state,
+        "url_driver": args.url_driver,
         "state": "inconclusive",
         "terminal": False,
         "commit": env.get("GITHUB_SHA"),
@@ -589,7 +602,7 @@ def main():
         scheme = "a" + uuid.uuid4().hex
         nonces = (uuid.uuid4().hex + uuid.uuid4().hex, uuid.uuid4().hex + uuid.uuid4().hex)
         project_root = root / "generated"
-        generated = write_project(project_root, package, scheme, nonces, args.initial_state)
+        generated = write_project(project_root, package, scheme, nonces, args.initial_state, args.url_driver)
         evidence["generated_source_sha256"] = generated["generated_source_sha256"]
         simctl = ["/usr/bin/xcrun", "simctl"]
         device = str(
