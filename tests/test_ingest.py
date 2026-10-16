@@ -14,6 +14,91 @@ from mobile_audit.maswe import coverage_matrix
 from mobile_audit.verify import verify_claim
 
 
+@pytest.mark.parametrize("field", ["reference", "path", "tags", "tag-bytes"])
+def test_shared_sarif_metadata_has_field_bounds(field):
+    from mobile_audit.ingest import MAX_PATH_BYTES, MAX_REFERENCE_BYTES, MAX_RULE_TAGS, MAX_TAG_BYTES
+
+    raw = document([result("Entry.java")])
+    rule = raw["runs"][0]["tool"]["driver"]["rules"][0]
+    if field == "reference":
+        rule["helpUri"] = "https://example.invalid/" + "x" * MAX_REFERENCE_BYTES
+    elif field == "path":
+        raw["runs"][0]["results"] = [result("x" * MAX_PATH_BYTES + ".java")]
+    elif field == "tags":
+        rule["properties"]["tags"] = [f"CWE-{index}" for index in range(MAX_RULE_TAGS + 1)]
+    else:
+        rule["properties"]["tags"] = ["한" * (MAX_TAG_BYTES // 3 + 1)]
+    with pytest.raises(ValueError, match="Invalid SARIF"):
+        external_findings(json.dumps(raw).encode(), "owned")
+
+
+def test_sarif_expansion_budget_rejects_shared_metadata_before_report_save(store, tmp_path, monkeypatch):
+    import mobile_audit.ingest as module
+    from mobile_audit.audit import summarize
+    from mobile_audit.core import now, uid
+
+    base = {
+        "id": uid("audit"),
+        "created": now(),
+        "target": str(tmp_path),
+        "inventory": {"platforms": []},
+        "findings": [],
+        "coverage": [],
+        "warnings": [],
+        "intel_snapshot": [],
+    }
+    base["summary"] = summarize(base)
+    store.save_report(base)
+    raw = document([result(f"Entry{index}.java") for index in range(64)])
+    raw["runs"][0]["tool"]["driver"]["rules"][0]["helpUri"] = "https://example.invalid/" + "x" * 1000
+    path = tmp_path / "owned.sarif"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setattr(module, "MAX_EXPANDED_BYTES", 16 * 1024)
+    with pytest.raises(ValueError, match="expanded metadata"):
+        ingest(store, base["id"], path, "owned")
+    assert len(store.reports()) == 1 and store.report(base["id"]) == base
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://owned-user:owned-password@example.invalid/help",
+        "https://example.invalid/password=OWNED_SYNTHETIC_SECRET",
+        "https://example.invalid/access_token%3DOWNED_SYNTHETIC_SECRET",
+    ],
+)
+def test_sarif_credential_reference_is_rejected_without_echoing_value(uri):
+    raw = document([result("Entry.java")])
+    raw["runs"][0]["tool"]["driver"]["rules"][0]["helpUri"] = uri
+    with pytest.raises(ValueError, match="unsafe reference") as error:
+        external_findings(json.dumps(raw).encode(), "owned")
+    assert "OWNED_SYNTHETIC_SECRET" not in str(error.value) and "owned-password" not in str(error.value)
+
+
+def test_sarif_reference_query_and_fragment_do_not_reach_assistant_context():
+    from mobile_audit.output import assistant_context
+
+    raw = document([result("Entry.java")])
+    raw["runs"][0]["tool"]["driver"]["rules"][0]["helpUri"] = (
+        "https://example.invalid/help?arbitrary=OWNED_SYNTHETIC_SECRET#OWNED_FRAGMENT"
+    )
+    findings, _ = external_findings(json.dumps(raw).encode(), "owned")
+    assert findings[0]["references"] == ["https://example.invalid/help"]
+    report = {
+        "id": "owned",
+        "created": "2026-10-16T00:00:00Z",
+        "target": "/synthetic/owned",
+        "findings": findings,
+        "coverage": [],
+        "summary": {},
+        "inventory": {},
+        "warnings": [],
+        "intel_snapshot": [],
+    }
+    context = json.dumps(assistant_context(report))
+    assert "OWNED_SYNTHETIC_SECRET" not in context and "OWNED_FRAGMENT" not in context
+
+
 def test_raw_rule_identity_cannot_borrow_another_rules_baseline_or_waiver():
     from mobile_audit.policy import evaluate
 

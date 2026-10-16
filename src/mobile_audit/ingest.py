@@ -13,6 +13,7 @@ import json
 import math
 import re
 from pathlib import Path, PurePosixPath
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from .core import canonical_json, digest, finding, now, read_bounded, redact, severity_rank, uid
 from .maswe import finding_weaknesses, weakness_index
@@ -21,6 +22,64 @@ MAX_SARIF_BYTES = 16 * 1024 * 1024
 MAX_RESULTS = 5000
 LINE_WINDOW = 3
 MAX_OBSERVATIONS = 20
+MAX_REFERENCE_BYTES = 2048
+MAX_PATH_BYTES = 4096
+MAX_RULE_TAGS = 64
+MAX_TAG_BYTES = 256
+MAX_EXPANDED_BYTES = 8 * 1024 * 1024
+
+
+def _bounded_string(value: object, label: str, limit: int) -> str:
+    text = _string(value, label)
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeError:
+        raise ValueError(f"Invalid SARIF {label}: invalid Unicode") from None
+    if size > limit:
+        raise ValueError(f"Invalid SARIF {label}: exceeds {limit} UTF-8 bytes")
+    return text
+
+
+def _canonical(value: object) -> str:
+    try:
+        return canonical_json(value)
+    except (ValueError, RecursionError, UnicodeError):
+        raise ValueError("Invalid SARIF: metadata cannot be canonicalized") from None
+
+
+def _reference(rule: dict) -> list[str]:
+    uri = _bounded_string(rule.get("helpUri"), "rule help URI", MAX_REFERENCE_BYTES)
+    if not uri.startswith("https://"):
+        return []
+    try:
+        parts = urlsplit(uri)
+        if not parts.hostname or parts.username is not None or parts.password is not None:
+            raise ValueError
+        decoded_path = unquote(parts.path)
+        if any(char.isspace() or ord(char) < 32 for char in uri):
+            raise ValueError
+        if redact(CREDENTIAL.sub(r"\1[REDACTED]", decoded_path)) != decoded_path:
+            raise ValueError
+    except ValueError:
+        raise ValueError("Invalid SARIF rule help URI: unsafe reference") from None
+    # Query strings and fragments are unnecessary for corroboration and may
+    # contain credentials under arbitrary parameter names.
+    return [urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))]
+
+
+class _ExpansionBudget:
+    def __init__(self) -> None:
+        self.used = 0
+
+    def encode(self, value: object) -> str:
+        text = _canonical(value)
+        try:
+            self.used += len(text.encode("utf-8"))
+        except UnicodeError:
+            raise ValueError("Invalid SARIF: metadata contains invalid Unicode") from None
+        if self.used > MAX_EXPANDED_BYTES:
+            raise ValueError("SARIF expanded metadata exceeds 8 MiB; split the import")
+        return text
 
 
 def _slug(value: str, limit: int = 60) -> str:
@@ -83,20 +142,25 @@ def _severity(rule: dict, result: dict) -> str:
 
 def _cwes(rule: dict) -> list[str]:
     tags = _object(rule.get("properties"), "rule properties").get("tags") or []
-    found = []
+    if isinstance(tags, list) and len(tags) > MAX_RULE_TAGS:
+        raise ValueError("Invalid SARIF rule tags: more than 64 entries")
+    found = set()
     for tag in tags if isinstance(tags, list) else []:
         if not isinstance(tag, str):
             continue
+        tag = _bounded_string(tag, "rule tag", MAX_TAG_BYTES)
         match = re.search(r"cwe[-/]?(\d{1,5})", tag, re.I)
-        if match and f"CWE-{int(match[1])}" not in found:
-            found.append(f"CWE-{int(match[1])}")
-    return found
+        if match:
+            found.add(f"CWE-{int(match[1])}")
+    return sorted(found)
 
 
 def _location(result: dict, root: str) -> tuple[str | None, int | None]:
     for location in _array(result.get("locations"), "result locations"):
         physical = _object(_object(location, "location").get("physicalLocation"), "physical location")
-        uri = _string(_object(physical.get("artifactLocation"), "artifact location").get("uri"), "URI")
+        uri = _bounded_string(
+            _object(physical.get("artifactLocation"), "artifact location").get("uri"), "URI", MAX_PATH_BYTES
+        )
         if not uri or "://" in uri or uri.startswith("/") or ".." in PurePosixPath(uri).parts:
             continue
         if root and uri.startswith(root + "/"):
@@ -125,6 +189,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
     label = _slug(tool, 40)
     tool_key = digest(tool.encode())
     groups: dict[str, dict] = {}
+    expansion = _ExpansionBudget()
     drivers, skipped, total, accepted = [], 0, 0, 0
     for run_index, run_value in enumerate(_array(document.get("runs"), "runs")):
         run = _object(run_value, "run")
@@ -132,9 +197,11 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
         driver_name = _string(driver.get("name"), "driver name")
         driver_key = digest(driver_name.encode())
         public_driver = {"name": _text(driver_name, 80), "version": _text(driver.get("version"), 40)}
-        drivers.append(public_driver)
+        if len(drivers) < 10:
+            drivers.append(public_driver)
         named_keys: dict[str, tuple[str, str]] = {}
         unnamed_descriptors: dict[int | None, str] = {}
+        metadata: dict[int, tuple[list[str], list[str]]] = {}
         # Keep positional slots: dropping malformed entries changes the meaning of ruleIndex.
         rules = _array(driver.get("rules"), "rules")
         by_id = {}
@@ -164,9 +231,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
             if raw_rule_name:
                 if raw_rule_name not in named_keys:
                     named_keys[raw_rule_name] = (
-                        digest(
-                            canonical_json(["named-rule-v1", tool_key, driver_key, raw_rule_name]).encode()
-                        ),
+                        digest(_canonical(["named-rule-v1", tool_key, driver_key, raw_rule_name]).encode()),
                         _slug(raw_rule_name),
                     )
                 namespace, display_rule = named_keys[raw_rule_name]
@@ -176,15 +241,15 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
                 # descriptor once so repeated indices cannot amplify its size.
                 descriptor_index = index if type(index) is int and 0 <= index < len(rules) else None
                 if descriptor_index not in unnamed_descriptors:
-                    unnamed_descriptors[descriptor_index] = digest(canonical_json(rule).encode())
+                    unnamed_descriptors[descriptor_index] = digest(_canonical(rule).encode())
                 namespace = digest(
-                    canonical_json(
+                    _canonical(
                         [
                             "unnamed-result-v1",
                             tool_key,
                             driver_key,
                             unnamed_descriptors[descriptor_index],
-                            digest(canonical_json(result).encode()),
+                            digest(_canonical(result).encode()),
                         ]
                     ).encode()
                 )
@@ -193,7 +258,9 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
             if path is None:
                 skipped += 1
                 continue
-            cwes = _cwes(rule)
+            if id(rule) not in metadata:
+                metadata[id(rule)] = (_cwes(rule), _reference(rule))
+            cwes, references = metadata[id(rule)]
             maswe = sorted({w for cwe in cwes for w in cwe_to_maswe.get(cwe, [])})
             evidence: dict[str, object] = {
                 "path": path,
@@ -206,7 +273,6 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
             if line:
                 evidence["line"] = line
             title = _object(rule.get("shortDescription"), "rule short description").get("text") or rule_name
-            help_uri = _string(rule.get("helpUri"), "rule help URI")
             # Slugs are display labels: distinct raw rule/driver names can share
             # one. Keep their exact namespace in the rule used by all identity,
             # baseline, waiver and comparison consumers.
@@ -218,7 +284,7 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
                 [evidence],
                 "Review the imported result in its tool; APSA did not verify it.",
                 "",
-                [help_uri] if help_uri.startswith("https://") else [],
+                references,
                 origin="external",
                 maswe=maswe,
                 cwe=cwes,
@@ -231,7 +297,10 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
                 "severity": item["severity"],
                 "cwe": sorted(cwes),
             }
-            representative = (-severity_rank(item["severity"]), canonical_json(item))
+            # Charge each candidate and observation before retaining any
+            # canonical representative or shared metadata expansion.
+            representative = (-severity_rank(item["severity"]), expansion.encode(item))
+            observation_key = expansion.encode(observation)
             group = groups.setdefault(
                 item["id"],
                 {
@@ -248,9 +317,10 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
                 group["finding"], group["representative"] = item, representative
             for key in ("cwe", "maswe", "references"):
                 group[key].update(item[key])
-            group["observations"][canonical_json(observation)] = observation
+            group["observations"][observation_key] = observation
             group["count"] += 1
     findings = []
+    emitted = _ExpansionBudget()
     for group in groups.values():
         item = group["finding"]
         for key in ("cwe", "maswe", "references"):
@@ -262,6 +332,9 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
         ]
         evidence["external_observation_count"] = group["count"]
         evidence["external_observations_truncated"] = len(observations) > MAX_OBSERVATIONS
+        # Unions and attached observations also count toward the final output
+        # budget. Reject the entire import before saving a derived report.
+        emitted.encode(item)
         findings.append(item)
     return findings, {
         "tool": label,
