@@ -463,7 +463,8 @@ class NativeFlow:
             declared = match[1] or match[2]
         else:
             declared = ""
-        return Value(root.traces, type_name=declared, identity=identity)
+        stored = frame.object_fields.get(identity, {}).get(StorageKey.UNKNOWN_FIELDS, Value())
+        return Value(_union([root, stored]).traces, type_name=declared, identity=identity)
 
     def receiver_identity(self, analyzer: Analyzer, receiver: Any, frame: Frame) -> str:
         if receiver is None or analyzer.key(receiver) in {"this", "self"}:
@@ -733,8 +734,44 @@ class NativeFlow:
             self.assign_identifier(analyzer, name, written, frame)
         elif analyzer.navigation(target) is not None:
             self.assign_member(analyzer, target, written, frame)
+        elif self.indexed_value(analyzer, target, frame) is not None and previous.identity:
+            frame.object_fields.setdefault(previous.identity, {})[StorageKey.UNKNOWN_FIELDS] = written
         else:
             self.partial("inout storage target unavailable", analyzer, call=call)
+
+    @staticmethod
+    def syntactic_inout(analyzer: Analyzer, argument: Any) -> bool:
+        target = analyzer.unwrap(argument)
+        # Swift's grammar attaches `&` to the head of a postfix chain, so
+        # `&values[0]` is a subscript call whose callee is a prefix expression.
+        while target is not None and target.type in {
+            "navigation_expression",
+            "call_expression",
+            "postfix_expression",
+        }:
+            target = _field(target, "target") or next(iter(target.named_children), None)
+        return bool(
+            analyzer.language == "swift"
+            and target is not None
+            and target.type == "prefix_expression"
+            and analyzer.text(target).lstrip().startswith("&")
+        )
+
+    def inout_effects(
+        self,
+        analyzer: Analyzer,
+        call: Call,
+        receiver: Value,
+        args: list[Value],
+        arguments: list[Any],
+        frame: Frame,
+    ) -> Value:
+        self.partial("Swift inout writeback unavailable", analyzer, call=call)
+        value = self.unavailable_result(analyzer, call, receiver, args, frame)
+        self.unavailable_write(analyzer, call, receiver, args, frame)
+        for argument in arguments:
+            self.inout_writeback(analyzer, call, argument, value, frame)
+        return value
 
     def finish(self, analyzer: Analyzer, function: Any, frame: Frame) -> None:
         owner = self.owner(analyzer, function)
@@ -1354,6 +1391,10 @@ class NativeFlow:
             return False
         if target.analyzer.language == "swift":
             for (name, _type, parameter), argument in zip(target.parameters, call.args, strict=True):
+                if NativeFlow.syntactic_inout(analyzer, argument) != bool(
+                    re.search(r"\binout\b", target.analyzer.text(parameter))
+                ):
+                    return False
                 external = _field(parameter, "external_name")
                 label = target.analyzer.text(external) if external is not None else name
                 actual = _field(argument.parent, "name") if argument.parent is not None else None
@@ -1651,6 +1692,7 @@ class NativeFlow:
     ) -> Value | None:
         if any(TRACE_PARTIAL in trace.description for value in [receiver, *args] for trace in value.traces):
             self.partial("source trace budget", analyzer, call=call)
+        syntactic_inout = [argument for argument in call.args if self.syntactic_inout(analyzer, argument)]
         binding = self.value_binding(analyzer, call, frame)
         if binding is not None:
             if (
@@ -1664,6 +1706,8 @@ class NativeFlow:
                 # Analyzer already models this typed WebKit policy callback;
                 # its lexical binding still must not resolve to a helper body.
                 return None
+            if syntactic_inout:
+                return self.inout_effects(analyzer, call, receiver, args, syntactic_inout, frame)
             self.partial("callable value binding unresolved", analyzer, call=call)
             return analyzer.changed(call.node, _union([binding, *args]))
         targets, relevant = self.resolve(analyzer, call, receiver, frame)
@@ -1676,6 +1720,11 @@ class NativeFlow:
                 self.partial(reason, analyzer, call=call)
                 relevant = True
         targets = admitted
+        if not targets and syntactic_inout:
+            # `&actual` is a mutation boundary even without a callee inventory.
+            # It precedes relevance shortcuts; admitted bodies keep their own
+            # summary path rather than receiving this unknown-call fallback.
+            return self.inout_effects(analyzer, call, receiver, args, syntactic_inout, frame)
         if not relevant:
             constructor_type = self.constructor_type(analyzer, call, frame)
             if constructor_type is not None and self.modeled_external(
@@ -1764,12 +1813,7 @@ class NativeFlow:
             if re.search(r"\binout\b", target.analyzer.text(parameter))
         ]
         if inout_arguments:
-            self.partial("Swift inout writeback unavailable", analyzer, call=call)
-            value = self.unavailable_result(analyzer, call, receiver, args, frame)
-            self.unavailable_write(analyzer, call, receiver, args, frame)
-            for argument in inout_arguments:
-                self.inout_writeback(analyzer, call, argument, value, frame)
-            return value
+            return self.inout_effects(analyzer, call, receiver, args, inout_arguments, frame)
         constructor = all(target.node.type == "constructor_declaration" for target in targets)
         identity = (
             self.binding_identity(analyzer, call.node, "allocation")

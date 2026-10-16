@@ -10,6 +10,9 @@ on:
       - tests/fixtures/runtime/transport/**
       - tests/support/runtime_transport.py
       - src/mobile_audit/**
+      # The installed URL fixture does not use native source-flow analysis.
+      - '!src/mobile_audit/native_flow.py'
+      - '!src/mobile_audit/source_analysis.py'
       - pyproject.toml
       - uv.lock
       - .github/workflows/runtime-modern-headless.yml

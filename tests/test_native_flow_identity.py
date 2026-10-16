@@ -3201,3 +3201,461 @@ class Entry {{
     report = scan((f"app/Entry.{suffix}", source))
     assert len(findings(report, URL)) == int(tainted), report
     assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+SWIFT_EXTERNAL_INOUT_PROBES = [
+    pytest.param(
+        "external-qualified-scalar",
+        "11e880fc850189c82e6ef3e265b3d157f6d27e58a347781555f8aa6a73db8527",
+        True,
+        """import WebKit
+import UIKit
+import External
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  ExternalMutator.put(&text, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="external-qualified-scalar",
+    ),
+    pytest.param(
+        "known-qualified-scalar",
+        "8c416ba974dbef42ea93fd8bb98f516995a61641c5c2ebaf660c0c53c4ff4d92",
+        True,
+        """import WebKit
+import UIKit
+import External
+final class ExternalMutator {
+ static func put(_ target: inout String, _ value: String) { target = value }
+}
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  ExternalMutator.put(&text, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="known-qualified-scalar",
+    ),
+    pytest.param(
+        "unknown-unqualified-scalar",
+        "0a7ea57e119055d6df02cb79af84a0e40747709e62f3d8addb2d8dc7cac627e8",
+        True,
+        """import WebKit
+import UIKit
+import External
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  put(&text, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="unknown-unqualified-scalar",
+    ),
+    pytest.param(
+        "unknown-qualified-struct",
+        "68bb80a65c4aa4cc72de92d88a5aa91e958e590211487ffe635231dc1ba0adaa",
+        True,
+        """import WebKit
+import UIKit
+import External
+struct Holder {
+ var stash: String = "https://safe.example/"
+ func read() -> String { return stash }
+}
+class Entry {
+ let web = WKWebView()
+ var h: Holder = Holder()
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  ExternalMutator.put(&h, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: h.read())!))
+  return true
+ }
+}
+""",
+        id="unknown-qualified-struct",
+    ),
+    pytest.param(
+        "external-namespace-scalar",
+        "a653dba66ff611deada45e0e8dad201061bb97dfc7769bcd8c51c8d2ccd83114",
+        True,
+        """import WebKit
+import UIKit
+import External
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  External.Mutator.put(&text, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="external-namespace-scalar",
+    ),
+    pytest.param(
+        "unknown-qualified-literal",
+        "0a8fa7f45fb6371a0fbd2fa2f97b97261cf4e79acd62c409f73b19ae68658df6",
+        False,
+        """import WebKit
+import UIKit
+import External
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  ExternalMutator.put(&text, "https://safe.example/")
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="unknown-qualified-literal",
+    ),
+    pytest.param(
+        "unknown-unqualified-literal",
+        "3c9d485ab73afc6dd949cac4d8d71b8410e013f66c55572d61baebfffa636dcc",
+        False,
+        """import WebKit
+import UIKit
+import External
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  put(&text, "https://safe.example/")
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="unknown-unqualified-literal",
+    ),
+    pytest.param(
+        "known-inout-literal",
+        "13c4dbdafea553d74684a06da22f6e639d85e4b9057a0be518c8c4174fcc8d25",
+        False,
+        """import WebKit
+import UIKit
+import External
+final class ExternalMutator {
+ static func put(_ target: inout String, _ value: String) { target = value }
+}
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  ExternalMutator.put(&text, "https://safe.example/")
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="known-inout-literal",
+    ),
+    pytest.param(
+        "known-inout-safe-body-with-tainted-unused-argument",
+        "f48a671d904fcc8b10a655811bf22e97baccc558545dad62295992e0d1ae7662",
+        True,
+        """import WebKit
+import UIKit
+import External
+final class ExternalMutator {
+ static func put(_ target: inout String, _ value: String) { target = "https://safe.example/" }
+}
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  ExternalMutator.put(&text, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="known-inout-safe-body-with-tainted-unused-argument",
+    ),
+    pytest.param(
+        "known-byvalue-noop",
+        "8f47dbc4b2bcb49f45f43f40484d6d4a1b7e1695852387ae08359f1a1cff975d",
+        False,
+        """import WebKit
+import UIKit
+import External
+final class ExternalMutator {
+ static func put(_ target: String, _ value: String) {  }
+}
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  ExternalMutator.put(text, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="known-byvalue-noop",
+    ),
+    pytest.param(
+        "unknown-qualified-unrelated-scalar",
+        "7a2d3e514ee33b1f32ca8fb179f16f9adc1b74970a8cf0afb40f946b23d555f9",
+        False,
+        """import WebKit
+import UIKit
+import External
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ var other: String = "https://other.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  ExternalMutator.put(&other, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="unknown-qualified-unrelated-scalar",
+    ),
+    pytest.param(
+        "known-inout-unrelated-scalar",
+        "475434c696878e1eac0f9825069d8897cb8f801b0c2f8efbdde2021c3f31bebd",
+        False,
+        """import WebKit
+import UIKit
+import External
+final class ExternalMutator {
+ static func put(_ target: inout String, _ value: String) { target = value }
+}
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ var other: String = "https://other.example/"
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  ExternalMutator.put(&other, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="known-inout-unrelated-scalar",
+    ),
+    pytest.param(
+        "unknown-qualified-parameter-receiver",
+        "9576e426eb777c9b0efe51250dada597492b74f4c7ab53e0b6fc37ecb3d1b2d8",
+        True,
+        """import WebKit
+import UIKit
+import External
+class Entry {
+ let web = WKWebView()
+ var text: String = "https://safe.example/"
+ var mutator: ExternalMutator
+ func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+  mutator.put(&text, incoming.absoluteString)
+  web.load(URLRequest(url: URL(string: text)!))
+  return true
+ }
+}
+""",
+        id="unknown-qualified-parameter-receiver",
+    ),
+]
+
+
+@pytest.mark.parametrize("name,source_sha256,unsafe,source", SWIFT_EXTERNAL_INOUT_PROBES)
+def test_syntactic_inout_precedes_unknown_call_relevance_without_losing_known_controls(
+    name, source_sha256, unsafe, source
+):
+    import hashlib
+
+    assert hashlib.sha256(source.encode()).hexdigest() == source_sha256
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(unsafe), report
+    if name == "known-byvalue-noop":
+        assert report["metadata"]["native_flow"]["state"] == "checked", report
+        assert report["metadata"]["native_flow"]["reasons"] == [], report
+    else:
+        assert report["metadata"]["native_flow"]["state"] == "partial", report
+        assert "Swift inout writeback unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("dispatch", ["qualified", "namespace", "unqualified", "receiver", "callable"])
+@pytest.mark.parametrize("lvalue", ["local", "self-field", "member"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_inout_syntax_updates_the_actual_local_or_field_storage(dispatch, lvalue, tainted):
+    callee = {
+        "qualified": "ExternalMutator.put",
+        "namespace": "External.Mutator.put",
+        "unqualified": "put",
+        "receiver": "mutator.put",
+        "callable": "writer",
+    }[dispatch]
+    target = {"local": "local", "self-field": "self.text", "member": "holder.text"}[lvalue]
+    argument = "incoming.absoluteString" if tainted else '"https://safe.example/"'
+    source = f"""import WebKit
+import UIKit
+import External
+final class TextHolder {{ var text: String = "https://safe.example/" }}
+class Entry {{
+    let web = WKWebView()
+    var text: String = "https://safe.example/"
+    var holder: TextHolder = TextHolder()
+    let mutator: ExternalMutator
+    let writer: (inout String, String) -> Void
+    init(_ mutator: ExternalMutator, _ writer: @escaping (inout String, String) -> Void) {{
+        self.mutator = mutator
+        self.writer = writer
+    }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        var local: String = "https://safe.example/"
+        {callee}(&{target}, {argument})
+        web.load(URLRequest(url: URL(string: {target})!))
+        return true
+    }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "Swift inout writeback unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("inout_call", [False, True])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_swift_inout_applicability_keeps_byvalue_noop_and_writeback_overloads_distinct(inout_call, tainted):
+    argument = "incoming.absoluteString" if tainted else '"https://safe.example/"'
+    source = f"""import WebKit
+import UIKit
+final class Mutator {{
+    static func put(_ target: String, _ value: String) {{}}
+    static func put(_ target: inout String, _ value: String) {{ target = value }}
+}}
+class Entry {{
+    let web = WKWebView()
+    var text: String = "https://safe.example/"
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        Mutator.put({"&" if inout_call else ""}text, {argument})
+        web.load(URLRequest(url: URL(string: text)!))
+        return true
+    }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted and inout_call), report
+    assert report["metadata"]["native_flow"]["state"] == ("partial" if inout_call else "checked"), report
+
+
+def test_swift_ampersand_inside_a_literal_is_not_inout_syntax():
+    source = """import WebKit
+import UIKit
+final class Helper {
+    static func route(_ marker: String, _ input: String) -> String { return "https://safe.example/" }
+}
+class Entry {
+    let web = WKWebView()
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {
+        let text = Helper.route("&text", incoming.absoluteString)
+        web.load(URLRequest(url: URL(string: text)!))
+        return true
+    }
+}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert not findings(report, URL), report
+    assert report["metadata"]["native_flow"]["state"] == "checked", report
+
+
+@pytest.mark.parametrize("dispatch", ["qualified", "namespace", "unqualified", "receiver", "callable"])
+@pytest.mark.parametrize("index", ["0", "position"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_inout_subscript_head_preserves_scalar_projection(dispatch, index, tainted):
+    callee = {
+        "qualified": "ExternalMutator.put",
+        "namespace": "External.Mutator.put",
+        "unqualified": "put",
+        "receiver": "mutator.put",
+        "callable": "writer",
+    }[dispatch]
+    argument = "incoming.absoluteString" if tainted else '"https://safe.example/"'
+    unrelated = (
+        f"web.load(URLRequest(url: URL(string: other[{index}])!))"
+        if dispatch in {"qualified", "namespace", "receiver"}
+        else ""
+    )
+    source = f"""import WebKit
+import UIKit
+import External
+class Entry {{
+    let web = WKWebView()
+    var texts: [String] = ["https://safe.example/"]
+    var other: [String] = ["https://safe.example/"]
+    let mutator: ExternalMutator
+    let writer: (inout String, String) -> Void
+    init(_ mutator: ExternalMutator, _ writer: @escaping (inout String, String) -> Void) {{
+        self.mutator = mutator
+        self.writer = writer
+    }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        let position = 0
+        {callee}(&texts[{index}], {argument})
+        web.load(URLRequest(url: URL(string: texts[{index}])!))
+        {unrelated}
+        return true
+    }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "Swift inout writeback unavailable" in report["metadata"]["native_flow"]["reasons"], report
+
+
+@pytest.mark.parametrize("dispatch", ["qualified", "namespace", "unqualified", "receiver", "callable"])
+@pytest.mark.parametrize("tainted", [False, True])
+def test_unknown_inout_nested_member_with_subscript_head_updates_the_actual_field(dispatch, tainted):
+    callee = {
+        "qualified": "ExternalMutator.put",
+        "namespace": "External.Mutator.put",
+        "unqualified": "put",
+        "receiver": "mutator.put",
+        "callable": "writer",
+    }[dispatch]
+    argument = "incoming.absoluteString" if tainted else '"https://safe.example/"'
+    source = f"""import WebKit
+import UIKit
+import External
+final class TextHolder {{ var text: String = "https://safe.example/" }}
+class Entry {{
+    let web = WKWebView()
+    var holders: [TextHolder] = [TextHolder()]
+    let mutator: ExternalMutator
+    let writer: (inout String, String) -> Void
+    init(_ mutator: ExternalMutator, _ writer: @escaping (inout String, String) -> Void) {{
+        self.mutator = mutator
+        self.writer = writer
+    }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) -> Bool {{
+        {callee}(&holders[0].text, {argument})
+        web.load(URLRequest(url: URL(string: holders[0].text)!))
+        return true
+    }}
+}}
+"""
+    report = scan(("app/Entry.swift", source))
+    assert len(findings(report, URL)) == int(tainted), report
+    assert report["metadata"]["native_flow"]["state"] == "partial", report
+    assert "Swift inout writeback unavailable" in report["metadata"]["native_flow"]["reasons"], report
