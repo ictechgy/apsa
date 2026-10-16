@@ -56,6 +56,19 @@ def test_long_rule_names_and_driver_names_remain_distinct():
     assert len({item["id"] for item in findings}) == 4
 
 
+@pytest.mark.parametrize("indexed", [False, True])
+def test_duplicate_rule_descriptors_cannot_downgrade_selected_severity(indexed):
+    raw = document([result("Entry.java")])
+    driver = raw["runs"][0]["tool"]["driver"]
+    duplicate = copy.deepcopy(driver["rules"][0])
+    duplicate["properties"] = {"security-severity": "1.0", "tags": ["CWE-79"]}
+    driver["rules"].append(duplicate)
+    if indexed:
+        raw["runs"][0]["results"][0]["ruleIndex"] = 0
+    with pytest.raises(ValueError, match="duplicate rule ID"):
+        external_findings(json.dumps(raw).encode(), "owned")
+
+
 def test_duplicate_sarif_results_merge_without_losing_severity_or_provenance():
     raw = document([result("Entry.java")])
     low = raw["runs"][0]

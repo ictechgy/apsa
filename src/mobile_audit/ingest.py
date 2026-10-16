@@ -135,7 +135,13 @@ def external_findings(raw: bytes, tool: str, root: str = "") -> tuple[list[dict]
         unnamed_descriptors: dict[int | None, str] = {}
         # Keep positional slots: dropping malformed entries changes the meaning of ruleIndex.
         rules = _array(driver.get("rules"), "rules")
-        by_id = {r["id"]: r for r in rules if isinstance(r, dict) and isinstance(r.get("id"), str)}
+        by_id = {}
+        for rule in rules:
+            if not isinstance(rule, dict) or not isinstance(rule.get("id"), str) or not rule["id"]:
+                continue
+            if rule["id"] in by_id:
+                raise ValueError("Invalid SARIF rules: duplicate rule ID")
+            by_id[rule["id"]] = rule
         for result in _array(run.get("results"), "results"):
             total += 1
             if total > MAX_RESULTS:
