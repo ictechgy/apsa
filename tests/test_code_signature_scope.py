@@ -28,7 +28,7 @@ def superblob(entries):
     return struct.pack(">III", 0xFADE0CC0, offset, len(entries)) + b"".join(indexes + content)
 
 
-def image(*, defect=None, limit=8192, padding=0, scatter=False, encrypted=False):
+def image(*, defect=None, limit=8192, padding=0, scatter=False, encrypted=False, pages=None):
     entitlement_slot, entitlement = (
         (7, DER_BLOB) if defect in {"der-zero", "der-missing", "der-at-5"} else (5, XML_BLOB)
     )
@@ -41,7 +41,8 @@ def image(*, defect=None, limit=8192, padding=0, scatter=False, encrypted=False)
     special = {1: INFO, entitlement_slot: entitlement}
     if defect in {"missing", "der-missing", "misindex"}:
         special = {1: INFO}
-    pages = tuple(range((limit + 4095) // 4096))
+    if pages is None:
+        pages = tuple(range((limit + 4095) // 4096))
 
     def signature(code):
         directory = bytearray(directory_fixture(code[:limit], pages=pages, special=special, scatter=scatter))
@@ -133,6 +134,26 @@ def test_encrypted_page_postprocessing_cannot_hide_unbound_metadata(mock_cms):
     signature = inspect_macho(bytes(raw), bundle_blobs={1: INFO})[0]["code_signature"]
     assert signature["integrity"] == "modified"
     assert signature["code_directories"][0]["entitlements_bound"] is False
+
+
+def test_encrypted_page_mismatch_cannot_hide_unsealed_scatter_gap(mock_cms, tmp_path):
+    raw = bytearray(image(scatter=True, encrypted=True, pages=(1,)))
+    raw[5000] ^= 1
+    signature = inspect_macho(bytes(raw), bundle_blobs={1: INFO})[0]["code_signature"]
+    directory = signature["code_directories"][0]
+    assert directory["full_code_coverage"] is False
+    assert directory["integrity"] == "unverifiable"
+    assert directory["reason"] == "scatter leaves unsealed file pages"
+    assert signature["integrity"] == "unverifiable"
+    path = tmp_path / "new-synthetic-encrypted-scatter-gap.ipa"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("Payload/App.app/Info.plist", INFO)
+        archive.writestr("Payload/App.app/App", raw)
+    report = analyze_binary(path, inspect_target(path)[0])
+    assert (
+        next(row for row in report["coverage"] if row["rule_id"] == "BINARY-IOS-CODE-INTEGRITY")["state"]
+        == "partial"
+    )
 
 
 def test_encryption_only_retains_not_run_while_unsealed_extent_is_partial(mock_cms, tmp_path):

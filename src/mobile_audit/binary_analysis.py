@@ -844,7 +844,12 @@ def _macho_slice(
                 and directory.get("resource_envelope_state") != "modified"
             ):
                 # App Store encryption follows signing; the kernel checks decrypted pages.
-                directory["integrity"] = "unverifiable-encrypted-pages"
+                if directory.get("full_code_coverage") is True:
+                    directory["integrity"] = "unverifiable-encrypted-pages"
+                else:
+                    directory.update(
+                        {"integrity": "unverifiable", "reason": "scatter leaves unsealed file pages"}
+                    )
             if "mismatched_pages" in directory:
                 directory["mismatched_pages"] = pages[:64]
         states = {d.get("integrity") for d in signature["code_directories"]}

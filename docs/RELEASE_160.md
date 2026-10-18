@@ -23,6 +23,9 @@ compiler module identity.
 
 ## Upgrade effects
 
+- Encrypted-page mismatches abstain as `not-run` only when the directory covers
+  the complete code extent. A scatter gap leaves coverage `partial`, even when
+  every observed mismatch is inside an encrypted region.
 - OSV records sharing a display CVE retain flat, exact upstream `osv_records`
   and sorted `osv_ids` in the cache. Correlation uses the highest active-member
   severity; a withdrawn duplicate cannot suppress an active advisory. Partial
@@ -31,6 +34,11 @@ compiler module identity.
   Conflicting same-revision records and bounded merge failures preserve the
   cache and leave the package unchecked. Historical overwritten identities
   cannot be reconstructed; run a complete fresh online query to recover them.
+  Opaque older observations without upstream identity remain separately in
+  `osv_legacy_records` during partial queries and retire on a complete response;
+  no primary IDs or missing package coordinates are invented. A singleton
+  retains its exact upstream metadata and ordering; only multi-member rows
+  synthesize deterministic unions.
 - Offline transmission exclusions also mark matching dependencies excluded and
   not checked, even with a fresh cached feed. Cached findings remain visible;
   no request is sent. `dependency_query.online` records false while

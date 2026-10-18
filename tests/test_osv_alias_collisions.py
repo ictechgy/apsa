@@ -263,15 +263,11 @@ def test_partial_upstream_alias_change_retires_its_prior_display_group_member(
     assert groups["CVE-2099-4243"]["severity"] == "critical"
 
 
-@pytest.mark.parametrize(
-    "defect", ["revision-conflict", "member-budget", "byte-budget", "unknown-old-identity"]
-)
+@pytest.mark.parametrize("defect", ["revision-conflict", "member-budget", "byte-budget"])
 def test_partial_merge_failure_preserves_cache_and_releases_transaction(memory_store, monkeypatch, defect):
     from mobile_audit import osv_records
 
     previous = intel._normalize_osv(advisory(STRONG, critical=True, older=True), DEP)
-    if defect == "unknown-old-identity":
-        previous.pop("osv_id")
     memory_store.upsert_intel([previous])
     before = memory_store.intelligence(limit=100)
     incoming = [intel._normalize_osv(advisory(WEAK), DEP)]
@@ -308,3 +304,37 @@ def test_partial_same_revision_reordering_and_legacy_enrichment_keep_new_members
     assert set(members(cached[0])) == {STRONG, WEAK}
     assert findings[0]["severity"] == "critical"
     assert members(cached[0])[STRONG]["aliases"]
+
+
+@pytest.mark.parametrize("mode", ["legacy", "batch"])
+def test_partial_opaque_legacy_collision_never_invents_an_upstream_identity(memory_store, monkeypatch, mode):
+    old = intel._normalize_osv(advisory(STRONG, critical=True, older=True), DEP)
+    old.pop("osv_id")
+    memory_store.upsert_intel([old])
+    _, cached, findings = query(
+        memory_store, monkeypatch, mode, [advisory(WEAK, withdrawn=True)], partial=True
+    )
+    row = cached[0]
+    assert row["severity"] == "critical" and findings[0]["severity"] == "critical"
+    assert row["osv_ids"] == [WEAK] and len(row["osv_legacy_records"]) == 1
+    assert "osv_id" not in row["osv_legacy_records"][0]
+    assert row["osv_records"][0]["osv_id"] == WEAK
+    refresh_again(memory_store)
+    _, repeated, _ = query(memory_store, monkeypatch, mode, [advisory(WEAK, withdrawn=True)], partial=True)
+    assert len(repeated[0]["osv_legacy_records"]) == 1
+    assert not repeated[0]["osv_legacy_records"][0].get("osv_legacy_records")
+    refresh_again(memory_store)
+    _, complete, current = query(memory_store, monkeypatch, mode, [advisory(WEAK, withdrawn=True)])
+    assert not current and complete[0].get("withdrawn")
+    assert "osv_legacy_records" not in complete[0]
+
+
+@pytest.mark.parametrize("mode", ["legacy", "batch"])
+def test_opaque_unknown_coordinates_cannot_hide_a_new_identified_finding(memory_store, monkeypatch, mode):
+    memory_store.upsert_intel(
+        [{"id": CVE, "source": SOURCE, "title": "Opaque legacy", "severity": "critical"}]
+    )
+    _, cached, findings = query(memory_store, monkeypatch, mode, [advisory(WEAK)], partial=True)
+    assert findings and findings[0]["severity"] == "medium"
+    assert cached[0]["osv_id"] == WEAK
+    assert "query_match" not in cached[0]["osv_legacy_records"][0]
