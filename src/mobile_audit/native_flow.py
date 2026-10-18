@@ -34,6 +34,7 @@ MAX_PARTIAL_DETAILS = 256
 MAX_EFFECT_DEPTH = 8
 MAX_EFFECT_OBJECTS = 128
 MAX_EMPTY_BASE_DEPTH = 8
+MAX_EXTENSION_TYPES = 4096
 
 
 class StorageKey(Enum):
@@ -252,10 +253,15 @@ class NativeFlow:
         self.module_values: dict[str, list[tuple[Analyzer, Any]]] = {}
         self.module_type_aliases: dict[str, list[tuple[Analyzer, Any]]] = {}
         self.swift_extensions_present = False
+        # Member types added by an extension are lookup uncertainty, never
+        # ordinary module classes or source constructor summaries.
+        self.swift_extension_types: dict[str, dict[str, Any]] = {}
+        self.swift_extension_types_exhausted = False
         self.active_guards: dict[int | tuple[int, str], set[str]] = {}
         self.active_conditions: list[Any] = []
         self.files = sorted(files, key=lambda item: item[0].path)
         count = 0
+        extension_type_count = 0
         for analyzer, root, nodes in self.files:
             analyzer.prepare(root, nodes)
             analyzer.native_flow = self
@@ -295,6 +301,46 @@ class NativeFlow:
                         self.module_values.setdefault(name, []).append((analyzer, node))
                 if analyzer.language == "swift" and any(child.type == "extension" for child in node.children):
                     self.swift_extensions_present = True
+                    target = _field(node, "name")
+                    body = _field(node, "body")
+                    if target is not None and body is not None:
+                        owner = analyzer.text(target).strip()
+                        for declaration in body.named_children:
+                            if self.swift_extension_types_exhausted:
+                                break
+                            if declaration.type not in NOMINAL_DECLARATIONS | {
+                                "type_alias",
+                                "typealias_declaration",
+                                "associatedtype_declaration",
+                            }:
+                                continue
+                            name = (
+                                _field(declaration, "name")
+                                or (_field(declaration, "type") if declaration.type == "type_alias" else None)
+                                or next(
+                                    (
+                                        child
+                                        for child in declaration.named_children
+                                        if child.type in IDENTIFIERS
+                                    ),
+                                    None,
+                                )
+                            )
+                            if name is None:
+                                continue
+                            members = self.swift_extension_types.get(analyzer.text(name), {})
+                            if owner in members:
+                                continue
+                            if extension_type_count >= MAX_EXTENSION_TYPES:
+                                self.swift_extension_types_exhausted = True
+                                self.partial(
+                                    "Swift extension member type inventory budget", analyzer, node=node
+                                )
+                                break
+                            extension_type_count += 1
+                            self.swift_extension_types.setdefault(analyzer.text(name), {})[owner] = (
+                                declaration
+                            )
                 boundary = self.scope_boundary(node)
                 if boundary is not None and boundary.kind == "nominal":
                     name = boundary.name
@@ -1526,6 +1572,23 @@ class NativeFlow:
                     self.type_parameter_cache[key] = names
                 if root in self.type_parameter_cache[key]:
                     return self.type_parameter_cache[key][root]
+                if analyzer.language == "swift" and boundary is not None and boundary.kind == "nominal":
+                    if self.swift_extension_types_exhausted:
+                        return boundary.node
+                    owner = self.owner(analyzer, boundary.name)
+                    for target, declaration in self.swift_extension_types.get(root, {}).items():
+                        if (
+                            target == owner
+                            or target.endswith("." + owner)
+                            or owner.endswith("." + target)
+                            or target.partition(".")[0] in self.module_type_aliases
+                            or "." in target
+                            and target not in self.class_definitions
+                        ):
+                            # Supplied Swift module membership and extension
+                            # aliases are unresolved; their bodies confer no
+                            # SDK identity. Exact unrelated owners stay apart.
+                            return declaration
                 inherited = next(
                     (child for child in scope.named_children if child.type in INHERITED_TYPE_SCOPES), None
                 )

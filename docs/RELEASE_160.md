@@ -23,6 +23,12 @@ compiler module identity.
 
 ## Upgrade effects
 
+- Swift member types and typealiases added by an observed extension cannot
+  supply SDK constructor or sanitizer identity. Lookup retains uncertainty for
+  the affected owner, unresolved aliases and qualified owners; unrelated owners
+  and explicit SDK qualification remain distinct. Inventory exhaustion fails
+  closed. Hosted Swift checks separately compile nested-type, nested-alias and
+  qualified-Foundation type assertions; these do not execute an application.
 - Encrypted-page mismatches abstain as `not-run` only when the directory covers
   the complete code extent. A scatter gap leaves coverage `partial`, even when
   every observed mismatch is inside an encrypted region. Missing sealed plist,

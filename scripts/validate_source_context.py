@@ -15,6 +15,32 @@ REVISION = "explicit-source-context-r1"
 PAIRS = {"java": "intent", "kotlin": "query", "swift": "url"}
 
 
+def swift_extension_type_probes() -> dict[str, str]:
+    """Fresh type assertions prove lookup, without app execution or SDK signing."""
+    declaration = """struct FakeURL {
+    let host: String? = "synthetic.example.test"
+    init?(string: String) {}
+}
+"""
+    result = {}
+    for name, constructor, expected, member in [
+        ("nested-nominal", "URL", "Handler.URL", declaration.replace("FakeURL", "URL")),
+        ("nested-alias", "URL", "FakeURL", "typealias URL = FakeURL"),
+        ("qualified-sdk", "Foundation.URL", "Foundation.URL", declaration.replace("FakeURL", "URL")),
+    ]:
+        result[name] = (
+            "import Foundation\n"
+            + declaration
+            + "class Handler {\nfunc probe(_ incoming: Foundation.URL) {\n"
+            + f"let parsed = {constructor}(string: incoming.absoluteString)!\n"
+            + f"let _: {expected} = parsed\n"
+            + "}\n}\nextension Handler {\n"
+            + member
+            + "\n}\n"
+        )
+    return result
+
+
 def inputs(root: Path, languages: list[str]) -> list[tuple[str, Path, str]]:
     """Validate committed source identities before invoking any compiler."""
     manifest = json.loads((root / "benchmarks/corpus.json").read_text())
@@ -109,14 +135,27 @@ def main() -> None:
                 str(source),
             ]
         results.append({"case_id": case_id, "source_sha256": digest, **run(command)})
-    passed = all(row["exit_code"] == 0 for row in list(tools.values()) + results)
+    lookup_results = []
+    if args.language == "swift":
+        for case_id, source_text in swift_extension_type_probes().items():
+            source = args.out / f"extension-lookup-{case_id}.swift"
+            source.write_text(source_text)
+            lookup_results.append(
+                {
+                    "case_id": case_id,
+                    "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    **run([*results[-1]["argv"][:-1], str(source)]),
+                }
+            )
+    passed = all(row["exit_code"] == 0 for row in list(tools.values()) + results + lookup_results)
     report = {
         "input_revision": REVISION,
         "sdk": str(args.sdk),
         "tools": tools,
         "cases": results,
+        "extension_type_lookup_cases": lookup_results,
         "passed": passed,
-        "scope": "Synthetic source typechecking only; no app execution or legacy-v1 compilation claim",
+        "scope": "Synthetic source and extension member-type lookup typechecking only; no app execution or legacy-v1 compilation claim",
     }
     (args.out / "result.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
