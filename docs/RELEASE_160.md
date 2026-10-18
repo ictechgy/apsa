@@ -299,6 +299,13 @@ settings; task names are tracking labels, not native role selectors. Exact
 snapshots, raw reports and the failed launch records are preserved separately.
 # Swift extension conformance lookup
 
+Unknown extension targets also retain member-type uncertainty when implicit
+protocol conformance is possible. A source declaration proves an unrelated
+target only in the extension's own file, through ordinary module/nominal scopes,
+without private ancestors or conditional compilation. Duplicate extension owners
+from different files preserve unresolved context within the existing budget.
+Actor and payload-free enum lookup have separate hosted Swift type assertions.
+
 Swift conformances declared by empty extensions now fence inherited member type
 lookup before SDK import fallback. Protocol and protocol-extension aliases,
 private alias targets in another source file, and qualified SDK roots retain

@@ -51,6 +51,23 @@ def swift_extension_type_probes() -> dict[str, str]:
             + "let _: FakeURL = parsed\n"
             + "}\n}\nextension Handler: P {}\n"
         )
+    for name, owner, protocol in [
+        ("implicit-actor", "actor Handler", "Actor"),
+        ("implicit-enum-equatable", "enum Handler", "Equatable"),
+        ("implicit-enum-hashable", "enum Handler", "Hashable"),
+    ]:
+        result[name] = (
+            "import Foundation\n"
+            + declaration
+            + f"extension {protocol} {{ typealias URL = FakeURL }}\n"
+            + owner
+            + " {\n"
+            + ("case main\n" if owner.startswith("enum") else "")
+            + "func probe(_ incoming: Foundation.URL) {\n"
+            + "let parsed = URL(string: incoming.absoluteString)!\n"
+            + "let _: FakeURL = parsed\n"
+            + "}\n}\n"
+        )
     return result
 
 

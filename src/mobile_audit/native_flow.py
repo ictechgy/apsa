@@ -255,9 +255,10 @@ class NativeFlow:
         self.swift_extensions_present = False
         # Member types added by an extension are lookup uncertainty, never
         # ordinary module classes or source constructor summaries.
-        self.swift_extension_types: dict[str, dict[str, Any]] = {}
-        self.swift_extension_conformances: dict[str, Any] = {}
+        self.swift_extension_types: dict[str, dict[str, tuple[Analyzer | None, Any]]] = {}
+        self.swift_extension_conformances: dict[str, tuple[Analyzer | None, Any]] = {}
         self.swift_extension_types_exhausted = False
+        self.swift_conditional_files: set[str] = set()
         self.active_guards: dict[int | tuple[int, str], set[str]] = {}
         self.active_conditions: list[Any] = []
         self.files = sorted(files, key=lambda item: item[0].path)
@@ -266,6 +267,14 @@ class NativeFlow:
         for analyzer, root, nodes in self.files:
             analyzer.prepare(root, nodes)
             analyzer.native_flow = self
+            if analyzer.language == "swift" and any(
+                node.type == "directive"
+                and any(child.type in {"#if", "#elseif", "#else", "#endif"} for child in node.children)
+                for node in nodes
+            ):
+                # Tree-sitter keeps conditional compilation directives flat;
+                # a represented declaration may be in an inactive branch.
+                self.swift_conditional_files.add(analyzer.path)
             packages = [
                 node for node in root.named_children if node.type in {"package_declaration", "package_header"}
             ]
@@ -310,15 +319,19 @@ class NativeFlow:
                             (child for child in node.named_children if child.type in INHERITED_TYPE_SCOPES),
                             None,
                         )
-                        if inherited is not None and owner not in self.swift_extension_conformances:
-                            if extension_type_count >= MAX_EXTENSION_TYPES:
+                        if inherited is not None:
+                            if owner in self.swift_extension_conformances:
+                                previous_source, previous_node = self.swift_extension_conformances[owner]
+                                if previous_source is not None and previous_source.path != analyzer.path:
+                                    self.swift_extension_conformances[owner] = (None, previous_node)
+                            elif extension_type_count >= MAX_EXTENSION_TYPES:
                                 self.swift_extension_types_exhausted = True
                                 self.partial(
                                     "Swift extension member type inventory budget", analyzer, node=node
                                 )
                             else:
                                 extension_type_count += 1
-                                self.swift_extension_conformances[owner] = inherited
+                                self.swift_extension_conformances[owner] = (analyzer, inherited)
                         for declaration in body.named_children:
                             if self.swift_extension_types_exhausted:
                                 break
@@ -344,6 +357,9 @@ class NativeFlow:
                                 continue
                             members = self.swift_extension_types.get(analyzer.text(name), {})
                             if owner in members:
+                                previous_source, previous_node = members[owner]
+                                if previous_source is not None and previous_source.path != analyzer.path:
+                                    members[owner] = (None, previous_node)
                                 continue
                             if extension_type_count >= MAX_EXTENSION_TYPES:
                                 self.swift_extension_types_exhausted = True
@@ -353,7 +369,8 @@ class NativeFlow:
                                 break
                             extension_type_count += 1
                             self.swift_extension_types.setdefault(analyzer.text(name), {})[owner] = (
-                                declaration
+                                analyzer,
+                                declaration,
                             )
                 boundary = self.scope_boundary(node)
                 if boundary is not None and boundary.kind == "nominal":
@@ -1536,7 +1553,30 @@ class NativeFlow:
             current = base
         return False
 
-    def swift_extension_owner_matches(self, owner: str, target: str) -> bool:
+    def swift_extension_target_represented(self, target: str, extension_source: Analyzer | None) -> bool:
+        """Only represented bindings in the extension file rule out an external target."""
+        if extension_source is None or extension_source.path in self.swift_conditional_files:
+            return False
+        for source, node in self.class_definitions.get(target, []):
+            if source.language != "swift" or source.path != extension_source.path:
+                continue
+            scope = node
+            while scope is not None:
+                if scope.type in NOMINAL_DECLARATIONS:
+                    if self.declaration_tokens(scope) & {"private", "fileprivate"} or any(
+                        child.type == "extension" for child in scope.children
+                    ):
+                        break
+                elif scope.type not in NOMINAL_BODIES | {"program", "source_file"}:
+                    break
+                scope = scope.parent
+            else:
+                return True
+        return False
+
+    def swift_extension_owner_matches(
+        self, owner: str, target: str, extension_source: Analyzer | None
+    ) -> bool:
         """Unresolved Swift extension targets cannot establish imported type identity."""
         return (
             target == owner
@@ -1546,8 +1586,7 @@ class NativeFlow:
                 source.language == "swift"
                 for source, _ in self.module_type_aliases.get(target.partition(".")[0], [])
             )
-            or "." in target
-            and not any(source.language == "swift" for source, _ in self.class_definitions.get(target, []))
+            or not self.swift_extension_target_represented(target, extension_source)
             or re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", target) is None
         )
 
@@ -1605,14 +1644,16 @@ class NativeFlow:
                     if self.swift_extension_types_exhausted:
                         return boundary.name
                     owner = self.owner(analyzer, boundary.name)
-                    for target, inherited in self.swift_extension_conformances.items():
-                        if self.swift_extension_owner_matches(owner, target):
+                    for target, (extension_source, inherited) in self.swift_extension_conformances.items():
+                        if self.swift_extension_owner_matches(owner, target, extension_source):
                             # A protocol may supply any member type, including
                             # the root of a qualified SDK spelling, through an
                             # otherwise empty conformance extension.
                             return inherited
-                    for target, declaration in self.swift_extension_types.get(root, {}).items():
-                        if self.swift_extension_owner_matches(owner, target):
+                    for target, (extension_source, declaration) in self.swift_extension_types.get(
+                        root, {}
+                    ).items():
+                        if self.swift_extension_owner_matches(owner, target, extension_source):
                             # Supplied Swift module membership and extension
                             # aliases are unresolved; their bodies confer no
                             # SDK identity. Exact unrelated owners stay apart.
