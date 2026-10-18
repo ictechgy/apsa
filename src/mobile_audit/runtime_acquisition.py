@@ -136,7 +136,14 @@ class AcquisitionRecorder:
             self.binding = reconstructed
             if reconstructed != binding:
                 raise ValueError("Invalid acquisition app binding")
-            candidate = adapter.start_session(copy.deepcopy(binding), self.session_nonce)
+            try:
+                candidate = adapter.start_session(copy.deepcopy(binding), self.session_nonce)
+            except Exception:
+                # Adapter exceptions may contain captured credentials or bodies.
+                # Persist only the fixed failure state; cancellation still propagates.
+                self.error = True
+                self._revoke_model_binding()
+                return
             if type(candidate) is not AcquisitionSession:
                 raise ValueError("Untyped acquisition session")
             validate_build(candidate.build)
@@ -223,6 +230,10 @@ class AcquisitionRecorder:
         )
         try:
             capture = self.adapter.capture(copy.deepcopy(request))
+        except Exception:
+            self.error = True
+            return self._unavailable(state)
+        try:
             return self._record(request, capture)
         except (ValueError, TypeError, AttributeError, KeyError, OSError):
             self.error = True
@@ -360,7 +371,7 @@ class AcquisitionRecorder:
         return result
 
 
-def evaluate_backend_invalidation(scenario: dict, snapshots: dict) -> list[dict]:
+def evaluate_backend_invalidation(scenario: dict, snapshots: dict, binding: dict) -> list[dict]:
     """Never infer backend behavior from UI, local residuals or manual captures."""
     results = []
     for transition in scenario.get("workflow", {}).get("transitions", []):
@@ -369,7 +380,32 @@ def evaluate_backend_invalidation(scenario: dict, snapshots: dict) -> list[dict]
         before = snapshots.get(transition["baseline"], {})
         after = snapshots.get(transition["snapshot"], {})
         probes = [before.get("backend_probe", {}), after.get("backend_probe", {})]
-        valid = all(p.get("provenance", {}).get("state") == "bound" for p in probes)
+        valid = (
+            binding.get("state") == "bound"
+            and isinstance(binding.get("identity"), str)
+            and HASH.fullmatch(binding["identity"]) is not None
+        )
+        valid = valid and all(
+            p.get("provenance", {}).get("state") == "bound"
+            and p["provenance"].get("binding_identity") == binding["identity"]
+            and isinstance(snapshot.get("acquisition", {}).get("capture_sha256"), str)
+            and HASH.fullmatch(snapshot["acquisition"]["capture_sha256"]) is not None
+            and p["provenance"].get("capture_sha256") == snapshot["acquisition"]["capture_sha256"]
+            for p, snapshot in zip(probes, (before, after), strict=True)
+        )
+        valid = valid and all(
+            isinstance(p.get("request_sha256"), str) and HASH.fullmatch(p["request_sha256"]) is not None
+            for p in probes
+        )
+        # Identical HTTP bytes can be sent in two fresh replays. Distinct capture
+        # challenges establish separate observations without changing the payload.
+        valid = valid and before["acquisition"]["capture_sha256"] != after["acquisition"]["capture_sha256"]
+        valid = valid and all(
+            isinstance(snapshot.get("acquisition", {}).get("session_sha256"), str)
+            and HASH.fullmatch(snapshot["acquisition"]["session_sha256"]) is not None
+            and probe["provenance"].get("session_sha256") == snapshot["acquisition"]["session_sha256"]
+            for probe, snapshot in zip(probes, (before, after), strict=True)
+        )
         valid = valid and before.get("acquisition", {}).get("session_sha256") == after.get(
             "acquisition", {}
         ).get("session_sha256")

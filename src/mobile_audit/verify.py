@@ -385,6 +385,9 @@ def verify_claim(
             states.setdefault(item["rule_id"], set()).add(item["state"])
     matches, elsewhere = [], []
     for item in report.get("findings", []):
+        if item.get("origin") == "external":
+            # An imported claim is not independent APSA evidence for itself.
+            continue
         mapped = finding_weaknesses(item)
         if item.get("rule_id") not in checks and not set(weaknesses) & set(mapped):
             continue

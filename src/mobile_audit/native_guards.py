@@ -45,12 +45,6 @@ def path_predicate(
     if node is None:
         return {}
     text = analyzer.text(node).strip()
-    call = analyzer.call(node)
-    if text.startswith("!") and call is not None:
-        # The Swift grammar attaches a leading '!' to the receiver of a call.
-        positive = not positive
-    elif text.startswith("!") and node.named_children:
-        return path_predicate(analyzer, node.named_children[-1], frame, positive=not positive)
     left = node.child_by_field_name("left") or node.child_by_field_name("lhs")
     right = node.child_by_field_name("right") or node.child_by_field_name("rhs")
     if node.type == "in_expression" and len(node.named_children) == 2:
@@ -74,9 +68,37 @@ def path_predicate(
             value = analyzer.value(right, frame)
             return lexical_constraints(value)
         return {}
+
+    # A leading bang in the text of a binary condition does not negate the
+    # complete condition. Classify conjunction/disjunction before unary nodes.
+    def negated_operand(expression: Any) -> Any:
+        if expression is None or expression.type not in {"unary_expression", "prefix_expression"}:
+            return None
+        operator = expression.child_by_field_name("operator") or expression.child_by_field_name("operation")
+        if operator is None or analyzer.text(operator).strip() != "!":
+            return None
+        return (
+            expression.child_by_field_name("operand")
+            or expression.child_by_field_name("argument")
+            or expression.child_by_field_name("target")
+        )
+
+    operand = negated_operand(node)
+    if operand is not None:
+        return path_predicate(analyzer, operand, frame, positive=not positive)
+    call = analyzer.call(node)
     if call is None or len(call.args) != 1:
         return {}
-    value = analyzer.value(call.receiver, frame)
+    receiver = call.receiver
+    root = receiver
+    # These grammars can attach the predicate's leading negation to the
+    # leftmost receiver, below member navigation and force-unwrapping nodes.
+    # Follow only that receiver chain; never search argument or binary subtrees.
+    while root is not None and root.type in {"navigation_expression", "postfix_expression"}:
+        root = root.child_by_field_name("target") or next(iter(root.named_children), None)
+    if negated_operand(root) is not None:
+        positive = not positive
+    value = analyzer.value(receiver, frame)
     # Rejecting every '..' component is supported; checking only '../' misses a bare '..'.
     if call.name == "contains" and analyzer.literal(call.args[0]) == ".." and not positive:
         return lexical_constraints(value)

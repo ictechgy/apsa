@@ -527,7 +527,7 @@ def test_independent_backend_replay_not_local_store(platform, invalidate, retain
     adapter.open_url("synthetic://transition")
     after = recorder.capture("after", {"account": None, "state": "logged_out"}, "logout")
     snapshots = {"before": before, "after": after}
-    assert evaluate_backend_invalidation(value, snapshots)[0]["state"] == (
+    assert evaluate_backend_invalidation(value, snapshots, recorder.binding)[0]["state"] == (
         "passed" if invalidate else "failed"
     )
     assert evaluate_workflow(value, snapshots, recorder.binding)[0]["state"] == "passed"

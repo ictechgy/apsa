@@ -218,6 +218,52 @@ def test_two_recorders_cannot_reuse_acquisition_session():
     assert first.metadata()["session_sha256"] != second.metadata()["session_sha256"]
 
 
+@pytest.mark.parametrize("stage", ["session", "capture"])
+@pytest.mark.parametrize("error_type", [RuntimeError, ArithmeticError])
+def test_ordinary_adapter_errors_are_redacted_and_remain_inconclusive(stage, error_type, capsys):
+    value = network_scenario()
+    body = "NEW_SYNTHETIC_CREDENTIAL_BODY_MUST_NOT_ESCAPE"
+
+    class Broken(SyntheticTestAppAdapter):
+        def start_session(self, binding, nonce):
+            if stage == "session":
+                raise error_type(body)
+            return super().start_session(binding, nonce)
+
+        def capture(self, request):
+            raise error_type(body)
+
+    adapter = Broken(value)
+    binding = build_binding(value["platform"], value["package"], adapter.environment()["app"])
+    recorder = AcquisitionRecorder(adapter, binding, value["markers"])
+    snapshot = recorder.capture("before", {"account": "a", "state": "authenticated"}, None)
+    assert snapshot["acquisition"]["capture_errors"] is True
+    assert all(surface["state"] == "inconclusive" for surface in snapshot["surfaces"].values())
+    assert body not in json.dumps(snapshot)
+    captured = capsys.readouterr()
+    assert body not in captured.out + captured.err
+
+
+@pytest.mark.parametrize("stage", ["session", "capture"])
+def test_adapter_cancellation_is_not_converted_to_an_observation(stage):
+    value = network_scenario()
+
+    class Interrupted(SyntheticTestAppAdapter):
+        def start_session(self, binding, nonce):
+            if stage == "session":
+                raise KeyboardInterrupt()
+            return super().start_session(binding, nonce)
+
+        def capture(self, request):
+            raise KeyboardInterrupt()
+
+    adapter = Interrupted(value)
+    binding = build_binding(value["platform"], value["package"], adapter.environment()["app"])
+    with pytest.raises(KeyboardInterrupt):
+        recorder = AcquisitionRecorder(adapter, binding, value["markers"])
+        recorder.capture("before", {"account": "a", "state": "authenticated"}, None)
+
+
 def test_live_gate_and_new_source_models(tmp_path):
     gate = acquisition_plan("ios", "com.synthetic.app")
     assert gate["live_acquisition"] == "unsupported"
@@ -403,6 +449,41 @@ def test_model_binding_is_promoted_only_after_valid_synthetic_session(execution)
     assert record["app_binding"]["build"] == {"runtime_model_sha256": "c" * 64}
     assert record["acquisition"]["mode"] == "synthetic"
     assert record["workflow"][0]["state"] == "passed"
+
+
+def test_revoked_model_binding_also_revokes_prior_backend_verdict(execution):
+    value = network_scenario()
+    value["steps"].append({"action": "snapshot", "label": "extra"})
+    record = execution(value, ModelIdentityAdapter(value))["runtime"][-1]
+    assert record["app_binding"]["state"] == "unavailable"
+    assert record["workflow"][0]["state"] == "inconclusive"
+    assert record["backend_invalidation"][0]["state"] == "inconclusive"
+
+
+@pytest.mark.parametrize(
+    "defect", ["binding-state", "binding-identity", "capture-identity", "capture-replay"]
+)
+def test_backend_probe_requires_current_binding_and_fresh_capture_proof(execution, defect):
+    from mobile_audit.runtime_acquisition import evaluate_backend_invalidation
+
+    value = network_scenario()
+    record = execution(value, ModelIdentityAdapter(value))["runtime"][-1]
+    binding, snapshots = copy.deepcopy(record["app_binding"]), copy.deepcopy(record["snapshots"])
+    assert evaluate_backend_invalidation(value, snapshots, binding)[0]["state"] == "passed"
+    if defect == "binding-state":
+        binding["state"] = "unavailable"
+    elif defect == "binding-identity":
+        binding["identity"] = "0" * 64
+    elif defect == "capture-identity":
+        snapshots["after"]["acquisition"] = {**snapshots["after"]["acquisition"], "capture_sha256": "0" * 64}
+    else:
+        replayed = snapshots["before"]["acquisition"]["capture_sha256"]
+        snapshots["after"]["acquisition"] = {**snapshots["after"]["acquisition"], "capture_sha256": replayed}
+        snapshots["after"]["backend_probe"]["provenance"] = {
+            **snapshots["after"]["backend_probe"]["provenance"],
+            "capture_sha256": replayed,
+        }
+    assert evaluate_backend_invalidation(value, snapshots, binding)[0]["state"] == "inconclusive"
 
 
 @pytest.mark.parametrize("failure", ["instrumented", "untyped", "nonce", "error"])

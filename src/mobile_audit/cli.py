@@ -750,6 +750,8 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                     "--format checklist requires --checklist, and --checklist only applies to it"
                 )
             if args.format == "checklist":
+                if args.sarif_root is not None:
+                    raise UsageError("--sarif-root applies only to --format sarif")
                 from .checklists import checklist_markdown, checklist_view, load_checklist
 
                 try:

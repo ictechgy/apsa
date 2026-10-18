@@ -77,6 +77,43 @@ compiler module identity.
 
 ## Verification and limits
 
+
+### Dated development recovery: 2026-10-18
+
+The later development candidate `03c952a8ad51517ec29f6dead93acafa38518546`
+passed its 18 hosted CI, package/SDK, bundletool and comparator jobs; links and
+counts are recorded in [release readiness](../RELEASE_READINESS.md).
+`explicit-source-context-r1` adds explicit SDK context to six corpus inputs,
+with real hosted Java/Kotlin/Swift typechecks. Exact original bytes are retained
+in `tests/fixtures/native_context_legacy`; tests require their original partial
+outcomes. Expected labels, denominators, payloads, guards and sinks were not
+relaxed. The revised corpus has TP19/FP0/FN0, a passing regression contract and
+one known partial case, so its overall `passed` remains false. These are
+informed development reruns. They establish neither original-corpus success nor
+independent accuracy, holdout performance or policy-baseline approval.
+
+The earlier failing snapshots below retain their measured meaning. A subsequent
+Claude review identified additional issues in imported-evidence verification,
+boolean guard scope, visible Kotlin aliases, signing coverage, runtime binding
+revocation and release orchestration. Their fixes require a new immutable-head
+review and hosted validation before publication; the preceding success cannot
+stand in for those gates.
+
+Imported findings remain external observations: they cannot corroborate their
+own claims or promote native MASWE coverage. Malformed device metadata is
+rejected before source analysis. Boolean guards use parsed operator scope;
+visible unresolved type aliases preserve candidates and partial coverage.
+Runtime backend verdicts require the current model binding, matching session
+and capture identity, and distinct nonce-bound capture proofs. Revocation makes
+prior backend results inconclusive. Two fresh HTTP requests may have identical
+serialized bytes, so differing request payload hashes are not required.
+Code-signature consistency requires entitlement slots to bind the corresponding
+XML/DER blob and conservative full pre-signature code coverage. Missing or
+zero special-slot hashes, wrong blob indices and uncovered code cannot become
+clean consistency evidence. This is an analysis coverage limit, not a universal
+claim that an unusual Mach-O layout is rejected by an Apple kernel.
+
+
 The prior exact source snapshot `50f1a0f` passed eleven supported CI jobs and
 four package/MCP jobs. Those observations are historical; the 1.6 candidate
 requires its own supported CI, repeated package-content checks, clean install

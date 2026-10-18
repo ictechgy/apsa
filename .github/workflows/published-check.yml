@@ -14,7 +14,7 @@ jobs:
   verify-publication:
     if: github.repository == 'ictechgy/apsa' && github.ref_type == 'tag'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -29,15 +29,19 @@ jobs:
           version: "0.12.1"
           python-version: "3.12.13"
           enable-cache: false
+      - name: Select the exact publication verifier interpreter
+        run: |
+          uv python install 3.12.13
+          echo "APSA_VERIFIER_PYTHON=$(uv python find 3.12.13)" >> "$GITHUB_ENV"
       - name: Bind checkout, version, public registries and downloaded package bytes
         env:
           RELEASE_SHA: ${{ inputs.source-sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          version="$("$APSA_VERIFIER_PYTHON" -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
-          python scripts/verify_publication.py --version "$version" --source-sha "$RELEASE_SHA" --out "$RUNNER_TEMP/publication"
+          "$APSA_VERIFIER_PYTHON" scripts/verify_publication.py --version "$version" --source-sha "$RELEASE_SHA" --out "$RUNNER_TEMP/publication"
       - name: Install verified PyPI wheel into a new isolated environment
         env:
           UV_CACHE_DIR: ${{ runner.temp }}/public-install-cache
@@ -51,12 +55,9 @@ jobs:
           for module in apsa quaygate mobile_audit; do
             test "$("$RUNNER_TEMP/public-install/bin/python" -I -m "$module" --version)" = "$RELEASE_VERSION"
           done
-      - name: Public uvx cold resolution with an empty dedicated cache
-        env:
-          UV_CACHE_DIR: ${{ runner.temp }}/public-cold-cache
-          APSA_HOME: ${{ runner.temp }}/public-cold-home
+      - name: Public uvx cold resolution with bounded fresh-cache retries
         run: |
-          test "$(uvx --python 3.12.13 "apsa@${RELEASE_VERSION}" --version)" = "$RELEASE_VERSION"
+          "$APSA_VERIFIER_PYTHON" scripts/verify_cold_start.py --version "$RELEASE_VERSION" --out "$RUNNER_TEMP/public-cold-start"
       - name: Actual installed stdio SDK initialize and tools/list in both scopes
         run: |
           "$RUNNER_TEMP/public-install/bin/python" -I scripts/served_mcp_manifest.py --out "$RUNNER_TEMP/public-mcp" --contract tests/contracts/mcp_tool_manifest_pending.json
@@ -111,5 +112,9 @@ jobs:
             ${{ runner.temp }}/public-scan.json
             ${{ runner.temp }}/public-report-verify.json
             ${{ runner.temp }}/public-mcp-tools.json
+            ${{ runner.temp }}/public-cold-start/result.json
+            ${{ runner.temp }}/public-cold-start/attempt-*/result.json
+            ${{ runner.temp }}/public-cold-start/attempt-*/stdout
+            ${{ runner.temp }}/public-cold-start/attempt-*/stderr
           retention-days: 30
           if-no-files-found: error

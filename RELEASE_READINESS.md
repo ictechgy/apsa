@@ -1,5 +1,33 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## 1.6.0 development recovery — 2026-10-18
+
+Candidate `03c952a8ad51517ec29f6dead93acafa38518546` passed all 18 jobs in
+[CI](https://github.com/ictechgy/apsa/actions/runs/39111486956),
+[package/actual SDK stdio](https://github.com/ictechgy/apsa/actions/runs/39111486973),
+[bundletool](https://github.com/ictechgy/apsa/actions/runs/39111486957),
+[MobSF](https://github.com/ictechgy/apsa/actions/runs/39111486967) and
+[component comparison](https://github.com/ictechgy/apsa/actions/runs/39111486974).
+Linux passed 4,631 tests and macOS 4,634; repeated builds produced identical
+wheel and sdist bytes across both systems and Python versions.
+
+The development corpus now declares `explicit-source-context-r1`: six Java,
+Kotlin and Swift inputs add represented SDK imports and bounded source ancestry.
+Their exact original bytes remain regression fixtures under
+`tests/fixtures/native_context_legacy/`. Labels, IDs, order, denominators,
+payloads, guards and sinks are unchanged. The revised 30-case run measured
+TP19/FP0/FN0 and passed its regression contract with one known partial case;
+its overall `passed` remains false. This is a disclosed development-input
+revision, not a pass on the original corpus, an independent accuracy result,
+a holdout or an approved policy baseline. Earlier failures remain historical.
+Hosted Java, Kotlin and Swift compilers typechecked all six revised sources.
+
+Claude's whole-tool review then found additional correctness and release issues.
+The recovery fixes require fresh tests, installed runtime controls, complete
+independent reviews and publication checks on their final immutable source.
+The successful candidate above does not approve those later bytes or publication.
+[Release scope and remaining limits](docs/RELEASE_160.md) distinguish each claim.
+
 ## Five fresh validation gates — 2026-10-11
 
 [FIVE_GATE_VALIDATION.md](docs/FIVE_GATE_VALIDATION.md) records source-only

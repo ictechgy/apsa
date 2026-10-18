@@ -200,11 +200,14 @@ def coverage_matrix(report: dict) -> dict:
         if isinstance(rule, str) and isinstance(item.get("state"), str):
             states.setdefault(rule, set()).add(item["state"])
     findings: dict[str, list[str]] = {}
+    native_weaknesses: set[str] = set()
     for item in report.get("findings", []):
         if not isinstance(item, dict) or not isinstance(item.get("id"), str):
             continue
         for weakness in finding_weaknesses(item):
             findings.setdefault(weakness, []).append(item["id"])
+            if item.get("origin") != "external":
+                native_weaknesses.add(weakness)
     rows = []
     for weakness in index["weaknesses"]:
         checks = sorted(rule for rule, mapped in RULE_WEAKNESSES.items() if weakness["id"] in mapped)
@@ -220,8 +223,8 @@ def coverage_matrix(report: dict) -> dict:
             state = aggregate_states(
                 [rule_state(states.get(rule, set())) for rule in checks if rule in states] or ["not-run"]
             )
-            if found and state in {"not-run", "not-applicable"}:
-                # A finding shows some related check ran, never that all of them did.
+            if weakness["id"] in native_weaknesses and state in {"not-run", "not-applicable"}:
+                # Only native findings show that a related APSA check ran.
                 state = "partial"
         rows.append(
             {

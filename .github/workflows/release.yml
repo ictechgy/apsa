@@ -66,6 +66,14 @@ jobs:
           version: "0.12.1"
           python-version: "3.12.13"
           enable-cache: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          packages: "platforms;android-36 build-tools;36.0.0"
+          log-accepted-android-sdk-licenses: false
       - name: Install the locked build environment
         run: |
           uv python install 3.12.13
@@ -104,10 +112,14 @@ jobs:
     name: Bind the verified version to an immutable tag
     needs: [validate, verify, build]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      created: ${{ steps.bind_tag.outputs.created }}
     permissions:
       contents: write
     steps:
       - name: Create the release tag or verify its existing commit
+        id: bind_tag
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -120,14 +132,16 @@ jobs:
           if ref["type"] != "commit" or ref["sha"] != os.environ["GITHUB_SHA"]:
               raise SystemExit("Existing release tag does not match the verified commit; refusing to move it")
           PY
+            echo "created=false" >> "$GITHUB_OUTPUT"
           else
             grep -q 'HTTP 404' tag-error.txt || { cat tag-error.txt; exit 1; }
             gh api --method POST "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA"
+            echo "created=true" >> "$GITHUB_OUTPUT"
           fi
 
   dispatch-tag:
     name: Start publication in the verified tag context
-    if: github.ref_type != 'tag'
+    if: github.ref_type != 'tag' && needs.tag.outputs.created == 'true'
     needs: [validate, verify, build, tag]
     runs-on: ubuntu-24.04
     timeout-minutes: 5

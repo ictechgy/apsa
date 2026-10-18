@@ -250,7 +250,7 @@ class NativeFlow:
         self.type_parameter_cache: dict[tuple[int, int], dict[str, Any]] = {}
         self.empty_base_cache: dict[tuple[int, int, str], bool] = {}
         self.module_values: dict[str, list[tuple[Analyzer, Any]]] = {}
-        self.swift_type_aliases: set[str] = set()
+        self.module_type_aliases: dict[str, list[tuple[Analyzer, Any]]] = {}
         self.swift_extensions_present = False
         self.active_guards: dict[int | tuple[int, str], set[str]] = {}
         self.active_conditions: list[Any] = []
@@ -272,14 +272,19 @@ class NativeFlow:
                     namespace = match[1]
             self.namespaces[id(analyzer)] = namespace
             for node in nodes:
-                if analyzer.language == "swift" and node.type in {"type_alias", "typealias_declaration"}:
+                if (
+                    analyzer.language in {"kotlin", "swift"}
+                    and node.type in {"type_alias", "typealias_declaration"}
+                    and node.parent is not None
+                    and node.parent.type in {"program", "source_file"}
+                ):
                     name = (
                         _field(node, "name")
                         or _field(node, "type")
                         or next((child for child in node.named_children if child.type in IDENTIFIERS), None)
                     )
                     if name is not None:
-                        self.swift_type_aliases.add(analyzer.text(name))
+                        self.module_type_aliases.setdefault(analyzer.text(name), []).append((analyzer, node))
                 if (
                     analyzer.language in {"kotlin", "swift"}
                     and node.type == "property_declaration"
@@ -1698,12 +1703,13 @@ class NativeFlow:
                 pending.extend(child.named_children)
         return names
 
-    def module_value_present(self, analyzer: Analyzer, name: str) -> bool:
+    def module_value_present(self, analyzer: Analyzer, name: str, *, aliases: bool = False) -> bool:
         """A potential expression binding supplies uncertainty, never a value/type proof."""
         imported = self.imported_symbols(analyzer, name)
         names = {name, *(symbol.rsplit(".", 1)[-1] for symbol in imported)}
         for source_name in names:
-            for source, node in self.module_values.get(source_name, []):
+            bindings = self.module_type_aliases if aliases else self.module_values
+            for source, node in bindings.get(source_name, []):
                 if source.language != analyzer.language:
                     continue
                 if source is analyzer:
@@ -1790,7 +1796,7 @@ class NativeFlow:
             return False
         root, _, remainder = declared.partition(".")
         if analyzer.language == "swift" and (
-            root in self.swift_type_aliases or self.class_name_present(analyzer, root)
+            self.module_value_present(analyzer, root, aliases=True) or self.class_name_present(analyzer, root)
         ):
             # A supplied source nominal can shadow a module/type spelling in
             # another file. Unknown module membership is not proof of absence.
@@ -1842,6 +1848,10 @@ class NativeFlow:
     def declaration_tokens(node: Any) -> set[str]:
         """Read declaration keywords from AST tokens, excluding bodies/comments."""
         name = _field(node, "name")
+        if name is None and node.type == "type_alias":
+            name = _field(node, "type") or next(
+                (child for child in node.named_children if child.type in IDENTIFIERS), None
+            )
         if name is None and node.type == "property_declaration":
             name = next(
                 (
@@ -2059,13 +2069,18 @@ class NativeFlow:
     ) -> tuple[list[Callable], bool]:
         if self.value_binding(analyzer, call, frame) is not None:
             return [], True
+        if call.receiver is None and self.module_value_present(analyzer, call.name, aliases=True):
+            return [], True
         receiver_root = analyzer.key(call.receiver).partition(".")[0] if call.receiver is not None else ""
         if (
             receiver_root
             and receiver_root not in frame.values
             and receiver_root not in analyzer.parameter_types
             and receiver_root not in analyzer.field_types
-            and self.module_value_present(analyzer, receiver_root)
+            and (
+                self.module_value_present(analyzer, receiver_root)
+                or self.module_value_present(analyzer, receiver_root, aliases=True)
+            )
         ):
             return [], True
         imported = self.imported_symbols(analyzer, call.name)

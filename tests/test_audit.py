@@ -10,6 +10,27 @@ from mobile_audit.inputs import inspect_target, parse_dependencies
 from mobile_audit.output import assistant_context, sarif
 
 
+@pytest.mark.parametrize(
+    "environment",
+    [
+        [],
+        ["ios"],
+        {"platform": []},
+        {"platform": "ios", "version": 17},
+        {"platform": "ios", "version": None},
+        {"platform": "ios", "simulator": "false"},
+        {"platform": "android", "security_patch": 20260905},
+    ],
+)
+def test_device_info_types_fail_before_input_analysis(store, tmp_path, monkeypatch, environment):
+    monkeypatch.setattr(
+        "mobile_audit.audit.analyze_target",
+        lambda *args, **kwargs: pytest.fail("Invalid device metadata reached analysis"),
+    )
+    with pytest.raises(ValueError, match="Device info"):
+        scan(store, tmp_path / "unread-source", environment=environment)
+
+
 def test_real_binary_android_manifest_and_dex(store, apk):
     report = scan(store, apk)
     assert report["inventory"]["package"] == "audit.fixture"

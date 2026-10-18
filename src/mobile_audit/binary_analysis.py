@@ -398,7 +398,9 @@ CODE_HASHES = {1: ("sha1", 20), 2: ("sha256", 32), 3: ("sha256", 20), 4: ("sha38
 MAX_CODE_SLOTS = 65_536
 
 
-def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) -> dict:
+def _code_directory(
+    blob: bytes, code: bytes | None, entitlement_blobs: dict, signature_offset: int | None = None
+) -> dict:
     """Recompute CodeDirectory page and entitlement-slot hashes.
 
     Agreement shows the signed code pages and embedded entitlements match this
@@ -464,6 +466,13 @@ def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) ->
         "identifier": identifier,
         "cdhash": hashlib.new(algorithm, blob).hexdigest()[:40],
     }
+    extent = signature_offset if signature_offset is not None else len(code) if code is not None else None
+    result["code_extent_basis"] = (
+        "lc-code-signature-offset" if signature_offset is not None else "provided-code-buffer"
+    )
+    result["code_extent"] = extent
+    extent_matches = bool(slots and code_limit and code_limit == extent)
+    result["full_code_coverage"] = False
     if version >= 0x20200 and len(blob) >= 52:
         team_offset = struct.unpack_from(">I", blob, 48)[0]
         if 0 < team_offset < len(blob):
@@ -488,12 +497,15 @@ def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) ->
         result["mapped_pages"] = len(mapped_pages)
     if (
         code is None
+        or not extent_matches
         or code_limit > len(code)
         or not page_log
         or (mapped_pages is None and slots != (code_limit + (1 << page_log) - 1) >> page_log)
     ):
         # Missing code, or fewer slots than pages up to codeLimit, leaves bytes unhashed.
         result["integrity"] = "unverifiable"
+        if not extent_matches:
+            result["reason"] = "declared codeLimit does not cover the complete code extent"
     else:
         page = 1 << page_log
         for index in range(slots):
@@ -506,12 +518,27 @@ def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) ->
         # The full list is needed to compare with an encrypted region; it is cut afterwards.
         result["mismatched_pages"] = mismatched
         result["integrity"] = "consistent" if not mismatched else "modified"
+        result["full_code_coverage"] = True
         if mapped_pages is not None:
             result["mapped_integrity"] = result["integrity"]
             covered = len(mapped_pages) == (code_limit + page - 1) // page
             result["full_page_coverage"] = covered
+            result["full_code_coverage"] = covered
             if not covered and not mismatched:
                 result.update({"integrity": "unverifiable", "reason": "scatter leaves unsealed file pages"})
+    invalid_entitlement_slots = [
+        slot
+        for slot, payload in entitlement_blobs.items()
+        if len(payload) >= 4
+        and struct.unpack_from(">I", payload)[0] in {0xFADE7171, 0xFADE7172}
+        and (slot, struct.unpack_from(">I", payload)[0]) not in {(5, 0xFADE7171), (7, 0xFADE7172)}
+    ]
+    if invalid_entitlement_slots:
+        result["unsupported_entitlement_slots"] = sorted(invalid_entitlement_slots)
+        result["entitlements_bound"] = False
+        result["der_entitlements_bound"] = False
+        if result["integrity"] != "modified":
+            result["integrity"] = "unverifiable"
     for slot, name in (
         (1, "info_plist"),
         (3, "resource_envelope"),
@@ -520,11 +547,18 @@ def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) ->
     ):
         if slot > special:
             if slot in entitlement_blobs:
-                result[name + "_state"] = "not-sealed"
+                result[name + "_state"] = "unbound-present" if slot in {5, 7} else "not-sealed"
+                if slot in {5, 7}:
+                    result[name + "_bound"] = False
+                    result["integrity"] = "modified"
             continue
         expected = blob[hash_offset - slot * hash_size : hash_offset - (slot - 1) * hash_size]
         if not any(expected):
-            result[name + "_state"] = "not-sealed"
+            present = slot in {5, 7} and slot in entitlement_blobs
+            result[name + "_state"] = "unbound-present" if present else "not-sealed"
+            if present:
+                result[name + "_bound"] = False
+                result["integrity"] = "modified"
             continue
         if slot not in entitlement_blobs:
             result[name + "_state"] = "missing"
@@ -532,7 +566,7 @@ def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) ->
             continue
         if slot <= special and slot in entitlement_blobs:
             expected = blob[hash_offset - slot * hash_size : hash_offset - (slot - 1) * hash_size]
-            matches = digest(entitlement_blobs[slot]) == expected
+            matches = slot not in invalid_entitlement_slots and digest(entitlement_blobs[slot]) == expected
             result[name + "_bound"] = matches
             result[name + "_state"] = "consistent" if matches else "modified"
             if not matches:
@@ -541,7 +575,11 @@ def _code_directory(blob: bytes, code: bytes | None, entitlement_blobs: dict) ->
 
 
 def _code_signature(
-    raw: bytes, code: bytes | None = None, trust_policy: dict | None = None, bundle_blobs: dict | None = None
+    raw: bytes,
+    code: bytes | None = None,
+    trust_policy: dict | None = None,
+    bundle_blobs: dict | None = None,
+    signature_offset: int | None = None,
 ) -> dict:
     if len(raw) < 8 or len(raw) > MAX_SIGNATURE_BYTES:
         raise BinaryFormatError("invalid code signature size")
@@ -584,12 +622,12 @@ def _code_signature(
         declared_directory_slot = slot_type == 0 or 0x1000 <= slot_type < 0x1005
         if declared_directory_slot and blob_magic != 0xFADE0C02:
             directories.append((slot_type, raw[offset : offset + blob_length], False))
-        if blob_magic == 0xFADE7171:
+        if blob_magic == 0xFADE7171 and slot_type == 5:
             if "entitlements" in result:
                 raise BinaryFormatError("duplicate XML entitlement blobs")
             result["entitlements"] = _entitlement_summary(load_plist(raw[offset + 8 : offset + blob_length]))
             result["source"] = "embedded-xml"
-        elif blob_magic == 0xFADE7172:
+        elif blob_magic == 0xFADE7172 and slot_type == 7:
             result["der_entitlements_present"] = True
         elif blob_magic == 0xFADE0C02:
             # Keep every declared/observed directory visible. Unknown slots must
@@ -603,7 +641,7 @@ def _code_signature(
         elif blob_magic == 0xFADE0B01 and slot_type == 0x10000:
             result["cms_signature_present"] = blob_length > 8
             cms_signature = raw[offset + 8 : offset + blob_length]
-        if blob_magic in (0xFADE7171, 0xFADE7172) and slot_type in (5, 7):
+        if blob_magic in (0xFADE7171, 0xFADE7172):
             entitlement_blobs[slot_type] = raw[offset : offset + blob_length]
     primary_valid = False
     if directories:
@@ -630,7 +668,7 @@ def _code_signature(
             try:
                 if not supported:
                     raise BinaryFormatError("unsupported CodeDirectory slot or blob format")
-                directory_metadata.update(_code_directory(blob, code, entitlement_blobs))
+                directory_metadata.update(_code_directory(blob, code, entitlement_blobs, signature_offset))
             except BinaryFormatError as error:
                 if slot_type == 0:
                     primary_valid = False
@@ -780,6 +818,7 @@ def _macho_slice(
                     raw[offset : offset + size],
                     trust_policy,
                     bundle_blobs,
+                    signature_offset=dataoff,
                 ),
             }
         cursor += command_size
@@ -800,6 +839,7 @@ def _macho_slice(
                 and all(index * page < end and (index + 1) * page > start for index in pages)
                 and directory.get("entitlements_bound", True)
                 and directory.get("der_entitlements_bound", True)
+                and not directory.get("unsupported_entitlement_slots")
                 and directory.get("info_plist_state") != "modified"
                 and directory.get("resource_envelope_state") != "modified"
             ):
@@ -1142,7 +1182,14 @@ def analyze_binary(path: Path, collected: dict) -> dict:
             )
             signatures = [slice_["code_signature"] for app in apps for slice_ in app.get("slices", [])]
             entitlements_complete = bool(signatures) and all(
-                "entitlements" in signature and not signature.get("der_entitlements_present")
+                "entitlements" in signature
+                and not signature.get("der_entitlements_present")
+                and bool(signature.get("code_directories"))
+                and all(
+                    directory.get("entitlements_bound") is True
+                    and not directory.get("unsupported_entitlement_slots")
+                    for directory in signature["code_directories"]
+                )
                 for signature in signatures
             )
             result["coverage"].append(
@@ -1150,7 +1197,7 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                     "BINARY-IOS-ENTITLEMENTS",
                     "checked" if entitlements_complete else "partial" if signatures else "not-run",
                     "codesign-metadata",
-                    "Embedded XML entitlement observation only. DER entitlements are not decoded; detached CMS content verification is reported separately and does not establish Apple signer trust. Provisioning values are permissions, not effective app entitlements.",
+                    "XML observation requires matching CodeDirectory slot-5 hashes. DER entitlements are not decoded; detached CMS verification is separate and does not establish Apple signer trust. Provisioning values are permissions, not effective app entitlements.",
                 )
             )
             integrity = [signature.get("integrity", "unverifiable") for signature in signatures]
@@ -1176,7 +1223,8 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                     and all(state in {"consistent", "modified"} for state in integrity)
                     and not invalid_cms
                     else "partial"
-                    if invalid_cms or any(state in {"consistent", "modified"} for state in integrity)
+                    if invalid_cms
+                    or any(state in {"consistent", "modified", "unverifiable"} for state in integrity)
                     else "not-run",
                     "codedirectory-hashes",
                     "Recomputes CodeDirectory page and entitlement-slot hashes. Agreement is internal integrity only. Detached CMS verification is separate; certificate chain, Apple signer, team identity and provisioning remain unverified.",

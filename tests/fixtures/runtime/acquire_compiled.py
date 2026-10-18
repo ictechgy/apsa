@@ -70,7 +70,7 @@ def execute(
             "manifest": adapter.manifest,
             "snapshots": snapshots,
             "workflow": evaluate_workflow(value, snapshots, binding),
-            "backend_invalidation": evaluate_backend_invalidation(value, snapshots),
+            "backend_invalidation": evaluate_backend_invalidation(value, snapshots, binding),
             "external_proof": {"physical_device": "unmeasured", "backend_HTTP": "unmeasured"},
         }
         (root / "recorder-evidence.json").write_text(json.dumps(result, indent=2) + "\n")

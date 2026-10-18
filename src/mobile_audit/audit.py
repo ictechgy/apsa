@@ -374,13 +374,32 @@ def scan(
 ) -> dict:
     if progress:
         progress("input-analysis", 5)
-    if environment:
-        if environment.get("platform") not in {"android", "ios"}:
+    if environment is not None:
+        if not isinstance(environment, dict):
+            raise ValueError("Device info must be a JSON object")
+        if not isinstance(environment.get("platform"), str) or environment["platform"] not in {
+            "android",
+            "ios",
+        }:
             raise ValueError("Device info requires platform: android or ios")
         if "os_product" in environment and (
             not isinstance(environment["os_product"], str) or environment["os_product"] not in PRODUCTS
         ):
             raise ValueError("Device info os_product must be ios or ipados")
+        for field in (
+            "version",
+            "security_patch",
+            "vendor_security_patch",
+            "webview_version",
+            "model",
+            "observed_at",
+            "soc_manufacturer",
+            "soc_model",
+        ):
+            if field in environment and not isinstance(environment[field], str):
+                raise ValueError(f"Device info {field} must be a string")
+        if "simulator" in environment and type(environment["simulator"]) is not bool:
+            raise ValueError("Device info simulator must be a boolean")
         environment = {
             k: v
             for k, v in environment.items()

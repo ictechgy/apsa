@@ -1026,7 +1026,7 @@ def _run(
             "live_device_verified": False,
             "note": "No trusted network/instrumentation adapter was injected; operator JSON remains unverified.",
         },
-        "backend_invalidation": evaluate_backend_invalidation(scenario, snapshots),
+        "backend_invalidation": evaluate_backend_invalidation(scenario, snapshots, binding),
         "schema_version": scenario.get("schema_version", 1),
         "static_links": [
             {

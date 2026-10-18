@@ -121,7 +121,7 @@ def test_switch_is_authenticated_b_with_old_a_replay_and_unambiguous_markers(pla
     after = recorder.capture("after", {"account": "b", "state": "authenticated"}, "account_switch")
     snapshots = {"before": before, "after": after}
     assert evaluate_workflow(scenario, snapshots, recorder.binding)[0]["state"] == "passed"
-    assert evaluate_backend_invalidation(scenario, snapshots) == []
+    assert evaluate_backend_invalidation(scenario, snapshots, recorder.binding) == []
     assert driver.old_account_switch_replay(before, after)[0]["state"] == "passed"
     assert authority.credential == old_credential and authority.b_credential != old_credential
     assert authority.switched and authority.b_active and not authority.active and not authority.logged_out

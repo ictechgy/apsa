@@ -14,6 +14,99 @@ from mobile_audit.maswe import coverage_matrix
 from mobile_audit.verify import verify_claim
 
 
+@pytest.mark.parametrize("native_present", [False, True])
+def test_imported_claim_cannot_supply_its_own_verification_or_native_coverage(
+    store, tmp_path, native_present
+):
+    from mobile_audit.audit import summarize
+    from mobile_audit.core import finding, now, uid
+
+    target = tmp_path / "fresh-source"
+    (target / "app").mkdir(parents=True)
+    (target / "app/X.kt").write_text("class FreshSynthetic {}")
+    native = finding(
+        "AST-WEBVIEW-SSL-BYPASS",
+        "Owned native evidence",
+        "medium",
+        "candidate",
+        [{"path": "app/X.kt", "line": 11}],
+        "Cancel certificate errors",
+    )
+    base = {
+        "id": uid("audit"),
+        "created": now(),
+        "target": str(target),
+        "inventory": {
+            "platforms": ["android"],
+            "source_analysis": {"files": [{"path": "app/X.kt", "state": "parsed"}]},
+        },
+        "findings": [native] if native_present else [],
+        "coverage": [{"rule_id": "AST-WEBVIEW-SSL-BYPASS", "state": "not-run"}],
+        "warnings": [],
+        "intel_snapshot": [],
+    }
+    base["summary"] = summarize(base)
+    store.save_report(base)
+    sarif = tmp_path / "new-claim.sarif"
+    sarif.write_text(json.dumps(document([result("app/X.kt")])))
+    derived = ingest(store, base["id"], sarif, "reviewer")
+    external = [item for item in derived["findings"] if item.get("origin") == "external"]
+    assert len(external) == 1
+    verification = verify_claim(derived, weakness="CWE-295", path="app/X.kt", line=11)
+    assert verification["verdict"] == ("corroborated" if native_present else "not-run")
+    assert [item["finding_id"] for item in verification["matching_findings"]] == (
+        [native["id"]] if native_present else []
+    )
+    row = next(row for row in coverage_matrix(derived)["weaknesses"] if row["id"] == "MASWE-0027")
+    assert row["state"] == ("partial" if native_present else "not-run")
+    assert external[0]["id"] in row["findings"]
+
+
+def test_checklist_export_rejects_sarif_root_before_loading_checklist(store, tmp_path, monkeypatch, capsys):
+    from mobile_audit.audit import summarize
+    from mobile_audit.core import now, uid
+
+    base = {
+        "id": uid("audit"),
+        "created": now(),
+        "target": str(tmp_path),
+        "inventory": {},
+        "findings": [],
+        "coverage": [],
+        "warnings": [],
+    }
+    base["summary"] = summarize(base)
+    store.save_report(base)
+    monkeypatch.setattr(
+        "mobile_audit.checklists.load_checklist",
+        lambda *args: pytest.fail("Conflicting flags reached checklist loading"),
+    )
+    output = tmp_path / "unused.json"
+    assert (
+        main(
+            [
+                "--json",
+                "--home",
+                str(store.home),
+                "reports",
+                "export",
+                base["id"],
+                "--format",
+                "checklist",
+                "--checklist",
+                str(tmp_path / "unused.toml"),
+                "--sarif-root",
+                "module",
+                "--out",
+                str(output),
+            ]
+        )
+        == 2
+    )
+    assert "--sarif-root applies only to --format sarif" in capsys.readouterr().out
+    assert not output.exists()
+
+
 @pytest.mark.parametrize("limit", ["comparisons", "links"])
 def test_corroboration_limits_reject_atomically_and_keep_bounded_matches(store, tmp_path, monkeypatch, limit):
     import mobile_audit.ingest as module

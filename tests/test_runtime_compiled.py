@@ -94,7 +94,7 @@ def test_compiled_backend_authority_is_separate_from_store(owned_adapter, invali
 
     value = storage_scenario("android", "logout")
     adapter = owned_adapter(value, invalidate_backend=invalidate, local_residual=residual)
-    _, _, snapshots = acquire(value, adapter)
+    _, binding, snapshots = acquire(value, adapter)
     before, after = snapshots["before"], snapshots["after"]
     assert before["backend_probe"]["outcome"] == "accepted"
     assert after["backend_probe"]["outcome"] == ("rejected" if invalidate else "accepted")
@@ -104,7 +104,7 @@ def test_compiled_backend_authority_is_separate_from_store(owned_adapter, invali
         any(match["marker_label"] == "a" and match["surface"] == "storage" for match in after["matches"])
         is residual
     )
-    assert evaluate_backend_invalidation(value, snapshots)[0]["state"] == "inconclusive"
+    assert evaluate_backend_invalidation(value, snapshots, binding)[0]["state"] == "inconclusive"
 
 
 @pytest.mark.parametrize("index", [1, 2, 3, 4, 5, 6, 7, 8])

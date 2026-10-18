@@ -2497,7 +2497,7 @@ def execute_case(
         backend = (
             old_account_switch_replay(before, after)
             if transition_kind == "account_switch"
-            else evaluate_backend_invalidation(value, snapshots)
+            else evaluate_backend_invalidation(value, snapshots, recorder.binding)
         )
         workflow = evaluate_workflow(value, snapshots, recorder.binding)
         local_complete = all(
