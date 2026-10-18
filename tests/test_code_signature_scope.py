@@ -28,7 +28,9 @@ def superblob(entries):
     return struct.pack(">III", 0xFADE0CC0, offset, len(entries)) + b"".join(indexes + content)
 
 
-def image(*, defect=None, limit=8192, padding=0, scatter=False, encrypted=False, pages=None):
+def image(
+    *, defect=None, limit=8192, padding=0, scatter=False, encrypted=False, pages=None, missing_slot=None
+):
     entitlement_slot, entitlement = (
         (7, DER_BLOB) if defect in {"der-zero", "der-missing", "der-at-5"} else (5, XML_BLOB)
     )
@@ -39,6 +41,10 @@ def image(*, defect=None, limit=8192, padding=0, scatter=False, encrypted=False,
     elif defect == "der-at-5":
         entitlement_slot = 5
     special = {1: INFO, entitlement_slot: entitlement}
+    if missing_slot is not None:
+        special[missing_slot] = {1: INFO, 3: b"synthetic-sealed-resources", 5: XML_BLOB, 7: DER_BLOB}[
+            missing_slot
+        ]
     if defect in {"missing", "der-missing", "misindex"}:
         special = {1: INFO}
     if pages is None:
@@ -52,7 +58,7 @@ def image(*, defect=None, limit=8192, padding=0, scatter=False, encrypted=False,
         return superblob(
             [
                 (0, bytes(directory)),
-                (entitlement_slot, entitlement),
+                *([] if missing_slot == entitlement_slot else [(entitlement_slot, entitlement)]),
                 (0x10000, struct.pack(">II", 0xFADE0B01, 12) + b"MOCK"),
             ]
         )
@@ -150,6 +156,40 @@ def test_encrypted_page_mismatch_cannot_hide_unsealed_scatter_gap(mock_cms, tmp_
         archive.writestr("Payload/App.app/Info.plist", INFO)
         archive.writestr("Payload/App.app/App", raw)
     report = analyze_binary(path, inspect_target(path)[0])
+    assert (
+        next(row for row in report["coverage"] if row["rule_id"] == "BINARY-IOS-CODE-INTEGRITY")["state"]
+        == "partial"
+    )
+
+
+@pytest.mark.parametrize(
+    "slot,name", [(1, "info_plist"), (3, "resource_envelope"), (5, "entitlements"), (7, "der_entitlements")]
+)
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_encrypted_page_mismatch_cannot_hide_missing_sealed_metadata(
+    mock_cms, tmp_path, slot, name, mismatch
+):
+    raw = bytearray(image(encrypted=True, missing_slot=slot))
+    if mismatch:
+        raw[5000] ^= 1
+    signature = inspect_macho(bytes(raw), bundle_blobs={} if slot == 1 else {1: INFO})[0]["code_signature"]
+    directory = signature["code_directories"][0]
+    assert directory["full_code_coverage"] is True
+    assert directory[name + "_state"] == "missing"
+    assert directory["integrity"] == "unverifiable"
+    assert signature["integrity"] == "unverifiable"
+    if slot == 1:
+        return  # The IPA's executable lookup itself requires a present Info.plist.
+    path = tmp_path / f"new-synthetic-missing-slot-{slot}-{mismatch}.ipa"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("Payload/App.app/Info.plist", INFO)
+        archive.writestr("Payload/App.app/App", raw)
+    report = analyze_binary(path, inspect_target(path)[0])
+    if slot in {5, 7}:
+        assert (
+            next(row for row in report["coverage"] if row["rule_id"] == "BINARY-IOS-ENTITLEMENTS")["state"]
+            == "partial"
+        )
     assert (
         next(row for row in report["coverage"] if row["rule_id"] == "BINARY-IOS-CODE-INTEGRITY")["state"]
         == "partial"

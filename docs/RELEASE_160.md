@@ -25,7 +25,9 @@ compiler module identity.
 
 - Encrypted-page mismatches abstain as `not-run` only when the directory covers
   the complete code extent. A scatter gap leaves coverage `partial`, even when
-  every observed mismatch is inside an encrypted region.
+  every observed mismatch is inside an encrypted region. Missing sealed plist,
+  resources or entitlements also remain `partial`; encryption cannot hide an
+  independent metadata verification gap.
 - OSV records sharing a display CVE retain flat, exact upstream `osv_records`
   and sorted `osv_ids` in the cache. Correlation uses the highest active-member
   severity; a withdrawn duplicate cannot suppress an active advisory. Partial
@@ -52,7 +54,9 @@ compiler module identity.
 
 - Online dependency reassessment saves the new per-package query states and
   latest request/errors before computing completeness. A new online attempt
-  replaces its predecessor's query warnings; offline refresh retains them.
+  replaces its predecessor's query warnings, including derived offline exclusion
+  warnings; offline refresh retains them. Older offline reports without a
+  separate warning list are handled from their recorded excluded package states.
   Watch still uses its documented default options rather than scan exclusions.
 - Imported SARIF rule keys now include exact driver/rule identity. Previously
   ambiguous external baselines and waivers require explicit review; old slug

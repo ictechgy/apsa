@@ -844,11 +844,20 @@ def _macho_slice(
                 and directory.get("resource_envelope_state") != "modified"
             ):
                 # App Store encryption follows signing; the kernel checks decrypted pages.
-                if directory.get("full_code_coverage") is True:
+                metadata_available = all(
+                    directory.get(name + "_state", "not-sealed") in {"consistent", "not-sealed"}
+                    for name in ("info_plist", "resource_envelope", "entitlements", "der_entitlements")
+                )
+                if directory.get("full_code_coverage") is True and metadata_available:
                     directory["integrity"] = "unverifiable-encrypted-pages"
                 else:
                     directory.update(
-                        {"integrity": "unverifiable", "reason": "scatter leaves unsealed file pages"}
+                        {
+                            "integrity": "unverifiable",
+                            "reason": "scatter leaves unsealed file pages"
+                            if directory.get("full_code_coverage") is not True
+                            else "sealed metadata unavailable",
+                        }
                     )
             if "mismatched_pages" in directory:
                 directory["mismatched_pages"] = pages[:64]
@@ -1192,6 +1201,7 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                 and bool(signature.get("code_directories"))
                 and all(
                     directory.get("entitlements_bound") is True
+                    and directory.get("der_entitlements_state", "not-sealed") == "not-sealed"
                     and not directory.get("unsupported_entitlement_slots")
                     for directory in signature["code_directories"]
                 )

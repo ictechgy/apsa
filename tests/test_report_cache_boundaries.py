@@ -31,6 +31,53 @@ def test_report_larger_than_input_limit_verifies_and_saves_idempotently(store, t
     assert store.verify_reports()["state"] == "passed"
 
 
+@pytest.mark.parametrize("excluded", [False, True])
+@pytest.mark.parametrize("recorded_warning", [False, True])
+def test_online_reassessment_replaces_offline_exclusion_warning(
+    store, tmp_path, monkeypatch, excluded, recorded_warning
+):
+    dependency = dict(name="private-owned", ecosystem="PyPI", version="1.0", confidence="exact")
+    inventory = {"target": str(tmp_path), "platforms": [], "dependencies": [dependency], "warnings": []}
+    monkeypatch.setattr(
+        audit,
+        "analyze_target",
+        lambda *args, **kwargs: {"inventory": copy.deepcopy(inventory), "findings": [], "coverage": []},
+    )
+    monkeypatch.setattr(audit, "source_health", lambda _: [])
+    value = audit.scan(store, tmp_path, osv_policy={"exclude_names": ["private-*"]})
+    warning = "1 dependencies excluded by transmission policy; not checked"
+    assert value["warnings"].count(warning) == 1
+    value["warnings"].append("Unrelated retained warning")
+    if recorded_warning:
+        value["inventory"]["dependency_query"]["warnings"] = [warning]
+    else:
+        value["inventory"]["dependency_query"].pop("warnings", None)
+    monkeypatch.setattr(store, "report", lambda _: copy.deepcopy(value))
+    assert audit.refresh_report(store, value["id"], save=False)["warnings"].count(warning) == 1
+    errors = [warning] if excluded else []
+    refreshed = audit.refresh_report(
+        store,
+        value["id"],
+        save=False,
+        dependency_query={
+            "mode": "auto",
+            "packages": [
+                {
+                    **{key: dependency[key] for key in ("ecosystem", "name", "version")},
+                    "state": "excluded" if excluded else "complete",
+                    "checked": not excluded,
+                    "transmitted": not excluded,
+                }
+            ],
+            "transmission_exclusions": {"exclude_names": ["private-*"]} if excluded else {},
+        },
+        online_query={"requested": True, "errors": errors},
+    )
+    assert refreshed["warnings"].count(warning) == int(excluded)
+    assert "Unrelated retained warning" in refreshed["warnings"]
+    assert refreshed["online_query"] == {"requested": True, "errors": errors}
+
+
 def test_report_exact_utf8_export_limit_rejects_before_transaction_or_export(store, tmp_path, monkeypatch):
     value = report(tmp_path / "new-source", payload="가" * 100)
     size = len((json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode())

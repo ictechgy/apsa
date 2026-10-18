@@ -477,7 +477,9 @@ def scan(
             "transmission_exclusions": osv_policy or {},
         }
         if states:
-            warnings.append(f"{len(states)} dependencies excluded by transmission policy; not checked")
+            query_warnings = [f"{len(states)} dependencies excluded by transmission policy; not checked"]
+            inventory["dependency_query"]["warnings"] = query_warnings
+            warnings.extend(query_warnings)
     records = store.intelligence(limit=100000)
     feeds = source_health(store)
     feed_map = {f["source"]: f for f in feeds}
@@ -589,11 +591,24 @@ def refresh_report(
             check["state"] = dependency_coverage_state(dep, feed)
         elif check["rule_id"] == "OS-CVE":
             check.update(os_cve_coverage(report.get("environment"), advisories, report["intel_snapshot"]))
+    superseded_warnings = set(
+        previous.get("online_query", {}).get("errors", []) if online_query is not None else []
+    )
+    if dependency_query is not None:
+        previous_query = previous["inventory"].get("dependency_query", {})
+        superseded_warnings.update(previous_query.get("warnings", []))
+        if previous_query.get("online") is False:
+            # Older reports did not record the derived offline warning separately.
+            excluded = sum(s.get("state") == "excluded" for s in previous_query.get("packages", []))
+            if excluded:
+                superseded_warnings.add(
+                    f"{excluded} dependencies excluded by transmission policy; not checked"
+                )
     report["warnings"] = [
         w
         for w in report["warnings"]
         if not w.startswith(("No cached intelligence.", "Some intelligence sources"))
-        and (online_query is None or w not in previous.get("online_query", {}).get("errors", []))
+        and w not in superseded_warnings
     ]
     if online_query is not None:
         report["warnings"].extend(report["online_query"]["errors"])
