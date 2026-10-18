@@ -297,3 +297,12 @@ configured model is unavailable in this account. Independent code/spec and
 architecture lanes use the installed role definitions with inherited session
 settings; task names are tracking labels, not native role selectors. Exact
 snapshots, raw reports and the failed launch records are preserved separately.
+# Swift extension conformance lookup
+
+Swift conformances declared by empty extensions now fence inherited member type
+lookup before SDK import fallback. Protocol and protocol-extension aliases,
+private alias targets in another source file, and qualified SDK roots retain
+partial coverage when their identity cannot be established. Conformance owners
+share the bounded extension inventory with direct member types. Unrelated owners
+and aliases in other languages do not create this uncertainty.
+

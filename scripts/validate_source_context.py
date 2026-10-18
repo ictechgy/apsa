@@ -38,6 +38,19 @@ def swift_extension_type_probes() -> dict[str, str]:
             + member
             + "\n}\n"
         )
+    for name, protocol in [
+        ("protocol-conformance", "protocol P { typealias URL = FakeURL }\n"),
+        ("protocol-extension-conformance", "protocol P {}\nextension P { typealias URL = FakeURL }\n"),
+    ]:
+        result[name] = (
+            "import Foundation\n"
+            + declaration
+            + protocol
+            + "class Handler {\nfunc probe(_ incoming: Foundation.URL) {\n"
+            + "let parsed = URL(string: incoming.absoluteString)!\n"
+            + "let _: FakeURL = parsed\n"
+            + "}\n}\nextension Handler: P {}\n"
+        )
     return result
 
 

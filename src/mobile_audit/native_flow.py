@@ -256,6 +256,7 @@ class NativeFlow:
         # Member types added by an extension are lookup uncertainty, never
         # ordinary module classes or source constructor summaries.
         self.swift_extension_types: dict[str, dict[str, Any]] = {}
+        self.swift_extension_conformances: dict[str, Any] = {}
         self.swift_extension_types_exhausted = False
         self.active_guards: dict[int | tuple[int, str], set[str]] = {}
         self.active_conditions: list[Any] = []
@@ -305,6 +306,19 @@ class NativeFlow:
                     body = _field(node, "body")
                     if target is not None and body is not None:
                         owner = analyzer.text(target).strip()
+                        inherited = next(
+                            (child for child in node.named_children if child.type in INHERITED_TYPE_SCOPES),
+                            None,
+                        )
+                        if inherited is not None and owner not in self.swift_extension_conformances:
+                            if extension_type_count >= MAX_EXTENSION_TYPES:
+                                self.swift_extension_types_exhausted = True
+                                self.partial(
+                                    "Swift extension member type inventory budget", analyzer, node=node
+                                )
+                            else:
+                                extension_type_count += 1
+                                self.swift_extension_conformances[owner] = inherited
                         for declaration in body.named_children:
                             if self.swift_extension_types_exhausted:
                                 break
@@ -1522,6 +1536,21 @@ class NativeFlow:
             current = base
         return False
 
+    def swift_extension_owner_matches(self, owner: str, target: str) -> bool:
+        """Unresolved Swift extension targets cannot establish imported type identity."""
+        return (
+            target == owner
+            or target.endswith("." + owner)
+            or owner.endswith("." + target)
+            or any(
+                source.language == "swift"
+                for source, _ in self.module_type_aliases.get(target.partition(".")[0], [])
+            )
+            or "." in target
+            and not any(source.language == "swift" for source, _ in self.class_definitions.get(target, []))
+            or re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", target) is None
+        )
+
     def lexical_type(self, analyzer: Analyzer, declared: str, use: Any = None) -> Any:
         """Find source type bindings before interpreting a spelling as an import/package."""
         match = re.match(r"[A-Za-z_]\w*", declared)
@@ -1574,17 +1603,16 @@ class NativeFlow:
                     return self.type_parameter_cache[key][root]
                 if analyzer.language == "swift" and boundary is not None and boundary.kind == "nominal":
                     if self.swift_extension_types_exhausted:
-                        return boundary.node
+                        return boundary.name
                     owner = self.owner(analyzer, boundary.name)
+                    for target, inherited in self.swift_extension_conformances.items():
+                        if self.swift_extension_owner_matches(owner, target):
+                            # A protocol may supply any member type, including
+                            # the root of a qualified SDK spelling, through an
+                            # otherwise empty conformance extension.
+                            return inherited
                     for target, declaration in self.swift_extension_types.get(root, {}).items():
-                        if (
-                            target == owner
-                            or target.endswith("." + owner)
-                            or owner.endswith("." + target)
-                            or target.partition(".")[0] in self.module_type_aliases
-                            or "." in target
-                            and target not in self.class_definitions
-                        ):
+                        if self.swift_extension_owner_matches(owner, target):
                             # Supplied Swift module membership and extension
                             # aliases are unresolved; their bodies confer no
                             # SDK identity. Exact unrelated owners stay apart.
