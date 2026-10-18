@@ -23,6 +23,25 @@ compiler module identity.
 
 ## Upgrade effects
 
+- OSV records sharing a display CVE retain flat, exact upstream `osv_records`
+  and sorted `osv_ids` in the cache. Correlation uses the highest active-member
+  severity; a withdrawn duplicate cannot suppress an active advisory. Partial
+  responses preserve absent members while replacing an incoming upstream's own
+  revision under a transaction; complete responses retire absent members.
+  Conflicting same-revision records and bounded merge failures preserve the
+  cache and leave the package unchecked. Historical overwritten identities
+  cannot be reconstructed; run a complete fresh online query to recover them.
+- Offline transmission exclusions also mark matching dependencies excluded and
+  not checked, even with a fresh cached feed. Cached findings remain visible;
+  no request is sent. `dependency_query.online` records false while
+  `online_query.requested` remains false. Other cached dependencies keep their
+  coverage. Empty-policy offline scans retain their existing report shape.
+- Saved report exports have one 32 MiB UTF-8 limit, including pretty formatting
+  and the final newline. Oversized reports fail before database/export writes;
+  verification and an identical repeated save use the same limit. The generic
+  source/input JSON read limit remains 8 MiB. Verification reuses the latest
+  exact-target report even when many newer child-module reports exist.
+
 - Online dependency reassessment saves the new per-package query states and
   latest request/errors before computing completeness. A new online attempt
   replaces its predecessor's query warnings; offline refresh retains them.
@@ -133,9 +152,15 @@ official hosted quality gate remain unchanged; that gate must be assessed on
 the final candidate.
 On `3181dfd`, the unchanged official 30-case replay matched 25 cases and measured
 TP19/FP3/FN0 with five partial/disagreement cases. Its regression contract and
-three existing benchmark tests failed. Those results remain release blockers
-until a supported correction or an explicit requirement decision resolves them;
-the final candidate still requires its own measurement.
+three existing benchmark tests failed. Those results blocked that candidate. **Disposition, 2026-10-18 (release
+executor): resolved as a development-fixture context defect by the supported
+input correction `explicit-source-context-r1`.** The active development gate
+requires the revised sources to typecheck and satisfy the unchanged regression
+thresholds, while the exact legacy sources must retain their conservative
+partial/candidate outcomes. This does not fix or pass original-v1 bytes, record
+a user-authored requirement decision, or approve accuracy or a policy baseline.
+The revision and both outcome contracts are explicit release inputs; the final
+candidate still requires its own successful measurement and reviews.
 Validation preserves independent benchmark, stdio and package measurements
 after an earlier failed check; the overall job still fails, and publication
 gates are unchanged.

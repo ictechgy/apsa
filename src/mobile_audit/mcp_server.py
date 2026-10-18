@@ -274,11 +274,7 @@ def create_server(
                 if Path(report["target"]) != authorized_target:
                     raise ValueError("Report target differs from the requested target")
             else:
-                saved = [
-                    item
-                    for item in store.reports(50, roots=[authorized_target])
-                    if Path(item["target"]) == authorized_target
-                ]
+                saved = store.target_reports(str(authorized_target), limit=1)
                 if rescan or not saved:
                     report = scan(store, authorized_target, expected_target=authorized_target)
                 else:

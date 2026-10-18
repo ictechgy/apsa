@@ -1375,6 +1375,12 @@ class Analyzer:
             return self.comparison(left, right, frame) or self.comparison(right, left, frame)
         call = self.call(node)
         if call and len(call.args) == 1:
+            from .native_guards import receiver_negated
+
+            if call.name in {"equals", "equalsIgnoreCase", "endsWith", "hasSuffix"} and receiver_negated(
+                self, call.receiver
+            ):
+                return {}
             if call.name in {"equals", "equalsIgnoreCase"}:
                 return self.comparison(call.receiver, call.args[0], frame) or self.comparison(
                     call.args[0], call.receiver, frame

@@ -16,6 +16,7 @@ from typing import Any
 from .completeness import report_incomplete as report_incomplete
 
 MAX_FILE = 8 * 1024 * 1024
+MAX_REPORT_BYTES = 32 * 1024 * 1024
 MAX_ARCHIVE_TOTAL = 512 * 1024 * 1024
 MAX_FILES = 12000
 MAX_SOURCE_TOTAL = 64 * 1024 * 1024
@@ -50,11 +51,11 @@ def code_excerpt(line: str) -> str:
     return redact(re.sub(r"""(["'])(?:\\.|(?!\1).)*?\1""", '"…"', line))[:240]
 
 
-def read_json(path: Path, *, authorized: bool = False) -> Any:
+def read_json(path: Path, *, authorized: bool = False, limit: int = MAX_FILE) -> Any:
     # A caller-bound path must keep its authorized spelling: resolving again
     # would follow an ancestor replaced after the caller's root check.
     source = path if authorized else path.expanduser().parent.resolve() / path.name
-    return json.loads(read_bounded(source).decode("utf-8"))
+    return json.loads(read_bounded(source, limit=limit).decode("utf-8"))
 
 
 def read_bounded(path: Path, limit: int = MAX_FILE) -> bytes:

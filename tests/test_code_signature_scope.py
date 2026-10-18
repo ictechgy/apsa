@@ -133,3 +133,21 @@ def test_encrypted_page_postprocessing_cannot_hide_unbound_metadata(mock_cms):
     signature = inspect_macho(bytes(raw), bundle_blobs={1: INFO})[0]["code_signature"]
     assert signature["integrity"] == "modified"
     assert signature["code_directories"][0]["entitlements_bound"] is False
+
+
+def test_encryption_only_retains_not_run_while_unsealed_extent_is_partial(mock_cms, tmp_path):
+    from tests.test_parser_depth import large_signed_macho
+
+    for name, raw, expected in [
+        ("encrypted-only", large_signed_macho(80), "not-run"),
+        ("unsealed-extent", image(limit=4096), "partial"),
+    ]:
+        path = tmp_path / f"{name}.ipa"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("Payload/App.app/Info.plist", INFO)
+            archive.writestr("Payload/App.app/App", raw)
+        report = analyze_binary(path, inspect_target(path)[0])
+        assert (
+            next(row for row in report["coverage"] if row["rule_id"] == "BINARY-IOS-CODE-INTEGRITY")["state"]
+            == expected
+        )

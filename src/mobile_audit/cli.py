@@ -598,7 +598,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             if Path(report["target"]) != target:
                 raise UsageError("Report target differs from the requested target")
         else:
-            saved = [item for item in store.reports(50, roots=[target]) if Path(item["target"]) == target]
+            saved = store.target_reports(str(target), limit=1)
             report = scan(store, target) if args.rescan or not saved else store.report(saved[0]["id"])
         try:
             return verify_claim(

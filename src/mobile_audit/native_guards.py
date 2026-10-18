@@ -38,6 +38,45 @@ def exits(analyzer: Any, node: Any) -> bool:
     return False
 
 
+def _negated_operand(analyzer: Any, expression: Any) -> Any:
+    if expression is None or expression.type not in {"unary_expression", "prefix_expression"}:
+        return None
+    operator = expression.child_by_field_name("operator") or expression.child_by_field_name("operation")
+    if operator is None or analyzer.text(operator).strip() != "!":
+        return None
+    return (
+        expression.child_by_field_name("operand")
+        or expression.child_by_field_name("argument")
+        or expression.child_by_field_name("target")
+    )
+
+
+def receiver_negated(analyzer: Any, node: Any) -> bool:
+    """Predicate negation attached by Kotlin/Swift to the head of a receiver chain."""
+    negated = False
+    while node is not None:
+        node = analyzer.unwrap(node)
+        if node is None:
+            break
+        operator = node.child_by_field_name("operator")
+        if node.type == "unary_expression" and operator is not None and analyzer.text(operator) == "!!":
+            # Kotlin's postfix non-null assertion is transparent, not two
+            # logical negations, and can wrap a receiver carrying the real !.
+            node = node.child_by_field_name("argument")
+            continue
+        operand = _negated_operand(analyzer, node)
+        if operand is not None:
+            negated = not negated
+            node = operand
+        elif node.type in {"navigation_expression", "postfix_expression", "call_expression"}:
+            # Only the target/callee: an argument, suffix or binary operand
+            # cannot supply polarity for its containing method invocation.
+            node = node.child_by_field_name("target") or next(iter(node.named_children), None)
+        else:
+            break
+    return negated
+
+
 def path_predicate(
     analyzer: Any, node: Any, frame: Any, *, positive: bool = True
 ) -> dict[int | tuple[int, str], set[str]]:
@@ -71,32 +110,14 @@ def path_predicate(
 
     # A leading bang in the text of a binary condition does not negate the
     # complete condition. Classify conjunction/disjunction before unary nodes.
-    def negated_operand(expression: Any) -> Any:
-        if expression is None or expression.type not in {"unary_expression", "prefix_expression"}:
-            return None
-        operator = expression.child_by_field_name("operator") or expression.child_by_field_name("operation")
-        if operator is None or analyzer.text(operator).strip() != "!":
-            return None
-        return (
-            expression.child_by_field_name("operand")
-            or expression.child_by_field_name("argument")
-            or expression.child_by_field_name("target")
-        )
-
-    operand = negated_operand(node)
+    operand = _negated_operand(analyzer, node)
     if operand is not None:
         return path_predicate(analyzer, operand, frame, positive=not positive)
     call = analyzer.call(node)
     if call is None or len(call.args) != 1:
         return {}
     receiver = call.receiver
-    root = receiver
-    # These grammars can attach the predicate's leading negation to the
-    # leftmost receiver, below member navigation and force-unwrapping nodes.
-    # Follow only that receiver chain; never search argument or binary subtrees.
-    while root is not None and root.type in {"navigation_expression", "postfix_expression"}:
-        root = root.child_by_field_name("target") or next(iter(root.named_children), None)
-    if negated_operand(root) is not None:
+    if receiver_negated(analyzer, receiver):
         positive = not positive
     value = analyzer.value(receiver, frame)
     # Rejecting every '..' component is supported; checking only '../' misses a bare '..'.

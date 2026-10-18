@@ -15,6 +15,7 @@ from cvss import CVSS2, CVSS3, CVSS4
 from . import __version__
 from .core import digest, now, redact
 from .dependency_policy import DependencyTransmissionPolicy
+from .osv_records import persist_osv_query
 from .store import Store
 
 SOURCES = {
@@ -907,11 +908,10 @@ def _query_dependencies_legacy(
                     tokens.add(token)
                     payload["page_token"] = token
                 source = f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}"
-                if complete:
-                    store.replace_source(source, package_records)
-                else:
-                    # A bounded/paginated subset cannot retire prior matches.
-                    store.upsert_intel(package_records)
+                persist_osv_query(store, source, package_records, complete=complete)
+                if not complete:
+                    # Incoming upstream revisions replace themselves; absent
+                    # members survive until a complete package snapshot arrives.
                     errors.append(
                         f"OSV query incomplete for {dep['name']}: page/record/request budget reached; cached matches retained"
                     )

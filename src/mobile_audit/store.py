@@ -10,7 +10,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .core import MAX_FILE, canonical_json, digest, now, read_json, uid, write_json
+from .core import MAX_FILE, MAX_REPORT_BYTES, canonical_json, digest, now, read_json, uid, write_json
 
 
 def _restrict(path: Path) -> None:
@@ -162,6 +162,11 @@ class Store:
 
     def save_report(self, report: dict) -> dict:
         body = canonical_json(report)
+        # Freeze caller data once: the database and pretty export must describe
+        # the same value, and the exact exported byte limit applies before writes.
+        frozen = json.loads(body)
+        if len((json.dumps(frozen, ensure_ascii=False, indent=2) + "\n").encode("utf-8")) > MAX_REPORT_BYTES:
+            raise ValueError(f"Report export exceeds {MAX_REPORT_BYTES} bytes")
         body_hash = digest(body.encode())
         exported = self.home / "reports" / f"{report['id']}.json"
         temporary: Path | None = None
@@ -187,12 +192,12 @@ class Store:
             temporary = Path(name)
             # Preserve the atomic 0600 JSON writer, but publish without replacing
             # an existing export belonging to a committed immutable report.
-            write_json(temporary, report)
+            write_json(temporary, frozen)
             metadata = temporary.lstat()
             try:
                 os.link(temporary, exported, follow_symlinks=False)
             except FileExistsError:
-                if canonical_json(read_json(exported, authorized=True)) != body:
+                if canonical_json(read_json(exported, authorized=True, limit=MAX_REPORT_BYTES)) != body:
                     raise ValueError("Report export conflicts with immutable report") from None
             else:
                 created_identity = metadata.st_dev, metadata.st_ino
@@ -241,7 +246,9 @@ class Store:
                 exported = self.home / "reports" / f"{row['id']}.json"
                 if not exported.is_file():
                     raise ValueError("export missing")
-                if canonical_json(read_json(exported)) != canonical_json(json.loads(row["body"])):
+                if canonical_json(read_json(exported, limit=MAX_REPORT_BYTES)) != canonical_json(
+                    json.loads(row["body"])
+                ):
                     raise ValueError("export differs from immutable database report")
             except (ValueError, OSError) as error:
                 failures.append({"id": row["id"], "error": str(error)})

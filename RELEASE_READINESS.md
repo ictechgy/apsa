@@ -21,6 +21,11 @@ its overall `passed` remains false. This is a disclosed development-input
 revision, not a pass on the original corpus, an independent accuracy result,
 a holdout or an approved policy baseline. Earlier failures remain historical.
 Hosted Java, Kotlin and Swift compilers typechecked all six revised sources.
+The release executor records this supported development-fixture correction as
+the disposition of the earlier context-related blocker, with revised-context
+and exact-legacy regression contracts both mandatory. It is not an original-v1
+engine success or a user-authored requirements/baseline approval; the final
+source still needs its own passing gates and reviews.
 
 Claude's whole-tool review then found additional correctness and release issues.
 The recovery fixes require fresh tests, installed runtime controls, complete

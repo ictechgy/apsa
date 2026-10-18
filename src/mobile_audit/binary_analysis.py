@@ -1224,7 +1224,15 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                     and not invalid_cms
                     else "partial"
                     if invalid_cms
-                    or any(state in {"consistent", "modified", "unverifiable"} for state in integrity)
+                    or any(state in {"consistent", "modified"} for state in integrity)
+                    or any(
+                        signature.get("integrity") == "unverifiable"
+                        and any(
+                            directory.get("integrity") != "unverifiable-encrypted-pages"
+                            for directory in signature.get("code_directories", [])
+                        )
+                        for signature in signatures
+                    )
                     else "not-run",
                     "codedirectory-hashes",
                     "Recomputes CodeDirectory page and entitlement-slot hashes. Agreement is internal integrity only. Detached CMS verification is separate; certificate chain, Apple signer, team identity and provisioning remain unverified.",

@@ -372,6 +372,11 @@ def scan(
     apk_set_device: dict | None = None,
     ipa_trust_policy: dict | None = None,
 ) -> dict:
+    from .dependency_policy import DependencyTransmissionPolicy
+
+    if osv_query_mode not in {"auto", "legacy", "batch"}:
+        raise ValueError("OSV query_mode must be auto, legacy or batch")
+    policy = DependencyTransmissionPolicy(**(osv_policy or {}))
     if progress:
         progress("input-analysis", 5)
     if environment is not None:
@@ -443,9 +448,6 @@ def scan(
     warnings = inventory["warnings"].copy()
     failures = []
     if online:
-        from .dependency_policy import DependencyTransmissionPolicy
-
-        policy = DependencyTransmissionPolicy(**(osv_policy or {}))
         states: list[dict] = []
         _, failures = query_dependencies(
             store,
@@ -460,6 +462,22 @@ def scan(
             "transmission_exclusions": osv_policy or {},
         }
         warnings.extend(failures)
+    elif any((policy.exclude_ecosystems, policy.exclude_names, policy.exclude_coordinates)):
+        states = []
+        for dep in inventory["dependencies"]:
+            if policy.excludes(dep):
+                dep["osv_query"] = {"state": "excluded", "checked": False, "transmitted": False}
+                states.append(
+                    {**{key: dep.get(key) for key in ("ecosystem", "name", "version")}, **dep["osv_query"]}
+                )
+        inventory["dependency_query"] = {
+            "mode": osv_query_mode,
+            "online": False,
+            "packages": states,
+            "transmission_exclusions": osv_policy or {},
+        }
+        if states:
+            warnings.append(f"{len(states)} dependencies excluded by transmission policy; not checked")
     records = store.intelligence(limit=100000)
     feeds = source_health(store)
     feed_map = {f["source"]: f for f in feeds}

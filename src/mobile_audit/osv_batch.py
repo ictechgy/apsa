@@ -8,6 +8,7 @@ from urllib.parse import quote
 import httpx
 
 from .core import digest
+from .osv_records import persist_osv_query
 from .source_context import osv_package_name
 from .store import Store
 
@@ -283,15 +284,21 @@ def query_batch(
             source = f"osv:{item['key'][0]}:{item['key'][1]}:{item['key'][2]}"
             complete = item["complete"] and item["error"] is None
             status = "complete" if complete else "partial" if item["pages"] or item["records"] else "error"
-            if complete:
-                store.replace_source(source, item["records"])
-            else:
-                store.upsert_intel(item["records"])
+            persisted = False
+            try:
+                persist_osv_query(store, source, item["records"], complete=complete)
+                persisted = True
+            except (ValueError, KeyError, TypeError) as error:
+                complete = False
+                status = "partial" if item["pages"] or item["records"] else "error"
+                item["error"] = f"record aggregation {type(error).__name__}"
+            if not complete:
                 # Error strings intentionally omit coordinate and remote exception text.
                 errors.append(
                     f"OSV query incomplete for package: {item['error'] or 'budget reached'}; cached matches retained"
                 )
-            found.extend(item["records"])
+            if persisted:
+                found.extend(item["records"])
             store.feed(
                 source,
                 "ok" if complete else status,
