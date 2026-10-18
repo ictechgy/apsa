@@ -132,6 +132,8 @@ def main() -> int:
             {
                 key: result[key]
                 for key in (
+                    "input_revision",
+                    "input_revision_scope",
                     "passed",
                     "regression_contract_passed",
                     "summary",

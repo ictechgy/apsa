@@ -27,7 +27,14 @@
           "status": "candidate"
         }
       ],
-      "rationale": "Intent string extra flows through a local alias to a typed WebView."
+      "rationale": "Intent string extra flows through a local alias to a typed WebView.",
+      "context_revision": {
+        "id": "explicit-source-context-r1",
+        "legacy_sha256": "6d011984097ba8e4e5d4275023c7af7aba1f8ebe85d4482a5d007cf452faf569",
+        "current_sha256": "995d3670513f00a6b50055d2c17fe5cbb3e70cf321d5fe82e491c997928f0e17",
+        "legacy_source": "tests/fixtures/native_context_legacy/java-vulnerable.java",
+        "context_change": "Explicit SDK imports, inline source-defined empty base; explicit Intent entry for Kotlin; injected Swift reader and MainActor callback. URL payload/guard/sink labels unchanged."
+      }
     },
     {
       "id": "java-intent-fixed",
@@ -36,7 +43,14 @@
       "variant": "fixed",
       "pair": "java-intent",
       "expected": [],
-      "rationale": "The same payload is parsed and constrained by exact HTTPS and complete-host checks."
+      "rationale": "The same payload is parsed and constrained by exact HTTPS and complete-host checks.",
+      "context_revision": {
+        "id": "explicit-source-context-r1",
+        "legacy_sha256": "fe453a368aee81033f1f1d79ba34979b19d45314c1262fc316af8659adf2d500",
+        "current_sha256": "9a7ec9b4227727b17b27ccc853dd6c1f636399603fad0bc4e4528403a674565b",
+        "legacy_source": "tests/fixtures/native_context_legacy/java-fixed.java",
+        "context_change": "Explicit SDK imports, inline source-defined empty base; explicit Intent entry for Kotlin; injected Swift reader and MainActor callback. URL payload/guard/sink labels unchanged."
+      }
     },
     {
       "id": "java-documentation-irrelevant",
@@ -168,7 +182,14 @@
           "status": "candidate"
         }
       ],
-      "rationale": "An Activity link query item reaches WebView without destination checks."
+      "rationale": "An explicitly supplied Intent link query item reaches WebView without destination checks.",
+      "context_revision": {
+        "id": "explicit-source-context-r1",
+        "legacy_sha256": "6bd6eb5732fd6631f043a004d05c10260da95eb930ab698eb46367fb46880fa5",
+        "current_sha256": "022288b7d89308bcafca1d2f2ad1b432f6e9942d421097f6cff99749bedeacc8",
+        "legacy_source": "tests/fixtures/native_context_legacy/kotlin-vulnerable.kt",
+        "context_change": "Explicit SDK imports, inline source-defined empty base; explicit Intent entry for Kotlin; injected Swift reader and MainActor callback. URL payload/guard/sink labels unchanged."
+      }
     },
     {
       "id": "kotlin-query-fixed",
@@ -177,7 +198,14 @@
       "variant": "fixed",
       "pair": "kotlin-query",
       "expected": [],
-      "rationale": "The extracted destination is parsed and guarded with HTTPS and exact hostname."
+      "rationale": "The extracted destination is parsed and guarded with HTTPS and exact hostname.",
+      "context_revision": {
+        "id": "explicit-source-context-r1",
+        "legacy_sha256": "35efccaceb290cb68430e94d09d6dd70ddeb0c37456055ff487f972c65f681e6",
+        "current_sha256": "4c4b9f56c79c6221bb40ed84bed38a9ffaa701723244190a176bab1fa4f31cb1",
+        "legacy_source": "tests/fixtures/native_context_legacy/kotlin-fixed.kt",
+        "context_change": "Explicit SDK imports, inline source-defined empty base; explicit Intent entry for Kotlin; injected Swift reader and MainActor callback. URL payload/guard/sink labels unchanged."
+      }
     },
     {
       "id": "kotlin-documentation-irrelevant",
@@ -255,7 +283,14 @@
           "status": "candidate"
         }
       ],
-      "rationale": "An application URL callback feeds a URLRequest into WKWebView through an alias."
+      "rationale": "An typed URL entry method feeds a URLRequest into WKWebView through an alias.",
+      "context_revision": {
+        "id": "explicit-source-context-r1",
+        "legacy_sha256": "4aabaa95b44b5c3bb561d7e93b54924025218ec4bfac63b45cf7cd05fa7f211a",
+        "current_sha256": "fccd5f7b94908a673733af732bb25d7963791388ef2d5a2c0ed86687e00f8885",
+        "legacy_source": "tests/fixtures/native_context_legacy/swift-vulnerable.swift",
+        "context_change": "Explicit SDK imports, inline source-defined empty base; explicit Intent entry for Kotlin; injected Swift reader and MainActor callback. URL payload/guard/sink labels unchanged."
+      }
     },
     {
       "id": "swift-url-fixed",
@@ -264,7 +299,14 @@
       "variant": "fixed",
       "pair": "swift-url",
       "expected": [],
-      "rationale": "A guard exits the callback unless HTTPS and the exact host match."
+      "rationale": "A guard exits the typed URL entry method unless HTTPS and the exact host match.",
+      "context_revision": {
+        "id": "explicit-source-context-r1",
+        "legacy_sha256": "091df1c6cb702508605c618dac12296951b9132ce8025a765e2dde70974de4c1",
+        "current_sha256": "8642673e013412f0835ba9f0720f1249eed9f81acdf0f13c646301531f514def",
+        "legacy_source": "tests/fixtures/native_context_legacy/swift-fixed.swift",
+        "context_change": "Explicit SDK imports, inline source-defined empty base; explicit Intent entry for Kotlin; injected Swift reader and MainActor callback. URL payload/guard/sink labels unchanged."
+      }
     },
     {
       "id": "swift-documentation-irrelevant",
@@ -385,5 +427,7 @@
       "expected": [],
       "rationale": "The small licensed upstream APK contains real methods/instructions without these selected risky call patterns."
     }
-  ]
+  ],
+  "input_revision": "explicit-source-context-r1",
+  "input_revision_scope": "Development fixture-context repair; not an unchanged-v1 replay, independent sample, or real SDK superclass coverage. Original source-absent ancestors remain conservative regression controls."
 }

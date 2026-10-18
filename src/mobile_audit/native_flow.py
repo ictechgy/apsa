@@ -10,6 +10,7 @@ from typing import Any
 from .source_analysis import (
     FILE_SINKS,
     FUNCTIONS,
+    IDENTIFIERS,
     INTENT_LAUNCHERS,
     NESTED_INTENT_GETTERS,
     RULES,
@@ -32,6 +33,7 @@ MAX_FIELD_ROUNDS = 4
 MAX_PARTIAL_DETAILS = 256
 MAX_EFFECT_DEPTH = 8
 MAX_EFFECT_OBJECTS = 128
+MAX_EMPTY_BASE_DEPTH = 8
 
 
 class StorageKey(Enum):
@@ -97,8 +99,12 @@ MODELED_EXTERNAL_CONSTRUCTORS = {
     "javax.crypto.spec.PBEKeySpec",
     "javax.crypto.spec.IvParameterSpec",
     "javax.crypto.spec.GCMParameterSpec",
+    "Foundation.URL",
+    "Foundation.URLRequest",
+    "WebKit.WKWebView",
 }
 MODELED_EXTERNAL_METHODS = {
+    "WebKit.WKWebView": {"load", "evaluateJavaScript"},
     "android.content.Intent": {
         "getData",
         "getDataString",
@@ -242,6 +248,10 @@ class NativeFlow:
         self.owner_cache: dict[tuple[int, int], str] = {}
         self.type_scope_cache: dict[tuple[int, int], list[tuple[str, Any]]] = {}
         self.type_parameter_cache: dict[tuple[int, int], dict[str, Any]] = {}
+        self.empty_base_cache: dict[tuple[int, int, str], bool] = {}
+        self.module_values: dict[str, list[tuple[Analyzer, Any]]] = {}
+        self.swift_type_aliases: set[str] = set()
+        self.swift_extensions_present = False
         self.active_guards: dict[int | tuple[int, str], set[str]] = {}
         self.active_conditions: list[Any] = []
         self.files = sorted(files, key=lambda item: item[0].path)
@@ -262,6 +272,24 @@ class NativeFlow:
                     namespace = match[1]
             self.namespaces[id(analyzer)] = namespace
             for node in nodes:
+                if analyzer.language == "swift" and node.type in {"type_alias", "typealias_declaration"}:
+                    name = (
+                        _field(node, "name")
+                        or _field(node, "type")
+                        or next((child for child in node.named_children if child.type in IDENTIFIERS), None)
+                    )
+                    if name is not None:
+                        self.swift_type_aliases.add(analyzer.text(name))
+                if (
+                    analyzer.language in {"kotlin", "swift"}
+                    and node.type == "property_declaration"
+                    and node.parent is not None
+                    and node.parent.type in {"program", "source_file"}
+                ):
+                    for name in self.property_binding_names(analyzer, node):
+                        self.module_values.setdefault(name, []).append((analyzer, node))
+                if analyzer.language == "swift" and any(child.type == "extension" for child in node.children):
+                    self.swift_extensions_present = True
                 boundary = self.scope_boundary(node)
                 if boundary is not None and boundary.kind == "nominal":
                     name = boundary.name
@@ -1349,6 +1377,100 @@ class NativeFlow:
                 result.add(match[1])
         return result
 
+    def empty_source_ancestry(self, analyzer: Analyzer, nominal: Any, root: str) -> bool:
+        """Discharge member lookup only for a unique, same-file empty class chain.
+
+        This supplies no constructor, dispatch or external SDK ancestry proof.
+        Any unrepresented member, alias, extension or base retains the fence.
+        """
+        key = (id(analyzer), nominal.id, root)
+        if key in self.empty_base_cache:
+            return self.empty_base_cache[key]
+        self.empty_base_cache[key] = False
+        if "class" not in self.declaration_tokens(nominal):
+            return False
+        if analyzer.language == "swift" and self.swift_extensions_present:
+            return False
+        seen = set()
+        current = nominal
+        for _ in range(MAX_EMPTY_BASE_DEPTH):
+            if (
+                current.id in seen
+                or current.has_error
+                or current.parent is None
+                or current.parent.type not in {"program", "source_file"}
+                or any(child.type == "type_parameters" for child in current.named_children)
+                or "@" in analyzer.text(current).split("{", 1)[0]
+            ):
+                return False
+            seen.add(current.id)
+            inherited = [child for child in current.named_children if child.type in INHERITED_TYPE_SCOPES]
+            if not inherited:
+                self.empty_base_cache[key] = True
+                return True
+            if len(inherited) != 1:
+                return False
+            text = analyzer.text(inherited[0]).strip()
+            pattern = (
+                r"extends\s+([A-Za-z_]\w*)" if analyzer.language == "java" else r"([A-Za-z_]\w*)(?:\(\))?"
+            )
+            match = re.fullmatch(pattern, text)
+            if match is None:
+                return False
+            name = match[1]
+            # A member/value with the base spelling can change the header's
+            # binding. Keep that case unresolved instead of selecting the
+            # convenient top-level class by leaf name.
+            current_body = next(
+                (child for child in current.named_children if child.type in NOMINAL_BODIES), None
+            )
+            if current_body is not None and re.search(
+                r"\b" + re.escape(name) + r"\b", analyzer.text(current_body)
+            ):
+                return False
+            # Do not infer a package/import identity from a globally unique
+            # leaf, or recurse through the use site's inherited lookup.
+            namespace = self.namespaces[id(analyzer)]
+            owner = namespace + "." + name if namespace else name
+            imported = self.imported_symbols(analyzer, name, classes=True)
+            if (
+                imported
+                and imported != {owner}
+                or any(
+                    declaration.endswith(".*") or declaration.startswith("static ")
+                    for declaration in analyzer.imports
+                )
+            ):
+                return False
+            definitions = self.class_definitions.get(owner, [])
+            if len(definitions) != 1 or definitions[0][0] is not analyzer:
+                return False
+            file_root = current
+            while file_root.parent is not None:
+                file_root = file_root.parent
+            if any(
+                child.type in {"type_alias", "typealias_declaration"} for child in file_root.named_children
+            ):
+                return False
+            base = definitions[0][1]
+            header = analyzer.text(base).split("{", 1)[0].strip()
+            if not re.fullmatch(
+                r"(?:(?:public|protected|private|internal|fileprivate|open|abstract|final|static)\s+)*"
+                r"class\s+" + re.escape(name) + r"\s*(?:(?:extends\s+|:\s*)[A-Za-z_]\w*(?:\(\))?)?\s*",
+                header,
+            ):
+                return False
+            body = next((child for child in base.named_children if child.type in NOMINAL_BODIES), None)
+            if (
+                body is None
+                and analyzer.language != "kotlin"
+                or body is not None
+                and any("comment" not in child.type for child in body.named_children)
+            ):
+                return False
+            current = base
+        return False
+
     def lexical_type(self, analyzer: Analyzer, declared: str, use: Any = None) -> Any:
         """Find source type bindings before interpreting a spelling as an import/package."""
         match = re.match(r"[A-Za-z_]\w*", declared)
@@ -1402,10 +1524,9 @@ class NativeFlow:
                 inherited = next(
                     (child for child in scope.named_children if child.type in INHERITED_TYPE_SCOPES), None
                 )
-                if inherited is not None:
-                    # The represented superclass/protocol may supply a member
-                    # type before an enclosing/package/import binding. No
-                    # complete inherited type lookup is available here.
+                if inherited is not None and not self.empty_source_ancestry(analyzer, scope, root):
+                    # Unknown or nonempty ancestry may supply a member before
+                    # an enclosing/package/import binding.
                     return inherited
             if scope.type in scopes:
                 if scope.type == "program" and analyzer.language == "java":
@@ -1548,7 +1669,65 @@ class NativeFlow:
         )
 
     @staticmethod
-    def value_binding(analyzer: Analyzer, call: Call, frame: Frame) -> Value | None:
+    def property_binding_names(analyzer: Analyzer, node: Any) -> set[str]:
+        """Read binding patterns without mistaking receiver/types/initializers for names."""
+        if analyzer.language == "kotlin":
+            declarations = []
+            for child in node.named_children:
+                if child.type == "variable_declaration":
+                    declarations.append(child)
+                elif child.type == "multi_variable_declaration":
+                    declarations.extend(child.named_children)
+            return {
+                analyzer.text(name)
+                for declaration in declarations
+                for name in declaration.named_children[:1]
+                if name.type in IDENTIFIERS
+            }
+        pending = [
+            child
+            for index, child in enumerate(node.children)
+            if node.field_name_for_child(index) == "name" and child.type == "pattern"
+        ]
+        names = set()
+        while pending:
+            child = pending.pop()
+            if child.type in IDENTIFIERS:
+                names.add(analyzer.text(child))
+            elif child.type not in {"type_annotation", "computed_value"}:
+                pending.extend(child.named_children)
+        return names
+
+    def module_value_present(self, analyzer: Analyzer, name: str) -> bool:
+        """A potential expression binding supplies uncertainty, never a value/type proof."""
+        imported = self.imported_symbols(analyzer, name)
+        names = {name, *(symbol.rsplit(".", 1)[-1] for symbol in imported)}
+        for source_name in names:
+            for source, node in self.module_values.get(source_name, []):
+                if source.language != analyzer.language:
+                    continue
+                if source is analyzer:
+                    if source_name == name:
+                        return True
+                    continue
+                if self.declaration_tokens(node) & {"private", "fileprivate"}:
+                    continue
+                if analyzer.language == "swift":
+                    # Compiler module membership is not represented by source inputs.
+                    if source_name == name:
+                        return True
+                    continue
+                namespace = self.namespaces[id(source)]
+                identity = (namespace + "." if namespace else "") + source_name
+                if source_name == name and (
+                    namespace == self.namespaces[id(analyzer)] or namespace + ".*" in analyzer.imports
+                ):
+                    return True
+                if identity in imported:
+                    return True
+        return False
+
+    def value_binding(self, analyzer: Analyzer, call: Call, frame: Frame) -> Value | None:
         """A current lexical value binds an unqualified callee before a member/type name."""
         if (
             analyzer.language not in {"kotlin", "swift"}
@@ -1557,6 +1736,7 @@ class NativeFlow:
                 call.name in frame.values
                 or call.name in analyzer.parameter_types
                 or call.name in analyzer.field_types
+                or self.module_value_present(analyzer, call.name)
             )
         ):
             return None
@@ -1609,6 +1789,12 @@ class NativeFlow:
         if self.class_owners(analyzer, declared, call.node):
             return False
         root, _, remainder = declared.partition(".")
+        if analyzer.language == "swift" and (
+            root in self.swift_type_aliases or self.class_name_present(analyzer, root)
+        ):
+            # A supplied source nominal can shadow a module/type spelling in
+            # another file. Unknown module membership is not proof of absence.
+            return False
         imported = self.imported_symbols(analyzer, root, classes=True)
         identities = {symbol + ("." + remainder if remainder else "") for symbol in imported}
         if not imported and "." in declared:
@@ -1656,6 +1842,15 @@ class NativeFlow:
     def declaration_tokens(node: Any) -> set[str]:
         """Read declaration keywords from AST tokens, excluding bodies/comments."""
         name = _field(node, "name")
+        if name is None and node.type == "property_declaration":
+            name = next(
+                (
+                    child
+                    for child in node.named_children
+                    if child.type in {"variable_declaration", "multi_variable_declaration"}
+                ),
+                None,
+            )
         pending = [child for child in node.children if name is not None and child.end_byte <= name.start_byte]
         tokens = set()
         while pending:
@@ -1864,6 +2059,15 @@ class NativeFlow:
     ) -> tuple[list[Callable], bool]:
         if self.value_binding(analyzer, call, frame) is not None:
             return [], True
+        receiver_root = analyzer.key(call.receiver).partition(".")[0] if call.receiver is not None else ""
+        if (
+            receiver_root
+            and receiver_root not in frame.values
+            and receiver_root not in analyzer.parameter_types
+            and receiver_root not in analyzer.field_types
+            and self.module_value_present(analyzer, receiver_root)
+        ):
+            return [], True
         imported = self.imported_symbols(analyzer, call.name)
         names = {call.name, *(symbol.rsplit(".", 1)[-1] for symbol in imported)}
         constructor_type = self.constructor_type(analyzer, call, frame)
@@ -1881,6 +2085,26 @@ class NativeFlow:
             if self.signature_visible(analyzer, target, call) and self.lexical_visible(analyzer, target, call)
         ]
         if constructor_type is not None:
+            if (
+                analyzer.language in {"kotlin", "swift"}
+                and call.receiver is None
+                and (
+                    (imported if analyzer.language == "swift" else imported - MODELED_EXTERNAL_CONSTRUCTORS)
+                    or any(
+                        target.node.type != "constructor_declaration"
+                        and (
+                            target.analyzer.path == analyzer.path
+                            or analyzer.language == "swift"
+                            and not target.owner
+                        )
+                        and (not target.owner or target.owner == self.owner(analyzer, analyzer.function))
+                        for target in choices
+                    )
+                )
+            ):
+                # A visible source function can shadow an imported type's
+                # constructor spelling. Its presence must precede SDK models.
+                return [], True
             if self.modeled_external(analyzer, constructor_type, call, constructor=True):
                 return [], False
             owners = self.class_owners(analyzer, constructor_type, call.node)

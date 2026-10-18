@@ -1,17 +1,18 @@
 name: Verify published APSA artifacts and cold startup
 
 on:
-  workflow_run:
-    workflows: ["Publish APSA to PyPI"]
-    types: [completed]
-    branches: [main]
+  workflow_call:
+    inputs:
+      source-sha:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   verify-publication:
-    if: github.repository == 'ictechgy/apsa' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository
+    if: github.repository == 'ictechgy/apsa' && github.ref_type == 'tag'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -21,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.source-sha }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
@@ -30,7 +31,7 @@ jobs:
           enable-cache: false
       - name: Bind checkout, version, public registries and downloaded package bytes
         env:
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_SHA: ${{ inputs.source-sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"

@@ -156,6 +156,12 @@ SOURCE_SUFFIXES = frozenset(
     }
 )
 PUBLIC_FIXTURE_SOURCES = (
+    "tests/fixtures/native_context_legacy/java-vulnerable.java",
+    "tests/fixtures/native_context_legacy/java-fixed.java",
+    "tests/fixtures/native_context_legacy/kotlin-vulnerable.kt",
+    "tests/fixtures/native_context_legacy/kotlin-fixed.kt",
+    "tests/fixtures/native_context_legacy/swift-vulnerable.swift",
+    "tests/fixtures/native_context_legacy/swift-fixed.swift",
     "tests/fixtures/binary_analysis/build.py",
     "tests/fixtures/binary_analysis/unsafe/Calls.java",
     "tests/fixtures/binary_analysis/safe/Calls.java",

@@ -125,8 +125,26 @@ jobs:
             gh api --method POST "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA"
           fi
 
+  dispatch-tag:
+    name: Start publication in the verified tag context
+    if: github.ref_type != 'tag'
+    needs: [validate, verify, build, tag]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Dispatch the same release workflow on the bound tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: gh workflow run release.yml --repo "$GH_REPO" --ref "$RELEASE_TAG"
+
   publish:
     name: Publish with the registered PyPI publisher
+    if: github.ref_type == 'tag'
     needs: [validate, verify, build, tag]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -214,3 +232,10 @@ jobs:
           else
             gh release create "$RELEASE_TAG" release-assets/* --verify-tag --title "APSA $RELEASE_TAG" --generate-notes
           fi
+
+  verify-publication:
+    name: Verify public downloads and cold startup
+    needs: [publish, mcp-registry, github-release]
+    uses: ./.github/workflows/published-check.yml
+    with:
+      source-sha: ${{ github.sha }}

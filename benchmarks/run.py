@@ -88,6 +88,20 @@ def _load(path: Path) -> tuple[dict, bytes]:
             not isinstance(case.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", case["sha256"])
         ):
             raise ValueError("Compiled binary cases require an explicit SHA-256 fixture lock")
+        context = case.get("context_revision")
+        if context is not None and (
+            not isinstance(context, dict)
+            or not isinstance(manifest.get("input_revision"), str)
+            or not manifest["input_revision"].strip()
+            or manifest["input_revision"] == "original-v1"
+            or not isinstance(context.get("id"), str)
+            or context.get("id") != manifest.get("input_revision")
+            or any(
+                not isinstance(context.get(key), str) or re.fullmatch(r"[0-9a-f]{64}", context[key]) is None
+                for key in ("legacy_sha256", "current_sha256")
+            )
+        ):
+            raise ValueError("Context revisions require an explicit revision and both input hashes")
         known.add(case["id"])
     return manifest, raw
 
@@ -118,6 +132,8 @@ def run(manifest_path: Path = DEFAULT_MANIFEST, case_ids: list[str] | None = Non
                 raise ValueError(
                     "Fixture SHA-256 differs from independently labeled bytes; review and relabel before running"
                 )
+            if case.get("context_revision") and case["context_revision"]["current_sha256"] != input_hash:
+                raise ValueError("Context-revision input SHA-256 differs from the declared source")
             if case["kind"] == "source":
                 analysis = source_analysis.analyze_sources([(case["path"], input_raw.decode("utf-8"))])
             else:
@@ -153,6 +169,8 @@ def run(manifest_path: Path = DEFAULT_MANIFEST, case_ids: list[str] | None = Non
             "incomplete_rules": partial,
             "error": error,
         }
+        if case.get("context_revision"):
+            outcome["context_revision"] = case["context_revision"]
         outcomes.append(outcome)
         if not outcome["matched"]:
             disagreements.append(
@@ -197,6 +215,8 @@ def run(manifest_path: Path = DEFAULT_MANIFEST, case_ids: list[str] | None = Non
         "schema_version": 1,
         "corpus": manifest.get("name"),
         "corpus_sha256": _hash(raw),
+        "input_revision": manifest.get("input_revision", "original-v1"),
+        "input_revision_scope": manifest.get("input_revision_scope", "Original declared input context"),
         "metric_unit": "unique case-rule-status labels; no instance-level or production accuracy estimate",
         "rule_version": RULE_VERSION,
         "parser_versions": dependencies,

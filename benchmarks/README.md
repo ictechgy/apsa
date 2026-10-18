@@ -23,6 +23,18 @@ bytes causes a nonzero exit. Expected and observed labels are compared directly;
 the runner does not infer labels from the scanner's output. Input, corpus, and
 engine hashes let a release record identify the bytes actually measured.
 
+The current input revision is `explicit-source-context-r1`. Its Java Intent,
+Kotlin query and Swift URL vulnerable/fixed pairs have explicit SDK imports and
+a represented empty source base. Kotlin receives a typed Intent parameter;
+Swift receives a typed WebView and uses an actor-isolated method. Payloads,
+guards, sinks, labels and scoring remain unchanged. These six sources are also
+typechecked with real Android/Apple SDKs on fresh CI runners. This is a development
+regression repair, not a new holdout or proof of real Activity/UIKit ancestry.
+Each affected case records both old and new SHA-256 hashes. The exact legacy
+sources in `tests/fixtures/native_context_legacy` remain mandatory regressions:
+their unresolved inherited context still produces partial coverage. Results from
+the current revision must not be described as the original v1 bytes passing.
+
 The sampling unit is a unique **case / rule / evidence-status** label. Multiple
 findings of the same rule and status in one case count once. This prevents a
 fixture with repeated calls from inflating detection counts. Empty-label cases

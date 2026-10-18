@@ -11,7 +11,7 @@ The PyPI project is `apsa`. Its GitHub Trusted Publisher uses these exact values
 
 The workflow lives at [`.github/workflows/release.yml`](../.github/workflows/release.yml). It runs when a `v` release tag is pushed, when a maintainer manually runs it on that tag, or for an explicit release commit on `main` described below. A tag invocation must match the version in `pyproject.toml`; other branches are rejected.
 
-Before publishing, the workflow runs the existing macOS/Linux and Python 3.11/3.12 CI matrix. A separate Ubuntu/Python 3.12 build creates the upload artifacts and verifies repeated wheel/sdist hashes, clean wheel installation, source/APK scans, MCP stdio, and packaged skills. The publishing job waits for all checks and downloads only the two distributions from that build. It uses PyPI Trusted Publishing and attestations; no long-lived PyPI API token is required. Only the publishing job receives `id-token: write`.
+Before publishing, the workflow runs the existing macOS/Linux and Python 3.11/3.12 CI matrix. A separate Ubuntu/Python 3.12 build creates the upload artifacts and verifies repeated wheel/sdist hashes, clean wheel installation, source/APK scans, MCP stdio, and packaged skills. The publishing job waits for all checks and downloads only the two distributions from that build. It uses PyPI Trusted Publishing and attestations; no long-lived PyPI API token is required. Only that job receives an OIDC token within the `pypi` environment; the separate MCP Registry job has its own OIDC permission.
 
 After PyPI accepts the release, another job creates the GitHub release and attaches:
 
@@ -21,6 +21,13 @@ After PyPI accepts the release, another job creates the GitHub release and attac
 - A verified bundle archive containing the distributions, locked runtime/build requirements, attribution, and its own complete file checksums.
 
 The manifest's `published: false` records that the local build script itself does not publish. The workflow's publishing result and the PyPI release page record whether uploading succeeded.
+
+After PyPI, the MCP Registry and release downloads succeed, the same tag workflow
+calls `published-check.yml` on the exact release commit. Fresh Linux and macOS
+runners verify public identities and artifact hashes, clean installation, cold
+`uvx` resolution, actual MCP stdio in both scopes and a synthetic scan. A failure
+at this stage leaves any already published files intact and keeps the overall
+release workflow failed until the public verification succeeds.
 
 For a new release, update the package version and documentation, run the checks, commit the reviewed inputs, then push the matching tag. Derive the tag from the committed package metadata:
 
@@ -38,7 +45,9 @@ After PyPI accepts a release, the `mcp-registry` job publishes `server.json` to 
 
 The Claude Code plugin in `plugins/apsa` pins `apsa@VERSION`; the marketplace serves whatever the default branch contains, so update the plugin version, `server.json` and `action.yml` together with `pyproject.toml`.
 
-An explicit `Release APSA ...` commit on `main` that changes `pyproject.toml` also starts release verification. The workflow creates the version tag only after all checks pass and refuses a tag bound to different bytes. Its publishing job runs in the original invocation's ref context, so creating a tag does not turn a main-context invocation into a tag-context invocation. Ordinary commits do not publish packages.
+An explicit `Release APSA ...` commit on `main` that changes `pyproject.toml` also starts release verification. The workflow creates the version tag only after all checks pass and refuses a tag bound to different bytes. It then dispatches the same workflow on that immutable tag. The tag invocation reruns CI and artifact verification before publishing in the `pypi` environment. The main invocation does not upload packages. Ordinary commits do not publish packages.
+
+Only this main-to-tag dispatch job receives `actions: write`; the tag invocation skips dispatch, which prevents recursion. An explicit dispatch is required because tag pushes made with `GITHUB_TOKEN` do not start another workflow. GitHub documents the `workflow_dispatch` exception in [Triggering a workflow](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
 
 If the approved tag was created but the publishing job failed before its steps, inspect job summaries and the environment/publisher configuration. The cause must be verified separately. A maintainer can start the existing workflow on that exact tag without moving it:
 
@@ -46,4 +55,4 @@ If the approved tag was created but the publishing job failed before its steps, 
 gh workflow run release.yml --repo ictechgy/apsa --ref "$APSA_RELEASE_TAG"
 ```
 
-This reruns the CI/build gates for the tagged source. A source-only connector may not expose workflow dispatch; do not treat a successful source upload or tag creation as registry publication. Any additional dispatch automation and its permissions require their own review and authorization. Keep the [release sequence](ROADMAP.md) stage gates: confirm each published version before advancing the next candidate.
+This reruns the CI/build gates for the tagged source. Do not treat a successful source upload, tag creation, or dispatch as registry publication. Confirm PyPI, the MCP Registry, release assets and their checksums independently. Keep the [release sequence](ROADMAP.md) stage gates: confirm each published version before advancing the next candidate.
