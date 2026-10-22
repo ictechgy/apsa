@@ -80,8 +80,7 @@ def query(database, monkeypatch, mode, records, *, partial=False):
     assert len(by_id) == len(records)
     calls = []
     if partial:
-        # Legacy stops at a real bounded pagination boundary, not a transport
-        # exception that discards all records from its current query.
+        # Exercise a bounded pagination stop independently of transport failures.
         monkeypatch.setattr(intel, "MAX_OSV_PAGES", 1)
 
     def respond(request):

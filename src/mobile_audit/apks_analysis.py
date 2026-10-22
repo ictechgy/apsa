@@ -62,25 +62,26 @@ def _read(archive: zipfile.ZipFile, item: zipfile.ZipInfo, limit: int) -> bytes:
 
 
 @overload
-def _rebase(value: dict, prefix: str) -> dict: ...
+def _rebase(value: dict, prefix: str, *, origin_is_path: bool = True) -> dict: ...
 
 
 @overload
-def _rebase(value: list, prefix: str) -> list: ...
+def _rebase(value: list, prefix: str, *, origin_is_path: bool = True) -> list: ...
 
 
 @overload
-def _rebase(value: object, prefix: str) -> object: ...
+def _rebase(value: object, prefix: str, *, origin_is_path: bool = True) -> object: ...
 
 
-def _rebase(value: object, prefix: str) -> object:
+def _rebase(value: object, prefix: str, *, origin_is_path: bool = True) -> object:
     if isinstance(value, list):
         return [_rebase(entry, prefix) for entry in value]
     if not isinstance(value, dict):
         return value
     result = {}
     for key, entry in value.items():
-        if key in {"path", "origin", "archive_entry"} and isinstance(entry, str) and entry:
+        path_field = key in {"path", "archive_entry"} or (key == "origin" and origin_is_path)
+        if path_field and isinstance(entry, str) and entry:
             result[key] = prefix + entry
         else:
             result[key] = _rebase(entry, prefix)
@@ -204,7 +205,8 @@ def analyze_apks(
             }
         )
         for item in report["findings"]:
-            rebased = _rebase(item, prefix)
+            # Finding origin is an engine label; nested evidence origin is a path.
+            rebased = _rebase(item, prefix, origin_is_path=False)
             rebased["apk_set_member"] = entry.path
             rebased["module"] = entry.module_name
             rebased["id"] = finding_identity(

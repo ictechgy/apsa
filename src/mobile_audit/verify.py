@@ -12,7 +12,15 @@ from pathlib import PurePosixPath, PureWindowsPath
 
 from .completeness import analysis_incomplete, report_incomplete
 from .core import canonical_json, digest
-from .maswe import RULE_WEAKNESSES, UNMAPPED, finding_weaknesses, weakness_index, weaknesses_for
+from .maswe import (
+    RULE_WEAKNESSES,
+    UNMAPPED,
+    aggregate_states,
+    finding_weaknesses,
+    rule_state,
+    weakness_index,
+    weaknesses_for,
+)
 from .rules import rules
 
 STATUS_STRENGTH = ("candidate", "version-affected", "configuration-confirmed", "runtime-confirmed")
@@ -24,6 +32,46 @@ NOTE = (
 )
 AST_SUFFIXES = (".java", ".kt", ".kts", ".swift", ".m")
 SOURCE_SUFFIXES = AST_SUFFIXES + (".js", ".jsx", ".jsbundle", ".ts", ".tsx", ".dart")
+
+# Narrow claim correspondence, not the broader MASWE traceability relation.
+# CWE-22, CWE-89 and CWE-502 describe distinct path, SQL and deserialization
+# behaviors even though MASWE-0050 relates to all three. Certificate bypasses
+# map to CWE-295; trusting user-installed CAs alone is not a bypass. Other CWE
+# claims remain unassessed until a specific check correspondence is established.
+CWE_CHECKS = {
+    "CWE-22": {"AST-PATH-TRAVERSAL"},
+    "CWE-89": {"AST-SQL-CONCAT", "HYBRID-SQL-INPUT"},
+    "CWE-295": {
+        "WEBVIEW-SSL-BYPASS",
+        "AST-WEBVIEW-SSL-BYPASS",
+        "BINARY-WEBVIEW-SSL-BYPASS",
+        "SOURCE-TRUST-ALL-CERTS",
+        "SWIFT-SERVER-TRUST-ACCEPTED",
+    },
+    "CWE-502": {"SOURCE-JAVA-DESERIALIZATION", "IOS-INSECURE-UNARCHIVE"},
+}
+
+# Configuration findings have precise IDs but share a production coverage entry.
+# These aliases affect execution states only, never finding correspondence.
+COVERAGE_ALIASES = {
+    "ANDROID-DEBUG": "ANDROID-CONFIG",
+    "ANDROID-CLEARTEXT": "ANDROID-CONFIG",
+    "IOS-ATS": "IOS-CONFIG",
+}
+
+
+def _claim_checks(weakness: str | None, rule: str | None) -> set[str]:
+    value = weakness.strip().upper() if weakness else ""
+    if value.startswith("CWE-"):
+        checks = CWE_CHECKS.get(f"CWE-{int(value[4:])}", set()).copy()
+    elif weakness:
+        # Use only the caller's explicit MASWE, not categories inferred from rule.
+        checks = {check for check, mapped in RULE_WEAKNESSES.items() if value in mapped}
+    else:
+        checks = set()
+    if rule:
+        return checks & {rule} if weakness else {rule}
+    return checks
 
 
 def _portable_source_pairing(before: dict, after: dict) -> str:
@@ -371,25 +419,36 @@ def verify_claim(
     if not 0 <= window <= 50:
         raise ValueError("window must be 0-50 lines")
     weaknesses = _weaknesses(weakness, rule)
-    checks = sorted(
-        {rule_id for rule_id, mapped in RULE_WEAKNESSES.items() if set(mapped) & set(weaknesses)}
-        | ({rule} if rule else set())
-    )
+    checks = sorted(_claim_checks(weakness, rule))
+    narrow_claim = bool(rule or (weakness and weakness.strip().upper().startswith("CWE-")))
     target = str(report.get("target", ""))
     requested = report.get("requested_target")
     spellings = [target] + ([str(requested)] if requested else [])
     claimed = _relative(path, spellings) if path else None
     states: dict[str, set[str]] = {}
     for item in report.get("coverage", []):
-        if item.get("rule_id") in checks and isinstance(item.get("state"), str):
-            states.setdefault(item["rule_id"], set()).add(item["state"])
+        if isinstance(item.get("state"), str):
+            for check in checks:
+                if item.get("rule_id") in {check, COVERAGE_ALIASES.get(check, check)}:
+                    states.setdefault(check, set()).add(item["state"])
     matches, elsewhere = [], []
     for item in report.get("findings", []):
         if item.get("origin") == "external":
             # An imported claim is not independent APSA evidence for itself.
             continue
         mapped = finding_weaknesses(item)
-        if item.get("rule_id") not in checks and not set(weaknesses) & set(mapped):
+        # Dependency findings carry upstream advisory IDs rather than the coverage
+        # group's rule ID. Environment advisories cannot corroborate an app claim.
+        dependency_match = (
+            "DEPENDENCY-CVE" in checks
+            and item.get("origin") == "intelligence"
+            and item.get("scope", "app") != "environment"
+        )
+        if (
+            item.get("rule_id") not in checks
+            and not dependency_match
+            and (narrow_claim or not set(weaknesses) & set(mapped))
+        ):
             continue
         located = [e for e in item.get("evidence", []) if isinstance(e, dict)]
         summary = {
@@ -437,7 +496,7 @@ def verify_claim(
                 }
             )
             file_state = "path-unmatched" if candidates else "not-analyzed"
-    observed = set().union(*states.values()) if states else set()
+    observed = aggregate_states([rule_state(values) for values in states.values()])
     if matches:
         verdict = "corroborated"
     elif not checks:
@@ -448,9 +507,9 @@ def verify_claim(
         verdict = "path-unmatched"
     elif file_state in {"skipped", "not-analyzed"}:
         verdict = "file-not-analyzed"
-    elif "partial" in observed or file_state == "partial":
+    elif observed == "partial" or file_state == "partial":
         verdict = "partial"
-    elif "checked" in observed:
+    elif observed == "checked":
         verdict = "not-observed"
     else:
         verdict = "not-run"
@@ -471,5 +530,11 @@ def verify_claim(
         "candidate_paths": candidates[:20],
         "matching_findings": matches[:50],
         "other_findings_in_file": elsewhere[:50],
-        "note": NOTE,
+        "note": NOTE
+        + (
+            " CWE corroboration requires an explicit rule mapping; currently CWE-22, CWE-89, CWE-295 and CWE-502 "
+            "are supported. Broader MASWE overlap cannot corroborate an unsupported CWE claim."
+            if weakness and weakness.strip().upper().startswith("CWE-")
+            else ""
+        ),
     }

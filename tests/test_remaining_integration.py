@@ -64,6 +64,7 @@ def test_apk_set_scan_retains_selected_member_evidence_and_partial_scope(tmp_pat
     assert inv["apk_set"]["manifest_merge_verified"] is False
     risky = [f for f in result["findings"] if f["rule_id"] == "HYBRID-UNTRUSTED-URL"]
     assert risky and all(f["apk_set_member"] == DEFAULT_PATHS[1] for f in risky)
+    assert all(f["origin"] == "source" for f in risky)
     assert all(f["evidence"][0]["path"].startswith(DEFAULT_PATHS[1] + "!/") for f in risky)
     assert not any(check["state"] == "checked" for check in result["coverage"])
     assert "selected-" not in json.dumps(inv)

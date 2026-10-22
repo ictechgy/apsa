@@ -428,9 +428,14 @@ def test_osv_later_page_failure_preserves_prior_full_cache(store):
     ]
     with _client(lambda request: responses.pop(0)) as client:
         found, errors = query_dependencies(store, [DEPENDENCY], client)
-    assert found == [] and errors
-    assert store.intel_by_id(IDENTIFIER)[0]["snapshot_hash"] == old["snapshot_hash"]
-    assert store.intel_by_id("OSV-one") == []
+    assert [record["id"] for record in found] == ["OSV-one"] and errors
+    retained = store.intel_by_id(IDENTIFIER)[0]
+    for key in ("id", "source", "title", "query_match"):
+        assert retained[key] == old[key]
+        assert retained["osv_legacy_records"][0][key] == old[key]
+    assert old["snapshot_hash"] in {row["snapshot_hash"] for row in store.intel_history(IDENTIFIER)}
+    assert store.intel_by_id("OSV-one")
+    assert next(feed for feed in store.feeds() if feed["source"].startswith("osv:"))["status"] == "partial"
 
 
 @pytest.mark.parametrize("budget", ["MAX_OSV_PAGES", "MAX_OSV_RECORDS"])

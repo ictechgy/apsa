@@ -11,7 +11,7 @@ import tarfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, NoReturn, overload
+from typing import Any, Callable, NoReturn, overload
 
 from defusedxml import ElementTree as ET
 
@@ -382,9 +382,11 @@ def scrub_runtime(value: Any, markers: dict[str, str]) -> Any:
     return value
 
 
-def snapshot(adapter, markers: dict[str, str]) -> dict:
+def snapshot(adapter, markers: dict[str, str], *, checkpoint: Callable[[], None] | None = None) -> dict:
     result = {"created": now(), "surfaces": {}, "matches": [], "files": []}
     for surface, capture in [("storage", adapter.storage), ("ui", adapter.ui), ("logs", adapter.logs)]:
+        if checkpoint:
+            checkpoint()
         try:
             value = capture()
             entries = value if isinstance(value, list) else [(surface, value)]
@@ -665,7 +667,14 @@ def run(
     *,
     scenario=None,
     acquisition_adapter: AcquisitionAdapter | None = None,
+    progress: Callable[[str, int], None] | None = None,
 ) -> dict:
+    """Run a scenario, checking cooperative cancellation between device operations.
+
+    A progress callback may raise KeyboardInterrupt to cancel. An operation
+    already executing can finish before the next checkpoint; physical worker
+    signals remain separate.
+    """
     if acquisition_adapter is not None and adapter is None:
         raise ValueError(
             "Trusted acquisition requires an explicit runtime action adapter; device discovery is disabled for this seam"
@@ -675,6 +684,8 @@ def run(
         raise ValueError(
             "Customize the scenario template and confirm the prepared precondition before execution."
         )
+    if progress:
+        progress("device-scenario", 10)
     resolved = adapter or (Android if scenario["platform"] == "android" else IOS)(
         scenario["package"], scenario.get("device")
     )
@@ -689,6 +700,7 @@ def run(
             adapter=resolved,
             scenario=scenario,
             acquisition_adapter=acquisition_adapter,
+            progress=progress,
         )
 
 
@@ -717,7 +729,15 @@ def _run(
     adapter=None,
     scenario: dict | None = None,
     acquisition_adapter: AcquisitionAdapter | None = None,
+    progress: Callable[[str, int], None] | None = None,
 ) -> dict:
+    percent = 10
+
+    def checkpoint():
+        if progress:
+            progress("device-scenario", percent)
+
+    checkpoint()
     scenario = scenario or validate_scenario(read_json(scenario_path))
     if scenario["precondition"].startswith("EDIT:"):
         raise ValueError(
@@ -752,6 +772,7 @@ def _run(
     directory.mkdir(parents=True, mode=0o700)
     snapshots = {}
     transcript = []
+    checkpoint()
     environment = adapter.environment()
     if acquisition_adapter is not None and environment.get("platform") != scenario["platform"]:
         raise ValueError("Acquisition adapter environment platform differs from scenario")
@@ -798,6 +819,7 @@ def _run(
         else:
             build_verification = "audited-ipa-match-unavailable"
     binding = build_binding(scenario["platform"], scenario["package"], observed_app)
+    checkpoint()
     recorder = (
         AcquisitionRecorder(acquisition_adapter, binding, scenario["markers"])
         if acquisition_adapter
@@ -811,6 +833,8 @@ def _run(
     if recorder and recorder.metadata()["mode"] == "synthetic":
         build_verification = "synthetic-app-model-build"
     for index, step in enumerate(scenario["steps"]):
+        percent = 10 + 80 * index // len(scenario["steps"])
+        checkpoint()
         action = step["action"]
         details = {}
         try:
@@ -842,15 +866,17 @@ def _run(
                     ),
                     None,
                 )
+                checkpoint()
                 snapshots[step["label"]] = (
                     recorder.capture(step["label"], states.get(step["label"]), transition)
                     if recorder
-                    else snapshot(adapter, scenario["markers"])
+                    else snapshot(adapter, scenario["markers"], checkpoint=checkpoint)
                 )
                 snapshots[step["label"]]["binding"] = binding
                 snapshots[step["label"]]["declared_state"] = states.get(step["label"])
                 if screenshots:
                     path = directory / f"{step['label']}.png"
+                    checkpoint()
                     adapter.screenshot(path)
                     snapshots[step["label"]]["screenshot"] = str(path)
             elif action == "launch":
@@ -864,7 +890,15 @@ def _run(
             elif action == "input_text":
                 adapter.input_text(str(step["text"]))
             elif action == "wait":
-                time.sleep(float(step.get("seconds", 0)))
+                seconds = float(step.get("seconds", 0))
+                if progress:
+                    deadline = time.monotonic() + seconds
+                    while (remaining := deadline - time.monotonic()) > 0:
+                        checkpoint()
+                        time.sleep(min(0.1, remaining))
+                else:
+                    time.sleep(seconds)
+            checkpoint()
             transcript.append({"step": index, "action": action, "state": "completed", **details})
         except (ValueError, OSError, KeyError) as error:
             transcript.append(
@@ -876,6 +910,7 @@ def _run(
                 }
             )
             break
+    checkpoint()
     if recorder:
         binding = recorder.binding
     if binding.get("state") != "bound" and binding.get("build", {}).get("runtime_model_sha256"):
@@ -1098,4 +1133,6 @@ def _run(
                     "Target-app marker changed after dispatch. Review separate authentication assertions; delivery alone is not authentication proof."
                 )
     report["summary"] = summarize(report)
+    if progress:
+        progress("evidence-report", 95)
     return store.save_report(report)

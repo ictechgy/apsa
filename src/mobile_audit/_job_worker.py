@@ -14,6 +14,10 @@ from .runtime import run
 from .store import Store
 
 
+class JobCancelled(KeyboardInterrupt):
+    """A committed cancellation request observed at a worker checkpoint."""
+
+
 def interrupted(_signum, _frame):
     raise KeyboardInterrupt
 
@@ -29,12 +33,12 @@ def main() -> None:
             return
         claimed = True
         payload = row["payload"]
+
+        def progress(stage, percent):
+            if not jobs.update(store, identifier, stage=stage, progress=percent):
+                raise JobCancelled
+
         if payload["kind"] == "scan":
-
-            def progress(stage, percent):
-                if not jobs.update(store, identifier, stage=stage, progress=percent):
-                    raise KeyboardInterrupt
-
             report = scan(
                 store,
                 Path(payload["target"]),
@@ -53,14 +57,14 @@ def main() -> None:
                 ipa_trust_policy=payload.get("ipa_trust_policy"),
             )
         else:
-            if not jobs.update(store, identifier, stage="device-scenario", progress=10):
-                raise KeyboardInterrupt
+            progress("device-scenario", 10)
             report = run(
                 store,
                 Path(payload["scenario"]),
                 payload["report_id"],
                 screenshots=payload.get("screenshots", False),
                 scenario=payload.get("scenario_value"),
+                progress=progress,
             )
         jobs.finish(store, identifier, "completed", report_id=report["id"])
     except KeyboardInterrupt:

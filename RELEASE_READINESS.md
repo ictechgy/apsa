@@ -1,6 +1,25 @@
 # GitHub 공개 소스 — 2026-10-06
 
-## 1.6.1 correctness patch — 2026-10-22
+## 1.6.2 review corrections — 2026-10-22
+
+[Patch scope](docs/RELEASE_162.md): Objective-C binding ownership, OSV partial
+page recovery, strict verification claims, partial coverage aggregation,
+cooperative runtime cancellation and APK-set finding provenance. Final source
+review, supported CI and public installation checks remain separate gates;
+this source record alone does not claim publication.
+
+## Published 1.6.1 — 2026-10-22
+
+The `v1.6.1` tag points to `010e6b8ca51f7a0dbf88724e497845a03a69436f`.
+The [release workflow](https://github.com/ictechgy/apsa/actions/runs/39786849403)
+completed 19 jobs successfully with one expected dispatch skip. PyPI, MCP
+Registry, GitHub release assets and Linux/macOS public installation checks
+passed. Independent public downloads matched both hosted verification artifacts:
+
+- Wheel SHA-256: `f9c553bc1fea08fd38bf982cf357a89330e63f66b3964af224937ca051e02d53`.
+- Source distribution SHA-256: `c8817b18c788c077f2022498d960c0444aafe910bcbc8988b8b11071bb9b1aaf`.
+
+## 1.6.1 correctness patch scope — 2026-10-22
 
 [Patch scope](docs/RELEASE_161.md): hybrid callable identity, native raw-path
 containment and exact dependency evidence retrieval. These changes require

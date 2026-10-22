@@ -6,9 +6,9 @@
 
 This English README is the source of truth. The Korean README follows it.
 
-APSA 1.6.1 fixes missed findings from ambiguous hybrid helpers, raw-path substring
-guards and dependency advisories displaced by unrelated cached records.
-See [patch scope and upgrade effects](docs/RELEASE_161.md).
+APSA 1.6.2 fixes Objective-C binding scope, incomplete OSV queries, precise claim
+verification, runtime cancellation and APK-set finding provenance.
+See [patch scope and upgrade effects](docs/RELEASE_162.md).
 
 **APSA 1.6 analysis extensions.** This version adds bounded native cross-file
 flow and input-bound path guards, JS/TS/Dart candidates, recorded Gradle variant
@@ -285,7 +285,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.6.1
+uv tool install --python 3.12 apsa==1.6.2
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -407,7 +407,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.6.1; pin the full commit SHA
+  - uses: ictechgy/apsa@<commit-sha> # v1.6.2; pin the full commit SHA
     with:
       path: android            # source folder, or a built APK/AAB/IPA in the workspace
       fail-on-incomplete: "true"
@@ -534,6 +534,12 @@ MCP uses stdio and requires an explicit `--root`; repeat it for multiple roots. 
 | Runtime planning | `runtime_plan`, `runtime_devices` |
 
 `verify_finding` (CLI `apsa verify`) cross-checks a finding claimed by another tool or AI reviewer against APSA's evidence and never refutes it. Project taint specifications name project-specific sources and sinks, such as a deep-link parser or an in-app browser wrapper, for APSA to follow deterministically; see [project specifications](https://github.com/ictechgy/apsa/blob/main/docs/PROJECT_SPECS.md).
+
+Exact rule claims match that rule; MASWE claims may use related checks. Precise CWE
+corroboration currently supports CWE-22, CWE-89, CWE-295 and CWE-502 through explicit check
+mappings. Other CWE claims return `not-assessed`; broad MASWE overlap alone does
+not corroborate them. When both a rule and weakness are supplied, both must match.
+Mixed checked and unexecuted coverage remains `partial`.
 
 `capabilities` reports `tool_manifest_sha256`, a hash of the APSA-owned tool
 surface (names, descriptions, annotation hints and parameter shapes); the tool

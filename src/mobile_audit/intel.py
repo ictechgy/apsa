@@ -882,38 +882,55 @@ def _query_dependencies_legacy(
                 package_records = []
                 tokens = set()
                 complete = False
+                pages = 0
+                query_failure = ""
                 for _ in range(MAX_OSV_PAGES):
                     if requests >= max_requests:
                         break
                     requests += 1
                     if attempted_sources is not None:
                         attempted_sources.add(f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}")
-                    value = fetcher.post_json(endpoint, payload)
-                    if value and not ({"vulns", "next_page_token"} & value.keys()):
-                        raise ValueError("Malformed OSV response: no vulnerability or pagination fields")
-                    vulns = _list(value.get("vulns", []), "OSV response vulnerabilities")
-                    remaining = MAX_OSV_RECORDS - len(package_records)
-                    package_records.extend(
-                        _provenance(_normalize_osv(vuln, dep), endpoint, fetcher.hashes[-1])
-                        for vuln in vulns[:remaining]
-                    )
-                    token = _text(value.get("next_page_token", ""), "OSV page token")
+                    try:
+                        value = fetcher.post_json(endpoint, payload)
+                        if value and not ({"vulns", "next_page_token"} & value.keys()):
+                            raise ValueError("Malformed OSV response: no vulnerability or pagination fields")
+                        vulns = _list(value.get("vulns", []), "OSV response vulnerabilities")
+                        remaining = MAX_OSV_RECORDS - len(package_records)
+                        # A malformed page must not contribute a partially normalized prefix.
+                        page_records = [
+                            _provenance(_normalize_osv(vuln, dep), endpoint, fetcher.hashes[-1])
+                            for vuln in vulns[:remaining]
+                        ]
+                        token = _text(value.get("next_page_token", ""), "OSV page token")
+                        if token and token in tokens:
+                            raise ValueError("OSV pagination did not advance")
+                    except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+                        if not pages:
+                            raise
+                        # Earlier validated pages remain positive evidence even when
+                        # a later request fails. They cannot establish full coverage.
+                        query_failure = type(error).__name__
+                        break
+                    package_records.extend(page_records)
+                    pages += 1
                     if len(vulns) <= remaining and not token:
                         complete = True
                         break
                     if len(vulns) > remaining or len(package_records) >= MAX_OSV_RECORDS:
                         break
-                    if token in tokens or not token:
-                        raise ValueError("OSV pagination did not advance")
                     tokens.add(token)
                     payload["page_token"] = token
                 source = f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}"
-                persist_osv_query(store, source, package_records, complete=complete)
+                # No new observation means the existing cache keeps its exact
+                # snapshot identity; only a complete empty response can retire it.
+                if complete or package_records:
+                    persist_osv_query(store, source, package_records, complete=complete)
                 if not complete:
                     # Incoming upstream revisions replace themselves; absent
                     # members survive until a complete package snapshot arrives.
                     errors.append(
-                        f"OSV query incomplete for {dep['name']}: page/record/request budget reached; cached matches retained"
+                        f"OSV query incomplete for {dep['name']}: "
+                        f"{query_failure or 'page/record/request budget reached'}; cached matches retained"
                     )
                 found.extend(package_records)
                 store.feed(

@@ -6,8 +6,8 @@
 
 영문 README가 원본입니다. 이 문서는 영문 원본을 기준으로 작성한 한국어 번역입니다.
 
-1.6.1은 하이브리드 함수 식별, 외부 파일 경로 검사, 의존성 취약점 캐시 조회로
-인해 탐지 결과가 누락되던 문제를 수정합니다. [변경 범위와 업그레이드 영향](docs/RELEASE_161.md)을 확인하세요.
+1.6.2는 Objective-C 이름 범위, 불완전한 OSV 조회, 주장 검증, 런타임 작업 취소,
+APK-set 발견 출처를 수정합니다. [변경 범위와 업그레이드 영향](docs/RELEASE_162.md)을 확인하세요.
 
 **APSA 1.6 분석 확장.** 이번 버전은 제한된 네이티브 파일 간 흐름과 같은 입력의 경로 검증,
 JS/TS/Dart 후보 탐지, 기록된 Gradle 변형 선택, OSV 배치·전송 제외 정책, 인증 상태별
@@ -223,7 +223,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.6.1
+uv tool install --python 3.12 apsa==1.6.2
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -345,7 +345,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.6.1; 전체 커밋 SHA로 고정
+  - uses: ictechgy/apsa@<commit-sha> # v1.6.2; 전체 커밋 SHA로 고정
     with:
       path: android            # 소스 폴더 또는 workspace 안의 APK/AAB/IPA
       fail-on-incomplete: "true"
@@ -449,6 +449,12 @@ MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 ro
 | 런타임 계획 | `runtime_plan`, `runtime_devices` |
 
 `verify_finding`(CLI `apsa verify`)은 다른 도구나 AI 리뷰어가 주장한 발견을 APSA 증거와 대조하며 반박하지 않습니다. 프로젝트 taint 명세는 딥링크 파서나 인앱 브라우저 래퍼 같은 프로젝트 고유 source·sink를 지정해 APSA가 결정적으로 추적하게 합니다. [프로젝트 명세](https://github.com/ictechgy/apsa/blob/main/docs/PROJECT_SPECS.md)를 참고하세요.
+
+정확한 규칙 ID 주장은 해당 규칙과, MASWE 주장은 관련 검사와 대조합니다. CWE 주장은
+현재 명시적 검사 매핑이 있는 CWE-22·CWE-89·CWE-295·CWE-502를 지원합니다. 나머지는
+`not-assessed`로 반환하며 넓은 MASWE 범주가 겹친다는 이유로 확인하지 않습니다.
+규칙과 약점을 함께 지정하면 둘 다 일치해야 합니다. 실행된 검사와 미실행 검사가
+섞인 결과는 `partial`로 표시합니다.
 
 `capabilities`는 APSA가 정의한 도구 이름·설명·annotation·파라미터 형태를 정규화한 해시
 `tool_manifest_sha256`을 알려 주며, 한 프로세스 안에서 도구 목록은 바뀌지 않습니다. 서버가 스스로
