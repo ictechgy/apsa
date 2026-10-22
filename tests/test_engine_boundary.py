@@ -58,7 +58,7 @@ class SyntheticReportStore:
         self.home = home
         self.saved = None
 
-    def intelligence(self, *, limit):
+    def correlation_intelligence(self, dependencies):
         return []
 
     def save_report(self, report):

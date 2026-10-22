@@ -281,7 +281,7 @@ ENTRY_ITERATORS = {
     "getNextJarEntry",
 }
 NESTED_INTENT_GETTERS = {"getParcelableExtra", "getParcelable"}
-# Path containment checks: a canonical or normalized path compared by prefix, or a ".." test.
+# Path checks include canonical containment and separate lexical ".." constraints.
 CANONICAL_PATHS = (
     "canonicalPath",
     "getCanonicalPath",
@@ -1246,7 +1246,7 @@ class Analyzer:
             or not (
                 trace.path_safe
                 or trace.description.endswith(BASENAME)
-                or "path-contained" in self.active_guards.get(trace.origin, set())
+                or "no-parent-segments" in self.active_guards.get(trace.origin, set())
             )
             for trace in value.traces
         ):

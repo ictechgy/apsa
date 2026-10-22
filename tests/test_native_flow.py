@@ -186,15 +186,31 @@ def test_path_irrelevant_or_nondominating_checks_keep_candidate(suffix, guard):
             let name = input.query
             guard !name!.contains("..") else { return false }
             let output = URL(fileURLWithPath: name!)
+            let bytes: Data = Data()
+            bytes.write(to: output)
             return true
         }
     }""",
         ),
     ],
 )
-def test_same_value_rejecting_guard_dominates_path_operation(suffix, source):
+@pytest.mark.parametrize("absolute_only", [False, True])
+def test_rejecting_parent_segments_does_not_contain_a_raw_external_path(suffix, source, absolute_only):
+    # /tmp/arbitrary has no parent segments and still escapes any intended root.
+    # The same-input and dominating-return properties do not make this safe.
+    if absolute_only:
+        operation, absolute_guard = {
+            "java": ("new FileOutputStream(name);", 'if (!name.startsWith("/tmp/")) return;'),
+            "kt": ("FileOutputStream(name)", 'if (!name.startsWith("/tmp/")) return'),
+            "swift": (
+                "let output = URL(fileURLWithPath: name!)",
+                'guard name!.hasPrefix("/tmp/") else { return false }',
+            ),
+        }[suffix]
+        source = source.replace(operation, absolute_guard + "\n" + operation)
     report = scan((f"New.{suffix}", source))
-    assert not findings(report), report
+    assert findings(report), report
+    assert all(item["status"] == "candidate" for item in findings(report))
 
 
 @pytest.mark.parametrize("prefix", ["root.getCanonicalPath()", "root.getCanonicalPath() + File.separator"])
@@ -287,15 +303,20 @@ def test_cross_file_argument_return_and_sink_paths_ignore_file_order(reverse):
 
 def test_direct_helper_guard_preserves_positive_and_rejects_unrelated_check():
     for guard, expected in [
-        ('if (name.contains("..")) return;', False),
-        ('if (other.contains("..")) return;', True),
+        ('if (!output.getCanonicalPath().startsWith("/synthetic/root/")) return;', False),
+        ('if (!otherPath.getCanonicalPath().startsWith("/synthetic/root/")) return;', True),
     ]:
         report = scan(
             (
                 "New.java",
                 f"""class Handler {{
             void entry(Intent input) {{ write(input.getStringExtra("name"), "safe"); }}
-            void write(String name, String other) {{ {guard} new FileOutputStream(name); }}
+            void write(String name, String other) {{
+                File output = new File(name);
+                File otherPath = new File(other);
+                {guard}
+                new FileOutputStream(output);
+            }}
         }}""",
             )
         )
@@ -309,10 +330,11 @@ def test_caller_guard_dominates_resolved_helper_sink():
             """class Handler {
         fun entry(input: Intent) {
             val name = input.getStringExtra("name")!!
-            if (name.contains("..")) return
-            write(name)
+            val output = File(name)
+            if (!output.canonicalPath.startsWith("/synthetic/root/")) return
+            write(output)
         }
-        fun write(name: String) { FileOutputStream(name) }
+        fun write(output: File) { FileOutputStream(output) }
     }""",
         )
     )
@@ -707,6 +729,8 @@ def test_rooted_constant_prefix_preserves_only_same_input_path_guard(suffix, gua
     "path_expression",
     [
         '"/synthetic/root/../" + name',
+        '"/synthetic/root" + name',
+        "root + name",
         '"/synthetic/root/" + transform(name)',
         '"/synthetic/root/" + name + "../escape"',
         '"/synthetic/root/" + other',
@@ -720,6 +744,7 @@ def test_rooted_prefix_cannot_bless_transforms_or_different_input(path_expressio
         void entry(Intent input) {
             String name = input.getStringExtra("name");
             String other = input.getStringExtra("other");
+            String root = input.getStringExtra("root");
             if (name.contains("..")) return;
             new FileOutputStream("""
             + path_expression

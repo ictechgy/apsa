@@ -45,7 +45,7 @@ class Fields {
     assert functions(text, "Fields.java", "AST-CRYPTO-STATIC-IV") == ["fixed"]
 
 
-def test_archive_name_guard_follows_only_the_same_entry_and_alias():
+def test_archive_lexical_guard_follows_same_entry_under_a_fixed_root_prefix():
     text = """import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -54,31 +54,31 @@ class Archive {
         val entry = zis.nextEntry ?: return
         if (".." in entry.name) return
         val same = entry
-        File(dest, same.name)
+        File("/synthetic/root/" + same.name)
     }
     fun parameter(entry: ZipEntry, dest: File) {
         if (entry.name.contains("..")) return
-        File(dest, entry.getName())
+        File("/synthetic/root/" + entry.getName())
     }
     fun reassigned(zis: ZipInputStream, dest: File) {
         var entry = zis.nextEntry ?: return
         if (".." in entry.name) return
         entry = zis.nextEntry ?: return
-        File(dest, entry.name)
+        File("/synthetic/root/" + entry.name)
     }
     fun different(zis: ZipInputStream, dest: File) {
         val first = zis.nextEntry ?: return
         if (".." in first.name) return
         val second = zis.nextEntry ?: return
-        File(dest, second.name)
+        File("/synthetic/root/" + second.name)
     }
     fun slash(entry: ZipEntry, dest: File) {
         if (entry.name.contains("../")) return
-        File(dest, entry.name)
+        File("/synthetic/root/" + entry.name)
     }
     fun nested(entry: ZipEntry, dest: File, reject: Boolean) {
         if (".." in entry.name) { if (reject) return }
-        File(dest, entry.name)
+        File("/synthetic/root/" + entry.name)
     }
 }"""
     assert functions(text, "Archive.kt", "AST-PATH-TRAVERSAL") == [

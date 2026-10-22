@@ -24,7 +24,7 @@ KOTLIN_CALLER = 'package app\nimport android.content.Intent\nimport android.webk
         "unguarded",
         "leading-not-and",
         "leading-not-or",
-        "leading-not-and-not-contains",
+        "leading-not-and-not-prefix",
         "unary",
         "unary-parenthesized",
         "contains-reject",
@@ -40,14 +40,20 @@ def test_early_return_uses_boolean_scope_instead_of_leading_text(language, kind)
         "unguarded": None,
         "leading-not-and": f"!flag && {prefix}",
         "leading-not-or": f"!flag || {prefix}",
-        "leading-not-and-not-contains": '!flag && !name.contains("..")',
+        "leading-not-and-not-prefix": f"!flag && !{prefix}",
         "unary": f"!{prefix}",
         "unary-parenthesized": f"!({prefix})",
         "contains-reject": 'name.contains("..")',
     }[kind]
     guard = f"if ({condition}) return" + (";" if language == "java" else "") if condition else ""
     report = scan((f"app/Saver.{language}", SOURCES[language].replace("{guard}", guard)))
-    unsafe = kind in {"unguarded", "leading-not-and", "leading-not-or", "leading-not-and-not-contains"}
+    unsafe = kind in {
+        "unguarded",
+        "leading-not-and",
+        "leading-not-or",
+        "leading-not-and-not-prefix",
+        "contains-reject",
+    }
     assert bool(findings(report, PATH)) == unsafe, report
     assert report["metadata"]["native_flow"]["state"] == "checked", report
 

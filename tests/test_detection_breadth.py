@@ -1221,7 +1221,7 @@ class Guards : Activity() {
         val out = File(dir, name)
     }
 
-    fun contained(dir: File) {
+    fun lexicallyChecked(dir: File) {
         val name = intent.getStringExtra("n")!!
         if (name.contains("..")) return
         val out = File(dir, name)
@@ -1238,7 +1238,8 @@ class Guards : Activity() {
 def test_guards_need_comparisons_and_services_are_not_implicit_targets():
     found = ast("Guards.kt", GUARDS_KT)
     assert found["AST-INTENT-REDIRECTION"] == [12]
-    assert found["AST-PATH-TRAVERSAL"] == [22]
+    # Removing or rejecting '..' does not prove a caller-controlled path is contained.
+    assert found["AST-PATH-TRAVERSAL"] == [22, 28]
     assert "AST-IMPLICIT-INTENT" not in found
 
 
@@ -1257,8 +1258,9 @@ import java.util.zip.ZipInputStream
 class Final {
     fun unzip(zis: ZipInputStream, dest: File) {
         val entry = zis.nextEntry ?: return
-        if (".." in entry.name) return
-        FileOutputStream(File(dest, entry.name))
+        val out = File(dest, entry.name)
+        if (!out.canonicalPath.startsWith(dest.canonicalPath + File.separator)) return
+        FileOutputStream(out)
     }
 
     fun unzipSlash(zis: ZipInputStream, dest: File) {
@@ -1286,7 +1288,7 @@ class Final {
 def test_final_review_guards_and_unconditional_scopes():
     found = ast("Final.kt", FINAL_KT)
     # Rejecting '../' alone misses the bare '..' entry and does not prove containment.
-    assert found["AST-PATH-TRAVERSAL"] == [21]
+    assert found["AST-PATH-TRAVERSAL"] == [22]
     assert "AST-INTENT-REDIRECTION" not in found
     assert "AST-WEBVIEW-UNTRUSTED-URL" not in found
 

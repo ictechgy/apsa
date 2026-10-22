@@ -7,11 +7,12 @@ from typing import Any
 
 
 def lexical_constraints(value: Any) -> dict[int | tuple[int, str], set[str]]:
+    """Record a segment constraint without granting safety to a raw path."""
     if value.category == "canonical-path":
         # Canonicalization already removed parent segments; their absence proves no containment.
         return {}
     return {
-        (trace.origin, trace.path_route) if trace.path_route else trace.origin: {"path-contained"}
+        (trace.origin, trace.path_route) if trace.path_route else trace.origin: {"no-parent-segments"}
         for trace in value.traces
     }
 
@@ -120,7 +121,8 @@ def path_predicate(
     if receiver_negated(analyzer, receiver):
         positive = not positive
     value = analyzer.value(receiver, frame)
-    # Rejecting every '..' component is supported; checking only '../' misses a bare '..'.
+    # Rejecting '..' is a lexical fact, not containment: absolute paths still pass.
+    # Checking only '../' also misses a bare '..'.
     if call.name == "contains" and analyzer.literal(call.args[0]) == ".." and not positive:
         return lexical_constraints(value)
     if not positive or call.name not in {"startsWith", "hasPrefix"} or value.category != "canonical-path":

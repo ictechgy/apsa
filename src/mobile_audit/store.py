@@ -95,6 +95,8 @@ class Store:
           body TEXT, PRIMARY KEY(id,source,branch));
         CREATE TABLE IF NOT EXISTS intel_revisions(snapshot_hash TEXT PRIMARY KEY, id TEXT, source TEXT,
           branch TEXT, modified TEXT, observed TEXT, body TEXT);
+        CREATE INDEX IF NOT EXISTS intel_source ON intel(source);
+        CREATE INDEX IF NOT EXISTS intel_branches_source ON intel_branches(source);
         """)
 
         self.db.execute("BEGIN IMMEDIATE")
@@ -535,6 +537,35 @@ class Store:
             )
             for row in rows
         ]
+
+    def correlation_intelligence(self, dependencies: list[dict], limit=100000) -> list[dict]:
+        """Keep exact package query results independent of the recent advisory window."""
+        records = self.intelligence(limit=limit)
+        identities = {(r["id"], r["source"], r.get("branch_id", "")) for r in records}
+        sources = sorted({f"osv:{dep['ecosystem']}:{dep['name']}:{dep['version']}" for dep in dependencies})
+        # Bound SQL variables, not the matching query results. An unrelated feed
+        # must never evict a dependency advisory while its coverage stays checked.
+        for offset in range(0, len(sources), 400):
+            batch = sources[offset : offset + 400]
+            placeholders = ",".join("?" for _ in batch)
+            rows = self.db.execute(
+                f"SELECT id,source,body,'' AS branch FROM intel WHERE source IN ({placeholders}) "
+                f"UNION ALL SELECT id,source,body,branch FROM intel_branches WHERE source IN ({placeholders})",
+                (*batch, *batch),
+            )
+            for row in rows:
+                identity = (row["id"], row["source"], row["branch"])
+                if identity in identities:
+                    continue
+                identities.add(identity)
+                records.append(
+                    dict(
+                        json.loads(row["body"]),
+                        snapshot_hash=digest(row["body"].encode()),
+                        **({"branch_id": row["branch"]} if row["branch"] else {}),
+                    )
+                )
+        return records
 
     def intel_by_id(self, identifier: str) -> list[dict]:
         return [

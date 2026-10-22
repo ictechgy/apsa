@@ -21,6 +21,7 @@ def report():
             "input_kind": "source",
             "fingerprint": "source-before",
             "deep_links": [],
+            "dependencies": [],
         },
         "findings": [
             {
@@ -94,7 +95,7 @@ class SyntheticStore:
     def report(self, identifier):
         return copy.deepcopy(self.previous)
 
-    def intelligence(self, **kwargs):
+    def correlation_intelligence(self, dependencies):
         return []
 
     def save_report(self, value):

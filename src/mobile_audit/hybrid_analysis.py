@@ -154,6 +154,15 @@ class Function:
     parameters: list[str]
     tokens: list[Token]
     line: int
+    offset: int
+    direct: bool
+    bindings: set[str]
+
+    @property
+    def identity(self) -> tuple[str, int]:
+        # Names and arities are not identities: nested declarations and members
+        # can share both with an unrelated module function, even on one line.
+        return self.path, self.offset
 
 
 def _tokens(text: str) -> list[Token]:
@@ -200,9 +209,135 @@ def _split(tokens: list[Token], separator: str = ",") -> list[list[Token]]:
     return groups
 
 
+def _bindings(tokens: list[Token], *, dart: bool = False, function_declarations: bool = True) -> set[str]:
+    """Conservative local declarations/writes, independent of execution order.
+
+    This is deliberately not a lexical scope proof. A declaration in a nested
+    block can prevent a summary lookup outside that block; it must never make
+    us select an unrelated function as a sanitizer.
+    """
+    result = set()
+    pairs = _pairs(tokens)
+    closing = {close: start for start, close in pairs.items()}
+
+    def target(end: int) -> None:
+        if end < 0:
+            return
+        if tokens[end].kind == "identifier":
+            if (
+                end == 0
+                or tokens[end - 1].text not in {".", "?."}
+                or (end >= 2 and tokens[end - 2].text in {"window", "globalThis", "self", "this"})
+            ):
+                result.add(tokens[end].text)
+        elif end in closing and tokens[end].text in {"}", "]"}:
+            opening = closing[end]
+            if opening and tokens[opening - 1].text in {"window", "globalThis", "self", "this"}:
+                if end == opening + 2 and tokens[opening + 1].kind == "string":
+                    name = tokens[opening + 1].text[1:-1]
+                    result.add(name if re.fullmatch(r"[A-Za-z_$][\w$]*", name) else "*")
+                else:
+                    result.add("*")
+            result.update(part.text for part in tokens[opening + 1 : end] if part.kind == "identifier")
+
+    for index, token in enumerate(tokens):
+        if token.text in {"const", "let", "var", "final", "late"}:
+            depth, initializer = 0, False
+            for next_ in range(index + 1, len(tokens)):
+                part = tokens[next_]
+                if depth == 0 and part.text in {";", ")", "in", "of", "const", "let", "var", "final", "late"}:
+                    break
+                if depth == 0 and part.text == "=":
+                    initializer = True
+                elif depth == 0 and part.text == ",":
+                    initializer = False
+                elif not initializer and part.kind == "identifier":
+                    result.add(part.text)
+                if part.text in {"(", "[", "{"}:
+                    depth += 1
+                elif part.text in {")", "]", "}"}:
+                    depth -= 1
+        elif token.text == "class" or (function_declarations and token.text == "function"):
+            next_ = index + 1
+            if next_ < len(tokens) and tokens[next_].text == "*":
+                next_ += 1
+            if next_ < len(tokens) and tokens[next_].kind == "identifier":
+                result.add(tokens[next_].text)
+        elif token.text == "catch" and index + 1 in pairs:
+            result.update(
+                part.text for part in tokens[index + 2 : pairs[index + 1]] if part.kind == "identifier"
+            )
+        elif token.text in {"=", "in", "of"} and index:
+            previous = index - 1
+            while previous >= 0 and tokens[previous].text in {
+                "+",
+                "-",
+                "*",
+                "/",
+                "%",
+                "?",
+                "??",
+                "&&",
+                "||",
+                "&",
+                "|",
+                "^",
+                ">",
+                "<",
+            }:
+                previous -= 1
+            target(previous)
+        elif token.text == "=>" and index:
+            previous = index - 1
+            if previous in closing and tokens[previous].text == ")":
+                opening = closing[previous]
+                result.update(
+                    part.text for part in tokens[opening + 1 : previous] if part.kind == "identifier"
+                )
+                if opening and tokens[opening - 1].text == ":":
+                    result.add("*")
+            elif tokens[previous].kind == "identifier" and (
+                previous == 0 or tokens[previous - 1].text != ":"
+            ):
+                result.add(tokens[previous].text)
+            else:
+                # An unmodeled typed arrow signature cannot establish a stable
+                # lexical namespace for any callable in this bounded model.
+                result.add("*")
+        elif token.text in {"+", "-"} and index + 1 < len(tokens) and tokens[index + 1].text == token.text:
+            target(index - 1)
+            target(index + 2)
+        elif token.text == "with" and index + 1 < len(tokens) and tokens[index + 1].text == "(":
+            # Dynamic scope/binding changes cannot justify an empty summary.
+            result.add("*")
+        elif (
+            dart
+            and token.kind == "identifier"
+            and index
+            and index + 1 < len(tokens)
+            and tokens[index + 1].text in {";", ","}
+            and (tokens[index - 1].kind == "identifier" or tokens[index - 1].text in {">", "?", ")"})
+        ):
+            # Includes Dart typed declarations without an initializer. Extra
+            # bindings here cost precision only; they cannot erase input taint.
+            result.add(token.text)
+    return result
+
+
 def _functions(path: str, tokens: list[Token]) -> list[Function]:
     pairs = _pairs(tokens)
     found, consumed = [], set()
+    # Writes in a callback or another function may change a module binding.
+    # Without a complete execution/scope model, treat every observed write and
+    # closure parameter as a possible conflict for the entire source file.
+    module_bindings = _bindings(tokens, dart=path.endswith(".dart"), function_declarations=False)
+    depths, depth = [], 0
+    for token in tokens:
+        depths.append(depth)
+        if token.text in {"(", "[", "{"}:
+            depth += 1
+        elif token.text in {")", "]", "}"}:
+            depth -= 1
     for start, close in pairs.items():
         if tokens[start].text != "(" or start == 0 or tokens[start - 1].kind != "identifier":
             continue
@@ -220,18 +355,57 @@ def _functions(path: str, tokens: list[Token]) -> list[Function]:
         before = tokens[max(0, start - 4) : start - 1]
         if any(token.text in {".", "?.", "new", "return"} for token in before[-1:]):
             continue
-        parameters = []
+        parameters, parameter_bindings = [], set()
         for group in _split(tokens[start + 1 : close]):
-            names = [token.text for token in group if token.kind == "identifier"]
+            default = next((index for index, token in enumerate(group) if token.text == "="), len(group))
+            names = [token.text for token in group[:default] if token.kind == "identifier"]
             if not names:
                 continue
             # JS/TS name: type vs Dart type name. Destructuring is unsupported.
-            parameters.append(names[0] if any(t.text == ":" for t in group) or len(names) == 1 else names[-1])
-        found.append(Function(path, name, parameters, tokens[body + 1 : pairs[body]], tokens[start - 1].line))
+            parameters.append(names[-1] if path.endswith(".dart") else names[0])
+            # Including type/property identifiers is conservative for unsupported
+            # destructuring and function-typed parameters.
+            parameter_bindings.update(names)
+        direct = depths[start] == 0
+        if not path.endswith(".dart"):
+            keyword = start - 2
+            if keyword >= 0 and tokens[keyword].text == "*":
+                keyword -= 1
+            direct &= keyword >= 0 and tokens[keyword].text == "function"
+            # A named function expression belongs to its own lexical scope, not
+            # to the file-level callable namespace.
+            if direct:
+                prefix = keyword - 1
+                while prefix >= 0 and tokens[prefix].text in {"export", "default", "async"}:
+                    prefix -= 1
+                direct = (
+                    prefix < 0
+                    or tokens[prefix].text in {";", "}"}
+                    or (
+                        tokens[prefix].line < tokens[keyword].line
+                        and (
+                            tokens[prefix].kind in {"identifier", "string", "number"}
+                            or tokens[prefix].text in {")", "]"}
+                        )
+                    )
+                )
+        body_tokens = tokens[body + 1 : pairs[body]]
+        found.append(
+            Function(
+                path,
+                name,
+                parameters,
+                body_tokens,
+                tokens[start - 1].line,
+                tokens[start - 1].offset,
+                direct,
+                parameter_bindings | _bindings(body_tokens, dart=path.endswith(".dart")),
+            )
+        )
         consumed.update(range(start - 1, pairs[body] + 1))
     # Module-level statements can contain sources and direct calls.
     top = [token for index, token in enumerate(tokens) if index not in consumed]
-    found.append(Function(path, "<module>", [], top, 1))
+    found.append(Function(path, "<module>", [], top, 1, -1, True, module_bindings))
     return found
 
 
@@ -288,12 +462,14 @@ class Flow:
         self.functions = functions
         self.imports = imports
         self.texts = texts
-        self.summaries: dict[tuple[str, str, int], set[Origin]] = {}
+        self.summaries: dict[tuple[str, int], set[Origin]] = {}
+        self.module_bindings = {f.path: f.bindings for f in functions if f.name == "<module>"}
         self.findings: dict[tuple[str, int, str, tuple], dict] = {}
         self.edges: set[tuple[str, int, str, str]] = set()
         self.truncated = False
         self.operations = 0
-        self.active: list[tuple[str, str, int]] = []
+        self.active: list[tuple[str, int]] = []
+        self.uncertain_calls = False
 
     def bound(self, origins: set[Origin]) -> set[Origin]:
         if len(origins) > MAX_ORIGINS:
@@ -304,17 +480,28 @@ class Flow:
         return origins
 
     def resolve(self, function: Function, name: str, arity: int) -> Function | None:
+        if (
+            not function.direct
+            or name in function.bindings
+            or "*" in function.bindings
+            or name in self.module_bindings.get(function.path, set())
+            or "*" in self.module_bindings.get(function.path, set())
+        ):
+            return None
         candidates = [
             f
             for f in self.functions
-            if f.path == function.path and f.name == name and len(f.parameters) == arity
+            if f.direct and f.path == function.path and f.name == name and len(f.parameters) == arity
         ]
         if not candidates and name in self.imports.get(function.path, {}):
             target, exported = self.imports[function.path][name].rsplit(":", 1)
             candidates = [
                 f
                 for f in self.functions
-                if f.name == exported
+                if f.direct
+                and f.name == exported
+                and f.name not in self.module_bindings.get(f.path, set())
+                and "*" not in self.module_bindings.get(f.path, set())
                 and len(f.parameters) == arity
                 and (f.path == target or str(PurePosixPath(f.path).with_suffix("")) == target)
             ]
@@ -325,7 +512,12 @@ class Flow:
             candidates = [
                 f
                 for f in self.functions
-                if f.path in targets and f.name == name and len(f.parameters) == arity
+                if f.direct
+                and f.path in targets
+                and f.name == name
+                and f.name not in self.module_bindings.get(f.path, set())
+                and "*" not in self.module_bindings.get(f.path, set())
+                and len(f.parameters) == arity
             ]
         if len(candidates) > 1:
             self.truncated = True
@@ -367,6 +559,7 @@ class Flow:
             open_ = end + 1
             if open_ < len(tokens) and tokens[open_].text == "(" and open_ in pairs:
                 close = pairs[open_]
+                uncertain = False
                 args = [
                     self.expression(function, group, env, emit) for group in _split(tokens[open_ + 1 : close])
                 ]
@@ -376,7 +569,7 @@ class Flow:
                     callee = self.resolve(function, name, len(args)) if len(parts) == 1 else None
                     if callee:
                         self.edges.add((function.path, token.line, callee.path, callee.name))
-                        for origin in self.summaries.get((callee.path, callee.name, len(args)), set()):
+                        for origin in self.summaries.get(callee.identity, set()):
                             actual = args[origin.parameter] if origin.parameter >= 0 else {origin}
                             for original in actual:
                                 steps = (
@@ -398,6 +591,7 @@ class Flow:
                     else:
                         # Unknown calls propagate input conservatively; they never sanitize it.
                         value.update(set().union(*args) if args else set())
+                        uncertain = True
                 sink = None
                 if parts[-1] in {"loadUrl", "loadRequest", "loadURL"}:
                     sink = "HYBRID-UNTRUSTED-URL"
@@ -413,6 +607,8 @@ class Flow:
                     "NativeModules."
                 ):
                     sink = "HYBRID-NATIVE-BRIDGE"
+                if uncertain and sink is None:
+                    self.uncertain_calls = True
                 tainted = (
                     set().union(*args)
                     if sink == "HYBRID-NATIVE-BRIDGE" and args
@@ -466,7 +662,7 @@ class Flow:
     def run_function(
         self, function: Function, emit: bool, actual: list[set[Origin]] | None = None
     ) -> set[Origin]:
-        identity = (function.path, function.name, function.line)
+        identity = function.identity
         if emit and (identity in self.active or len(self.active) >= 4):
             self.truncated = True
             return set()
@@ -485,9 +681,13 @@ class Flow:
             if not chunk:
                 continue
             # Include statements separated by braces (loops/branches are not path proofs).
-            pieces, current = [], []
+            pieces, current, expression_depth = [], [], 0
             for token in chunk:
-                if token.text in {"{", "}"}:
+                if token.text in {"(", "["}:
+                    expression_depth += 1
+                elif token.text in {")", "]"}:
+                    expression_depth -= 1
+                if token.text in {"{", "}", ";"} and expression_depth == 0:
                     if current:
                         pieces.append(current)
                     current = []
@@ -577,7 +777,7 @@ def analyze_hybrid(
     flow = Flow(functions, imports, texts)
     try:
         for _ in range(MAX_ROUNDS):
-            updated = {(f.path, f.name, len(f.parameters)): flow.run_function(f, False) for f in functions}
+            updated = {f.identity: flow.run_function(f, False) for f in functions}
             if updated == flow.summaries:
                 break
             flow.summaries = updated
@@ -589,6 +789,10 @@ def analyze_hybrid(
         warnings.append(f"Hybrid modeled flow incomplete: {error}")
     if flow.truncated:
         warnings.append("Hybrid finding/origin/call-depth budget reached")
+    if flow.uncertain_calls:
+        warnings.append(
+            "Hybrid callable identity unresolved or shadowed; uncertain calls retain argument taint"
+        )
     for record in files:
         if record["analysis_state"] == "analyzed":
             record["flow_state"] = "incomplete" if warnings else "bounded-modeled"

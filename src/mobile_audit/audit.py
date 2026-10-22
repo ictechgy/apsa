@@ -480,7 +480,7 @@ def scan(
             query_warnings = [f"{len(states)} dependencies excluded by transmission policy; not checked"]
             inventory["dependency_query"]["warnings"] = query_warnings
             warnings.extend(query_warnings)
-    records = store.intelligence(limit=100000)
+    records = store.correlation_intelligence(inventory["dependencies"])
     feeds = source_health(store)
     feed_map = {f["source"]: f for f in feeds}
     for dep in inventory["dependencies"]:
@@ -577,7 +577,7 @@ def refresh_report(
         if f.get("origin") != "intelligence"
         and not f["rule_id"].startswith(("CVE-", "GHSA-", "OSV-", "OS-CVE-"))
     ]
-    records = store.intelligence(limit=100000)
+    records = store.correlation_intelligence(report["inventory"]["dependencies"])
     current, advisories = correlate(report["inventory"], records, report.get("environment"))
     report["findings"].extend(current)
     report["findings"].sort(key=lambda f: -severity_rank(f["severity"]))

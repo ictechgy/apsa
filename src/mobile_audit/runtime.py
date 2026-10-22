@@ -1073,7 +1073,7 @@ def _run(
     report["runtime"].append(scrub_runtime(record, scenario["markers"]))
     report["environment"] = scrub_runtime(environment, scenario["markers"])
     intel_findings, report["environment_advisories"] = correlate(
-        report["inventory"], store.intelligence(limit=100000), environment
+        report["inventory"], store.correlation_intelligence(report["inventory"]["dependencies"]), environment
     )
     report["findings"] = [f for f in report["findings"] if f.get("origin") != "intelligence"] + intel_findings
     report["findings"].sort(key=lambda f: -severity_rank(f["severity"]))

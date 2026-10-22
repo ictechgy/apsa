@@ -6,6 +6,10 @@
 
 This English README is the source of truth. The Korean README follows it.
 
+APSA 1.6.1 fixes missed findings from ambiguous hybrid helpers, raw-path substring
+guards and dependency advisories displaced by unrelated cached records.
+See [patch scope and upgrade effects](docs/RELEASE_161.md).
+
 **APSA 1.6 analysis extensions.** This version adds bounded native cross-file
 flow and input-bound path guards, JS/TS/Dart candidates, recorded Gradle variant
 selection, OSV batching and transmission exclusions, authenticated runtime evidence,
@@ -281,7 +285,7 @@ Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; no
 Install the published package from [PyPI](https://pypi.org/project/apsa/):
 
 ```sh
-uv tool install --python 3.12 apsa==1.6.0
+uv tool install --python 3.12 apsa==1.6.1
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -403,7 +407,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.6.0; pin the full commit SHA
+  - uses: ictechgy/apsa@<commit-sha> # v1.6.1; pin the full commit SHA
     with:
       path: android            # source folder, or a built APK/AAB/IPA in the workspace
       fail-on-incomplete: "true"

@@ -1,5 +1,28 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## 1.6.1 correctness patch — 2026-10-22
+
+[Patch scope](docs/RELEASE_161.md): hybrid callable identity, native raw-path
+containment and exact dependency evidence retrieval. These changes require
+fresh validation and independent reviews of their final immutable source.
+The publication workflow and public package checks establish release completion;
+this source record alone does not claim publication.
+
+## Published 1.6.0 — 2026-10-18
+
+The `v1.6.0` tag and public `main` at the start of the 1.6.1 work point to
+`e6e465eba123b55505685157f72d19307b5eb1e4`. The
+[release workflow](https://github.com/ictechgy/apsa/actions/runs/39123277737)
+completed 19 jobs successfully with one expected main-dispatch skip, including
+PyPI, MCP Registry, GitHub release assets and Linux/macOS public installation
+verification. The [PyPI release](https://pypi.org/project/apsa/1.6.0/) and
+[GitHub downloads](https://github.com/ictechgy/apsa/releases/tag/v1.6.0) agree:
+
+- Wheel SHA-256: `18aee43a14b9bc4a2cc0cb1253e3f98cba1cff5bf712681115c03aa2c72ee215`.
+- Source distribution SHA-256: `7ed2abb25e373c5fbdb2bc15c61b9e6746dbbc71eacc4eb9058b7710e2922cec`.
+
+The dated candidate and recovery entries below remain historical evidence.
+
 ## 1.6.0 development recovery — 2026-10-18
 
 Candidate `03c952a8ad51517ec29f6dead93acafa38518546` passed all 18 jobs in

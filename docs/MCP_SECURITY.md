@@ -6,7 +6,7 @@ APSA's MCP server reads app source and builds that may be untrusted, on behalf o
 a model that may be steered by that content. This page states what the server
 does to limit that, mapped to the
 [OWASP MCP Top 10 (2025, beta)](https://owasp.org/www-project-mcp-top-10/), and
-what remains the client's or user's responsibility. It describes the APSA 1.6.0 candidate; publication is tracked separately.
+what remains the client's or user's responsibility. It describes APSA 1.6.1; publication is tracked separately.
 
 ## Fixed, inspectable tool surface
 

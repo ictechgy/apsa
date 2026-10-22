@@ -6,6 +6,9 @@
 
 영문 README가 원본입니다. 이 문서는 영문 원본을 기준으로 작성한 한국어 번역입니다.
 
+1.6.1은 하이브리드 함수 식별, 외부 파일 경로 검사, 의존성 취약점 캐시 조회로
+인해 탐지 결과가 누락되던 문제를 수정합니다. [변경 범위와 업그레이드 영향](docs/RELEASE_161.md)을 확인하세요.
+
 **APSA 1.6 분석 확장.** 이번 버전은 제한된 네이티브 파일 간 흐름과 같은 입력의 경로 검증,
 JS/TS/Dart 후보 탐지, 기록된 Gradle 변형 선택, OSV 배치·전송 제외 정책, 인증 상태별
 런타임 근거, AAB 단순 리소스, 분리 CMS 일관성 검증과 전후 근거 비교를 추가했습니다.
@@ -220,7 +223,7 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 [PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
 
 ```sh
-uv tool install --python 3.12 apsa==1.6.0
+uv tool install --python 3.12 apsa==1.6.1
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -342,7 +345,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.6.0; 전체 커밋 SHA로 고정
+  - uses: ictechgy/apsa@<commit-sha> # v1.6.1; 전체 커밋 SHA로 고정
     with:
       path: android            # 소스 폴더 또는 workspace 안의 APK/AAB/IPA
       fail-on-incomplete: "true"
