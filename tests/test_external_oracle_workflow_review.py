@@ -83,6 +83,19 @@ def source_archive():
 
 @pytest.fixture
 def boundary(tmp_path, monkeypatch):
+    # Exercise the real fresh-job recorder against a newly authored case manifest,
+    # independently of optional historical benchmark inputs in a developer checkout.
+    checkout = tmp_path / "fresh-trusted-checkout"
+    benchmarks = checkout / "benchmarks"
+    benchmarks.mkdir(parents=True)
+    (benchmarks / "dependency_oracle.py").write_bytes((ROOT / "benchmarks/dependency_oracle.py").read_bytes())
+    spec = {
+        "id": "owncloud",
+        "repository": "apsa-synthetic/dependency-oracle-fixture",
+        "commit": "1" * 40,
+        "module": ":owncloudApp",
+    }
+    (benchmarks / "dependency_cases.json").write_text(json.dumps({"cases": [spec]}))
     raw = tmp_path / "untrusted-gradle-output"
     raw.mkdir()
     expected = source_archive()
@@ -95,15 +108,13 @@ def boundary(tmp_path, monkeypatch):
     def https(url, *, timeout):
         assert timeout == 120
         urls.append(url)
-        assert (
-            url == "https://codeload.github.com/owncloud/android/zip/0d6c955f9d06776bce425d88b55f608c8bd6fe89"
-        )
+        assert url == f"https://codeload.github.com/{spec['repository']}/zip/{spec['commit']}"
         return io.BytesIO(expected)
 
     monkeypatch.setattr(urllib.request, "urlopen", https)
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setenv("ORACLE_CASE", "owncloud")
-    monkeypatch.chdir(ROOT)
+    monkeypatch.chdir(checkout)
     return {"root": tmp_path, "raw": raw, "expected": expected, "urls": urls}
 
 

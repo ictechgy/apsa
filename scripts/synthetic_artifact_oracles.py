@@ -16,6 +16,7 @@ import os
 import selectors
 import signal
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -151,8 +152,15 @@ def main() -> None:
     parser.add_argument("--java-home", type=Path)
     args = parser.parse_args()
     root = args.new_root.resolve(strict=True)
-    if not root.is_relative_to(Path("/private/tmp")):
-        raise ValueError("NEW fixture root must be an explicitly created /private/tmp directory")
+    temporary_roots = {Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()}
+    if (
+        root in temporary_roots
+        or not root.is_dir()
+        or not any(root.is_relative_to(parent) for parent in temporary_roots)
+    ):
+        raise ValueError(
+            "NEW fixture root must be an explicitly created subdirectory of a system temp directory"
+        )
     if args.artifact.is_symlink():
         raise ValueError("NEW artifact must not be a symlink")
     artifact = args.artifact.resolve(strict=True)

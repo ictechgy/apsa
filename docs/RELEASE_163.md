@@ -116,6 +116,14 @@ tag-context publication, followed by public download and installation checks.
 Current status belongs in [release readiness](../RELEASE_READINESS.md); the
 [publishing workflow](PUBLISHING.md) defines those gates.
 
+The source-only release excludes historical benchmark inputs, including
+`benchmarks/dependency_cases.json`. The optional external Gradle-oracle workflow
+requires a separately reviewed trusted case manifest before it can run; that
+workflow is not part of package publication. Its regression tests use newly
+authored synthetic inputs to verify recording boundaries. Passing those tests
+does not establish a successful external Gradle build or a refreshed oracle
+measurement.
+
 The CLI and `apsa tui` remain the available interfaces. The
 [desktop app roadmap](DESKTOP_APP_ROADMAP.md) describes a future local wrapper
 around the same engine, with isolated sidecar, IPC, lifecycle, signing and

@@ -297,11 +297,12 @@ def test_denied_group_signal_is_only_tolerated_after_observed_unreaped_exit(
         assert calls == ["denied-killpg", "wait"]
 
 
-def test_oracle_cleanup_diagnostic_preserves_strict_observation_schema(monkeypatch):
+@pytest.mark.parametrize("temp_base", [None, "/tmp"])
+def test_oracle_cleanup_diagnostic_preserves_strict_observation_schema(monkeypatch, temp_base):
     # Fresh inert files satisfy identity checks; no signing tool is executed.
     from mobile_audit.artifact_oracle import record_digest
 
-    with tempfile.TemporaryDirectory(prefix="apsa-new-oracle-", dir="/private/tmp") as temporary:
+    with tempfile.TemporaryDirectory(prefix="apsa-new-oracle-", dir=temp_base) as temporary:
         root = Path(temporary).resolve()
         artifact, source, tool, record = (
             root / name for name in ("new.apk", "New.java", "apksigner", "result.json")
@@ -352,6 +353,48 @@ def test_oracle_cleanup_diagnostic_preserves_strict_observation_schema(monkeypat
         assert "process_group_cleanup" not in value["observation"]
         assert value["observation"]["record_sha256"] == record_digest(value["observation"])
         assert value["summary"]["state"] == "reported-pass"
+
+
+@pytest.mark.parametrize("root_kind", ["default-temp", "portable-temp", "outside", "file"])
+def test_oracle_rejects_nonfixture_roots_before_reading_inputs(tmp_path, monkeypatch, root_kind):
+    fresh_file = tmp_path / "NEW-not-a-directory"
+    fresh_file.write_text("NEW synthetic fixture only")
+    root = {
+        "default-temp": Path(tempfile.gettempdir()).resolve(),
+        "portable-temp": Path("/tmp").resolve(),
+        "outside": Path("/"),
+        "file": fresh_file,
+    }[root_kind]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "synthetic-oracle",
+            "--new-root",
+            str(root),
+            "--artifact",
+            str(tmp_path / "NEW.apk"),
+            "--source",
+            str(tmp_path / "NEW.java"),
+            "--compiler",
+            str(tmp_path / "NEW-compiler"),
+            "--oracle",
+            "apksigner_signature",
+            "--tool",
+            str(tmp_path / "NEW-tool"),
+            "--record",
+            str(tmp_path / "NEW-result.json"),
+        ],
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Rejected roots must not read fixture contents or invoke a tool")
+
+    monkeypatch.setattr(oracle, "sha", forbidden)
+    monkeypatch.setattr(oracle, "capture", forbidden)
+    with pytest.raises(ValueError, match="explicitly created subdirectory of a system temp directory"):
+        oracle.main()
+    assert not (tmp_path / "NEW-result.json").exists()
 
 
 @pytest.mark.parametrize("mode", ["timeout", "invalid-utf8", "oversized", "complete"])
