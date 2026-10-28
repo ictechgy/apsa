@@ -83,11 +83,18 @@ def digest(path: Path) -> str:
     return checksum.hexdigest()
 
 
-def run(arguments: list[str], cwd: Path, environment: dict[str, str], timeout: int = 900) -> str:
+def run(
+    arguments: list[str],
+    cwd: Path,
+    environment: dict[str, str],
+    timeout: int = 900,
+    *,
+    expected_exit_code: int = 0,
+) -> str:
     result = subprocess.run(
         arguments, cwd=cwd, env=environment, capture_output=True, text=True, timeout=timeout, check=False
     )
-    if result.returncode:
+    if result.returncode != expected_exit_code:
         raise RuntimeError(
             f"Command failed ({result.returncode}): {arguments[0]} {arguments[1:4]}\n"
             f"{result.stdout[-12000:]}{result.stderr[-12000:]}"
@@ -582,6 +589,47 @@ def smoke_network_requested(*reports: dict) -> bool:
     return False
 
 
+def smoke_binary_report(value: object) -> dict:
+    """Require the compiled fixture's explicit unsupported credential-text abstention."""
+    message = "Clean release binary smoke lacks the expected partial credential-text evidence"
+    if (
+        not isinstance(value, dict)
+        or type(value.get("exit_code")) is not int
+        or value["exit_code"] != 3
+        or value.get("ok") is not False
+        or not isinstance(value.get("data"), dict)
+    ):
+        raise RuntimeError(message)
+    report = value["data"]
+    summary, inventory, coverage = (report.get(name) for name in ("summary", "inventory", "coverage"))
+    if (
+        not isinstance(summary, dict)
+        or summary.get("incomplete") is not True
+        or type(summary.get("partial")) is not int
+        or summary["partial"] != 1
+        or not isinstance(inventory, dict)
+        or inventory.get("input_kind") != "apk"
+        or inventory.get("partial") is not True
+        or not isinstance(inventory.get("credential_text"), dict)
+        or not isinstance(coverage, list)
+        or any(not isinstance(row, dict) for row in coverage)
+        or not isinstance(report.get("findings"), list)
+    ):
+        raise RuntimeError(message)
+    credential = inventory["credential_text"]
+    partial_checks = [row for row in coverage if row.get("state") == "partial"]
+    if (
+        credential.get("collection_enabled") is not True
+        or credential.get("partial") is not True
+        or type(credential.get("omitted_files")) is not int
+        or credential["omitted_files"] < 1
+        or len(partial_checks) != 1
+        or partial_checks[0].get("rule_id") != "PACKAGED-CREDENTIAL-TEXT"
+    ):
+        raise RuntimeError(message)
+    return report
+
+
 def smoke(python: Path, directory: Path, environment: dict[str, str], version: str, stage: Path) -> dict:
     cli = python.parent / "apsa"
     home = directory / "audit-home"
@@ -652,9 +700,19 @@ def smoke(python: Path, directory: Path, environment: dict[str, str], version: s
     )
     smoke_report_verification(verified)
     binary = fresh_binary_fixture(stage, directory / "synthetic-binary", environment)
-    binary_report = json.loads(
-        run([str(cli), "scan", str(binary), "--home", str(home), "--json"], directory, environment, 180)
-    )["data"]
+    # Its real binary XML manifest cannot enter the credential-text channel.
+    # Exit 3 must remain visible and agree with that specific partial evidence.
+    binary_report = smoke_binary_report(
+        json.loads(
+            run(
+                [str(cli), "scan", str(binary), "--home", str(home), "--json"],
+                directory,
+                environment,
+                180,
+                expected_exit_code=3,
+            )
+        )
+    )
     if binary_report["inventory"]["engines"] != ["mobile-audit", "quaygate-lint"]:
         raise RuntimeError("Clean installation did not run both binary engines")
     if binary_report["inventory"]["quaygate"].get("input_sha256") != digest(binary):

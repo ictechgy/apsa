@@ -113,6 +113,108 @@ def test_smoke_offline_claim_is_derived_from_both_reports():
             release.smoke_network_requested(offline, value)
 
 
+@pytest.mark.parametrize("actual,expected", [(3, None), (1, 3), (2, 3), (0, 3), (4, 3)])
+def test_release_run_rejects_every_unexpected_process_exit(tmp_path, monkeypatch, actual, expected):
+    monkeypatch.setattr(
+        release.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], actual, "synthetic output", ""),
+    )
+    kwargs = {} if expected is None else {"expected_exit_code": expected}
+    with pytest.raises(RuntimeError, match="Command failed"):
+        release.run(["synthetic-command"], tmp_path, {}, **kwargs)
+
+
+@pytest.mark.parametrize("expected", [0, 3])
+def test_release_run_requires_the_exact_requested_process_exit(tmp_path, monkeypatch, expected):
+    monkeypatch.setattr(
+        release.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], expected, "synthetic output", ""),
+    )
+    assert release.run(["synthetic-command"], tmp_path, {}, expected_exit_code=expected) == "synthetic output"
+
+
+def binary_smoke_payload():
+    return {
+        "ok": False,
+        "exit_code": 3,
+        "data": {
+            "summary": {"incomplete": True, "partial": 1},
+            "inventory": {
+                "input_kind": "apk",
+                "partial": True,
+                "credential_text": {"collection_enabled": True, "partial": True, "omitted_files": 1},
+            },
+            "coverage": [{"rule_id": "PACKAGED-CREDENTIAL-TEXT", "state": "partial"}],
+            "findings": [],
+        },
+    }
+
+
+def test_binary_smoke_keeps_explicit_incomplete_credential_coverage():
+    value = binary_smoke_payload()
+    assert release.smoke_binary_report(value) is value["data"]
+    assert value["exit_code"] == 3 and value["data"]["summary"]["incomplete"] is True
+
+
+@pytest.mark.parametrize(
+    "section,key,value",
+    [
+        ("envelope", "exit_code", 0),
+        ("envelope", "exit_code", True),
+        ("envelope", "ok", True),
+        ("envelope", "data", []),
+        ("report", "summary", []),
+        ("summary", "incomplete", False),
+        ("summary", "partial", True),
+        ("summary", "partial", 0),
+        ("summary", "partial", 2),
+        ("report", "inventory", []),
+        ("inventory", "input_kind", "source"),
+        ("inventory", "partial", False),
+        ("inventory", "credential_text", []),
+        ("credential", "collection_enabled", False),
+        ("credential", "partial", False),
+        ("credential", "omitted_files", 0),
+        ("credential", "omitted_files", True),
+        ("report", "coverage", {}),
+        ("report", "coverage", [None]),
+        ("report", "coverage", []),
+        ("report", "coverage", [{"rule_id": "PACKAGED-CREDENTIAL-TEXT", "state": "checked"}]),
+        ("report", "coverage", [{"rule_id": "UNRELATED-RULE", "state": "partial"}]),
+        (
+            "report",
+            "coverage",
+            [
+                {"rule_id": "PACKAGED-CREDENTIAL-TEXT", "state": "partial"},
+                {"rule_id": "UNRELATED-RULE", "state": "partial"},
+            ],
+        ),
+        ("report", "findings", {}),
+    ],
+)
+def test_binary_smoke_rejects_wrong_exit_schema_or_partial_reason(section, key, value):
+    payload = binary_smoke_payload()
+    report = payload["data"]
+    target = {
+        "envelope": payload,
+        "report": report,
+        "summary": report["summary"],
+        "inventory": report["inventory"],
+        "credential": report["inventory"]["credential_text"],
+    }[section]
+    target[key] = value
+    with pytest.raises(RuntimeError, match="partial credential-text evidence"):
+        release.smoke_binary_report(payload)
+
+
+@pytest.mark.parametrize("value", [None, [], {}, {"exit_code": 3, "ok": False}])
+def test_binary_smoke_rejects_missing_report_envelope(value):
+    with pytest.raises(RuntimeError, match="partial credential-text evidence"):
+        release.smoke_binary_report(value)
+
+
 @pytest.mark.parametrize("failure", ["timeout", "invalid-uuid"])
 def test_create_failure_survives_empty_journal_and_cannot_confirm_cleanup(tmp_path, monkeypatch, failure):
     commands = transport.Commands(tmp_path, env={})
