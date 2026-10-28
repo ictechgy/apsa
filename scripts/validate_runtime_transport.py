@@ -158,7 +158,7 @@ def safe_ios_events(raw: bytes, expected: dict | None = None, readiness_epoch: s
         return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None
 
     try:
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=unique_journal_keys)
         if (
             not isinstance(value, dict)
             or set(value) != {"schema_version", "complete", "events", "launch_epoch_sha256"}
@@ -663,9 +663,32 @@ def acquisition_cleanup_state(journal: dict | None, results: list[dict]) -> dict
     return value
 
 
+def create_owned_ios(commands: "Commands", argv: list[str], *, selector: str) -> str:
+    """Record create intent before SDK execution; an unknown UUID cannot be cleaned safely."""
+    resources = commands.resources
+    pending = resources.root / "ios-create-pending.json" if resources is not None else None
+    if pending is not None:
+        # Exclusive creation also refuses a second attempt while ownership is uncertain.
+        with pending.open("x") as handle:
+            json.dump({"state": "unconfirmed", "scope": "NEW simulator create"}, handle)
+    try:
+        device = str(uuid.UUID(commands.run(argv).decode().strip())).upper()
+        if pending is not None:
+            pending.write_text(json.dumps({"state": "unconfirmed", "uuid": device, "selector": selector}))
+        return device
+    except Exception as error:
+        commands.pre_cleanup_failure = failure_observation(error, "ios-target-create", commands.records)
+        commands.pre_cleanup_failure["constructor_cleanup"] = {
+            "scope": "NEW simulator create; UUID ownership unavailable",
+            "state": "unconfirmed",
+        }
+        raise
+
+
 def cleanup_owned(root: Path, commands: "Commands", resources: OwnedResources) -> dict:
     """Idempotent fallback, only explicitly journaled new resources and paths."""
     results = []
+    pending = resources.root / "ios-create-pending.json"
     # Validate the entire iOS journal and all guards before ANY SDK operation.
     if (
         not isinstance(resources.value, dict)
@@ -735,11 +758,18 @@ def cleanup_owned(root: Path, commands: "Commands", resources: OwnedResources) -
             continue
         # Selector persists across driver death; only the CREATE-returned UUID is targeted.
         prefix, device_set = selectors[device]
-        commands.run(prefix + ["shutdown", device], optional=True)
-        commands.run(prefix + ["delete", device], optional=True)
-        confirmed = commands.last_status == 0 or (
-            record["selector"] == "custom" and not (device_set / device).exists()
-        )
+        try:
+            commands.run(prefix + ["shutdown", device], optional=True)
+        except CommandFailure:
+            # A hung shutdown must not prevent deletion of this owned UUID.
+            pass
+        try:
+            commands.run(prefix + ["delete", device], optional=True)
+            confirmed = commands.last_status == 0 or (
+                record["selector"] == "custom" and not (device_set / device).exists()
+            )
+        except CommandFailure:
+            confirmed = False
         results.append(
             {
                 "scope": "owned new simulator UUID",
@@ -750,6 +780,19 @@ def cleanup_owned(root: Path, commands: "Commands", resources: OwnedResources) -
         )
         if confirmed:
             resources.ios(device, deleted=True)
+    if pending.exists() or pending.is_symlink():
+        try:
+            if pending.is_symlink() or pending.stat().st_size > IOS_EVENT_BYTES:
+                raise ValueError("Invalid pending create record")
+            record = json.loads(pending.read_bytes(), object_pairs_hook=unique_journal_keys)
+            device = record.get("uuid") if isinstance(record, dict) else None
+            if not device or resources.value["ios"].get(device, {}).get("deleted") is not True:
+                raise ValueError("Unclosed simulator create")
+            pending.unlink()
+        except (ValueError, OSError):
+            results.append(
+                {"scope": "NEW simulator create; UUID ownership unavailable", "state": "unconfirmed"}
+            )
     state = "confirmed" if all(item["state"] == "confirmed" for item in results) else "unconfirmed"
     if state == "confirmed":
         # Exact owned names only; preserve evidence, command digests and ownership journal.
@@ -1197,11 +1240,15 @@ class NewAndroidDevice:
         raise ValueError("NEW emulator boot timed out")
 
     def close(self):
+        statuses = []
         if self.process is not None:
+            stopped = False
             try:
                 # Ask only our serial on our port to stop its emulator children cleanly.
                 self.commands.run(self.adb_prefix + ["emu", "kill"], timeout=15, optional=True)
+                requested_stop = self.commands.last_status == 0
                 self.process.wait(timeout=15)
+                stopped = requested_stop
             except (CommandFailure, subprocess.TimeoutExpired):
                 self.process.terminate()
                 try:
@@ -1210,9 +1257,9 @@ class NewAndroidDevice:
                     self.process.kill()
                     self.process.wait(timeout=15)
             self.process = None
+            statuses.append(0 if stopped else 1)
             if self.commands.resources:
-                self.commands.resources.android(emulator_closed=True)
-        statuses = []
+                self.commands.resources.android(emulator_closed=stopped)
         if self.adb_started:
             self.commands.run(
                 [str(self.sdk / "platform-tools/adb"), "-P", "5049", "kill-server"], optional=True
@@ -1285,7 +1332,9 @@ class AndroidTarget:
             )
             if raw and len(raw) <= 1024 * 1024:
                 try:
-                    response = json.loads(raw)
+                    response = json.loads(raw, object_pairs_hook=unique_journal_keys)
+                    if not isinstance(response, dict):
+                        raise ValueError("NEW Android response must be an object")
                     if response.get("action") == "fixture-error":
                         raise FixtureFailure(
                             "NEW Android fixture rejected binding or transport", safe_android_error(raw)
@@ -1294,8 +1343,14 @@ class AndroidTarget:
                         response.get(k) == v for k, v in expected.items() if k not in {"backend", "retain"}
                     ):
                         return response
+                except FixtureFailure:
+                    raise
                 except json.JSONDecodeError:
                     pass
+                except ValueError:
+                    raise FixtureFailure(
+                        "NEW Android fixture rejected binding or transport", safe_android_error(raw)
+                    ) from None
             time.sleep(0.1)
         raise ValueError("NEW Android response challenge timed out")
 
@@ -1418,17 +1473,17 @@ class IosTarget:
             "executable_sha256": digest((self.app / "TransportFixture").read_bytes()),
             "info_plist_sha256": digest((self.app / "Info.plist").read_bytes()),
         }
-        created = (
-            commands.run(self.simctl + ["create", "APSA-NEW-" + uuid.uuid4().hex, device_type, runtime])
-            .decode()
-            .strip()
+        self.device = create_owned_ios(
+            commands,
+            self.simctl + ["create", "APSA-NEW-" + uuid.uuid4().hex, device_type, runtime],
+            selector=device_set_mode,
         )
-        self.device = str(uuid.UUID(created)).upper()
         journaled = False
         try:
             if commands.resources:
                 commands.resources.ios(self.device, selector=device_set_mode)
                 journaled = True
+                (commands.resources.root / "ios-create-pending.json").unlink(missing_ok=True)
             commands.run(self.simctl + ["boot", self.device])
             commands.run(self.simctl + ["bootstatus", self.device, "-b"], timeout=180)
             commands.run(self.simctl + ["install", self.device, str(self.app)])
@@ -1509,6 +1564,8 @@ class IosTarget:
             )
             try:
                 cleanup = self.close(timeout=120 if journaled else 15, update_journal=journaled)
+                if cleanup.get("state") == "confirmed" and commands.resources is not None:
+                    (commands.resources.root / "ios-create-pending.json").unlink(missing_ok=True)
                 commands.pre_cleanup_failure["constructor_cleanup"] = {
                     **{key: value for key, value in cleanup.items() if key != "uuid"},
                     "uuid_sha256": digest(cleanup["uuid"].encode()) if "uuid" in cleanup else None,
@@ -1939,7 +1996,15 @@ class IosTarget:
         while time.monotonic() < deadline:
             if self.response.is_file() and self.response.stat().st_size <= 1024 * 1024:
                 try:
-                    response = json.loads(self.response.read_bytes())
+                    raw = self.response.read_bytes()
+                    response = json.loads(raw, object_pairs_hook=unique_journal_keys)
+                    if not isinstance(response, dict):
+                        raise ValueError("NEW iOS response must be an object")
+                except ValueError:
+                    # A response may still be in flight. Binding failures after
+                    # parsing are terminal and must retain their classification.
+                    pass
+                else:
                     if response.get("action") == "fixture-error":
                         raise FixtureFailure(
                             "NEW iOS fixture rejected binding or transport", self.lifecycle_observation()
@@ -1947,10 +2012,8 @@ class IosTarget:
                     if all(
                         response.get(k) == v for k, v in expected.items() if k not in {"backend", "retain"}
                     ):
-                        self.record_delivery(response, expected, raw=self.response.read_bytes())
+                        self.record_delivery(response, expected, raw=raw)
                         return response
-                except json.JSONDecodeError:
-                    pass
             time.sleep(0.1)
         primary = self.lifecycle_observation()
         primary["owned_process"] = getattr(self, "process_observations", {"state": "unmeasured"})
@@ -2295,9 +2358,8 @@ class IosTarget:
             try:
                 self.commands.run(self.simctl + ["shutdown", device], optional=True, timeout=timeout)
             except CommandFailure:
-                # If journaling failed, still attempt deletion of only CREATE's UUID.
-                if update_journal:
-                    raise
+                # Still attempt deletion of only CREATE's UUID after shutdown timeout.
+                pass
             self.commands.run(self.simctl + ["delete", device], optional=True, timeout=timeout)
             if self.commands.last_status == 0 and self.commands.resources and update_journal:
                 self.commands.resources.ios(device, deleted=True)

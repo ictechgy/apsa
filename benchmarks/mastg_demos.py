@@ -33,6 +33,8 @@ from pathlib import Path
 
 import yaml
 
+from mobile_audit.core import report_incomplete
+
 COMMIT = "990472dbcffe126f5556045d60270c4ffdfdde72"  # OWASP/mastg v2.0.0
 ARCHIVE_SHA256 = "72052f77b2e252c0034aae5f009615c22c6b2b4ebe031490b5f33711f433149c"
 ARCHIVE_URL = f"https://codeload.github.com/OWASP/mastg/tar.gz/{COMMIT}"
@@ -42,8 +44,11 @@ PASSES = re.compile(r"\btest (?:case )?passes\b|\bpasses because\b", re.I)
 
 
 def front_matter(path: Path) -> tuple[dict, str]:
-    _, head, body = path.read_text(encoding="utf-8").split("---", 2)
-    return yaml.safe_load(head) or {}, body
+    prefix, head, body = path.read_text(encoding="utf-8").split("---", 2)
+    value = yaml.safe_load(head) or {}
+    if prefix.strip() or not isinstance(value, dict):
+        raise ValueError("Expected dictionary front matter at the start of the demo")
+    return value, body
 
 
 def label(meta: dict, body: str) -> str | None:
@@ -74,22 +79,43 @@ def fetch(archive: Path | None, work: Path) -> Path:
 
 def demos(source: Path) -> list[dict]:
     tests = {}
+    test_errors = set()
     for folder in ("tests-beta", "tests"):
         for path in sorted((source / folder).rglob("MASTG-TEST-*.md")):
-            meta, _ = front_matter(path)
-            tests.setdefault(meta.get("id", path.stem), meta)
+            try:
+                meta, _ = front_matter(path)
+                tests.setdefault(meta.get("id", path.stem), meta)
+            except (ValueError, OSError, TypeError, yaml.YAMLError, RecursionError):
+                test_errors.add(path.stem)
     found = []
     for path in sorted((source / "demos").glob("*/*/MASTG-DEMO-*/MASTG-DEMO-*.md")):
-        meta, body = front_matter(path)
-        test = tests.get(meta.get("test"), {})
+        try:
+            meta, body = front_matter(path)
+            if meta.get("test") in test_errors:
+                raise ValueError("Referenced test metadata is malformed")
+            test = tests.get(meta.get("test"), {})
+            identity = meta["id"]
+            observed_label = label(meta, body)
+        except (ValueError, OSError, KeyError, TypeError, yaml.YAMLError, RecursionError) as error:
+            found.append(
+                {
+                    "id": path.stem,
+                    "test": None,
+                    "weakness_beta": None,
+                    "label": None,
+                    "directory": path.parent,
+                    "error": f"Demo metadata unavailable: {type(error).__name__}",
+                }
+            )
+            continue
         found.append(
             {
-                "id": meta["id"],
+                "id": identity,
                 "platform": meta.get("platform"),
                 "test": meta.get("test"),
                 "test_type": test.get("type"),
                 "weakness_beta": test.get("weakness"),
-                "label": label(meta, body),
+                "label": observed_label,
                 "directory": path.parent,
             }
         )
@@ -122,31 +148,43 @@ def evaluate(entries: list[dict], work: Path) -> dict:
             row = {k: v for k, v in entry.items() if k != "directory"}
             row["weaknesses"] = weaknesses
             row["in_scope"] = bool(set(weaknesses) & checked)
-            files = stage(entry["directory"], work / "targets" / entry["id"])
-            row["files"] = files
-            if not files:
-                row["outcome"] = "no-sample"
+            if entry.get("error"):
+                row["outcome"] = "error"
                 rows.append(row)
                 continue
             try:
+                files = stage(entry["directory"], work / "targets" / entry["id"])
+                row["files"] = files
+                if not files:
+                    row["outcome"] = "no-sample"
+                    rows.append(row)
+                    continue
                 report = scan(store, work / "targets" / entry["id"])
-            except (ValueError, OSError) as error:
+                related = [f for f in report["findings"] if set(weaknesses) & set(finding_weaknesses(f))]
+                row["flagged"] = bool(related)
+                row["findings"] = sorted({f["rule_id"] for f in related})
+                row["other_findings"] = sorted(
+                    {f["rule_id"] for f in report["findings"]} - set(row["findings"])
+                )
+                row["audit_incomplete"] = (
+                    report_incomplete(report) or report.get("summary", {}).get("incomplete") is True
+                )
+                if entry["label"] is None:
+                    row["outcome"] = "unlabeled"
+                elif not row["in_scope"]:
+                    row["outcome"] = "not-assessed"
+                elif not related and row["audit_incomplete"]:
+                    row["outcome"] = "unscored"
+                    row["scoring_abstention"] = "Incomplete audit cannot establish a silent labeled sample"
+                elif entry["label"] == "fail":
+                    row["outcome"] = "tp" if related else "fn"
+                else:
+                    row["outcome"] = "fp" if related else "tn"
+            except (ValueError, OSError, KeyError, TypeError, RecursionError) as error:
                 row["outcome"] = "error"
                 row["error"] = str(error)[:300]
                 rows.append(row)
                 continue
-            related = [f for f in report["findings"] if set(weaknesses) & set(finding_weaknesses(f))]
-            row["flagged"] = bool(related)
-            row["findings"] = sorted({f["rule_id"] for f in related})
-            row["other_findings"] = sorted({f["rule_id"] for f in report["findings"]} - set(row["findings"]))
-            if entry["label"] is None:
-                row["outcome"] = "unlabeled"
-            elif not row["in_scope"]:
-                row["outcome"] = "not-assessed"
-            elif entry["label"] == "fail":
-                row["outcome"] = "tp" if related else "fn"
-            else:
-                row["outcome"] = "fp" if related else "tn"
             rows.append(row)
     finally:
         store.close()
@@ -155,7 +193,7 @@ def evaluate(entries: list[dict], work: Path) -> dict:
         summary[row["outcome"]] = summary.get(row["outcome"], 0) + 1
     pairs = {}
     for row in rows:
-        if row["in_scope"] and row["outcome"] in {"tp", "fn", "tn", "fp"}:
+        if row["in_scope"] and row["label"] in {"fail", "pass"}:
             pairs.setdefault(row["test"], []).append(row)
     strict = {
         test: all(r["outcome"] in {"tp", "tn"} for r in group)
@@ -202,7 +240,7 @@ def main() -> int:
             indent=2,
         )
     )
-    return 0
+    return 1 if result["summary"].get("error") else 0
 
 
 if __name__ == "__main__":

@@ -342,3 +342,155 @@ def test_cli_exit_status_exposes_collection_failure(run, missing):
     )
     assert process.returncode == (1 if missing else 0)
     assert (run["out"] / "collection.json").is_file()
+
+
+def execution_metadata(exit_code=0):
+    return {
+        "schema": "apsa-benchmark-scan-execution-v1",
+        "argv": ["python", "-I", "-m", "apsa", "scan", "synthetic"],
+        "cwd": "/synthetic",
+        "exit_code": exit_code,
+        "elapsed_seconds": 0.01,
+        "timed_out": False,
+        **{
+            name: {
+                "path": name + ".txt",
+                "bytes": 0,
+                "retained_bytes": 0,
+                "truncated": False,
+                "sha256": hashlib.sha256(b"").hexdigest(),
+            }
+            for name in ("stdout", "stderr")
+        },
+    }
+
+
+def upgrade_v4(run, failing=()):
+    summary = run["summary"]
+    summary["schema"] = "apsa-fpfn-results-v4"
+    pair = summary["pairs"][0]
+    for side in ("vulnerable", "fixed"):
+        pair[side].update(report_returned=True, execution=execution_metadata())
+        pair[side]["labeled_file_states"] = {"Synthetic.java": "checked"}
+        pair[side]["labeled_rule_states"] = {rule: "checked" for rule in collector.relevant_rule_ids(pair)}
+        raw_report = json.loads(report(run, side).read_text())
+        raw_report["report"]["coverage"] = [
+            {"rule_id": rule, "state": "checked"} for rule in pair[side]["labeled_rule_states"]
+        ]
+        report(run, side).write_text(json.dumps(raw_report))
+        if side in failing:
+            pair[side] = {
+                "commit": pair[side]["commit"],
+                "report_returned": False,
+                "audit_incomplete": None,
+                "error": "CLI error retained in stdout.txt",
+                "error_phase": "scan",
+                "execution": execution_metadata(1),
+            }
+            pair["outcome"][side] = "unscored"
+            report(run, side).unlink()
+    if failing:
+        pair["error"] = "Failed sides: " + ", ".join(failing)
+        pair["outcome"]["discriminating_tp"] = False
+    if "vulnerable" in failing:
+        pair["outcome"]["vulnerable_line_level"] = False
+    summary["totals"] = collector.totals([pair], v4=True)
+    summary["in_scope_totals"] = dict(summary["totals"])
+    save_results(run)
+    return pair
+
+
+def test_v4_complete_collection_distinguishes_partial_scan_from_returned_report(run):
+    pair = upgrade_v4(run)
+    pair["fixed"]["audit_incomplete"] = True
+    pair["fixed"]["execution"]["exit_code"] = 4
+    save_results(run)
+    manifest = collect(run)
+    assert manifest["status"] == "complete" and manifest["errors"] == []
+    assert len(manifest["reports"]) == 2
+
+
+@pytest.mark.parametrize("failing", [("vulnerable",), ("fixed",), ("vulnerable", "fixed")])
+def test_v4_failed_side_keeps_identity_and_available_other_report(run, failing):
+    upgrade_v4(run, failing)
+    summary = run["summary"]
+    assert summary["totals"]["errors"] == summary["in_scope_totals"]["errors"] == 1
+    assert summary["totals"]["unscored_sides"] == len(failing)
+    assert summary["totals"]["scored_pairs"] == int(len(failing) == 1)
+    manifest = collect(run)
+    assert manifest["status"] == "incomplete"
+    assert manifest["errors"] == ["Evaluation failed for 1 pair(s)"]
+    assert len(manifest["reports"]) == 2 - len(failing)
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "lost-identity",
+        "lost-scope",
+        "wrong-scope",
+        "scored-failure",
+        "hidden-error",
+        "empty-error",
+        "no-outcome",
+        "false-discrimination",
+        "false-line-detection",
+        "bad-execution",
+        "bad-stream-size",
+        "bad-timeout",
+        "missing-execution",
+    ],
+)
+def test_v4_failure_metadata_is_validated_before_accepting_totals(run, corruption):
+    pair = upgrade_v4(run, ("vulnerable",))
+    if corruption == "lost-identity":
+        del pair["repository"]
+    elif corruption == "lost-scope":
+        del pair["in_scope"]
+    elif corruption == "wrong-scope":
+        pair["in_scope"] = False
+    elif corruption == "scored-failure":
+        pair["outcome"]["vulnerable"] = "fn"
+    elif corruption == "hidden-error":
+        del pair["error"]
+    elif corruption == "empty-error":
+        pair["vulnerable"]["error"] = ""
+    elif corruption == "no-outcome":
+        del pair["outcome"]
+    elif corruption == "false-discrimination":
+        pair["outcome"]["discriminating_tp"] = True
+    elif corruption == "false-line-detection":
+        pair["outcome"]["vulnerable_line_level"] = True
+    elif corruption == "bad-execution":
+        pair["fixed"]["execution"]["exit_code"] = 1
+    elif corruption == "bad-stream-size":
+        pair["vulnerable"]["execution"]["stdout"]["retained_bytes"] = 3
+    elif corruption == "bad-timeout":
+        pair["vulnerable"]["execution"]["timed_out"] = True
+    elif corruption == "missing-execution":
+        del pair["fixed"]["execution"]
+    save_results(run)
+    manifest = collect(run)
+    assert manifest["status"] == "incomplete"
+    assert any("Results unavailable or invalid" in error for error in manifest["errors"])
+
+
+def test_v4_huge_duration_fails_closed_and_keeps_partial_evidence(run):
+    pair = upgrade_v4(run)
+    pair["vulnerable"]["execution"]["elapsed_seconds"] = 10**1000
+    save_results(run)
+    manifest = collect(run)
+    assert manifest["status"] == "incomplete"
+    assert manifest["errors"] == ["Results unavailable or invalid (ValueError)"]
+    assert len(manifest["reports"]) == 2
+    assert json.loads((run["out"] / "collection.json").read_text()) == manifest
+    for entry in manifest["reports"]:
+        assert (run["out"] / entry["path"]).read_bytes() == (run["work"] / entry["path"]).read_bytes()
+
+
+@pytest.mark.parametrize("elapsed", [10**1000, float("inf"), float("nan"), -1, True])
+def test_execution_duration_rejects_unbounded_or_nonfinite_values(elapsed):
+    execution = execution_metadata()
+    execution["elapsed_seconds"] = elapsed
+    with pytest.raises(ValueError, match="execution fields"):
+        collector.validate_execution(execution, successful=False)

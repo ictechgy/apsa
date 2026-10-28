@@ -26,7 +26,7 @@ from tree_sitter import Language
 
 from . import jobs
 from .cli import demo_target, integration_config
-from .core import write_json
+from .core import report_incomplete, write_json
 from .intel import source_health, sync
 from .policy import evaluate, load_policy
 from .runtime import plan, validate_scenario
@@ -241,7 +241,12 @@ class AuditApp(App):
 
     def on_input_submitted(self, event: Input.Submitted):
         if event.input.id == "target":
-            self.start_scan(Path(event.value))
+            if not event.value.strip():
+                self.query_one("#status", Static).update(
+                    "입력 경로를 지정하세요. 먼저 데모를 실행해도 됩니다."
+                )
+                return
+            self.start_scan(Path(event.value.strip()))
         elif event.input.id == "intel-query":
             store = Store(self.home)
             try:
@@ -272,12 +277,20 @@ class AuditApp(App):
                 import time
 
                 path = demo_target(store.home / "demo" / str(time.time_ns()))
-            job = jobs.start(store, {"kind": "scan", "target": str(path), "online": online})
+            path = path.expanduser().resolve()
+            job = jobs.start(
+                store,
+                {"kind": "scan", "target": str(path), "expected_target": str(path), "online": online},
+            )
             report = self.wait_job(store, job)
             self.call_from_thread(self.show_report, report)
             self.call_from_thread(self.action_reload_reports)
             self.call_from_thread(
-                self.set_busy, False, "검사가 완료됐습니다. 후보와 미실행 항목을 함께 확인하세요."
+                self.set_busy,
+                False,
+                "부분 분석입니다. 분석하지 못한 범위와 후보를 함께 확인하세요."
+                if report_incomplete(report)
+                else "검사가 완료됐습니다. 후보와 미실행 항목을 함께 확인하세요.",
             )
         except Exception as error:
             if self.is_running:

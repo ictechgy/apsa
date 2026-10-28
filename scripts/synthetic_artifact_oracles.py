@@ -30,6 +30,29 @@ def sha(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _wait_unreaped(process: subprocess.Popen, deadline: float) -> bool:
+    """Observe only this owned child's exit without releasing its PID custody."""
+    while True:
+        waitid = getattr(os, "waitid", None)
+        if waitid is not None:
+            event = waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            exited = event is not None
+        else:
+            # Darwin has no os.waitid; status() does not reap the owned child.
+            import psutil
+
+            try:
+                exited = psutil.Process(process.pid).status() == psutil.STATUS_ZOMBIE
+            except psutil.NoSuchProcess:
+                raise ChildProcessError("Owned child custody unavailable") from None
+        if exited:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.01, remaining))
+
+
 def capture(argv: list[str], cwd: Path, *, java_home: Path | None = None) -> dict:
     """Retain bounded raw streams and status, terminating a hung process group."""
     streams = {"stdout": bytearray(), "stderr": bytearray()}
@@ -51,6 +74,9 @@ def capture(argv: list[str], cwd: Path, *, java_home: Path | None = None) -> dic
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
     deadline = time.monotonic() + 45
+    custody_held = True
+    exited_observed = False
+    group_cleanup = "unconfirmed"
     try:
         while selector.get_map():
             if time.monotonic() >= deadline:
@@ -70,15 +96,23 @@ def capture(argv: list[str], cwd: Path, *, java_home: Path | None = None) -> dic
             if truncated:
                 break
         if not timed_out and not truncated:
-            try:
-                process.wait(timeout=max(0.001, deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                timed_out = True
+            exited_observed = _wait_unreaped(process, deadline)
+            timed_out = not exited_observed
+    except ChildProcessError:
+        custody_held = False
+        raise
     finally:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        if custody_held:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+                group_cleanup = "signal-sent"
+            except ProcessLookupError:
+                group_cleanup = "absent"
+            except PermissionError:
+                # Darwin can deny killpg for an unreaped zombie leader. Only
+                # this observed exit permits reaping without another signal.
+                if not exited_observed:
+                    raise
         process.wait()
         selector.close()
         process.stdout.close()
@@ -89,6 +123,7 @@ def capture(argv: list[str], cwd: Path, *, java_home: Path | None = None) -> dic
         "returncode": process.returncode,
         "timed_out": timed_out,
         "output_truncated": truncated,
+        "process_group_cleanup": group_cleanup,
         **{f"{name}_base64": base64.b64encode(raw).decode() for name, raw in streams.items()},
         **{f"{name}_sha256": hashlib.sha256(raw).hexdigest() for name, raw in streams.items()},
     }
@@ -146,6 +181,8 @@ def main() -> None:
     sources = snapshot(args.source, root)
     compilers = {str(path.resolve(strict=True)): sha(path.resolve(strict=True)) for path in args.compiler}
     tool_hash = sha(args.tool.resolve(strict=True))
+    captured = capture(argv, root, java_home=args.java_home)
+    capture_diagnostics = {"process_group_cleanup": captured.pop("process_group_cleanup")}
     result = {
         "schema_version": 1,
         "oracle": args.oracle,
@@ -153,7 +190,7 @@ def main() -> None:
         "input_sha256": inputs,
         "source_sha256": sources,
         "compiler_sha256": compilers,
-        **capture(argv, root, java_home=args.java_home),
+        **captured,
     }
     current_files = [artifact]
     if artifact.is_dir():
@@ -180,7 +217,12 @@ def main() -> None:
         expected_environment=result["environment"],
     )
     with record_path.open("x") as stream:
-        json.dump({"observation": result, "summary": summary}, stream, indent=2, sort_keys=True)
+        json.dump(
+            {"observation": result, "summary": summary, "capture_diagnostics": capture_diagnostics},
+            stream,
+            indent=2,
+            sort_keys=True,
+        )
         stream.write("\n")
     print(json.dumps({"record": str(record_path), "state": summary["state"]}, sort_keys=True))
 

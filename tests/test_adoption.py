@@ -99,7 +99,7 @@ def test_sarif_meets_code_scanning_constraints_for_source_targets(demo_report):
             for location in result["locations"]
         )
         assert result["properties"]["status"] == finding["status"]
-    ssl = descriptors["WEBVIEW-SSL-BYPASS"]["properties"]
+    ssl = descriptors["WEBVIEW-SSL-BYPASS/candidate"]["properties"]
     # Candidate-only rules carry no security-severity, so they cannot fail default code scanning checks.
     assert "security-severity" not in ssl and "MASWE-0027" in ssl["tags"] and ssl["precision"] == "medium"
     notes = run["invocations"][0]["toolExecutionNotifications"]
@@ -190,11 +190,11 @@ def test_sarif_keeps_candidates_below_error_and_tags_candidate_rules(demo_report
     run = sarif({**demo_report, "findings": findings})["runs"][0]
     assert [r["level"] for r in run["results"]] == ["warning", "error", "warning"]
     rules = {rule["id"]: rule for rule in run["tool"]["driver"]["rules"]}
-    assert "candidate" in rules["WEBVIEW-SSL-BYPASS"]["properties"]["tags"]
-    assert rules["WEBVIEW-SSL-BYPASS"]["defaultConfiguration"]["level"] == "warning"
+    assert "candidate" in rules["WEBVIEW-SSL-BYPASS/candidate"]["properties"]["tags"]
+    assert rules["WEBVIEW-SSL-BYPASS/candidate"]["defaultConfiguration"]["level"] == "warning"
     assert "candidate" not in rules["SOURCE-TRUST-ALL-CERTS"]["properties"]["tags"]
     assert rules["SOURCE-TRUST-ALL-CERTS"]["defaultConfiguration"]["level"] == "error"
-    assert "security-severity" not in rules["WEBVIEW-SSL-BYPASS"]["properties"]
+    assert "security-severity" not in rules["WEBVIEW-SSL-BYPASS/candidate"]["properties"]
     assert rules["SOURCE-TRUST-ALL-CERTS"]["properties"]["security-severity"] == "8.0"
     mixed = sarif(
         {

@@ -2,7 +2,7 @@
 
 ## Source of truth
 - Status: Active
-- Last refreshed: 2026-10-06
+- Last refreshed: 2026-10-28
 - Primary product surfaces: CLI and keyboard-first Textual TUI.
 - Evidence reviewed: User requested Android/iOS source and APK/IPA audits, OWASP testing, continuously updated CVE intelligence, deep-link/WebView and post-logout data checks, and an LLM-assisted interface. Parent workspace is an unrelated trading/media collection with no mobile product. This directory is a separate project.
 
@@ -79,3 +79,11 @@
 
 ## Open questions
 - Device fleet coverage and commercial delivery format can be expanded after real app onboarding. They do not block the local CLI/TUI.
+
+## Planned desktop delivery
+- User direction: consider an easier app distribution after hardening against AI-assisted analysis and attacks. Current supported surfaces remain CLI, Textual TUI and MCP; `apsa tui` already provides guided local use.
+- Proposed flow: select input, inspect local capabilities, run a cancellable audit, review findings alongside incomplete coverage, compare and export. Reuse the existing engine/job/store interfaces; a listening web service or duplicated analyzer is unnecessary.
+- First prototype assumption: macOS with a bundled real Python runtime; target OS, publisher and toolkit remain open. `sys.executable -I -m` worker launches and native parser/isolation behavior must work outside the checkout before choosing packaging.
+- Security states: local/offline by default; online intelligence, model disclosure and authorized device execution remain separate choices. Evidence text is untrusted data and cannot select commands. Desktop completion cannot be presented as proof of app safety.
+- Acceptance: keyboard/focus support, actionable missing capabilities, real sandbox activation, verified cancellation/crash recovery, CLI report parity, signed updates and recoverable store migration.
+- Detailed stages and distribution gates: [desktop app roadmap](docs/DESKTOP_APP_ROADMAP.md). This is a future product plan, not a released desktop app or a prerequisite for the existing CLI/TUI release.

@@ -34,3 +34,19 @@ The distribution assumption is a local application with CLI, TUI, and CI support
 ## Honest scope
 
 Coverage is mapped to OWASP mobile controls and tests individually. This product does not claim complete MASVS certification, an absence of vulnerabilities, or universal device/OS support. These limits do not excuse missing implementation of the release requirements.
+
+## AI-assisted attack and delivery follow-up (2026-10-28)
+
+The user requested practical defenses in response to REA/ARTEX-style automation
+and asked to consider future easier app distribution. This extends R01/R04/R06:
+recognizable credentials in admitted packaged text must not fall between source
+and executable scanners; credential-only inputs use bounded, separate handling;
+model report and exact-finding pages retain fixed untrusted-evidence guidance
+within their byte budget. Candidate evidence does not prove credential validity,
+privileges or backend compromise. See [the assessment](docs/AI_ASSISTED_ATTACK_DEFENSE.md).
+
+A future desktop wrapper should reuse the same local engine, jobs, cancellation
+and reports. Its packaging and supported-host gates are recorded in
+[DESIGN.md](DESIGN.md) and [the roadmap](docs/DESKTOP_APP_ROADMAP.md). This is a
+planned delivery path, not a claim that a desktop installer has shipped or a new
+requirement to bundle mobile SDKs automatically.

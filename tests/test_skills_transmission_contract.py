@@ -118,12 +118,8 @@ def test_documented_scan_controls_parse_and_are_not_claimed_for_watch():
 
 @pytest.mark.parametrize("name", list(PRIOR_HASHES))
 def test_captured_prior_skill_upgrades_without_overwriting_customizations(name, tmp_path):
-    # Reconstruct only the prior disclosure from the newly frozen public source,
-    # not retained installation state or historical fixture directories.
     current = (ROOT / "src/mobile_audit/data/skills" / name / "SKILL.md").read_text()
-    start = current.index("CLI analysis runs locally")
-    end = current.index("\n\nRead exact finding evidence", start)
-    prior = (current[:start] + PRIOR_DISCLOSURE + current[end:]).encode()
+    prior = (ROOT / "tests/fixtures/skills" / f"{name}-1.5.1.md").read_bytes()
     assert hashlib.sha256(prior).hexdigest() == PRIOR_HASHES[name]
     destination = tmp_path / name
     destination.mkdir()

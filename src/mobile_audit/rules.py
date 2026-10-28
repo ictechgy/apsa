@@ -7,6 +7,8 @@ from itertools import islice
 
 from .core import code_excerpt, finding
 from .maswe import weaknesses_for
+from .sensitive_logging import JS_LINE_END, JS_SUFFIXES, sensitive_log_matches
+from .sensitive_logging import MATCHER as SENSITIVE_LOG_MATCHER
 
 
 def rules() -> list[dict]:
@@ -191,7 +193,14 @@ def static_checks(
     findings = []
     coverage = []
     compiled_package = inventory.get("input_kind") in {"apk", "ipa"}
-    packaged_source_suffixes = {".js", ".jsx", ".jsbundle", ".ts", ".tsx", ".dart"}
+    packaged_source_suffixes = {".js", ".jsx", ".jsbundle", ".bundle", ".ts", ".tsx", ".dart"}
+    admitted_bundles = set()
+    for path, text in sources:
+        if PathSuffix(path) == ".bundle":
+            from .hybrid_analysis import hybrid_source_input
+
+            if hybrid_source_input(path, text.encode("utf-8"))[1] is not None:
+                admitted_bundles.add(path)
     for rule in rules():
         if rule["mode"] != "source":
             continue
@@ -203,10 +212,13 @@ def static_checks(
             (path, text)
             for path, text in sources
             if PathSuffix(path) in rule.get("suffixes", [])
+            and (PathSuffix(path) != ".bundle" or path in admitted_bundles)
             and (not compiled_package or PathSuffix(path) in packaged_source_suffixes)
             and (PathSuffix(path) != ".xml" or text.lstrip("\ufeff \t\r\n").startswith("<"))
         ]
         truncated = False
+        uncertain_log_boundaries = False
+        uncertain_log_reasons: set[str] = set()
         if not applicable:
             state = "not-applicable"
         elif not source_files:
@@ -217,40 +229,97 @@ def static_checks(
                 # A required token absent from the raw text is absent after cleaning too.
                 if rule.get("requires") and not re.search(rule["requires"], text):
                     continue
-                cleaned = (
-                    strip_xml_comments(text)
-                    if PathSuffix(path) == ".xml"
-                    else strip_comments(text, templates=PathSuffix(path) in {".js", ".jsx", ".ts", ".tsx"})
-                )
+                if PathSuffix(path) == ".xml":
+                    cleaned = strip_xml_comments(text)
+                elif rule.get("matcher") == SENSITIVE_LOG_MATCHER:
+                    # The call matcher resolves comments and slash literals together.
+                    cleaned = text
+                else:
+                    cleaned = strip_comments(
+                        text, templates=PathSuffix(path) in {".js", ".jsx", ".ts", ".tsx"}
+                    )
                 if rule.get("requires") and not re.search(rule["requires"], cleaned):
                     continue
+                excluded = (pattern_exclusions or {}).get(path, {}).get(rule["id"], [])
+                byte_offsets: dict[int, int] = {}
                 # Some APIs are a property of the file (for example a deprecated class); report its first use.
-                matches = islice(
-                    re.finditer(rule["pattern"], cleaned, 0 if rule.get("case_sensitive") else re.I),
-                    1 if rule.get("once_per_file") else 31,
-                )
-                for index, match in enumerate(matches):
+                if rule["id"] == "STORAGE-SENSITIVE-LOG":
+                    log_matches = sensitive_log_matches(
+                        cleaned,
+                        PathSuffix(path),
+                        call_pattern=rule["pattern"],
+                        argument_pattern=rule["argument_pattern"],
+                    )
+                    spans = iter(log_matches.spans)
+                    if excluded:
+                        # Convert the needed boundaries in one ordered pass, rather
+                        # than repeatedly encoding long prefixes for many redacted calls.
+                        previous, encoded = 0, 0
+                        for position in sorted({p for span in log_matches.spans for p in span}):
+                            encoded += len(text[previous:position].encode("utf-8"))
+                            byte_offsets[position] = encoded
+                            previous = position
+                        excluded_ends: dict[int, int] = {}
+                        for item in excluded:
+                            excluded_ends[item["start"]] = max(
+                                excluded_ends.get(item["start"], -1), item["end"]
+                            )
+                        spans = (
+                            (start, end)
+                            for start, end in log_matches.spans
+                            if byte_offsets[end] > excluded_ends.get(byte_offsets[start], -1)
+                        )
+                    if log_matches.uncertain:
+                        state = "partial"
+                        uncertain_log_boundaries = True
+                        if log_matches.reason:
+                            uncertain_log_reasons.add(log_matches.reason)
+                else:
+                    spans = (
+                        (match.start(), match.end())
+                        for match in re.finditer(
+                            rule["pattern"], cleaned, 0 if rule.get("case_sensitive") else re.I
+                        )
+                    )
+                matches = islice(spans, 1 if rule.get("once_per_file") else 31)
+                for index, (match_start, match_end) in enumerate(matches):
                     if index == 30:
                         state = "partial"
                         truncated = True
                         break
-                    excluded = (pattern_exclusions or {}).get(path, {}).get(rule["id"], [])
-                    start = len(text[: match.start()].encode("utf-8"))
-                    end = len(text[: match.end()].encode("utf-8"))
+                    start = (
+                        byte_offsets[match_start] if byte_offsets else len(text[:match_start].encode("utf-8"))
+                    )
+                    end = byte_offsets[match_end] if byte_offsets else len(text[:match_end].encode("utf-8"))
                     if any(item["start"] == start and end <= item["end"] for item in excluded):
                         continue
                     if len(findings) >= 2000:
                         state = "partial"
                         break
-                    line_number = cleaned.count("\n", 0, match.start()) + 1
+                    line_number = (
+                        sum(1 for _ in JS_LINE_END.finditer(cleaned, 0, match_start)) + 1
+                        if rule.get("matcher") == SENSITIVE_LOG_MATCHER and PathSuffix(path) in JS_SUFFIXES
+                        else cleaned.count("\n", 0, match_start) + 1
+                    )
                     evidence = [
                         {
                             "path": path,
                             "line": line_number,
-                            "excerpt": code_excerpt(text.splitlines()[line_number - 1]),
+                            "excerpt": code_excerpt(
+                                (
+                                    JS_LINE_END.split(text)
+                                    if rule.get("matcher") == SENSITIVE_LOG_MATCHER
+                                    and PathSuffix(path) in JS_SUFFIXES
+                                    else text.split("\n")
+                                )[line_number - 1]
+                            ),
                             "basis": "source-pattern",
                         }
                     ]
+                    if rule["id"] == "STORAGE-SENSITIVE-LOG":
+                        # Separate call sites on a minified line need distinct
+                        # identities; offset is an existing finding-location field.
+                        evidence[0]["offset"] = start
                     findings.append(
                         finding(
                             rule["id"],
@@ -284,7 +353,13 @@ def static_checks(
                     " Per-file finding limit reached; additional matching evidence was omitted."
                     if truncated
                     else ""
-                ),
+                )
+                + (
+                    " Some sensitive-log argument boundaries were malformed or unresolved; candidates were retained conservatively."
+                    if uncertain_log_boundaries
+                    else ""
+                )
+                + (" " + "; ".join(sorted(uncertain_log_reasons)) + "." if uncertain_log_reasons else ""),
             }
         )
     for config in inventory["android_config"]:

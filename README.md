@@ -1,14 +1,32 @@
 # APSA
 
+**APSA 1.6.3.** See the [release scope and upgrade notes](docs/RELEASE_163.md).
+[Release readiness](RELEASE_READINESS.md) separates local validation from the
+hosted publication and public installation gates.
+
 **Evidence-first security audits for Android and iOS.**
 
 [English](https://github.com/ictechgy/apsa/blob/main/README.md) · [한국어](https://github.com/ictechgy/apsa/blob/main/README.ko.md)
 
 This English README is the source of truth. The Korean README follows it.
 
+**AI-assisted attack follow-up in 1.6.3.** Packaged plaintext
+credentials now have a separate, masked candidate check; compiled source-flow
+coverage remains distinct. Model context retains the untrusted-evidence guidance
+on detailed and truncated pages. See [scope and research](docs/AI_ASSISTED_ATTACK_DEFENSE.md).
+For easier use today, run `apsa tui`. A [desktop app roadmap](docs/DESKTOP_APP_ROADMAP.md)
+describes a future local wrapper around the same engine; no desktop installer is
+included in this release.
+
 APSA 1.6.2 fixes Objective-C binding scope, incomplete OSV queries, precise claim
 verification, runtime cancellation and APK-set finding provenance.
 See [patch scope and upgrade effects](docs/RELEASE_162.md).
+
+**Upgrading to 1.6.3.** Rescan before comparing reports or approving baselines:
+explicit synthetic evidence path kinds and deterministic CVE-alias selection
+can change finding IDs. Candidate-only SARIF descriptor IDs also migrate;
+APSA rule IDs and finding fingerprints remain unchanged by that SARIF change.
+Review baseline and waiver effects in the [upgrade notes](docs/RELEASE_163.md).
 
 **APSA 1.6 analysis extensions.** This version adds bounded native cross-file
 flow and input-bound path guards, JS/TS/Dart candidates, recorded Gradle variant
@@ -27,7 +45,7 @@ proof of app acquisition or backend revocation.
 The [five validation gates](docs/FIVE_GATE_VALIDATION.md) record new compiler,
 signature-mutation and installed iOS simulator evidence, along with the separate
 package, comparator, bundletool and backend measurement scopes.
-See [1.6 release validation](docs/RELEASE_160.md) for the current candidate gates
+See [1.6 release validation](docs/RELEASE_160.md) for the original 1.6 validation gates
 and upgrade effects, including the changed MCP tool manifest.
 
 **APSA 1.6 large-input follow-up.** Rule version: `2026.10.15.apsa.160`.
@@ -282,10 +300,12 @@ OWASP mappings describe relevant checks; APSA does not certify MASVS compliance 
 
 Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; not every host/Python combination has been tested (see the [support matrix](https://github.com/ictechgy/apsa/blob/main/docs/SUPPORTED_MATRIX.md)). The examples select Python 3.12, which uv can download if needed. Initial installation can use the network; scans can then use local inputs and cached intelligence.
 
-Install the published package from [PyPI](https://pypi.org/project/apsa/):
+After the 1.6.3 publication gates pass, install it from
+[PyPI](https://pypi.org/project/apsa/). Check [release readiness](RELEASE_READINESS.md)
+for publication status:
 
 ```sh
-uv tool install --python 3.12 apsa==1.6.2
+uv tool install --python 3.12 apsa==1.6.3
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -371,6 +391,14 @@ apsa reports verify
 
 Reassessment applies current intelligence to a saved inventory; run `scan` again for changed files or new static checks. If connected to an AI client, that client may send report metadata to its model provider. APSA's MCP context excludes source excerpts, full source files, and screenshot bytes; client-side data handling still depends on the client.
 
+**Finding follow-up in 1.6.3:** inspect one
+finding after a change with `apsa reports followup audit_BEFORE audit_AFTER
+--finding F-ID --out followup.json`, or MCP `reports_followup`. It preserves
+report hashes, identifies possible continuations after line changes, and
+separates observations from missing coverage or changed scope. It never calls
+disappearance proof of remediation. See [follow-up usage and limits](docs/FINDING_FOLLOWUP.md)
+and [competitive research and decisions](docs/COMPETITIVE_STRATEGY.md).
+
 ## CI and background jobs
 
 ```sh
@@ -407,7 +435,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.6.2; pin the full commit SHA
+  - uses: ictechgy/apsa@<commit-sha> # v1.6.3; pin the full release commit SHA
     with:
       path: android            # source folder, or a built APK/AAB/IPA in the workspace
       fail-on-incomplete: "true"

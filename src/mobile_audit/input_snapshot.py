@@ -13,6 +13,7 @@ from collections import deque
 from pathlib import Path
 
 from .core import MAX_ARCHIVE_TOTAL, MAX_FILE, MAX_FILES, MAX_SOURCE_TOTAL, open_directory, open_file
+from .credential_text import credential_only_input
 
 # When a source tree exceeds the staging budgets, files are staged kind by kind in this order
 # and the rest are omitted (the audit becomes partial) instead of the whole audit being refused.
@@ -186,6 +187,7 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
     oversized: list[Path] = []
     unreadable: list[str] = []
     symlinks: list[Path] = []
+    nonregular_gradle: list[Path] = []
     hybrid_inputs: list[dict] = []
     presence = {"truncated": False}
     # False once a file that could change which rules apply (code, configuration, shipped text) is
@@ -319,6 +321,17 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                                 symlinks.append(child)
                                 scope["complete"] = False
                             continue
+                        if (
+                            not stat.S_ISREG(metadata.st_mode)
+                            and entry.name not in SKIP_DIRS
+                            and entry.name.endswith((".gradle", ".gradle.kts"))
+                        ):
+                            # A known script name with unavailable script bytes
+                            # must not look like an absent ancestor. Never open
+                            # special files; directory traversal below still
+                            # preserves any independently readable nested code.
+                            nonregular_gradle.append(child)
+                            scope["complete"] = False
                         compiled = compiled_hybrid_input(child.as_posix())
                         if stat.S_ISREG(metadata.st_mode) and compiled is not None:
                             # Preserve name-only presence through staging; never copy/read AOT bytes.
@@ -339,6 +352,7 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                                 os.close(nested)
                         elif stat.S_ISREG(metadata.st_mode) and (
                             child.suffix in TEXT_SUFFIXES
+                            or credential_only_input(child)
                             or child.name in {"Podfile.lock", "Package.resolved"}
                         ):
                             candidates.append(
@@ -438,6 +452,11 @@ def stage_input(target: Path, output: Path, *, source: bool = True, hidden: tupl
                 omitted(
                     f"Source staging skipped {len(symlinks)} symbolic link(s) without reading their targets "
                     f"(first: {symlinks[0]}); app scope unknown; coverage partial"
+                )
+            if nonregular_gradle:
+                omitted(
+                    f"Source staging skipped {len(nonregular_gradle)} non-regular Gradle script(s) "
+                    f"(first: {nonregular_gradle[0]}); version context unknown; coverage partial"
                 )
             if oversized:
                 omitted(

@@ -11,7 +11,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from benchmarks.competitive import apsa_observation, apsa_report, engine_metadata
+from benchmarks.competitive import apsa_observation, apsa_report, engine_metadata, observation_state
 from benchmarks.real_world import (
     MAX_DOCUMENT,
     MAX_DOWNLOAD,
@@ -108,13 +108,17 @@ def run(root: Path, captured: Path) -> dict:
         prepared = prior["input"]
         signatures = []
         reports = []
+        observations = []
         durations = []
         for repeat in range(3):
             report, duration = apsa_report(sys.executable, target, root / f"{app['id']}-{repeat}")
             reports.append(report)
+            observations.append(apsa_observation(report))
             durations.append(duration)
             signatures.append(sha(app_signature(apsa_observation(report), report).encode()))
         report = reports[0]
+        stable = len(set(signatures)) == 1
+        state = observation_state(observations) if stable else "unstable"
         dependencies = dependency_inventory_score(report, app["dependencies"])
         label = app["config_label"]
         if app["id"] == "tusky":
@@ -123,7 +127,13 @@ def run(root: Path, captured: Path) -> dict:
                 for c in report["inventory"]["android_config"]
                 if c["path"].endswith(label["path"])
             ]
-            config = {"expected": False, "observed": observed, "correct": observed == ["false"]}
+            config = {
+                "expected": False,
+                "observed": observed,
+                "correct": state == "completed" and observed == ["false"],
+                "scored": state == "completed",
+                "state": state,
+            }
         else:
             config = {
                 "expected": "absence-or-unknown",
@@ -139,8 +149,18 @@ def run(root: Path, captured: Path) -> dict:
                 "input": prepared,
                 "upstream": provenance,
                 "config": config,
-                "dependencies_scored": dependencies,
-                "stable": len(set(signatures)) == 1,
+                "dependencies_scored": [
+                    {
+                        **d,
+                        "state": state,
+                        "scored": state == "completed",
+                        "extracted": state == "completed" and d["extracted"],
+                    }
+                    for d in dependencies
+                ],
+                "dependency_observations": dependencies,
+                "state": state,
+                "stable": stable,
                 "repeat_signatures": signatures,
                 "seconds": {"runs": durations, "median": statistics.median(durations)},
                 "analysis": compact_apsa(report),

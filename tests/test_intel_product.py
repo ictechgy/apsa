@@ -164,7 +164,7 @@ def test_old_vendor_and_queue_migration_preserves_report_bytes(tmp_path):
     db.close()
     migrated = Store(home)
     try:
-        assert migrated.db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert migrated.db.execute("PRAGMA user_version").fetchone()[0] == 3
         assert migrated.db.execute("SELECT body FROM reports").fetchone()[0] == report_body
         assert migrated.report("old")["target"] == "/old"
         row = migrated.intel_by_id(IDENTIFIER)[0]

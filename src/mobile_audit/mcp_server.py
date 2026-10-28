@@ -431,6 +431,21 @@ def create_server(
                 result["verification"] = compare_reports(a, b, portable_inputs=portable_inputs)
             return result
 
+    @server.tool(annotations=READ)
+    def reports_followup(
+        before: str, after: str, finding_id: str, portable_inputs: bool = False
+    ) -> dict[str, Any]:
+        """Follow one original finding across immutable reports. Distinguish exact observations from possible continuations after location changes, retain comparison blockers and next evidence steps, and bind results to report hashes. No source excerpts, rescans, network or device actions. Disappearance never proves remediation. portable_inputs only permits the existing identical-complete-source relocation rule; binary and runtime bindings stay strict."""
+        from .followup import assess_finding_followup
+
+        with database() as store:
+            return assess_finding_followup(
+                load_report(store, before),
+                load_report(store, after),
+                finding_id,
+                portable_inputs=portable_inputs,
+            )
+
     @server.tool(annotations=LOCAL)
     def audit_reassess(report_id: str) -> dict[str, Any]:
         """Re-evaluate a saved inventory against current cached intelligence and save a new report."""
@@ -536,7 +551,7 @@ def create_server(
         return {
             "path": str(path),
             "sha256": digest(encoded),
-            "report_id": report_id,
+            "report_id": artifact["report"]["id"],
             "approval": artifact["approval"],
         }
 

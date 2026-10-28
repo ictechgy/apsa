@@ -111,7 +111,8 @@ def test_bad_individual_item_does_not_poison_other_success(store):
         )
     ) as client:
         _, errors = query_dependencies(store, deps, client, query_mode="batch")
-    assert errors and deps[0]["osv_query"]["state"] == "partial"
+    assert errors and deps[0]["osv_query"]["state"] == "error"
+    assert deps[0]["osv_query"]["pages"] == 0
     assert deps[1]["osv_query"]["state"] == "complete"
 
 

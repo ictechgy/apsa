@@ -10,6 +10,16 @@ from pathlib import Path
 import psutil
 
 
+class CommandFailure(ValueError):
+    """A failed child exit that preserves its return code for precise diagnostics."""
+
+    def __init__(self, executable: str, returncode: int) -> None:
+        self.returncode = returncode
+        super().__init__(
+            f"Command failed ({executable}, exit {returncode}); check input, device authorization and test-build permissions."
+        )
+
+
 def command(
     args: list[str],
     timeout: float = 30,
@@ -83,9 +93,7 @@ def command(
         except subprocess.TimeoutExpired:
             raise ValueError(f"Command timed out: {args[0]}") from None
         if returncode:
-            raise ValueError(
-                f"Command failed ({args[0]}, exit {returncode}); check input, device authorization and test-build permissions."
-            )
+            raise CommandFailure(args[0], returncode)
         return bytes(output)
     finally:
         if os.name == "posix":

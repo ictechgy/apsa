@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import os
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +15,7 @@ from .apple_trust import (
     trust_policy_summary,
     validate_trust_policy,
 )
-from .processes import command
+from .processes import CommandFailure, command
 
 MAX_CMS_BYTES = 4 * 1024 * 1024
 MAX_DER_NODES = 20_000
@@ -194,11 +193,17 @@ def verify_cms_code_directory(
                     cwd=scratch,
                     env=verifier_env,
                 )
+            except CommandFailure:
+                return {
+                    **result,
+                    "state": "unsupported",
+                    "reason": "Host CMS verifier rejected the supplied structure",
+                }
             except (OSError, ValueError):
                 return {
                     **result,
                     "state": "not-run",
-                    "reason": "CMS verifier unavailable, denied or structure unsupported by host tool",
+                    "reason": "CMS verifier unavailable, denied or over budget",
                 }
             output = command(
                 [
@@ -248,13 +253,12 @@ def verify_cms_code_directory(
                     result["apple_root_pin_source"] = APPLE_ROOT_PIN_SOURCE
     except (OSError, ValueError) as error:
         # Neither stderr nor content/identity from attacker-controlled CMS is logged.
-        missing = not os.path.isfile("/usr/bin/openssl")
-        failed = isinstance(error, ValueError) and str(error).startswith("Command failed")
+        failed = isinstance(error, CommandFailure)
         return {
             **result,
-            "state": "invalid" if failed and not missing else "not-run",
+            "state": "invalid" if failed else "not-run",
             "reason": "CMS content/signature verification failed"
-            if failed and not missing
+            if failed
             else "CMS verifier unavailable, denied or over budget",
         }
     return {
@@ -325,7 +329,7 @@ def _verify_chain(
             "certificate_chain_verified": output == content,
         }
     except (OSError, ValueError) as error:
-        failed = isinstance(error, ValueError) and str(error).startswith("Command failed")
+        failed = isinstance(error, CommandFailure)
         return {
             "chain_trust": "invalid-or-unsupported" if failed else "not-run",
             "certificate_chain_verified": False,

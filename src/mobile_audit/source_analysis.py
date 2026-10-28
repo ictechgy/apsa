@@ -184,13 +184,11 @@ RULES = {
 ANDROID_ONLY = (
     "SSL-BYPASS",
     "JS-BRIDGE",
-    "CRYPTO-ECB",
-    "SQL-CONCAT",
     "PENDINGINTENT-MUTABLE",
-    "CRYPTO-WEAK-CIPHER",
     "INTENT-REDIRECTION",
     "IMPLICIT-INTENT",
 )
+SWIFT_UNIMPLEMENTED = {"AST-CRYPTO-ECB", "AST-CRYPTO-WEAK-CIPHER", "AST-SQL-CONCAT"}
 BROKEN_CIPHERS = {"DES", "DESEDE", "TRIPLEDES", "3DES", "RC4", "ARCFOUR", "RC2", "BLOWFISH"}
 # Constructors whose argument is key material or an IV/nonce: name -> (rule, argument index or label).
 KEY_SINKS = {
@@ -335,8 +333,12 @@ FILE_SINKS = {
 LIMITS_NOTE = (
     "Local def-use and bounded direct interprocedural flow; no dynamic method dispatch, unbounded interprocedural flow, "
     "component reachability, redirect, or authentication-state proof. Kotlin scope-function lambdas "
-    "(let, also, use, apply, run, with) are followed as blocks that may not run; other lambdas and "
-    "Swift closures are not analyzed. Lexical path containment does not prove symlink-free storage "
+    "(let, also, use, apply, run, with) are followed as blocks that may not run; other closure arguments "
+    "are inspected conservatively without transferring their guards. Unlabeled Kotlin lambda returns "
+    "are conservatively joined into the enclosing return; unavailable inline-call identity remains partial. "
+    "Kotlin returns to a resolved enclosing function label also join that function's return; "
+    "lambda-local labeled Kotlin returns and Java/Swift closure returns remain local. "
+    "Lexical path containment does not prove symlink-free storage "
     "or race-free filesystem access."
 )
 TRACE_PARTIAL = " [native-flow-partial]"
@@ -462,6 +464,9 @@ class Frame:
     object_fields: dict[Any, dict[Any, Value]] = field(default_factory=dict)
     call_results: dict[tuple, Value] = field(default_factory=dict)
     local_names: set[str] = field(default_factory=set)
+    # Lambda spans whose scope receiver/parameter was bound in this frame.
+    # Frame-local state cannot leak into a direct helper's fresh function frame.
+    kotlin_bound_scopes: set[tuple[int, int]] = field(default_factory=set)
 
     def copy(self) -> Frame:
         return Frame(
@@ -473,6 +478,7 @@ class Frame:
             {key: values.copy() for key, values in self.object_fields.items()},
             self.call_results.copy(),
             self.local_names.copy(),
+            self.kotlin_bound_scopes.copy(),
         )
 
 
@@ -535,6 +541,9 @@ class Analyzer:
         self.class_names: set[str] = set()
         self.safe_local_types: set[str] = set()
         self.defined_functions: set[str] = set()
+        self.kotlin_scope_shadows: set[str] = set()
+        self.kotlin_scope_import_unavailable: Any = None
+        self.kotlin_scope_import_reported = False
         self.pattern_exclusions: dict[str, set[tuple[int, int]]] = {}
         self.function_counts = {"observed": 0, "analyzed": 0, "skipped": 0, "without_body": 0}
         # Immutable file-level constants (const/static final/let): name -> (description, string value).
@@ -558,6 +567,7 @@ class Analyzer:
         self.truncated_rules: set[str] = set()
         self.native_flow: Any = None
         self.return_values: list[Value] = []
+        self.closure_depth = 0
         self.guarded_paths: set[tuple[int, str]] = set()
         self.unguarded_paths: set[tuple[int, str]] = set()
         self.finding_start = 0
@@ -581,7 +591,43 @@ class Analyzer:
     def point(self, node: Any) -> SourceNode:
         return node if isinstance(node, SourceNode) else SourceNode(node, self.location(node))
 
+    def symbol_name(self, name: str) -> str:
+        """Canonical ordinary Kotlin identifiers at symbol boundaries only.
+
+        Escaping an ordinary name does not change its binding. Other escaped
+        spellings stay unsupported; source text, literals and offsets are intact.
+        """
+        match = re.fullmatch(r"`([^\W\d]\w*)`", name) if self.language == "kotlin" else None
+        return match[1] if match else name
+
+    def import_name(self, imported: str) -> str:
+        """Normalize a whole supported Kotlin import once, before indexing it."""
+        normalized = self.normalized_import_name(imported)
+        return imported if normalized is None else normalized
+
+    def normalized_import_name(self, imported: str) -> str | None:
+        """None means import identity is unavailable, never an absent shadow."""
+        if self.language != "kotlin":
+            return imported
+        identifier = r"(?:[^\W\d]\w*|`[^\W\d]\w*`)"
+        match = re.fullmatch(
+            rf"({identifier}(?:\s*\.\s*{identifier})*(?:\s*\.\s*\*)?)(?:\s+as\s+({identifier}))?",
+            imported,
+        )
+        if match is None:
+            return None
+        target = ".".join(self.symbol_name(part) for part in re.split(r"\s*\.\s*", match[1]))
+        return target + (" as " + self.symbol_name(match[2]) if match[2] else "")
+
     def key(self, node: Any) -> str:
+        if self.language == "kotlin" and node is not None:
+            if node.type in IDENTIFIERS:
+                return self.symbol_name(self.text(node))
+            if node.type == "navigation_expression" and "`" in self.text(node):
+                navigation = self.navigation(node)
+                if navigation is not None:
+                    target, name = navigation
+                    return (self.key(target) + "." + name).removeprefix("this.")
         return re.sub(r"[?!\s]", "", self.text(node)).removeprefix("this.").removeprefix("self.")
 
     def spec_entry(self, kind: str, call: Call, frame: Frame) -> dict | None:
@@ -772,7 +818,7 @@ class Analyzer:
                 else None
             )
         if kind in IDENTIFIERS:
-            name = self.text(node)
+            name = self.symbol_name(self.text(node))
             if name in frame.constants:
                 return frame.constants[name]
             if name not in frame.values and name not in frame.types and name in self.constants:
@@ -885,7 +931,7 @@ class Analyzer:
             target = _field(node, "target") or node.named_children[0]
             suffix = _field(node, "suffix") or node.named_children[-1]
             identifiers = [part for part in _walk(suffix) if part.type in IDENTIFIERS]
-            return target, self.text(identifiers[-1]) if identifiers else self.text(suffix)
+            return target, self.symbol_name(self.text(identifiers[-1]) if identifiers else self.text(suffix))
         return None
 
     def call(self, node: Any) -> Call | None:
@@ -901,7 +947,7 @@ class Analyzer:
             return None
         callee = node.named_children[0]
         navigation = self.navigation(callee)
-        receiver, name = navigation if navigation else (None, self.text(callee))
+        receiver, name = navigation if navigation else (None, self.symbol_name(self.text(callee)))
         arguments = next((part for part in node.named_children if part.type == "value_arguments"), None)
         if arguments is None:
             suffix = next((part for part in node.named_children if part.type == "call_suffix"), None)
@@ -966,6 +1012,13 @@ class Analyzer:
     def value(self, node: Any, frame: Frame) -> Value:
         if node is None or node.type in COMMENTS:
             return Value()
+        if (
+            self.language == "kotlin"
+            and node.type in {"this", "this_expression"}
+            and self.text(node).strip() == "this"
+            and "this" in frame.values
+        ):
+            return frame.values["this"]
         if self.language == "swift" and node.type in {"tuple_expression", "as_expression"}:
             normalized = self.unwrap(node)
             if normalized is not node:
@@ -997,7 +1050,7 @@ class Analyzer:
             if rooted is not None:
                 return rooted
         if node.type in IDENTIFIERS:
-            name = self.text(node)
+            name = self.symbol_name(self.text(node))
             if (
                 name == "intent"
                 and name not in frame.values
@@ -1024,15 +1077,17 @@ class Analyzer:
         navigation = self.navigation(node)
         if navigation:
             base, member = navigation
+            value = self.value(base, frame)
             if self.native_flow is not None:
-                stored = self.native_flow.member(self, base, member, frame)
+                stored = self.native_flow.member(self, base, member, frame, value)
                 if stored is not None:
                     return stored
             if self.text(base) in {"this", "self"}:
                 return frame.values.get(member, Value(type_name=self.field_types.get(member, "")))
-            value = self.value(base, frame)
             if member in {"canonicalPath", "canonicalFile"} and value.category == "path":
                 return Value(value.traces, "canonical-path", value.type_name)
+            if member == "parentFile" and value.category in {"path", "canonical-path"}:
+                return Value(value.traces, "path", "File")
             if member == "standardizedFileURL" and value.category in {"path", "url"}:
                 return Value(value.traces, "canonical-path", value.type_name)
             if member == "path" and value.category == "canonical-path":
@@ -1123,6 +1178,8 @@ class Analyzer:
                 return self.path_value(node, Value(_union([receiver, *args]).traces, "path", "File"))
             if call.name in {"getCanonicalPath", "getCanonicalFile"} and receiver.category == "path":
                 return Value(receiver.traces, "canonical-path", receiver.type_name)
+            if call.name == "getParentFile" and receiver.category in {"path", "canonical-path"}:
+                return Value(receiver.traces, "path", "File")
             if call.name == "toPath" and receiver.category == "path":
                 return Value(receiver.traces, "path", "Path")
             if call.name == "toRealPath" and receiver.category == "path":
@@ -1280,12 +1337,12 @@ class Analyzer:
             return literal
         node = self.unwrap(node)
         if node is not None and node.type in IDENTIFIERS:
-            name = self.text(node)
+            name = self.symbol_name(self.text(node))
             if name not in frame.values and name not in frame.types and name in self.constants:
                 return self.constants[name][1]
         if node is not None and node.type in IDENTIFIERS and self.function is not None:
             # A local declared with a literal and not reassigned (=, +=) before this use.
-            name = self.text(node)
+            name = self.symbol_name(self.text(node))
             if name in self.parameter_types:
                 return None
             declarations, assignments = self.local_literals()
@@ -1350,7 +1407,7 @@ class Analyzer:
         values = [
             part for part in node.named_children if part.type not in {"variable_declaration", "modifiers"}
         ]
-        return self.text(name), values[-1] if values else None, self.text(type_node)
+        return self.symbol_name(self.text(name)), values[-1] if values else None, self.text(type_node)
 
     def constraints(self, node: Any, frame: Frame) -> dict[GuardKey, set[str]]:
         if node is None:
@@ -1796,8 +1853,8 @@ class Analyzer:
             return
         self.intent_checks += 1
         target = self.unwrap(first) or first
-        if target.type in IDENTIFIERS and self.text(target) in self.aliases:
-            target = self.aliases[self.text(target)]
+        if target.type in IDENTIFIERS and self.symbol_name(self.text(target)) in self.aliases:
+            target = self.aliases[self.symbol_name(self.text(target))]
         expression, basis = self.intent_expression(target, call.node)
         action = self.custom_action(expression)
         explicit = re.search(
@@ -1848,6 +1905,16 @@ class Analyzer:
                 and args
             ):
                 argument = args[0]
+                construction = False
+            elif call.name in {
+                "mkdir",
+                "mkdirs",
+                "delete",
+                "deleteRecursively",
+                "createNewFile",
+                "renameTo",
+            } and self.value(call.receiver, frame).category in {"path", "canonical-path"}:
+                argument = call.receiver
                 construction = False
         elif self.language == "swift":
             if call.name == "appendingPathComponent" and args:
@@ -1940,7 +2007,23 @@ class Analyzer:
             return False
         if receiver == qualified:
             return True
-        return receiver == simple and qualified in self.imports and simple not in self.class_names
+        return receiver == simple and self.imports_type(qualified)
+
+    def imports_type(self, qualified: str) -> bool:
+        simple = qualified.rsplit(".", 1)[-1]
+        if simple in self.class_names:
+            return False
+        explicit = {name for name in self.imports if name.rsplit(".", 1)[-1] == simple}
+        if explicit:
+            return qualified in explicit
+        if qualified.rsplit(".", 1)[0] + ".*" not in self.imports:
+            return False
+        # A wildcard does not outrank a represented lexical or same-package
+        # type. Do not turn project homonyms into framework API evidence.
+        return self.native_flow is None or not (
+            self.native_flow.lexical_type(self, simple) is not None
+            or self.native_flow.class_owners(self, simple)
+        )
 
     def check_security_call(self, call: Call, frame: Frame) -> None:
         if call.name == "getInstance" and call.args:
@@ -1972,7 +2055,7 @@ class Analyzer:
                 index = positions
                 simple = qualified.rsplit(".", 1)[-1]
                 sdk_type = receiver_type == qualified or (
-                    receiver_type == simple and qualified in self.imports and simple not in self.class_names
+                    receiver_type == simple and self.imports_type(qualified)
                 )
                 if call.name != method or not sdk_type:
                     continue
@@ -2004,8 +2087,8 @@ class Analyzer:
             and (mutability := self.pending_intent_mutability(call.args[3]))
         ):
             intent_node = call.args[2]
-            if intent_node.type in IDENTIFIERS and self.text(intent_node) in self.aliases:
-                intent_node = self.aliases[self.text(intent_node)]
+            if intent_node.type in IDENTIFIERS and self.symbol_name(self.text(intent_node)) in self.aliases:
+                intent_node = self.aliases[self.symbol_name(self.text(intent_node))]
             wrapped, basis = self.intent_expression(intent_node, call.node)
             explicit = re.search(
                 r"::class|\.class\b|setClass|setComponent|setPackage|ComponentName|\b(?:component|`?package`?)\s*=",
@@ -2051,6 +2134,9 @@ class Analyzer:
         self.active_guards = guards
         if node.type in COMMENTS or node.type in FUNCTIONS:
             return
+        if node.type in {"lambda_expression", "lambda_literal"}:
+            self.visit_scope_lambda(node, frame, guards, conditions, "", None, optional=True)
+            return
         if node.type in STRINGS:
             for part in node.named_children:
                 if "interpolat" in part.type:
@@ -2064,10 +2150,32 @@ class Analyzer:
         } and self.text(node).lstrip().startswith("return"):
             for part in node.named_children:
                 self.visit(part, frame, guards, conditions)
+            label_node = _field(node, "label") if self.language == "kotlin" else None
             expressions = [
-                part for part in node.named_children if part.type not in {"return_keyword", "label"}
+                part
+                for part in node.named_children
+                if part.type not in {"return_keyword", "label"} and part != label_node
             ]
-            if expressions:
+            labeled = self.language == "kotlin" and bool(re.match(r"return\s*@", self.text(node).lstrip()))
+            label_target = self.kotlin_return_target(node, label_node) if labeled else True
+            kotlin_nonlocal = self.language == "kotlin" and label_target is not False
+            if (
+                expressions
+                and (not labeled or kotlin_nonlocal)
+                and (not self.closure_depth or kotlin_nonlocal)
+            ):
+                if label_target is None or (
+                    self.closure_depth and not self.kotlin_return_context_known(node, frame)
+                ):
+                    # Legal unlabeled Kotlin inline returns leave the function.
+                    # Preserve possible values even when lookup/legality is not
+                    # established; uncertainty must not sanitize a helper return.
+                    if self.native_flow is not None:
+                        self.native_flow.partial(
+                            "Kotlin non-local return context unavailable", self, node=node
+                        )
+                    else:
+                        self.truncated_rules.update(RULES)
                 self.return_values.append(self.value(expressions[-1], frame).bind(self.point(node)))
             return
         declaration = self.declaration(node)
@@ -2116,7 +2224,7 @@ class Analyzer:
                     # An element or member write changes the array it belongs to.
                     base = next((part for part in _walk(left) if part.type in IDENTIFIERS), None)
                     if base is not None:
-                        frame.constants.pop(self.text(base), None)
+                        frame.constants.pop(self.symbol_name(self.text(base)), None)
                 value = self.value(right, frame).bind(self.point(node))
                 if previous is not None:
                     value = (
@@ -2176,12 +2284,22 @@ class Analyzer:
                 continuation = path_predicate(self, condition, before, positive=False)
                 for origin, checks in continuation.items():
                     guards.setdefault(origin, set()).update(checks)
-                    if "path-contained" in checks and not conditions and isinstance(origin, tuple):
+                    if (
+                        "path-contained" in checks
+                        and not conditions
+                        and not self.closure_depth
+                        and isinstance(origin, tuple)
+                    ):
                         self.guarded_paths.add(origin)
             elif exits(self, else_node):
                 for origin, checks in self.constraints(condition, before).items():
                     guards.setdefault(origin, set()).update(checks)
-                    if "path-contained" in checks and not conditions and isinstance(origin, tuple):
+                    if (
+                        "path-contained" in checks
+                        and not conditions
+                        and not self.closure_depth
+                        and isinstance(origin, tuple)
+                    ):
                         self.guarded_paths.add(origin)
             # Conservatively retain both possible assignments after a branch. Do not apply its guard outside it.
             for key in before.values:
@@ -2224,7 +2342,12 @@ class Analyzer:
                 if exits:
                     for origin, checks in self.constraints(condition, frame).items():
                         guards.setdefault(origin, set()).update(checks)
-                        if "path-contained" in checks and not conditions and isinstance(origin, tuple):
+                        if (
+                            "path-contained" in checks
+                            and not conditions
+                            and not self.closure_depth
+                            and isinstance(origin, tuple)
+                        ):
                             self.guarded_paths.add(origin)
                     conditions.append(condition)
             return
@@ -2270,17 +2393,44 @@ class Analyzer:
         if call:
             if call.receiver:
                 self.visit(call.receiver, frame, guards, conditions)
+            scope = self.scope_function(call)
+            with_call = self.kotlin_with_call(call)
+            with_arguments = self.kotlin_with_arguments(call) if with_call is not None else None
+            if with_call is not None and with_arguments is None:
+                if self.native_flow is not None:
+                    self.native_flow.partial("Kotlin non-local return context unavailable", self, node=node)
+                else:
+                    self.truncated_rules.update(RULES)
+            if with_arguments is not None:
+                receiver_lambda = self.scope_lambda_argument(with_arguments["receiver"])
+                if receiver_lambda is not None and receiver_lambda.type == "lambda_literal":
+                    # Inspect possible receiver-lambda sinks once, including
+                    # trailing forms whose receiver belongs to the inner call.
+                    # Only unshadowed stdlib identity excludes non-local returns.
+                    self.visit_receiver_lambda(receiver_lambda, frame, guards, conditions)
+            lambdas = self.trailing_lambdas(node)
             for arg in call.args:
-                self.visit(arg, frame, guards, conditions)
+                argument = self.scope_lambda_argument(arg)
+                if with_arguments is not None and argument is not None and argument.type == "lambda_literal":
+                    # Receiver-lambda evidence was inspected separately above.
+                    # Only the block parameter gets an inline scope binding.
+                    if arg == with_arguments.get("block"):
+                        lambdas.append(argument)
+                elif scope is not None and argument is not None and argument.type == "lambda_literal":
+                    # Kotlin permits both f { ... } and f(block = { ... }).
+                    # Bind either spelling once; the generic visitor has no
+                    # receiver and cannot establish an inline return context.
+                    lambdas.append(argument)
+                else:
+                    self.visit(arg, frame, guards, conditions)
             if self.native_flow is not None:
                 self.native_flow.active_guards = guards
                 self.native_flow.active_conditions = conditions
                 self.value(call.node, frame)
             self.check_call(call, frame, guards, conditions)
             self.release_constants(call, frame)
-            scope = self.scope_function(call)
             callee = self.text(node.named_children[0]) if node.named_children else ""
-            for lambda_node in self.trailing_lambdas(node):
+            for lambda_node in lambdas:
                 if scope is not None:
                     # x?.let {} may not run, and return@ may leave the lambda early.
                     optional = bool(re.search(r"\?\.\s*\w+\s*$", callee)) or "return@" in self.text(
@@ -2289,9 +2439,26 @@ class Analyzer:
                     self.visit_scope_lambda(lambda_node, frame, guards, conditions, *scope, optional)
                 else:
                     # An unfollowed closure may fill any array it names.
+                    kotlin_return = False
                     for part in _walk(lambda_node):
                         if part.type in IDENTIFIERS:
-                            frame.constants.pop(self.text(part), None)
+                            frame.constants.pop(self.symbol_name(self.text(part)), None)
+                        if self.language == "kotlin" and part.type in {
+                            "return_expression",
+                            "jump_expression",
+                        }:
+                            text = self.text(part).lstrip()
+                            labeled = bool(re.match(r"return\s*@", text))
+                            kotlin_return |= text.startswith("return") and (
+                                not labeled
+                                or self.kotlin_return_target(part, _field(part, "label")) is not False
+                            )
+                    if kotlin_return:
+                        # Unknown/custom inline calls still have possible
+                        # non-local values, but no receiver/parameter proof.
+                        self.visit_scope_lambda(
+                            lambda_node, frame, guards, conditions, "", None, optional=True
+                        )
             return
         for child in node.named_children:
             self.visit(child, frame, guards, conditions)
@@ -2311,13 +2478,193 @@ class Analyzer:
         """Kotlin scope function name and its receiver: x.let {}, x.use {}, with(x) {}."""
         if self.language != "kotlin":
             return None
-        if call.name in SCOPE_FUNCTIONS:
+        with_call = self.kotlin_with_call(call)
+        if with_call is not None:
+            arguments = self.kotlin_with_arguments(call)
+            return ("with", arguments["receiver"]) if arguments is not None else None
+        if call.name in SCOPE_FUNCTIONS - {"with"}:
             return call.name, call.receiver
+        return None
+
+    def scope_lambda_argument(self, node: Any) -> Any:
+        argument = self.unwrap(node)
+        if argument is not None and argument.type == "labeled_expression" and argument.named_children:
+            argument = self.unwrap(argument.named_children[-1])
+        return argument
+
+    def kotlin_with_call(self, call: Call) -> Call | None:
+        """The argument-bearing with call, including a trailing-lambda outer call."""
+        if self.language != "kotlin":
+            return None
+        if call.name == "with" and call.receiver is None:
+            return call
         callee = call.node.named_children[0] if call.node.named_children else None
         inner = self.call(callee) if callee is not None and callee.type == "call_expression" else None
-        if inner is not None and inner.name == "with" and inner.receiver is None and inner.args:
-            return "with", inner.args[0]
+        return inner if inner is not None and inner.name == "with" and inner.receiver is None else None
+
+    def kotlin_with_arguments(self, call: Call) -> dict[str, Any] | None:
+        """Bind the two stdlib parameter names from CST labels, never lexical order.
+
+        Positional arguments retain their declared slot. Duplicate/unknown names,
+        multiple bodies and unsupported callback values do not certify a scope.
+        """
+        target = self.kotlin_with_call(call)
+        if target is None:
+            return None
+        arguments = self.call_arguments(target)
+        bound: dict[str, Any] = {}
+        slots = ("receiver", "block")
+        rows = arguments.named_children if arguments is not None else []
+        if len(rows) > len(slots):
+            return None
+        for index, row in enumerate(rows):
+            named = any(child.type == "=" for child in row.children)
+            parts = row.named_children
+            if not parts:
+                return None
+            name = self.text(parts[0]).strip("`") if named else slots[index]
+            if name not in slots or name in bound:
+                return None
+            bound[name] = _field(row, "value") or parts[-1]
+        trailing = self.trailing_lambdas(call.node)
+        if target.node != call.node:
+            trailing += self.trailing_lambdas(target.node)
+        if "receiver" not in bound or len(trailing) > 1 or (trailing and "block" in bound):
+            return None
+        if "block" in bound:
+            block = self.scope_lambda_argument(bound["block"])
+            if block is None or block.type != "lambda_literal":
+                return None
+        elif not trailing:
+            return None
+        return bound
+
+    def kotlin_return_context_known(self, node: Any, frame: Frame) -> bool:
+        """Recognize only unshadowed built-in inline scope contexts, not Kotlin execution.
+
+        The ancestor walk is bounded; declaration/import indexes are prepared
+        once, and project callables are looked up by name without rescanning files.
+        A custom inline/noninline/crossinline declaration never gains stdlib
+        identity merely because its name is let/use/etc.
+        """
+        current = node.parent
+        for _ in range(64):
+            if current is None or current.type in FUNCTIONS:
+                return current == self.function
+            if current.type in {"lambda_expression", "lambda_literal"}:
+                if (current.start_byte, current.end_byte) not in frame.kotlin_bound_scopes:
+                    # The callee's spelling alone is insufficient: generic
+                    # lambda visits do not bind it/this or an explicit parameter.
+                    return False
+                parent = current.parent
+                while parent is not None and parent.type in {
+                    "annotated_lambda",
+                    "call_suffix",
+                    "value_argument",
+                    "value_arguments",
+                    "parenthesized_expression",
+                    "labeled_expression",
+                }:
+                    parent = parent.parent
+                call = self.call(parent) if parent is not None else None
+                scope = self.scope_function(call) if call is not None else None
+                if scope is None:
+                    return False
+                name = scope[0]
+                if not self.kotlin_scope_identity_known(name, frame):
+                    return False
+            current = current.parent
+        return False
+
+    def kotlin_scope_identity_known(self, name: str, frame: Frame) -> bool:
+        """Only an unshadowed scope name can establish stdlib return semantics."""
+        name = self.symbol_name(name)
+        return not (
+            self.kotlin_scope_import_unavailable is not None
+            or name in self.kotlin_scope_shadows
+            or name in self.defined_functions
+            or name in frame.values
+            or name in frame.local_names
+            or self.native_flow is not None
+            and (
+                name in self.native_flow.by_name
+                # Top-level callable val/var bindings also shadow scope names.
+                # Reuse the prepared package/import visibility index; a possible
+                # property binding supplies uncertainty, never stdlib identity.
+                or self.native_flow.module_value_present(self, name)
+            )
+        )
+
+    def kotlin_return_target(self, node: Any, label: Any) -> bool | None:
+        """Resolve the nearest Kotlin function/lambda label; None remains partial.
+
+        A named function has its own return label, but an intervening explicit
+        lambda label or implicit callee label with the same name shadows it.
+        The bounded ancestor walk never assumes that an unresolved label is local.
+        """
+        name = self.text(label).strip("`")
+        if not name:
+            return None
+        current = node.parent
+        for _ in range(64):
+            if current is None:
+                return None
+            if current.type in FUNCTIONS:
+                if self.text(_field(current, "name")).strip("`") == name:
+                    return current == self.function
+                return None
+            if current.type in {"lambda_expression", "lambda_literal"}:
+                parent = current.parent
+                explicit = False
+                for _ in range(8):
+                    if parent is None or parent.type not in {
+                        "annotated_lambda",
+                        "labeled_expression",
+                        "call_suffix",
+                        "value_argument",
+                        "value_arguments",
+                        "parenthesized_expression",
+                    }:
+                        break
+                    labels = [child for child in parent.named_children if child.type == "label"]
+                    explicit |= bool(labels)
+                    if any(self.text(child).rstrip("@ ").strip("`") == name for child in labels):
+                        return False
+                    parent = parent.parent
+                call = self.call(parent) if parent is not None else None
+                if call is not None and not explicit:
+                    callee = call.node.named_children[0] if call.node.named_children else None
+                    inner = (
+                        self.call(callee) if callee is not None and callee.type == "call_expression" else None
+                    )
+                    if (inner or call).name.strip("`") == name:
+                        return False
+            current = current.parent
         return None
+
+    def visit_receiver_lambda(
+        self,
+        node: Any,
+        frame: Frame,
+        guards: dict[GuardKey, set[str]],
+        conditions: list[Any],
+    ) -> None:
+        """Inspect a callable receiver conservatively, without asserting execution.
+
+        An unshadowed stdlib with receives a callable value, so its receiver's
+        returns cannot supply the enclosing function's summary. A custom with
+        may inline that lambda: retain possible non-local returns with the
+        generic visitor's explicit uncertainty and optional closure effects.
+        """
+        if not self.kotlin_scope_identity_known("with", frame):
+            self.visit_scope_lambda(node, frame, guards, conditions, "", None, optional=True)
+            return
+        returns = self.return_values
+        self.return_values = []
+        try:
+            self.visit_scope_lambda(node, frame, guards, conditions, "", None, optional=True)
+        finally:
+            self.return_values = returns
 
     def visit_scope_lambda(
         self,
@@ -2331,9 +2678,13 @@ class Analyzer:
     ) -> None:
         """Follow a scope function's lambda once, as a block whose parameter is the receiver."""
         local = frame.copy()
+        if scope:
+            local.kotlin_bound_scopes.add((node.start_byte, node.end_byte))
         parameters = next((part for part in node.named_children if part.type == "lambda_parameters"), None)
         names = (
-            [self.text(part) for part in _walk(parameters) if part.type in IDENTIFIERS] if parameters else []
+            [self.symbol_name(self.text(part)) for part in _walk(parameters) if part.type in IDENTIFIERS]
+            if parameters
+            else []
         )
         declared = set()
         saved = dict(self.aliases)
@@ -2344,14 +2695,24 @@ class Analyzer:
             local.constants.pop(name, None)
             if receiver is not None:
                 self.aliases[name] = receiver
+        elif scope in {"run", "apply", "with"} and receiver is not None:
+            # Receiver-style scopes introduce a lexical this. Keep it in the
+            # copied frame so nested scopes restore their enclosing receiver,
+            # and a non-local return sees the scope value, not the class object.
+            declared.add("this")
+            local.values["this"] = self.value(receiver, frame)
         local_guards = {origin: checks.copy() for origin, checks in guards.items()}
-        for child in node.named_children:
-            if child is parameters:
-                continue
-            parsed = self.declaration(child)
-            if parsed:
-                declared.add(parsed[0])
-            self.visit(child, local, local_guards, conditions.copy())
+        self.closure_depth += 1
+        try:
+            for child in node.named_children:
+                if child is parameters:
+                    continue
+                parsed = self.declaration(child)
+                if parsed:
+                    declared.add(parsed[0])
+                self.visit(child, local, local_guards, [*conditions, node])
+        finally:
+            self.closure_depth -= 1
         self.aliases = saved
         for key in frame.values:
             changed = local.values[key]
@@ -2370,6 +2731,21 @@ class Analyzer:
         if optional:
             frame.bridges.update(local.bridges)
             frame.javascript.update(local.javascript)
+            for identity in frame.object_fields.keys() | local.object_fields.keys():
+                previous, written = (
+                    frame.object_fields.get(identity, {}),
+                    local.object_fields.get(identity, {}),
+                )
+                frame.object_fields[identity] = {
+                    key: _union(
+                        [previous.get(key, Value()), written.get(key, Value())],
+                        previous.get(key, Value()).category
+                        if previous.get(key, Value()).category == written.get(key, Value()).category
+                        else "unknown",
+                        previous.get(key, Value()).type_name or written.get(key, Value()).type_name,
+                    )
+                    for key in previous.keys() | written.keys()
+                }
             frame.constants = {
                 key: value
                 for key, value in frame.constants.items()
@@ -2378,6 +2754,7 @@ class Analyzer:
         else:
             frame.bridges = local.bridges
             frame.javascript = local.javascript
+            frame.object_fields = local.object_fields
             frame.constants = {
                 **{key: value for key, value in local.constants.items() if key not in declared},
                 **{key: value for key, value in frame.constants.items() if key in declared},
@@ -2398,7 +2775,7 @@ class Analyzer:
             ):
                 target = target.named_children[-1] if target.named_children else None
             if target is not None and target.type in IDENTIFIERS:
-                frame.constants.pop(self.text(target), None)
+                frame.constants.pop(self.symbol_name(self.text(target)), None)
 
     def parameters(self, function: Any) -> list[tuple[str, str, Any]]:
         parameters = _field(function, "parameters") or next(
@@ -2440,7 +2817,7 @@ class Analyzer:
                     None,
                 )
             if name:
-                result.append((self.text(name), self.text(type_node), node))
+                result.append((self.symbol_name(self.text(name)), self.text(type_node), node))
         return result
 
     def collect_constants(self, root: Any) -> None:
@@ -2534,7 +2911,7 @@ class Analyzer:
                     ),
                     None,
                 )
-                result.append((self.text(name), None, self.text(type_node), False))
+                result.append((self.symbol_name(self.text(name)), None, self.text(type_node), False))
                 continue
             nodes = declaration.named_children if declaration.type == "field_declaration" else [declaration]
             for node in nodes:
@@ -2575,7 +2952,7 @@ class Analyzer:
         self.pending_paths = []
         self.active_guards = {}
         name = _field(function, "name")
-        self.scope = self.text(name)
+        self.scope = self.symbol_name(self.text(name))
         self.function = function
         self.function_source = self.text(function)
         self.path_guarded = self.action_hint = None
@@ -2586,6 +2963,7 @@ class Analyzer:
         self.aliases = {}
         self.field_types = self.class_fields(function)
         self.return_values = []
+        self.closure_depth = 0
         self.guarded_paths = set()
         self.unguarded_paths = set()
         enclosing = function.parent
@@ -2705,9 +3083,55 @@ class Analyzer:
 
     def prepare(self, root: Any, nodes: list[Any]) -> None:
         self.class_field_nodes.clear()
+        self.kotlin_scope_import_unavailable = None
+        self.kotlin_scope_import_reported = False
         for node in nodes:
+            if (
+                self.language == "kotlin"
+                and node.type == "ERROR"
+                and node.parent == root
+                and re.match(r"import\b", self.text(node).lstrip())
+            ):
+                # Recovery may not retain a complete import node. Its absence
+                # cannot establish that stdlib scope identities are unshadowed.
+                if self.kotlin_scope_import_unavailable is None:
+                    self.kotlin_scope_import_unavailable = node
+                self.truncated_rules.update(RULES)
             if node.type in {"import_declaration", "import_header", "import"}:
-                self.imports.add(re.sub(r"^import\s+|;\s*$", "", self.text(node)).strip())
+                raw_import = re.sub(r"^import\s+|;\s*$", "", self.text(node)).strip()
+                imported = self.normalized_import_name(raw_import)
+                self.imports.add(raw_import if imported is None else imported)
+                if self.language == "kotlin":
+                    following = node.next_named_sibling
+                    comment_nodes = 0
+                    # Comments may sit between the represented import prefix
+                    # and its recovered tail. Inspect only adjacent CST siblings
+                    # once at prepare, bounded by the existing node inventory.
+                    while following is not None and following.type in COMMENTS and comment_nodes < len(nodes):
+                        comment_nodes += 1
+                        following = following.next_named_sibling
+                    recovered_tail = following is not None and (
+                        following.type in COMMENTS
+                        or following.type == "ERROR"
+                        and (comment_nodes > 0 or following.start_point[0] == node.end_point[0])
+                    )
+                    if imported is None or node.has_error or recovered_tail:
+                        # Unsupported comments, aliases and exotic forms are
+                        # unresolved imports; keep raw evidence and withdraw all
+                        # stdlib scope identities rather than guessing a leaf.
+                        if self.kotlin_scope_import_unavailable is None:
+                            self.kotlin_scope_import_unavailable = node
+                        self.truncated_rules.update(RULES)
+                        continue
+                    parts = re.split(r"\s+as\s+", imported, maxsplit=1)
+                    target = parts[0]
+                    visible = parts[-1] if len(parts) == 2 else target.rsplit(".", 1)[-1]
+                    if visible == "*" and target not in {"kotlin.*", "kotlin.io.*"}:
+                        self.kotlin_scope_shadows.update(SCOPE_FUNCTIONS)
+                    elif visible in SCOPE_FUNCTIONS and target != (
+                        "kotlin.io.use" if visible == "use" else "kotlin." + visible
+                    ):
+                        self.kotlin_scope_shadows.add(visible)
             if node.type == "class_declaration":
                 name = self.text(_field(node, "name"))
                 self.class_names.add(name)
@@ -2721,7 +3145,7 @@ class Analyzer:
                 ):
                     self.safe_local_types.add(name)
             if node.type in FUNCTIONS:
-                self.defined_functions.add(self.text(_field(node, "name")))
+                self.defined_functions.add(self.symbol_name(self.text(_field(node, "name"))))
             if node.type == "object_declaration":
                 name = next(
                     (part for part in node.named_children if part.type in IDENTIFIERS | {"type_identifier"}),
@@ -2735,6 +3159,15 @@ class Analyzer:
         nodes = list(_walk(root)) if nodes is None else nodes
         if not prepared:
             self.prepare(root, nodes)
+        if (
+            self.kotlin_scope_import_unavailable is not None
+            and self.native_flow is not None
+            and not self.kotlin_scope_import_reported
+        ):
+            self.native_flow.partial(
+                "Kotlin scope import identity unavailable", self, node=self.kotlin_scope_import_unavailable
+            )
+            self.kotlin_scope_import_reported = True
         for function in nodes:
             if function.type not in FUNCTIONS:
                 continue
@@ -2970,6 +3403,8 @@ def analyze_sources(
                 }
             )
             metric["native_flow_diagnostics_complete"] = not flow_metadata["partial_details_truncated"]
+            if "native flow recursion budget" in metric["native_flow_reasons"]:
+                metric["state"] = "partial"
             for name, value in analyzer.function_counts.items():
                 function_totals[name] += value
             for item in analyzer.findings:
@@ -2998,11 +3433,20 @@ def analyze_sources(
             f"AST mobile checks do not support these source languages: {', '.join(sorted(unsupported))}."
         )
     state = "partial" if parsed and skipped else "checked" if parsed else "not-run"
+    inventory_complete = (
+        bool(parsed) and not skipped and "native flow recursion budget" not in flow_metadata["reasons"]
+    )
     coverage = [
         {
             "rule_id": rule,
             "state": "not-applicable"
             if rule.endswith(ANDROID_ONLY) and seen_languages == {"swift"} and not unsupported
+            else "partial"
+            if rule == "AST-SQL-CONCAT"
+            and seen_languages == {"swift"}
+            and any(item.get("kind") == "sql" for item in (specs or {}).get("sink", []))
+            else "not-run"
+            if rule in SWIFT_UNIMPLEMENTED and seen_languages == {"swift"} and not unsupported
             else "partial"
             if rule in truncated_rules and state == "checked"
             else state,
@@ -3016,12 +3460,17 @@ def analyze_sources(
             "functions_analyzed": function_totals["analyzed"],
             "functions_skipped": function_totals["skipped"],
             "functions_without_body": function_totals["without_body"],
-            "function_inventory_complete": bool(parsed) and not skipped,
+            "function_inventory_complete": inventory_complete,
             "normalized_files": normalized_files,
             "note": LIMITS_NOTE
             + (
                 " Native interface check currently covers Android addJavascriptInterface."
                 if rule.endswith("JS-BRIDGE")
+                else ""
+            )
+            + (
+                " The built-in check is not implemented for Swift; project-declared SQL sinks cover only their exact specifications."
+                if rule in SWIFT_UNIMPLEMENTED and seen_languages == {"swift"}
                 else ""
             ),
         }
@@ -3051,7 +3500,7 @@ def analyze_sources(
             "native_flow": flow_metadata,
             "files": file_metrics,
             "functions": function_totals,
-            "function_inventory_complete": bool(parsed) and not skipped,
+            "function_inventory_complete": inventory_complete,
             "remaining_source_records": remaining_records,
             "note": "Counts cover recognized AST function declarations only; errors, unsupported languages and budgets can hide additional functions. Adaptations retain original evidence offsets and remain partial. Closures and initializers are not a complete callable inventory.",
         },

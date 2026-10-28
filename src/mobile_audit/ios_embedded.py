@@ -19,6 +19,7 @@ def analyze_embedded(archive, main_apps: list[dict], names: set[str], byte_budge
         MAX_PLIST_BYTES,
         BinaryFormatError,
         _read_member,
+        _xml_entitlements_bound,
         inspect_macho,
     )
 
@@ -99,19 +100,21 @@ def analyze_embedded(archive, main_apps: list[dict], names: set[str], byte_budge
                     )
                 signature = slice_["code_signature"]
                 if signature.get("entitlements", {}).get("get-task-allow") is True:
+                    entitlements_bound = _xml_entitlements_bound(signature)
                     findings.append(
                         finding(
                             "BINARY-IOS-DEBUG-ENTITLEMENT",
                             "Embedded executable XML entitlements request debugging",
                             "medium",
-                            "candidate"
-                            if signature.get("der_entitlements_present")
-                            else "configuration-confirmed",
+                            "configuration-confirmed" if entitlements_bound else "candidate",
                             [
                                 {
                                     **evidence,
                                     "basis": "codesign-entitlement-observed",
                                     "get-task-allow": True,
+                                    "entitlements_binding_state": "bound"
+                                    if entitlements_bound
+                                    else "unverifiable",
                                     "signature_verified": False,
                                 }
                             ],

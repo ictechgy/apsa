@@ -110,9 +110,18 @@
       ".m",
       ".dart",
       ".js",
-      ".ts"
+      ".jsx",
+      ".jsbundle",
+      ".ts",
+      ".tsx",
+      ".mm",
+      ".bundle"
     ],
-    "pattern": "(?:Log\\.[divew]|print|println|NSLog|console\\.log|logger\\.\\w+)\\s*\\([^\\n]*(?:token|password|secret|email|session)",
+    "pattern": "(?<![\\w$])(?:Log\\.[divew]|println|print|NSLog|console\\.log|logger\\.\\w+)\\s*\\(",
+    "matcher": "sensitive-log-call-arguments-v3",
+    "argument_pattern": "token|password|secret|email|session",
+    "pattern_scope": "Call-prefix locator only, applied after comments are blanked as whitespace. The canonical matcher checks argument_pattern inside AST or lexical call boundaries after excluding comments; pattern alone is not the rule.",
+    "scope": "Sensitive-name heuristic within call arguments; no dataflow or logging-API identity proof. JS/JSX/jsbundle/recognized text bundles/TS/TSX call and new-expression arguments use Tree-sitter ASTs, bounded to 2 MiB UTF-8 source bytes, 250000 microseconds parse time and 200000 visited nodes. Grammar-reported parse errors, unsupported syntax and parser/budget failure remain partial with call-scoped lexical recovery limited to 2 MiB UTF-8 bytes; candidates in unresolved regions need manual review. Native source uses lexical boundaries with Kotlin triple-quote closing runs and Kotlin/Swift/Dart nested block comments. After one unterminated multiline Swift raw regex, all hash counts use line-bounded recovery in the already-malformed remainder; later multiline regex bodies are not fully resolved and recovered candidates need manual review.",
     "severity": "high",
     "masvs": "MASVS-STORAGE",
     "remediation": "Remove or redact sensitive values and verify with a unique test canary in a release-equivalent test build.",
@@ -188,7 +197,7 @@
     "mastg_tests": [],
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
     "requires": "X509TrustManager",
-    "pattern": "\\bcheckServerTrusted\\s*\\([^)]*\\)\\s*(?::\\s*Unit\\s*)?(?:\\{\\s*\\}|=\\s*Unit\\b)",
+    "pattern": "\\bcheckServerTrusted\\s*\\([^)]*\\)\\s*(?::\\s*Unit\\s*)?(?:throws\\s+[\\w.]+(?:\\s*,\\s*[\\w.]+)*\\s*)?(?:\\{\\s*(?:return\\s*;?\\s*)?\\}|=\\s*Unit\\b)",
     "severity": "high",
     "masvs": "MASVS-NETWORK",
     "remediation": "Use the platform default TrustManager, or pin with Network Security Configuration; never accept unchecked chains.",
@@ -465,5 +474,22 @@
     ],
     "once_per_file": true,
     "case_sensitive": true
+  },
+  {
+    "id": "PACKAGED-CREDENTIAL-TEXT",
+    "title": "Known credential format in packaged text",
+    "mode": "packaged-text",
+    "method": "packaged-credential-text-pattern",
+    "severity": "high",
+    "masvs": "MASVS-STORAGE",
+    "scope": "Bounded supported text members in APK or the declared main IPA app; format candidates only, without credential validation, runtime use or restriction proof. Google API key candidates are low severity. Binary and unsupported text remain partial.",
+    "remediation": "Remove private credentials from shipped app text and rotate any exposed credential. Use scoped short-lived backend tokens. Review API and app restrictions for public Google API keys.",
+    "references": [
+      "https://mas.owasp.org/MASWE/MASVS-STORAGE/MASWE-0004/"
+    ],
+    "maswe": [
+      "MASWE-0004"
+    ],
+    "mapping_scope": "partial: known-format packaged-text screening, not a full implementation of every test step"
   }
 ]

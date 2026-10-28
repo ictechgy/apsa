@@ -55,11 +55,32 @@ def claim(store: Store, job_id: str, pid: int, process_started: float) -> bool:
         return changed.rowcount == 1
 
 
-def finish(store: Store, job_id: str, state: str, *, report_id: str | None = None, error: str = "") -> bool:
+def finish(
+    store: Store,
+    job_id: str,
+    state: str,
+    *,
+    report_id: str | None = None,
+    error: str = "",
+    persisted: bool = False,
+) -> bool:
     """Finish active work without overriding a committed cancellation or terminal state."""
     if state not in {"completed", "failed", "cancelled"}:
         raise ValueError("Invalid worker completion state")
     with store.db:
+        if persisted:
+            if (
+                state != "completed"
+                or not report_id
+                or not store.db.execute("SELECT 1 FROM reports WHERE id=?", (report_id,)).fetchone()
+            ):
+                raise ValueError("Committed completion requires an existing report")
+            changed = store.db.execute(
+                "UPDATE jobs SET state='completed',stage='completed',progress=100,report_id=?,error='',updated=? "
+                "WHERE id=? AND state='running'",
+                (report_id, now(), job_id),
+            )
+            return changed.rowcount == 1
         changed = store.db.execute(
             "UPDATE jobs SET "
             "state=CASE WHEN stage='cancellation-requested' THEN 'cancelled' ELSE ? END,"

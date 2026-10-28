@@ -200,8 +200,6 @@ def query_batch(
                     break
                 pending = []
                 for item, result in zip(active, results, strict=True):
-                    item["pages"] += 1
-                    item["hashes"].append(content_hash)
                     try:
                         result = _object(result, "OSV batch item")
                         if set(result) - {"vulns", "next_page_token"}:
@@ -239,6 +237,10 @@ def query_batch(
                             for identifier, modified in stubs.items()
                             if identifier not in item["ids"]
                         ]
+                        # Only a fully validated item is an observed page.
+                        # A malformed prefix cannot advance coverage/provenance.
+                        item["pages"] += 1
+                        item["hashes"].append(content_hash)
                         item["ids"].update(new[:remaining])
                         if len(new) > remaining or (
                             token and (len(item["ids"]) >= MAX_OSV_RECORDS or item["pages"] >= MAX_OSV_PAGES)
@@ -286,8 +288,11 @@ def query_batch(
             status = "complete" if complete else "partial" if item["pages"] or item["records"] else "error"
             persisted = False
             try:
-                persist_osv_query(store, source, item["records"], complete=complete)
-                persisted = True
+                # Failed transport/validation/hydration with no new record is
+                # not an observation of a changed advisory snapshot.
+                if complete or item["records"]:
+                    persist_osv_query(store, source, item["records"], complete=complete)
+                    persisted = True
             except (ValueError, KeyError, TypeError) as error:
                 complete = False
                 status = "partial" if item["pages"] or item["records"] else "error"

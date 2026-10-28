@@ -32,7 +32,13 @@ def verify(version: str, output: Path, *, attempts: int = 10, delay: int = 30) -
         directory.mkdir()
         cache, app_home = directory / "cache", directory / "home"
         argv = ["uvx", "--python", "3.12.13", f"apsa@{version}", "--version"]
-        environment = dict(os.environ, UV_CACHE_DIR=str(cache), APSA_HOME=str(app_home), UV_NO_CONFIG="1")
+        environment = {key: value for key, value in os.environ.items() if not key.startswith(("UV_", "PIP_"))}
+        environment.update(
+            UV_CACHE_DIR=str(cache),
+            APSA_HOME=str(app_home),
+            UV_NO_CONFIG="1",
+            UV_PYTHON_INSTALL_DIR=str(directory / "interpreters"),
+        )
         timed_out = False
         try:
             result = subprocess.run(argv, env=environment, capture_output=True, timeout=90, check=False)

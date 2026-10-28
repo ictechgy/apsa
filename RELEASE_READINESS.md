@@ -1,5 +1,37 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## 1.6.3 locally verified; hosted release gates pending — 2026-10-29
+
+[Release scope and upgrade notes](docs/RELEASE_163.md) cover bounded input
+handling, native-flow correctness, masked credential-text candidates and
+model-evidence boundaries. This entry records the reviewed local candidate;
+it does not establish PyPI, MCP Registry or GitHub publication.
+
+The final local source-review snapshot passed **8,300 pytest tests**, with
+4 skipped and 6 subtests passed, in 79.79 seconds. All seven static checks
+passed. An offline wheel build matched all 50 changed packaged production
+files byte for byte. Independent code and architecture reviews of the complete
+161-file review delta ended **APPROVE** and **CLEAR**, with no blocking findings.
+Release-document preparation follows that source snapshot and must be included
+in the immutable commit used for the hosted release gates.
+
+Six fixed ordinary public FOSS APKs were scanned offline in 31.49 seconds.
+All returned partial reports with exit 3; the 50 observations comprise
+8 configuration-confirmed records and 42 candidates, not 50 proven
+vulnerabilities or an accuracy estimate. Aggregate warnings fell from 5,742 in
+the earlier credential-channel replay to 89 while omission and partial-coverage
+diagnostics remained. No apps or generated classes were run, no device was
+used, and no credential validity was queried. These static measurements do not
+validate installed behavior or server authorization.
+
+Publication requires the supported hosted CI matrix, reproducible package and
+clean-install checks on the exact release commit, then the tag-context publishing
+workflow and independent public download/installation verification. See
+[publishing gates](docs/PUBLISHING.md). Until those gates complete, the 1.6.3
+install examples describe the intended release version. Earlier dated entries
+below retain their historical snapshot meaning. The desktop app remains a
+[roadmap](docs/DESKTOP_APP_ROADMAP.md); no GUI installer is part of 1.6.3.
+
 ## 1.6.2 review corrections — 2026-10-22
 
 [Patch scope](docs/RELEASE_162.md): Objective-C binding ownership, OSV partial

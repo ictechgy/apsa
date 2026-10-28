@@ -31,6 +31,7 @@ ANDROID_CHECKS = (
     "app-signature",
     "app-cert",
     "dex-scan",
+    "dex-bytecode-scope",
     "dex-weak-crypto",
     "dex-webview",
     "dex-dynamic-code",
@@ -50,6 +51,7 @@ IOS_CHECKS = (
     "ipa-get-task-allow",
     "ipa-binary-hardening",
     "bin-scan",
+    "bin-scan-scope",
     "bin-secrets",
     "bin-embedded-keys",
     "bin-weak-crypto",
@@ -141,18 +143,38 @@ def analyze(target: Path) -> dict:
     for check in sorted(set(checks) | set(grouped)):
         records = grouped[check]
         states = {r.status for r in records}
-        state = "partial" if "error" in states else "not-run" if not states or "na" in states else "checked"
+        issues = [r for r in records if r.status in {"fail", "warn", "info"}]
+        state = (
+            "partial"
+            if "error" in states or ("na" in states and len(states) > 1)
+            else "not-run"
+            if not states or states == {"na"}
+            else "checked"
+        )
         # The legacy engine treats an absent/unparseable profile as a pass.
         # Absence cannot establish the actual signing entitlements.
         if check == "ipa-get-task-allow" and states == {"pass"}:
             state = "not-run"
         if check.startswith("dex-") and not meta.get("dex_entries"):
-            state = "not-run"
+            state = "partial" if issues else "not-run"
         if check.startswith("bin-") and any(r.check_id == "bin-scan" and r.status == "na" for r in results):
-            state = "not-run"
-        if check in {"dex-scan", "native-scan-scope", "app-manifest-anomaly"} and not records:
+            state = "partial" if issues else "not-run"
+        if (
+            check
+            in {
+                "dex-scan",
+                "dex-bytecode-scope",
+                "bin-scan-scope",
+                "native-scan-scope",
+                "app-manifest-anomaly",
+            }
+            and not records
+        ):
             state = "not-applicable"
-        if check == "app-manifest-anomaly" and records:
+        if (
+            check in {"app-manifest-anomaly", "dex-bytecode-scope", "bin-scan-scope", "native-scan-scope"}
+            and records
+        ):
             state = "partial"
         if check in {"dex-scan", "native-scan-scope"} and "info" in states:
             state = "partial"
@@ -170,7 +192,6 @@ def analyze(target: Path) -> dict:
         if state == "partial":
             output["metadata"]["complete"] = False
             output["warnings"].append(f"Quaygate check incomplete: {rule_id(check)}")
-        issues = [r for r in records if r.status in {"fail", "warn", "info"}]
         if not issues:
             continue
         primary = max(issues, key=lambda r: severity_rank((r.severity or "INFO").lower()))
@@ -191,6 +212,7 @@ def analyze(target: Path) -> dict:
                 [
                     {
                         "path": path,
+                        "path_kind": "archive-member" if check.startswith("app-") else "engine-scope",
                         "component": check,
                         "basis": "quaygate-lint",
                         "details": [code_excerpt(r.detail) for r in issues[:20]],

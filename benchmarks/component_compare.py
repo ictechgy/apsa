@@ -271,7 +271,7 @@ def parse_apsa_osv(case: dict, findings: list, errors: list, states: list) -> di
     ):
         return _failed("APSA finding does not bind an advisory to the supplied coordinate")
     observation = _record_observation(case, findings, apsa=True)
-    if not complete:
+    if not complete and observation["state"] == "completed":
         observation.update(state="partial", detected=None)
     return observation | {"package_states": states, "errors": errors}
 

@@ -141,7 +141,11 @@ jobs:
           python-version: "3.12.13"
           enable-cache: false
       - name: Build the wheel under test
-        run: uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+        run: |
+          uv venv --python 3.12.13 "$RUNNER_TEMP/build-venv"
+          python -I -c 'import runpy; print(runpy.run_path("scripts/release.py")["BUILD_REQUIREMENTS"], end="")' > "$RUNNER_TEMP/build-requirements.txt"
+          uv pip install --python "$RUNNER_TEMP/build-venv/bin/python" --require-hashes -r "$RUNNER_TEMP/build-requirements.txt"
+          uv build --python "$RUNNER_TEMP/build-venv/bin/python" --no-build-isolation --wheel --out-dir "$RUNNER_TEMP/dist"
       - name: Install into the interpreter under test
         env:
           CASE: ${{ matrix.case }}
@@ -159,7 +163,8 @@ jobs:
             sudo apt-get install -y bubblewrap
           fi
           uv venv --python "$PY" "$RUNNER_TEMP/venv"
-          uv pip install --python "$RUNNER_TEMP/venv/bin/python" "$RUNNER_TEMP"/dist/apsa-*.whl
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" --require-hashes -r requirements-release.txt
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" --no-deps "$RUNNER_TEMP"/dist/apsa-*.whl
       - name: Audit a fresh synthetic source in auto and required modes
         env:
           CASE: ${{ matrix.case }}

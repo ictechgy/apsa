@@ -145,7 +145,7 @@ def test_hardcoded_secrets_are_masked_everywhere(store, project):
     secrets = by_rule(report, "SOURCE-HARDCODED-SECRET")
     assert len(secrets) == 1 and secrets[0]["severity"] == "high"
     evidence = secrets[0]["evidence"][0]
-    assert evidence["credential_type"] == "aws-access-key-id" and evidence["masked_value"].startswith("AKIA…")
+    assert evidence["credential_type"] == "aws-access-key-id" and evidence["masked_value"] == "[REDACTED]"
     assert "AKIAIOSFODNN7EXAMPLE" not in json.dumps(report)
     assert "AKIAIOSFODNN7EXAMPLE" not in json.dumps(sarif(report))
 

@@ -230,6 +230,14 @@ def parser() -> Parser:
         action="store_true",
         help="With --verification, pair relocated complete source inputs with identical canonical SHA256; binary/runtime scopes stay strict",
     )
+    followup = reports.add_parser(
+        "followup", help="Track one finding across two reports with comparison blockers and next steps"
+    )
+    followup.add_argument("before")
+    followup.add_argument("after")
+    followup.add_argument("--finding", required=True, help="Finding ID in the before report")
+    followup.add_argument("--portable-inputs", action="store_true")
+    followup.add_argument("--out", type=Path, help="Write the follow-up evidence as JSON")
     refresh = reports.add_parser("reassess")
     refresh.add_argument("id", nargs="?", default="latest")
     runtime = commands.add_parser(
@@ -496,8 +504,12 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
     if cmd == "jobs":
         if args.action == "list":
             return {"jobs": jobs.listing(store, args.limit)}, 0
-        result = jobs.cancel(store, args.id) if args.action == "cancel" else jobs.get(store, args.id)
-        return result, 3 if result["state"] in {"failed", "interrupted"} else 0
+        if args.action == "cancel":
+            # Successfully processing a cancellation request is distinct from
+            # observing whether the requested audit itself completed.
+            return jobs.cancel(store, args.id), 0
+        result = jobs.get(store, args.id)
+        return result, 3 if result["state"] in {"failed", "interrupted", "cancelled"} else 0
     if cmd == "scan":
         from .apks_selection import read_device_spec
         from .run_options import artifact_options, build_selection, transmission_policy
@@ -590,7 +602,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
     if cmd == "verify":
         from .verify import verify_claim
 
-        target = args.target.resolve()
+        target = args.target.expanduser().resolve()
         if args.report and args.rescan:
             raise UsageError("Choose --report or --rescan")
         if args.report:
@@ -599,7 +611,11 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 raise UsageError("Report target differs from the requested target")
         else:
             saved = store.target_reports(str(target), limit=1)
-            report = scan(store, target) if args.rescan or not saved else store.report(saved[0]["id"])
+            report = (
+                scan(store, target, expected_target=target)
+                if args.rescan or not saved
+                else store.report(saved[0]["id"])
+            )
         try:
             return verify_claim(
                 report, path=args.path, line=args.line, weakness=args.weakness, rule=args.rule
@@ -608,7 +624,8 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             raise UsageError(str(error)) from error
     if cmd == "demo":
         directory = args.out or store.home / "demo" / str(time.time_ns())
-        return scan(store, demo_target(directory)), 0
+        target = demo_target(directory).resolve()
+        return scan(store, target, expected_target=target), 0
     if cmd == "rules":
         values = [r for r in rules() if not args.id or r["id"] == args.id]
         return {"rules": values}, 0
@@ -710,6 +727,18 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 result["verification"] = compare_reports(
                     store.report(args.before), store.report(args.after), portable_inputs=args.portable_inputs
                 )
+            return result, 0
+        if args.action == "followup":
+            from .followup import assess_finding_followup
+
+            result = assess_finding_followup(
+                store.report(args.before),
+                store.report(args.after),
+                args.finding,
+                portable_inputs=args.portable_inputs,
+            )
+            if args.out is not None:
+                write_json(args.out, result)
             return result, 0
         if args.action == "reassess":
             return refresh_report(store, args.id), 0

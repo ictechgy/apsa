@@ -137,6 +137,8 @@ class IosXCTestDispatcher:
             or commands.resources is None
             or commands.resources.value["ios"].get(device) != {"deleted": False, "selector": "default"}
             or root.is_symlink()
+            or root.exists()
+            or root.resolve() == commands.root.resolve()
             or not root.resolve().is_relative_to(commands.root.resolve())
         ):
             raise ValueError("NEW XCTest dispatch ownership differs")
@@ -223,22 +225,28 @@ class IosXCTestDispatcher:
             "acquisition": "unsupported",
         }
         self.observations.append(self.latest)
-        self.commands.run(
-            self.base
-            + [
-                "test-without-building",
-                "-xctestrun",
-                str(invocation),
-                "-only-testing:CallbackTests/CallbackTests/testDispatchOwnedURL",
-                "-resultBundlePath",
-                str(self.root / f"dispatch-{number}.xcresult"),
-            ],
-            timeout=300,
-        )
-        if self.commands.last_status != 0:
-            raise ValueError("NEW XCTest dispatch completion unverified")
-        self.latest.update({"phase": "os-open-completed", "xctest_exit_success": True})
+        self._write_diagnostics()
+        try:
+            self.commands.run(
+                self.base
+                + [
+                    "test-without-building",
+                    "-xctestrun",
+                    str(invocation),
+                    "-only-testing:CallbackTests/CallbackTests/testDispatchOwnedURL",
+                    "-resultBundlePath",
+                    str(self.root / f"dispatch-{number}.xcresult"),
+                ],
+                timeout=300,
+            )
+            if self.commands.last_status != 0:
+                raise ValueError("NEW XCTest dispatch completion unverified")
+            self.latest.update({"phase": "os-open-completed", "xctest_exit_success": True})
+        finally:
+            self._write_diagnostics()
+        return self.latest.copy()
+
+    def _write_diagnostics(self) -> None:
         (self.root / "dispatch-diagnostics.json").write_text(
             json.dumps({"build": self.build_observation, "dispatches": self.observations}, indent=2) + "\n"
         )
-        return self.latest.copy()

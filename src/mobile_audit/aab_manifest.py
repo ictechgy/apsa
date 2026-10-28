@@ -83,6 +83,17 @@ def _bytes(fields: dict, number: int) -> bytes:
     return value
 
 
+def _integer_primitive(raw: bytes) -> bool:
+    """Recognize direct integer values whose source spelling may be an enum/flag."""
+    item = _fields(raw)
+    variants = [key for key in range(1, 8) if key in item]
+    if variants != [7]:
+        return False
+    primitive = _fields(_bytes(item, 7))
+    variants = [key for key in range(1, 15) if key in primitive]
+    return variants in ([6], [7])
+
+
 def _compiled(raw: bytes, resources: ResourceResolver | None = None) -> str | None:
     if resources is not None:
         return resources.resolve_item(raw)
@@ -109,8 +120,12 @@ def _compiled(raw: bytes, resources: ResourceResolver | None = None) -> str | No
                 if value not in {0, 1}:
                     raise ValueError("Noncanonical protobuf boolean")
                 return "true" if value else "false"
-            if value > 0xFFFFFFFF:
+            if primitive == 6 and 0xFFFFFFFF80000000 <= value <= 0xFFFFFFFFFFFFFFFF:
+                value -= 1 << 64
+            elif value > 0xFFFFFFFF:
                 return None
+            if primitive == 6 and value >= 1 << 31:
+                value -= 1 << 32
             return str(value)
     return None
 
@@ -152,11 +167,15 @@ def decode_manifest(raw: bytes, *, resources: ResourceResolver | None = None) ->
             if qualified in output.attrib:
                 raise ValueError("Duplicate AAB XML attribute")
             declared = _string(attrs, 3) if 3 in attrs else None
-            compiled = _compiled(_bytes(attrs, 6), resources) if 6 in attrs else None
+            compiled_raw = _bytes(attrs, 6) if 6 in attrs else None
+            compiled = _compiled(compiled_raw, resources) if compiled_raw is not None else None
             if (
                 declared is not None
                 and compiled is not None
                 and declared != compiled
+                # AAPT2 retains symbolic enum/flag or hexadecimal source spelling.
+                # The compiled integer remains authoritative, including for forged text.
+                and not (compiled_raw is not None and _integer_primitive(compiled_raw))
                 and not (resources is not None and declared.startswith("@"))
             ):
                 raise ValueError("Conflicting declared and compiled attribute")

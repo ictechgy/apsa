@@ -209,7 +209,13 @@ def _split(tokens: list[Token], separator: str = ",") -> list[list[Token]]:
     return groups
 
 
-def _bindings(tokens: list[Token], *, dart: bool = False, function_declarations: bool = True) -> set[str]:
+def _bindings(
+    tokens: list[Token],
+    *,
+    dart: bool = False,
+    function_declarations: bool = True,
+    work: list[int] | None = None,
+) -> set[str]:
     """Conservative local declarations/writes, independent of execution order.
 
     This is deliberately not a lexical scope proof. A declaration in a nested
@@ -217,6 +223,7 @@ def _bindings(tokens: list[Token], *, dart: bool = False, function_declarations:
     us select an unrelated function as a sanitizer.
     """
     result = set()
+    work = [0] if work is None else work
     pairs = _pairs(tokens)
     closing = {close: start for start, close in pairs.items()}
 
@@ -244,6 +251,9 @@ def _bindings(tokens: list[Token], *, dart: bool = False, function_declarations:
         if token.text in {"const", "let", "var", "final", "late"}:
             depth, initializer = 0, False
             for next_ in range(index + 1, len(tokens)):
+                work[0] += 1
+                if work[0] > MAX_OPERATIONS:
+                    raise ValueError("hybrid declaration binding operation budget reached")
                 part = tokens[next_]
                 if depth == 0 and part.text in {";", ")", "in", "of", "const", "let", "var", "final", "late"}:
                     break
@@ -257,6 +267,8 @@ def _bindings(tokens: list[Token], *, dart: bool = False, function_declarations:
                     depth += 1
                 elif part.text in {")", "]", "}"}:
                     depth -= 1
+                    if depth < 0:
+                        break
         elif token.text == "class" or (function_declarations and token.text == "function"):
             next_ = index + 1
             if next_ < len(tokens) and tokens[next_].text == "*":
@@ -330,7 +342,10 @@ def _functions(path: str, tokens: list[Token]) -> list[Function]:
     # Writes in a callback or another function may change a module binding.
     # Without a complete execution/scope model, treat every observed write and
     # closure parameter as a possible conflict for the entire source file.
-    module_bindings = _bindings(tokens, dart=path.endswith(".dart"), function_declarations=False)
+    binding_work = [0]
+    module_bindings = _bindings(
+        tokens, dart=path.endswith(".dart"), function_declarations=False, work=binding_work
+    )
     depths, depth = [], 0
     for token in tokens:
         depths.append(depth)
@@ -342,7 +357,7 @@ def _functions(path: str, tokens: list[Token]) -> list[Function]:
         if tokens[start].text != "(" or start == 0 or tokens[start - 1].kind != "identifier":
             continue
         name = tokens[start - 1].text
-        if name in {"if", "while", "for", "switch", "catch", "with"}:
+        if name in {"if", "while", "for", "switch", "catch", "with", "await"}:
             continue
         body = close + 1
         # A TypeScript return type can intervene before the block.
@@ -399,7 +414,7 @@ def _functions(path: str, tokens: list[Token]) -> list[Function]:
                 tokens[start - 1].line,
                 tokens[start - 1].offset,
                 direct,
-                parameter_bindings | _bindings(body_tokens, dart=path.endswith(".dart")),
+                parameter_bindings | _bindings(body_tokens, dart=path.endswith(".dart"), work=binding_work),
             )
         )
         consumed.update(range(start - 1, pairs[body] + 1))
@@ -468,6 +483,9 @@ class Flow:
         self.edges: set[tuple[str, int, str, str]] = set()
         self.truncated = False
         self.operations = 0
+        self.operation_limit = MAX_OPERATIONS
+        self.summaries_complete = False
+        self.uncertain_assignments = False
         self.active: list[tuple[str, int]] = []
         self.uncertain_calls = False
 
@@ -530,9 +548,9 @@ class Flow:
         pairs = _pairs(tokens)
         index = 0
         while index < len(tokens):
-            self.operations += 1
-            if self.operations > MAX_OPERATIONS:
+            if self.operations >= self.operation_limit:
                 raise ValueError("hybrid flow operation budget reached")
+            self.operations += 1
             token = tokens[index]
             if token.kind == "string":
                 if token.text.startswith("`") or PurePosixPath(function.path).suffix == ".dart":
@@ -586,8 +604,13 @@ class Flow:
                                         steps[-8:],
                                     )
                                 )
-                        if emit and any(args):
-                            self.run_function(callee, True, args)
+                        if emit and not self.summaries_complete:
+                            value.update(set().union(*args) if args else set())
+                            self.uncertain_calls = True
+                        if emit and (any(args) or not self.summaries_complete):
+                            observed = self.run_function(callee, True, args)
+                            if not self.summaries_complete:
+                                value.update(observed)
                     else:
                         # Unknown calls propagate input conservatively; they never sanitize it.
                         value.update(set().union(*args) if args else set())
@@ -643,7 +666,7 @@ class Flow:
             + [{"path": path, "line": line, "role": role} for path, line, role in origin.steps]
             + [{"path": function.path, "line": token.line, "role": "sink"}],
             "excerpt": code_excerpt(
-                re.sub(r"`[^`]*`", '"…"', self.texts[function.path].splitlines()[token.line - 1])
+                re.sub(r"`[^`]*`", '"…"', self.texts[function.path].split("\n")[token.line - 1])
             ),
         }
         self.findings[key] = finding(
@@ -696,11 +719,59 @@ class Flow:
             if current:
                 pieces.append(current)
             for statement in pieces:
-                assigned = next((i for i, t in enumerate(statement) if t.text == "="), None)
-                if assigned is not None and assigned > 0 and statement[assigned - 1].kind == "identifier":
+                assigned, depth = None, 0
+                for index, token in enumerate(statement):
+                    if token.text in {"(", "[", "{"}:
+                        depth += 1
+                    elif token.text in {")", "]", "}"}:
+                        depth -= 1
+                    elif token.text == "=" and depth == 0:
+                        assigned = index
+                        break
+                if assigned is not None and assigned > 0:
                     value = self.expression(function, statement[assigned + 1 :], env, emit)
-                    name = statement[assigned - 1].text
-                    env[name] = self.bound(env.get(name, set()) | value)
+                    left = statement[:assigned]
+                    while left and left[-1].text in {
+                        "+",
+                        "-",
+                        "*",
+                        "/",
+                        "%",
+                        "??",
+                        "&&",
+                        "||",
+                        "&",
+                        "|",
+                        "^",
+                        ">",
+                        "<",
+                    }:
+                        left = left[:-1]
+                    declaration = next(
+                        (
+                            index
+                            for index, token in enumerate(left)
+                            if token.text in {"const", "let", "var", "final", "late"}
+                        ),
+                        None,
+                    )
+                    name = None
+                    if declaration is not None and not function.path.endswith(".dart"):
+                        target = left[declaration + 1 :]
+                        if target and target[0].kind == "identifier":
+                            name = target[0].text
+                    elif (
+                        left
+                        and left[-1].kind == "identifier"
+                        and (len(left) < 2 or left[-2].text not in {".", "?."})
+                    ):
+                        name = left[-1].text
+                    if name is not None:
+                        env[name] = self.bound(env.get(name, set()) | value)
+                    else:
+                        self.uncertain_assignments = True
+                    if any(token.text == "return" for token in statement):
+                        returned.update(value)
                 else:
                     value = self.expression(function, statement, env, emit)
                     if any(t.text == "return" for t in statement):
@@ -775,23 +846,36 @@ def analyze_hybrid(
     if observations_truncated:
         warnings.append("Hybrid input observation budget reached; additional framework content is unknown")
     flow = Flow(functions, imports, texts)
+    # Reserve emission work within the unchanged total operation cap. Summary
+    # exhaustion cannot consume all work before direct sinks are inspected.
+    flow.operation_limit = max(1, MAX_OPERATIONS // 2)
     try:
         for _ in range(MAX_ROUNDS):
             updated = {f.identity: flow.run_function(f, False) for f in functions}
             if updated == flow.summaries:
+                flow.summaries_complete = not flow.truncated
                 break
             flow.summaries = updated
         else:
             warnings.append("Hybrid callable summary iteration budget reached")
+    except ValueError as error:
+        warnings.append(f"Hybrid callable summaries incomplete: {error}")
+    summary_operations = flow.operations
+    flow.operation_limit = MAX_OPERATIONS
+    try:
         for function in functions:
             flow.run_function(function, True)
     except ValueError as error:
-        warnings.append(f"Hybrid modeled flow incomplete: {error}")
+        warnings.append(f"Hybrid modeled emission incomplete: {error}")
     if flow.truncated:
         warnings.append("Hybrid finding/origin/call-depth budget reached")
     if flow.uncertain_calls:
         warnings.append(
             "Hybrid callable identity unresolved or shadowed; uncertain calls retain argument taint"
+        )
+    if flow.uncertain_assignments:
+        warnings.append(
+            "Hybrid member or destructuring assignment target unresolved; bare local bindings are not assumed"
         )
     for record in files:
         if record["analysis_state"] == "analyzed":
@@ -830,6 +914,13 @@ def analyze_hybrid(
             "frameworks": frameworks,
             "input_observations_truncated": observations_truncated,
             "bytes": total,
+            "operations": {
+                "summary": summary_operations,
+                "emission": flow.operations - summary_operations,
+                "total": flow.operations,
+                "max_total": MAX_OPERATIONS,
+                "summaries_complete": flow.summaries_complete,
+            },
             "call_edges": [
                 {"path": path, "line": line, "callee_path": callee_path, "callee": name}
                 for path, line, callee_path, name in sorted(flow.edges)

@@ -854,7 +854,9 @@ def test_ios_journal_io_failure_cleans_only_create_returned_uuid_with_bounded_co
         )
     device_calls = [(argv, timeout) for argv, timeout in calls if "simctl" in argv and "create" not in argv]
     if failure == "malformed-create":
-        assert device_calls == [] and commands.pre_cleanup_failure is None
+        assert device_calls == []
+        assert commands.pre_cleanup_failure is not None
+        assert commands.pre_cleanup_failure["constructor_cleanup"]["state"] == "unconfirmed"
     else:
         assert len(device_calls) == 2
         assert all(argv[-1] == device and timeout == 15 for argv, timeout in device_calls)

@@ -7,7 +7,10 @@ import hashlib
 import json
 import os
 import platform
+import selectors
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,13 +99,117 @@ def inputs(root: Path, languages: list[str]) -> list[tuple[str, Path, str]]:
     return result
 
 
+MAX_COMPILER_OUTPUT_BYTES = 1024 * 1024
+
+
+def _wait_unreaped(process: subprocess.Popen, deadline: float) -> bool:
+    """Observe only this owned child's exit without releasing its PID custody."""
+    while True:
+        waitid = getattr(os, "waitid", None)
+        if waitid is not None:
+            event = waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            exited = event is not None
+        else:
+            # Darwin has no os.waitid; status() does not reap the owned child.
+            import psutil
+
+            try:
+                exited = psutil.Process(process.pid).status() == psutil.STATUS_ZOMBIE
+            except psutil.NoSuchProcess:
+                raise ChildProcessError("Owned child custody unavailable") from None
+        if exited:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.01, remaining))
+
+
 def run(argv: list[str]) -> dict:
-    completed = subprocess.run(argv, capture_output=True, text=True, timeout=180, check=False)
+    """Preserve bounded compiler evidence even on timeout or invalid UTF-8."""
+    streams = {"stdout": bytearray(), "stderr": bytearray()}
+    timed_out = truncated = custody_lost = False
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    except OSError as error:
+        return {
+            "argv": argv,
+            "exit_code": None,
+            "timed_out": False,
+            "output_truncated": False,
+            "output_decode_error": False,
+            "spawn_error_type": type(error).__name__,
+            "stdout": "",
+            "stderr": "",
+        }
+    assert process.stdout is not None and process.stderr is not None
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    deadline = time.monotonic() + 180
+    exited_observed = False
+    group_cleanup = "unconfirmed"
+    try:
+        while selector.get_map():
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            for key, _ in selector.select(0.05):
+                chunk = os.read(key.fd, 65536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                remaining = MAX_COMPILER_OUTPUT_BYTES - len(streams[key.data])
+                streams[key.data].extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    truncated = True
+                    break
+            if truncated:
+                break
+        if not timed_out and not truncated:
+            exited_observed = _wait_unreaped(process, deadline)
+            timed_out = not exited_observed
+    except ChildProcessError:
+        custody_lost = True
+    finally:
+        if not custody_lost:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+                group_cleanup = "signal-sent"
+            except ProcessLookupError:
+                group_cleanup = "absent"
+            except PermissionError:
+                # Observed exit is distinct from confirmed group cleanup.
+                # Never tolerate a denied signal to a live or hung child.
+                if not exited_observed:
+                    raise
+        process.wait()
+        selector.close()
+        process.stdout.close()
+        process.stderr.close()
+    decode_error = False
+    decoded = {}
+    for name, raw in streams.items():
+        try:
+            decoded[name] = raw.decode("utf-8")
+        except UnicodeError:
+            decode_error = True
+            decoded[name] = raw.decode("utf-8", errors="replace")
     return {
         "argv": argv,
-        "exit_code": completed.returncode,
-        "stdout": completed.stdout,
-        "stderr": completed.stderr,
+        "exit_code": None if timed_out or custody_lost else process.returncode,
+        "timed_out": timed_out,
+        "output_truncated": truncated,
+        "output_decode_error": decode_error,
+        "child_custody_lost": custody_lost,
+        "process_group_cleanup": group_cleanup,
+        **decoded,
     }
 
 
@@ -177,7 +284,14 @@ def main() -> None:
                     **run([*results[-1]["argv"][:-1], str(source)]),
                 }
             )
-    passed = all(row["exit_code"] == 0 for row in list(tools.values()) + results + lookup_results)
+    passed = all(
+        row["exit_code"] == 0
+        and not any(
+            row.get(flag)
+            for flag in ("timed_out", "output_truncated", "output_decode_error", "child_custody_lost")
+        )
+        for row in list(tools.values()) + results + lookup_results
+    )
     report = {
         "input_revision": REVISION,
         "sdk": str(args.sdk),

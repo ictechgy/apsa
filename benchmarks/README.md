@@ -1,5 +1,10 @@
 # Curated static regression benchmark
 
+For the latest public-app execution measurements and controlled MobSF comparison,
+see [Measured improvements](../docs/MEASURED_IMPROVEMENTS.md). Those observations
+are separate from this curated regression corpus and do not establish production
+accuracy.
+
 This directory contains a small, handcrafted corpus with independent labels in
 `corpus.json` and reviewable source files in `cases/`. Each record names its
 vulnerable, fixed, or irrelevant variant, rationale, expected rule IDs, and

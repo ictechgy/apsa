@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apsa"
-version = "1.6.2"
+version = "1.6.3"
 description = "APSA (앱사): evidence-first security audits for Android and iOS"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,16 +20,18 @@ dependencies = [
     "psutil==7.2.2",
     "tree-sitter==0.25.2",
     "tree-sitter-java==0.23.5",
+    "tree-sitter-javascript==0.25.0",
     "tree-sitter-kotlin==1.1.0",
     "tree-sitter-objc==3.0.2",
     "tree-sitter-swift==0.7.4",
     "tree-sitter-json==0.24.8",
+    "tree-sitter-typescript==0.23.2",
     "cvss>=3.6,<4",
     "loguru>=0.7,<1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=1", "ruff>=0.12", "pyright>=1.1.400"]
+dev = ["pytest>=8", "pytest-asyncio>=1", "ruff>=0.12", "pyright>=1.1.400", "pyyaml>=6"]
 
 [project.scripts]
 apsa = "apsa.cli:main"

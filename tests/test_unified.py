@@ -29,7 +29,10 @@ def test_android_both_engines_share_input_report(store, apk):
     assert report["inventory"]["fingerprint"] == file_digest(apk)
     assert report["inventory"]["quaygate"]["complete"] is True
     assert "QG-APP-SIGNATURE" in {f["rule_id"] for f in report["findings"]}
-    assert "QG-APP-SIGNATURE" in {f["ruleId"] for f in sarif(report)["runs"][0]["results"]}
+    results = sarif(report)["runs"][0]["results"]
+    signature = next(f for f in results if f["properties"]["apsaRuleId"] == "QG-APP-SIGNATURE")
+    assert signature["ruleId"] == "QG-APP-SIGNATURE/candidate"
+    assert signature["properties"]["status"] == "candidate"
     assert assistant_context(report)["engines"] == report["inventory"]["engines"]
     again = refresh_report(store, report["id"])
     assert again["parent_report"] == report["id"]

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import stat
 import tarfile
 import time
@@ -101,7 +102,12 @@ class Android:
             raise ValueError("Audited Android package is not installed")
         paths = self.shell(["pm", "path", self.package]).decode().splitlines()
         base = next((p.removeprefix("package:") for p in paths if p.endswith("/base.apk")), "")
-        app = {"package": self.package}
+        split_count = sum(
+            1
+            for path in paths
+            if path.startswith("package:") and path.endswith(".apk") and not path.endswith("/base.apk")
+        )
+        app = {"package": self.package, "installed_split_count": split_count}
         for key, pattern in [("version_code", r"versionCode=(\d+)"), ("version", r"versionName=([^\s]+)")]:
             match = re.search(pattern, installed)
             app[key] = match[1] if match else ""
@@ -109,7 +115,7 @@ class Android:
             try:
                 hash_output = self.shell(["sha256sum", base]).decode().split()
                 if hash_output and re.fullmatch(r"[a-f0-9]{64}", hash_output[0]):
-                    app["apk_sha256"] = hash_output[0]
+                    app["base_apk_sha256" if split_count else "apk_sha256"] = hash_output[0]
             except ValueError:
                 pass
         return {
@@ -163,6 +169,7 @@ class Android:
         self.shell(["input", "text", text.replace(" ", "%s")])
 
     def screenshot(self, path: Path):
+        self.require_foreground()
         data = command(self.prefix + ["exec-out", "screencap", "-p"], max_bytes=MAX_FILE)
         if not data.startswith(b"\x89PNG"):
             raise ValueError("Screenshot was not a PNG")
@@ -170,7 +177,8 @@ class Android:
 
     def storage(self) -> list[tuple[str, bytes]]:
         raw = command(
-            self.prefix + ["exec-out", shlex.join(["run-as", self.package, "tar", "-cf", "-", "."])]
+            self.prefix + ["exec-out", shlex.join(["run-as", self.package, "tar", "-cf", "-", "."])],
+            max_bytes=MAX_CAPTURE,
         )
         output = []
         total = 0
@@ -205,7 +213,16 @@ class Android:
         pid = self.shell(["pidof", "-s", self.package]).decode().strip()
         if not pid.isdigit():
             raise ValueError("App is not running; cannot scope logs to its process")
-        return self.shell(["logcat", "-d", "--pid", pid, "-t", "3000"], max_bytes=MAX_FILE)
+        raw = self.shell(["logcat", "-d", "--pid", pid, "-t", "3000"], max_bytes=MAX_FILE)
+        self.log_capture = {
+            "state": "inconclusive",
+            "scope": "bounded-single-pid-tail",
+            "pid": pid,
+            "line_limit": 3000,
+            "byte_limit": MAX_FILE,
+            "reason": "A single-process tail cannot establish absence across process restarts, secondary processes or omitted log-buffer history.",
+        }
+        return raw
 
 
 class IOS:
@@ -408,6 +425,8 @@ def snapshot(adapter, markers: dict[str, str], *, checkpoint: Callable[[], None]
                             }
                         )
             result["surfaces"][surface] = {"state": "captured", "files": len(entries)}
+            if surface == "logs" and isinstance(getattr(adapter, "log_capture", None), dict):
+                result["surfaces"][surface].update(adapter.log_capture)
         except (ValueError, OSError, tarfile.TarError) as error:
             result["surfaces"][surface] = {
                 "state": "not-run",
@@ -425,6 +444,11 @@ def validate_scenario(value: dict) -> dict:
         raise ValueError("Scenario platform must be android or ios")
     if type(value.get("schema_version", 1)) is not int or value.get("schema_version", 1) not in {1, 2}:
         raise ValueError("Scenario schema_version must be 1 or 2")
+    device = value.get("device")
+    if device is not None and (
+        not isinstance(device, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", device)
+    ):
+        raise ValueError("Scenario device must be null or a bounded serial/UDID string")
     validate_build(value.get("build", {}))
     package = value.get("package")
     if not isinstance(package, str) or not PACKAGE.fullmatch(package):
@@ -602,10 +626,18 @@ def evaluate_assertions(scenario: dict, snapshots: dict) -> list[dict]:
             return [
                 m
                 for m in snap.get("matches", [])
-                if m["marker_label"] == assertion["marker"] and m["surface"] == surface
+                if m["marker_label"] == assertion["marker"]
+                and m["surface"] == surface
+                and m.get("origin") != "operator-supplied"
+                and snap.get("surfaces", {}).get(surface, {}).get("acquisition") != "unverified"
             ]
 
-        if any(s.get("surfaces", {}).get(surface, {}).get("state") != "captured" for s in [baseline, after]):
+        if assertion.get("expect", "absent") == "absent" and hits(baseline) and hits(after):
+            # A captured positive survives incomplete scope; missing bytes cannot erase it.
+            state = "failed"
+        elif any(
+            s.get("surfaces", {}).get(surface, {}).get("state") != "captured" for s in [baseline, after]
+        ):
             state = (
                 "inconclusive"
                 if any(
@@ -632,6 +664,50 @@ def evaluate_assertions(scenario: dict, snapshots: dict) -> list[dict]:
             }
         )
     return results
+
+
+def deeplink_delivery_evidence(
+    scenario: dict,
+    snapshots: dict,
+    workflow_results: list,
+    assertions: list,
+    transcript: list,
+    *,
+    acquired: bool = False,
+) -> list[dict]:
+    """Bind a changed target marker to one dispatch bracketed by its snapshots."""
+    labels = {
+        step["label"]: index for index, step in enumerate(scenario["steps"]) if step["action"] == "snapshot"
+    }
+    candidates = [value["transition"] for value in workflow_results if value["state"] == "passed"]
+    candidates += [
+        value["assertion"]
+        for value in assertions
+        if value["state"] == "passed" and value["assertion"].get("purpose") == "delivery"
+    ]
+    evidence = []
+    for candidate in candidates:
+        before, after = candidate["baseline"], candidate["snapshot"]
+        if before not in labels or after not in labels:
+            continue
+        mutations = [
+            step
+            for step in transcript
+            if labels[before] < step["step"] < labels[after]
+            and step["action"] in {"launch", "open_url", "tap", "input_text"}
+        ]
+        if (
+            len(mutations) != 1
+            or mutations[0]["action"] != "open_url"
+            or mutations[0]["state"] != "completed"
+        ):
+            continue
+        if acquired and snapshots.get(after, {}).get("acquisition", {}).get("delivery") != "target-observed":
+            continue
+        entry = {"step": mutations[0]["step"], "baseline": before, "snapshot": after}
+        if entry not in evidence:
+            evidence.append(entry)
+    return evidence
 
 
 @contextmanager
@@ -770,369 +846,422 @@ def _run(
     run_id = uid("runtime")
     directory = store.home / "artifacts" / run_id
     directory.mkdir(parents=True, mode=0o700)
-    snapshots = {}
-    transcript = []
-    checkpoint()
-    environment = adapter.environment()
-    if acquisition_adapter is not None and environment.get("platform") != scenario["platform"]:
-        raise ValueError("Acquisition adapter environment platform differs from scenario")
-    observed_app = environment.get("app", {})
-    if observed_app.get("package") and observed_app["package"] != scenario["package"]:
-        raise ValueError("Installed app identity differs from the scenario package")
-    expected_build = scenario.get("build", {})
-    if not isinstance(expected_build, dict):
-        raise ValueError("Scenario build must be an object")
-    for key, expected in expected_build.items():
-        if key not in {
-            "version",
-            "version_code",
-            "apk_sha256",
-            "executable_sha256",
-            "info_plist_sha256",
-            "runtime_model_sha256",
-        } or not isinstance(expected, str):
-            raise ValueError("Build expectations must be string version or hash fields")
-        if observed_app.get(key) != expected:
-            raise ValueError(f"Installed app does not match scenario build expectation: {key}")
-    build_verification = "observed-installed-build"
-    if previous["inventory"]["input_kind"] == "apk":
-        if observed_app.get("apk_sha256"):
-            if observed_app["apk_sha256"] != previous["inventory"]["fingerprint"]:
-                raise ValueError("Installed APK differs from the audited APK; scan the installed build first")
-            build_verification = "audited-apk-match"
-        else:
-            build_verification = "audited-apk-match-unavailable"
-    elif previous["inventory"]["input_kind"] == "ipa":
-        expected_apps = previous["inventory"].get("binary", {}).get("apps", [])
-        hashes = {a.get("executable_sha256") for a in expected_apps if a.get("executable_sha256")}
-        actual_hash = observed_app.get("executable_sha256")
-        if hashes and actual_hash:
-            if actual_hash not in hashes:
-                raise ValueError("Installed iOS executable differs from the audited IPA")
-            build_verification = "audited-ipa-executable-match"
-            matching = [a for a in expected_apps if a.get("executable_sha256") == actual_hash]
-            info_hashes = {a["info_plist_sha256"] for a in matching if a.get("info_plist_sha256")}
-            if info_hashes and observed_app.get("info_plist_sha256"):
-                if observed_app["info_plist_sha256"] not in info_hashes:
-                    raise ValueError("Installed iOS Info.plist differs from the audited IPA")
-                build_verification = "audited-ipa-executable-and-config-match"
-        else:
-            build_verification = "audited-ipa-match-unavailable"
-    binding = build_binding(scenario["platform"], scenario["package"], observed_app)
-    checkpoint()
-    recorder = (
-        AcquisitionRecorder(acquisition_adapter, binding, scenario["markers"])
-        if acquisition_adapter
-        else None
-    )
-    if recorder:
-        # A model-only binding is promoted only by a valid synthetic session and
-        # revoked in place if its acquisition becomes inconclusive.
-        binding = recorder.binding
-    states = workflow_states(scenario)
-    if recorder and recorder.metadata()["mode"] == "synthetic":
-        build_verification = "synthetic-app-model-build"
-    for index, step in enumerate(scenario["steps"]):
-        percent = 10 + 80 * index // len(scenario["steps"])
+    try:
+        snapshots = {}
+        transcript = []
         checkpoint()
-        action = step["action"]
-        details = {}
-        try:
-            if action == "snapshot":
-                if scenario.get("workflow"):
-                    current = adapter.environment()
-                    current_app = current.get("app", {})
-                    if (
-                        (acquisition_adapter is not None and current.get("platform") != scenario["platform"])
-                        or current_app.get("package") != scenario["package"]
-                        or build_binding(
-                            scenario["platform"],
-                            scenario["package"],
-                            current_app,
-                            allow_synthetic_model=bool(
-                                recorder
-                                and recorder.metadata()["state"] == "bound"
-                                and recorder.metadata()["mode"] == "synthetic"
-                            ),
-                        )["identity"]
-                        != binding["identity"]
-                    ):
-                        raise ValueError("App/build changed or app identity unavailable before snapshot")
-                transition = next(
-                    (
-                        t["kind"]
-                        for t in scenario.get("workflow", {}).get("transitions", [])
-                        if t["snapshot"] == step["label"]
-                    ),
-                    None,
-                )
-                checkpoint()
-                snapshots[step["label"]] = (
-                    recorder.capture(step["label"], states.get(step["label"]), transition)
-                    if recorder
-                    else snapshot(adapter, scenario["markers"], checkpoint=checkpoint)
-                )
-                snapshots[step["label"]]["binding"] = binding
-                snapshots[step["label"]]["declared_state"] = states.get(step["label"])
-                if screenshots:
-                    path = directory / f"{step['label']}.png"
-                    checkpoint()
-                    adapter.screenshot(path)
-                    snapshots[step["label"]]["screenshot"] = str(path)
-            elif action == "launch":
-                adapter.launch()
-            elif action == "open_url":
-                outcome = adapter.open_url(step["url"])
-                if isinstance(outcome, dict):
-                    details = outcome
-            elif action == "tap":
-                adapter.tap(int(step["x"]), int(step["y"]))
-            elif action == "input_text":
-                adapter.input_text(str(step["text"]))
-            elif action == "wait":
-                seconds = float(step.get("seconds", 0))
-                if progress:
-                    deadline = time.monotonic() + seconds
-                    while (remaining := deadline - time.monotonic()) > 0:
-                        checkpoint()
-                        time.sleep(min(0.1, remaining))
-                else:
-                    time.sleep(seconds)
+        environment = adapter.environment()
+        if acquisition_adapter is not None and environment.get("platform") != scenario["platform"]:
+            raise ValueError("Acquisition adapter environment platform differs from scenario")
+        observed_app = environment.get("app", {})
+        if observed_app.get("package") and observed_app["package"] != scenario["package"]:
+            raise ValueError("Installed app identity differs from the scenario package")
+        expected_build = scenario.get("build", {})
+        if not isinstance(expected_build, dict):
+            raise ValueError("Scenario build must be an object")
+        for key, expected in expected_build.items():
+            if key not in {
+                "version",
+                "version_code",
+                "apk_sha256",
+                "executable_sha256",
+                "info_plist_sha256",
+                "runtime_model_sha256",
+            } or not isinstance(expected, str):
+                raise ValueError("Build expectations must be string version or hash fields")
+            if observed_app.get(key) != expected:
+                raise ValueError(f"Installed app does not match scenario build expectation: {key}")
+        build_verification = "observed-installed-build"
+        if previous["inventory"]["input_kind"] == "apk":
+            if observed_app.get("apk_sha256"):
+                if observed_app["apk_sha256"] != previous["inventory"]["fingerprint"]:
+                    raise ValueError(
+                        "Installed APK differs from the audited APK; scan the installed build first"
+                    )
+                build_verification = "audited-apk-match"
+            elif observed_app.get("installed_split_count") and observed_app.get("base_apk_sha256"):
+                if observed_app["base_apk_sha256"] != previous["inventory"]["fingerprint"]:
+                    raise ValueError("Installed base APK differs from the audited APK")
+                build_verification = "audited-apk-match-partial"
+            else:
+                build_verification = "audited-apk-match-unavailable"
+        elif previous["inventory"]["input_kind"] == "ipa":
+            expected_apps = previous["inventory"].get("binary", {}).get("apps", [])
+            hashes = {a.get("executable_sha256") for a in expected_apps if a.get("executable_sha256")}
+            actual_hash = observed_app.get("executable_sha256")
+            if hashes and actual_hash:
+                if actual_hash not in hashes:
+                    raise ValueError("Installed iOS executable differs from the audited IPA")
+                build_verification = "audited-ipa-executable-match"
+                matching = [a for a in expected_apps if a.get("executable_sha256") == actual_hash]
+                info_hashes = {a["info_plist_sha256"] for a in matching if a.get("info_plist_sha256")}
+                if info_hashes and observed_app.get("info_plist_sha256"):
+                    if observed_app["info_plist_sha256"] not in info_hashes:
+                        raise ValueError("Installed iOS Info.plist differs from the audited IPA")
+                    build_verification = "audited-ipa-executable-and-config-match"
+            else:
+                build_verification = "audited-ipa-match-unavailable"
+        binding = build_binding(scenario["platform"], scenario["package"], observed_app)
+        checkpoint()
+        recorder = (
+            AcquisitionRecorder(acquisition_adapter, binding, scenario["markers"])
+            if acquisition_adapter
+            else None
+        )
+        if recorder:
+            # A model-only binding is promoted only by a valid synthetic session and
+            # revoked in place if its acquisition becomes inconclusive.
+            binding = recorder.binding
+        states = workflow_states(scenario)
+        if recorder and recorder.metadata()["mode"] == "synthetic":
+            build_verification = "synthetic-app-model-build"
+        for index, step in enumerate(scenario["steps"]):
+            percent = 10 + 80 * index // len(scenario["steps"])
             checkpoint()
-            transcript.append({"step": index, "action": action, "state": "completed", **details})
-        except (ValueError, OSError, KeyError) as error:
-            transcript.append(
-                {
-                    "step": index,
-                    "action": action,
-                    "state": "error",
-                    "error": redact(replace_markers(str(error), scenario["markers"])),
-                }
-            )
-            break
-    checkpoint()
-    if recorder:
-        binding = recorder.binding
-    if binding.get("state") != "bound" and binding.get("build", {}).get("runtime_model_sha256"):
-        build_verification = "synthetic-model-binding-unavailable"
-    attach_operator_captures(scenario, snapshots, binding)
-    workflow_results = evaluate_workflow(scenario, snapshots, binding)
-    results = evaluate_assertions(scenario, snapshots)
-    for result in results:
-        if not scenario.get("workflow"):
-            continue
-        assertion = result["assertion"]
-        applicable = [
-            w
-            for w in workflow_results
-            if w["transition"]["baseline"] == assertion["baseline"]
-            and w["transition"]["snapshot"] == assertion["snapshot"]
-        ]
-        if (
-            not applicable
-            or any(w["state"] != "passed" for w in applicable)
-            or any(s["state"] == "error" for s in transcript)
-        ):
-            result["observed_state"] = result["state"]
-            result["state"] = "inconclusive"
-            result["note"] = (
-                "Required authenticated transition evidence is incomplete; the observation cannot establish exposure or removal."
-            )
-    scenario_hash = digest(canonical_json(scenario).encode())
-    identity_data = {key: scenario[key] for key in ("platform", "package", "steps", "assertions")}
-    acquisition_scope = (
-        {key: recorder.metadata()[key] for key in ("mode", "adapter_id")}
-        if recorder
-        else {"mode": "legacy-device", "adapter_id": "legacy-device"}
-    )
-    if recorder:
-        identity_data["acquisition_scope"] = acquisition_scope
-    if scenario.get("workflow"):
-        identity_data["workflow"] = scenario["workflow"]
-    legacy_identity = digest(replace_markers(canonical_json(identity_data), scenario["markers"]).encode())
-    identity_data["assertions"] = [assertion_identity(a) for a in scenario["assertions"]]
-    scenario_identity = digest(replace_markers(canonical_json(identity_data), scenario["markers"]).encode())
-    scope_data = {key: scenario[key] for key in ("platform", "package", "steps")}
-    if recorder:
-        scope_data["acquisition_scope"] = acquisition_scope
-    if scenario.get("workflow"):
-        scope_data["workflow"] = scenario["workflow"]
-    scenario_scope = digest(replace_markers(canonical_json(scope_data), scenario["markers"]).encode())
-    legacy_scopes = {}
-    for prior_run in report.get("runtime", []):
-        prior_assertions = [r["assertion"] for r in prior_run.get("assertions", [])]
-        candidate = {**scope_data, "assertions": prior_assertions}
-        legacy_scopes[prior_run["id"]] = digest(
-            replace_markers(canonical_json(candidate), scenario["markers"]).encode()
-        )
-    if (
-        results
-        and all(
-            r["state"] == "passed"
-            for r in results
-            if r["assertion"].get("purpose") in {"transition", "delivery"}
-        )
-        and not any(s["state"] == "error" for s in transcript)
-    ):
-        report["findings"] = [
-            f
-            for f in report["findings"]
-            if not (
-                f["status"] == "runtime-confirmed"
-                and any(
-                    (
-                        f.get("scenario_hash") == scenario_hash
-                        or e.get("scenario_scope") == scenario_scope
-                        or (
-                            e.get("scenario_identity") is not None
-                            and e["scenario_identity"]
-                            in {scenario_identity, legacy_identity, legacy_scopes.get(e.get("runtime_id"))}
-                        )
+            action = step["action"]
+            details = {}
+            try:
+                if action == "snapshot":
+                    if scenario.get("workflow"):
+                        current = adapter.environment()
+                        current_app = current.get("app", {})
+                        if (
+                            (
+                                acquisition_adapter is not None
+                                and current.get("platform") != scenario["platform"]
+                            )
+                            or current_app.get("package") != scenario["package"]
+                            or build_binding(
+                                scenario["platform"],
+                                scenario["package"],
+                                current_app,
+                                allow_synthetic_model=bool(
+                                    recorder
+                                    and recorder.metadata()["state"] == "bound"
+                                    and recorder.metadata()["mode"] == "synthetic"
+                                ),
+                            )["identity"]
+                            != binding["identity"]
+                        ):
+                            raise ValueError("App/build changed or app identity unavailable before snapshot")
+                    transition = next(
+                        (
+                            t["kind"]
+                            for t in scenario.get("workflow", {}).get("transitions", [])
+                            if t["snapshot"] == step["label"]
+                        ),
+                        None,
                     )
-                    and (
-                        (not scenario.get("workflow") and e.get("app_binding", {}).get("state") != "bound")
-                        or (
-                            binding["state"] == "bound"
-                            and e.get("app_binding", {}).get("identity") == binding["identity"]
-                        )
+                    checkpoint()
+                    snapshots[step["label"]] = (
+                        recorder.capture(step["label"], states.get(step["label"]), transition)
+                        if recorder
+                        else snapshot(adapter, scenario["markers"], checkpoint=checkpoint)
                     )
-                    and any(
-                        r["state"] in {"passed", "failed"}
-                        and assertion_identity(r["assertion"]) == assertion_identity(e.get("assertion", {}))
-                        for r in results
-                    )
-                    and {
-                        key: e.get("acquisition", {}).get(key, "legacy-device")
-                        for key in ("mode", "adapter_id")
+                    snapshots[step["label"]]["binding"] = binding
+                    snapshots[step["label"]]["declared_state"] = states.get(step["label"])
+                    if screenshots:
+                        path = directory / f"{step['label']}.png"
+                        checkpoint()
+                        adapter.screenshot(path)
+                        snapshots[step["label"]]["screenshot"] = str(path)
+                elif action == "launch":
+                    adapter.launch()
+                elif action == "open_url":
+                    outcome = adapter.open_url(step["url"])
+                    if isinstance(outcome, dict):
+                        details = outcome
+                elif action == "tap":
+                    adapter.tap(int(step["x"]), int(step["y"]))
+                elif action == "input_text":
+                    adapter.input_text(str(step["text"]))
+                elif action == "wait":
+                    seconds = float(step.get("seconds", 0))
+                    if progress:
+                        deadline = time.monotonic() + seconds
+                        while (remaining := deadline - time.monotonic()) > 0:
+                            checkpoint()
+                            time.sleep(min(0.1, remaining))
+                    else:
+                        time.sleep(seconds)
+                checkpoint()
+                transcript.append({"step": index, "action": action, "state": "completed", **details})
+            except (ValueError, OSError, KeyError) as error:
+                transcript.append(
+                    {
+                        "step": index,
+                        "action": action,
+                        "state": "error",
+                        "error": redact(replace_markers(str(error), scenario["markers"])),
                     }
-                    == acquisition_scope
-                    for e in f["evidence"]
                 )
-            )
-        ]
-    for result in results:
-        if result["state"] == "failed" and result["assertion"].get("expect", "absent") == "absent":
-            surface = result["assertion"].get("surface", "storage")
-            report["findings"].append(
-                finding(
-                    "RUNTIME-AUTH-EXPOSURE"
-                    if result["assertion"].get("purpose") == "authentication"
-                    else ("RUNTIME-RESIDUAL" if surface != "ui" else "RUNTIME-UI-EXPOSURE"),
-                    "Test canary remains observable at the after-transition snapshot",
-                    "high" if surface in {"ui", "logs"} else "medium",
-                    "runtime-confirmed",
-                    scrub_runtime(
-                        [
-                            {
-                                "runtime_id": run_id,
-                                "scenario_identity": scenario_identity,
-                                "scenario_scope": scenario_scope,
-                                "app_binding": binding,
-                                "acquisition": recorder.metadata()
-                                if recorder
-                                else {"state": "legacy-device-capture"},
-                                "assertion": result["assertion"],
-                                "matches": result["matches"],
-                            }
-                        ],
-                        scenario["markers"],
-                    ),
-                    "Review the logout/account-switch transition, storage deletion policy and token invalidation. Rerun this scenario after fixing it.",
-                    "MASVS-AUTH"
-                    if result["assertion"].get("purpose") == "authentication"
-                    else ("MASVS-PLATFORM" if surface == "ui" else "MASVS-STORAGE"),
-                    scenario_hash=scenario_hash,
+                break
+        checkpoint()
+        if recorder:
+            binding = recorder.binding
+        if binding.get("state") != "bound" and binding.get("build", {}).get("runtime_model_sha256"):
+            build_verification = "synthetic-model-binding-unavailable"
+        attach_operator_captures(scenario, snapshots, binding)
+        workflow_results = evaluate_workflow(scenario, snapshots, binding)
+        results = evaluate_assertions(scenario, snapshots)
+        for result in results:
+            if not scenario.get("workflow"):
+                continue
+            assertion = result["assertion"]
+            applicable = [
+                w
+                for w in workflow_results
+                if w["transition"]["baseline"] == assertion["baseline"]
+                and w["transition"]["snapshot"] == assertion["snapshot"]
+            ]
+            if (
+                not applicable
+                or any(w["state"] != "passed" for w in applicable)
+                or any(s["state"] == "error" for s in transcript)
+            ):
+                result["observed_state"] = result["state"]
+                result["state"] = "inconclusive"
+                result["note"] = (
+                    "Required authenticated transition evidence is incomplete; the observation cannot establish exposure or removal."
                 )
-            )
-    # Retain inconclusive historical evidence, but replace repeat observations
-    # of the same finding instead of publishing duplicate stable IDs.
-    report["findings"] = list({f["id"]: f for f in report["findings"]}.values())
-    record = {
-        "id": run_id,
-        "scenario_hash": scenario_hash,
-        "scenario_identity": scenario_identity,
-        "scenario_scope": scenario_scope,
-        "app_binding": binding,
-        "workflow": workflow_results,
-        "acquisition": recorder.metadata()
-        if recorder
-        else {
-            "state": "unsupported",
-            "live_device_verified": False,
-            "note": "No trusted network/instrumentation adapter was injected; operator JSON remains unverified.",
-        },
-        "backend_invalidation": evaluate_backend_invalidation(scenario, snapshots, binding),
-        "schema_version": scenario.get("schema_version", 1),
-        "static_links": [
-            {
-                **link,
-                "observations": [
-                    {"assertion": result["assertion"], "state": result["state"], "matches": result["matches"]}
-                    for result in results
-                    if result["assertion"].get("finding_id") == link["finding_id"]
-                    and result["assertion"].get("rule_id") == link["rule_id"]
-                ],
-            }
-            for link in static_runtime_links(previous)
-        ],
-        "precondition": redact(replace_markers(scenario["precondition"], scenario["markers"])),
-        "build_verification": build_verification,
-        "delivery_verification": "marker-observed"
-        if (workflow_results and all(w["state"] == "passed" for w in workflow_results))
-        or any(r["state"] == "passed" and r["assertion"].get("purpose") == "delivery" for r in results)
-        else "requested-not-confirmed",
-        "environment": environment,
-        "snapshots": snapshots,
-        "steps": transcript,
-        "assertions": results,
-        "transition_verification": (
-            "marker-observed"
-            if workflow_results and all(w["state"] == "passed" for w in workflow_results)
-            else "inconclusive"
+        scenario_hash = digest(canonical_json(scenario).encode())
+        identity_data = {key: scenario[key] for key in ("platform", "package", "steps", "assertions")}
+        acquisition_scope = (
+            {key: recorder.metadata()[key] for key in ("mode", "adapter_id")}
+            if recorder
+            else {"mode": "legacy-device", "adapter_id": "legacy-device"}
         )
-        if scenario.get("workflow")
-        else (
-            "marker-observed"
-            if any(r["state"] == "passed" and r["assertion"].get("purpose") == "transition" for r in results)
-            else "scenario-declared"
-        ),
-        "partial": any(s["state"] == "error" for s in transcript)
-        or not results
-        or any(w["state"] != "passed" for w in workflow_results)
-        or any(
-            r["state"] in {"not-run", "inconclusive"}
-            or (r["state"] == "failed" and r["assertion"].get("expect", "absent") == "present")
-            for r in results
-        ),
-    }
-    report["runtime"].append(scrub_runtime(record, scenario["markers"]))
-    report["environment"] = scrub_runtime(environment, scenario["markers"])
-    intel_findings, report["environment_advisories"] = correlate(
-        report["inventory"], store.correlation_intelligence(report["inventory"]["dependencies"]), environment
-    )
-    report["findings"] = [f for f in report["findings"] if f.get("origin") != "intelligence"] + intel_findings
-    report["findings"].sort(key=lambda f: -severity_rank(f["severity"]))
-    report["intel_snapshot"] = source_health(store)
-    residual_results = [r for r in results if r["assertion"].get("purpose", "residual") == "residual"]
-    for entry in report["coverage"]:
-        if entry["rule_id"] == "RUNTIME-RESIDUAL":
-            entry["state"] = "checked" if residual_results and not record["partial"] else "not-run"
-            entry["note"] = (
-                "Residual-purpose canary assertions only; delivery, transition and authentication assertions do not establish residual coverage. See per-surface capture states."
+        if recorder:
+            identity_data["acquisition_scope"] = acquisition_scope
+        if scenario.get("workflow"):
+            identity_data["workflow"] = scenario["workflow"]
+        legacy_identity = digest(replace_markers(canonical_json(identity_data), scenario["markers"]).encode())
+        identity_data["assertions"] = [assertion_identity(a) for a in scenario["assertions"]]
+        scenario_identity = digest(
+            replace_markers(canonical_json(identity_data), scenario["markers"]).encode()
+        )
+        scope_data = {key: scenario[key] for key in ("platform", "package", "steps")}
+        if recorder:
+            scope_data["acquisition_scope"] = acquisition_scope
+        if scenario.get("workflow"):
+            scope_data["workflow"] = scenario["workflow"]
+        scenario_scope = digest(replace_markers(canonical_json(scope_data), scenario["markers"]).encode())
+        legacy_scopes = {}
+        for prior_run in report.get("runtime", []):
+            prior_assertions = [r["assertion"] for r in prior_run.get("assertions", [])]
+            candidate = {**scope_data, "assertions": prior_assertions}
+            legacy_scopes[prior_run["id"]] = digest(
+                replace_markers(canonical_json(candidate), scenario["markers"]).encode()
             )
-        if entry["rule_id"] == "RUNTIME-DEEPLINK" and any(
-            s["action"] == "open_url" and s["state"] == "completed" for s in transcript
+        if (
+            results
+            and all(
+                r["state"] == "passed"
+                for r in results
+                if r["assertion"].get("purpose") in {"transition", "delivery"}
+            )
+            and not any(s["state"] == "error" for s in transcript)
         ):
-            entry["state"] = "observed"
-            entry["note"] = (
-                "URL dispatch requested. Confirm OS prompts and target-app delivery; authentication/origin behavior requires explicit UI assertions or manual review."
-            )
-            if record["delivery_verification"] == "marker-observed":
-                entry["state"] = "checked"
-                entry["note"] = (
-                    "Target-app marker changed after dispatch. Review separate authentication assertions; delivery alone is not authentication proof."
+            report["findings"] = [
+                f
+                for f in report["findings"]
+                if not (
+                    f["status"] == "runtime-confirmed"
+                    and any(
+                        (
+                            f.get("scenario_hash") == scenario_hash
+                            or e.get("scenario_scope") == scenario_scope
+                            or (
+                                e.get("scenario_identity") is not None
+                                and e["scenario_identity"]
+                                in {
+                                    scenario_identity,
+                                    legacy_identity,
+                                    legacy_scopes.get(e.get("runtime_id")),
+                                }
+                            )
+                        )
+                        and (
+                            (
+                                not scenario.get("workflow")
+                                and e.get("app_binding", {}).get("state") != "bound"
+                            )
+                            or (
+                                binding["state"] == "bound"
+                                and e.get("app_binding", {}).get("identity") == binding["identity"]
+                            )
+                        )
+                        and any(
+                            r["state"] in {"passed", "failed"}
+                            and assertion_identity(r["assertion"])
+                            == assertion_identity(e.get("assertion", {}))
+                            for r in results
+                        )
+                        and {
+                            key: e.get("acquisition", {}).get(key, "legacy-device")
+                            for key in ("mode", "adapter_id")
+                        }
+                        == acquisition_scope
+                        for e in f["evidence"]
+                    )
                 )
-    report["summary"] = summarize(report)
-    if progress:
-        progress("evidence-report", 95)
-    return store.save_report(report)
+            ]
+        for result in results:
+            if result["state"] == "failed" and result["assertion"].get("expect", "absent") == "absent":
+                surface = result["assertion"].get("surface", "storage")
+                report["findings"].append(
+                    finding(
+                        "RUNTIME-AUTH-EXPOSURE"
+                        if result["assertion"].get("purpose") == "authentication"
+                        else ("RUNTIME-RESIDUAL" if surface != "ui" else "RUNTIME-UI-EXPOSURE"),
+                        "Test canary remains observable at the after-transition snapshot",
+                        "high" if surface in {"ui", "logs"} else "medium",
+                        "runtime-confirmed",
+                        scrub_runtime(
+                            [
+                                {
+                                    "runtime_id": run_id,
+                                    "scenario_identity": scenario_identity,
+                                    "scenario_scope": scenario_scope,
+                                    "app_binding": binding,
+                                    "acquisition": recorder.metadata()
+                                    if recorder
+                                    else {"state": "legacy-device-capture"},
+                                    "assertion": result["assertion"],
+                                    "matches": result["matches"],
+                                }
+                            ],
+                            scenario["markers"],
+                        ),
+                        "Review the logout/account-switch transition, storage deletion policy and token invalidation. Rerun this scenario after fixing it.",
+                        "MASVS-AUTH"
+                        if result["assertion"].get("purpose") == "authentication"
+                        else ("MASVS-PLATFORM" if surface == "ui" else "MASVS-STORAGE"),
+                        scenario_hash=scenario_hash,
+                    )
+                )
+        # Retain inconclusive historical evidence, but replace repeat observations
+        # of the same finding instead of publishing duplicate stable IDs.
+        report["findings"] = list({f["id"]: f for f in report["findings"]}.values())
+        delivery_evidence = deeplink_delivery_evidence(
+            scenario, snapshots, workflow_results, results, transcript, acquired=recorder is not None
+        )
+        delivery_requested = any(s["action"] == "open_url" and s["state"] == "completed" for s in transcript)
+        record = {
+            "id": run_id,
+            "scenario_hash": scenario_hash,
+            "scenario_identity": scenario_identity,
+            "scenario_scope": scenario_scope,
+            "app_binding": binding,
+            "workflow": workflow_results,
+            "acquisition": recorder.metadata()
+            if recorder
+            else {
+                "state": "unsupported",
+                "live_device_verified": False,
+                "note": "No trusted network/instrumentation adapter was injected; operator JSON remains unverified.",
+            },
+            "backend_invalidation": evaluate_backend_invalidation(scenario, snapshots, binding),
+            "schema_version": scenario.get("schema_version", 1),
+            "static_links": [
+                {
+                    **link,
+                    "observations": [
+                        {
+                            "assertion": result["assertion"],
+                            "state": result["state"],
+                            "matches": result["matches"],
+                        }
+                        for result in results
+                        if result["assertion"].get("finding_id") == link["finding_id"]
+                        and result["assertion"].get("rule_id") == link["rule_id"]
+                    ],
+                }
+                for link in static_runtime_links(previous)
+            ],
+            "precondition": redact(replace_markers(scenario["precondition"], scenario["markers"])),
+            "build_verification": build_verification,
+            "delivery_verification": (
+                "marker-observed"
+                if delivery_evidence
+                else "requested-not-confirmed"
+                if delivery_requested
+                else "not-requested"
+            ),
+            "delivery_evidence": delivery_evidence,
+            "environment": environment,
+            "snapshots": snapshots,
+            "steps": transcript,
+            "assertions": results,
+            "transition_verification": (
+                "marker-observed"
+                if workflow_results and all(w["state"] == "passed" for w in workflow_results)
+                else "inconclusive"
+            )
+            if scenario.get("workflow")
+            else (
+                "marker-observed"
+                if any(
+                    r["state"] == "passed" and r["assertion"].get("purpose") == "transition" for r in results
+                )
+                else "scenario-declared"
+            ),
+            "partial": any(s["state"] == "error" for s in transcript)
+            or not results
+            or any(w["state"] != "passed" for w in workflow_results)
+            or any(
+                r["state"] in {"not-run", "inconclusive"}
+                or (r["state"] == "failed" and r["assertion"].get("expect", "absent") == "present")
+                for r in results
+            ),
+        }
+        report["runtime"].append(scrub_runtime(record, scenario["markers"]))
+        report["environment"] = scrub_runtime(environment, scenario["markers"])
+        intel_findings, report["environment_advisories"] = correlate(
+            report["inventory"],
+            store.correlation_intelligence(report["inventory"]["dependencies"]),
+            environment,
+        )
+        report["findings"] = [
+            f for f in report["findings"] if f.get("origin") != "intelligence"
+        ] + intel_findings
+        report["findings"].sort(key=lambda f: -severity_rank(f["severity"]))
+        report["intel_snapshot"] = source_health(store)
+        residual_results = [r for r in results if r["assertion"].get("purpose", "residual") == "residual"]
+        for entry in report["coverage"]:
+            if entry["rule_id"] == "RUNTIME-RESIDUAL":
+                entry["state"] = (
+                    "checked"
+                    if residual_results and not record["partial"]
+                    else "partial"
+                    if residual_results
+                    else "not-run"
+                )
+                entry["note"] = (
+                    "Residual-purpose canary assertions only; delivery, transition and authentication assertions do not establish residual coverage. See per-surface capture states."
+                )
+            if entry["rule_id"] == "RUNTIME-DEEPLINK" and delivery_requested:
+                entry["state"] = "observed"
+                entry["note"] = (
+                    "URL dispatch requested. Confirm OS prompts and target-app delivery; authentication/origin behavior requires explicit UI assertions or manual review."
+                )
+                if record["delivery_verification"] == "marker-observed":
+                    entry["state"] = "checked"
+                    entry["note"] = (
+                        "Target-app marker changed after dispatch. Review separate authentication assertions; delivery alone is not authentication proof."
+                    )
+        report["summary"] = summarize(report)
+        if progress:
+            progress("evidence-report", 95)
+        return store.save_report(report)
+    except BaseException:
+        # Only this fresh run directory is owned here. Keep referenced artifacts
+        # if a worker committed its report before deferred cancellation arrived.
+        committed = False
+        if hasattr(store, "db"):
+            committed = (
+                store.db.execute("SELECT 1 FROM reports WHERE id=?", (report["id"],)).fetchone() is not None
+            )
+        if not committed:
+            shutil.rmtree(directory, ignore_errors=True)
+        raise

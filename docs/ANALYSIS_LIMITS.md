@@ -70,6 +70,32 @@ per source, 16 MiB total, 100,000 tokens per file, 2,000 functions, 300,000 flow
 operations and six summary rounds. A skipped or truncated file cannot establish
 absence of a candidate.
 
+## Credential text admission
+
+Known-format credential matching has a separate bounded text channel. Source
+and packaged text can be inspected without admitting credential-only
+`.properties`, `.strings`, `.pem` or `.key` files to general source flow. Eligible
+APK/IPA text resources, including admitted JavaScript bundles in those packages,
+use `PACKAGED-CREDENTIAL-TEXT`. Credential candidates from other admitted
+representations (source folders, source ZIPs, AABs and `.app` folders) use
+`SOURCE-HARDCODED-SECRET`. Neither route makes compiled source rules analyzed.
+Only strict UTF-8 (optional BOM) and BOM-marked UTF-16 plaintext are decoded.
+Binary plists, other binary content, unsupported encodings, skipped files and
+exhausted limits remain unknown or partial. A filename alone proves no content.
+
+The channel shares existing per-file, total-size and no-symlink input limits.
+Reports contain aggregate coverage metadata and masked candidates, never the
+collected plaintext channel. Credential values use a fixed `[REDACTED]` marker;
+no prefix, exact length or value fingerprint is emitted by this matcher. Counts describe observed worker input; parent
+staging omissions set channel `partial` and `staging_incomplete` without inventing
+a missing-file count. Unsupported text is summarized in one counted warning
+rather than one warning per binary member. Matching recognizes existing credential formats;
+it does not estimate arbitrary secret entropy or contact credential services.
+Google API key candidates require restriction and usage review and do not prove
+a working secret. Certificates alone are not private keys. The absence of a
+candidate establishes no protection against reverse engineering or backend
+authorization failures. See [AI-assisted attack defense](AI_ASSISTED_ATTACK_DEFENSE.md).
+
 ## Xcode test scheduling
 
 Complete directory components such as `MyAppTests` or `MyAppUITests` join `Tests`
@@ -81,3 +107,22 @@ names such as `MyAppTestsSupport`, `LatestResults` and lowercase `protests` also
 keep production priority. This is a scheduling heuristic, not build-graph proof. It does not
 delete or mutate original test inputs, and budgets determine which files can be
 staged.
+
+## Bundled legacy binary screening
+
+The bundled Quaygate APK/IPA reader freezes at most 256 MiB of compressed input
+in a private temporary file before checking the ZIP directory. Directory metadata
+is limited to 8 MiB and 20,000 entries, and its physical records are counted
+before `ZipFile` allocates entry objects. ZIP64, concatenated prefixes and
+unsupported directory layouts are rejected. Local alignment padding and APK
+signing blocks before the directory remain supported. A mutable original path
+cannot replace the preflighted snapshot during ZIP parsing. This adds bounded
+temporary-file I/O; an over-limit file is unsupported, not a clean result.
+
+Bare `AES` is a default-cipher candidate only when a bounded entry-prefix proof
+binds that literal to the first argument of `Cipher.getInstance`. It is not
+inferred from a key label elsewhere in the method. Control-flow ambiguity and
+exception handlers limit that proof. Other legacy algorithm indicators retain
+their documented method/string heuristics; none proves whole-program dataflow,
+reachability or a vulnerability. The unified parser's OS isolation and the direct
+legacy CLI's in-process limits remain distinct as described in the threat model.

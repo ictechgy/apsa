@@ -9,6 +9,7 @@ compact(엔트리 하위 0x08 마커 — key=u16@0, type=flags>>8, data=u32@4) �
 "true"/"false"로 기록해 @bool 참조 해석에 쓴다.
 비정상 청크는 건너뛰고 부분 결과라도 반환한다(보수적 파싱).
 """
+
 from __future__ import annotations
 
 import struct
@@ -26,7 +27,7 @@ FLAG_OFFSET16 = 0x02
 # ResTable_entry.flags
 FLAG_COMPLEX = 0x0001  # 맵/스타일 — 값 없음
 FLAG_COMPACT = 0x0008  # aapt2 compact — key=u16@0, type=flags>>8, data=u32@4
-TYPE_STRING = 0x03     # Res_value 타입(전역 문자열 풀 참조)
+TYPE_STRING = 0x03  # Res_value 타입(전역 문자열 풀 참조)
 TYPE_INT_BOOLEAN = 0x12
 PACKAGE_HEADER_MIN = 8 + 4 + 256 + 16  # 청크 헤더 + id + 이름(char16[128]) + 4×u32
 
@@ -41,6 +42,8 @@ def _u16(data, off):
 
 def parse_resource_names(data: bytes) -> dict:
     names = {}
+    if len(data) > 64 * 1024 * 1024:
+        raise ValueError("ARSC byte budget exceeded")
     if len(data) < 12:
         return names
     ftype, _fheader, fsize = struct.unpack_from("<HHI", data, 0)
@@ -71,10 +74,16 @@ def _parse_package(data, pos, csize, global_strings, out):
     header_size = _u16(data, pos + 2)
     if header_size < PACKAGE_HEADER_MIN or header_size > csize:
         header_size = PACKAGE_HEADER_MIN
-    type_off = _u32(data, pos + 12 + 256)         # typeStrings(헤더8+id4+이름256 뒤)
-    key_off = _u32(data, pos + 12 + 256 + 8)      # keyStrings(사이 lastPublicType 건너뜀)
-    if not type_off or not key_off or pos + type_off >= pos + csize:
+    type_off = _u32(data, pos + 12 + 256)  # typeStrings(헤더8+id4+이름256 뒤)
+    key_off = _u32(data, pos + 12 + 256 + 8)  # keyStrings(사이 lastPublicType 건너뜀)
+    if not type_off or not key_off or pos + type_off >= pos + csize or pos + key_off >= pos + csize:
         return
+    for pool_offset in (type_off, key_off):
+        if pool_offset < header_size or pos + pool_offset + 8 > pos + csize:
+            raise ValueError("ARSC pool offset outside package")
+        pool_size = _u32(data, pos + pool_offset + 4)
+        if pos + pool_offset + pool_size > pos + csize:
+            raise ValueError("ARSC string pool outside package")
     try:
         type_strings = _read_string_pool(data, pos + type_off)
         key_strings = _read_string_pool(data, pos + key_off)
@@ -89,13 +98,11 @@ def _parse_package(data, pos, csize, global_strings, out):
         if ccsz <= 0 or inner + ccsz > end:
             break
         if ctype == RES_TABLE_TYPE_TYPE:
-            _parse_type_chunk(data, inner, ccsz, pkg_id, type_strings, key_strings,
-                              global_strings, out)
+            _parse_type_chunk(data, inner, ccsz, pkg_id, type_strings, key_strings, global_strings, out)
         inner += ccsz
 
 
-def _parse_type_chunk(data, pos, csize, pkg_id, type_strings, key_strings,
-                      global_strings, out):
+def _parse_type_chunk(data, pos, csize, pkg_id, type_strings, key_strings, global_strings, out):
     if csize < 24:
         return
     type_id = data[pos + 8]
@@ -110,43 +117,58 @@ def _parse_type_chunk(data, pos, csize, pkg_id, type_strings, key_strings,
     if not 0 < type_id <= len(type_strings):
         return
     type_name = type_strings[type_id - 1]
+    end = pos + csize
+    width = 2 if flags & FLAG_OFFSET16 and not flags & FLAG_SPARSE else 4
+    if (
+        entry_count > 200000
+        or offsets_pos < pos + 24
+        or offsets_pos + width * entry_count > end
+        or entries_base < offsets_pos + width * entry_count
+        or entries_base > end
+    ):
+        raise ValueError("ARSC offset table outside chunk/budget")
 
     def record(entry_idx, entry_off):
-        if entry_off < 0 or entry_off + 4 > len(data):
+        if entry_off < 0 or entry_off < entries_base or entry_off + 4 > end:
             return
         entry_flags = _u16(data, entry_off + 2)
         vtype = vdata = None
         value_off = None
         if entry_flags & FLAG_COMPLEX:
-            if entry_off + 8 > len(data):
+            if entry_off + 8 > end:
                 return
             key = _u32(data, entry_off + 4)
         elif entry_flags & FLAG_COMPACT:
             key = _u16(data, entry_off)
             vtype = entry_flags >> 8
-            if entry_off + 8 > len(data):
+            if entry_off + 8 > end:
                 return
             vdata = _u32(data, entry_off + 4)
         else:
-            if entry_off + 8 > len(data):
+            if entry_off + 8 > end:
                 return
             key = _u32(data, entry_off + 4)
             value_off = entry_off + max(_u16(data, entry_off), 8)
         if key >= len(key_strings):
             return
-        if value_off is not None and value_off + 8 <= len(data):
+        if value_off is not None and value_off + 8 <= end:
             _vsize, _res0, vtype, vdata = struct.unpack_from("<HBBI", data, value_off)
         value_text = None
         if vtype == TYPE_STRING and vdata is not None and vdata < len(global_strings):
             value_text = global_strings[vdata] or None
         elif vtype == TYPE_INT_BOOLEAN and vdata is not None:
             value_text = "true" if vdata else "false"
-        out[(pkg_id << 24) | (type_id << 16) | entry_idx] = (type_name, key_strings[key], value_text)
+        resource_id = (pkg_id << 24) | (type_id << 16) | entry_idx
+        value = (type_name, key_strings[key], value_text)
+        if resource_id in out and out[resource_id] != value:
+            # Conflicting configurations cannot establish a single boolean/path.
+            value = (type_name, key_strings[key], None)
+        out[resource_id] = value
 
     if flags & FLAG_SPARSE:
         for i in range(entry_count):
             o = offsets_pos + 4 * i
-            if o + 4 > len(data):
+            if o + 4 > end:
                 break
             idx, off16 = struct.unpack_from("<HH", data, o)
             # complex 엔트리는 offset 상위 비트(0x8000)로 마킹된다(SPARSE_COMPLEX_CODE)
@@ -154,7 +176,7 @@ def _parse_type_chunk(data, pos, csize, pkg_id, type_strings, key_strings,
     elif flags & FLAG_OFFSET16:
         for i in range(entry_count):
             o = offsets_pos + 2 * i
-            if o + 2 > len(data):
+            if o + 2 > end:
                 break
             (off16,) = struct.unpack_from("<H", data, o)
             if off16 == 0xFFFF:  # NO_ENTRY16 is a sentinel, not a scaled offset.
@@ -163,7 +185,7 @@ def _parse_type_chunk(data, pos, csize, pkg_id, type_strings, key_strings,
     else:
         for i in range(entry_count):
             o = offsets_pos + 4 * i
-            if o + 4 > len(data):
+            if o + 4 > end:
                 break
             off = _u32(data, o)
             if off == NO_ENTRY:

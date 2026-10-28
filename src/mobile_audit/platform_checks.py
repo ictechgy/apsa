@@ -1,7 +1,7 @@
-"""Source-tree platform checks: component exposure, backup, target SDK, privacy manifests, secrets.
+"""Source platform checks and bounded credential-format screening of packaged text.
 
-APK and IPA inputs keep the bundled lint engine's equivalents; these checks run
-for source trees and AAB manifests, where that engine does not.
+APK and IPA inputs retain the bundled lint engine's platform checks; only the
+credential-text pass below runs for those packages.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from xml.sax.handler import ContentHandler
 from defusedxml import sax as defused_sax
 
 from .core import finding, load_plist
+from .credential_text import CREDENTIAL_TEXT_SUFFIXES
 from .rules import strip_comments
 
 # Google Play: new apps and updates must target API 36 from 2026-08-31.
@@ -50,20 +51,7 @@ SECRETS = [
     ("anthropic-api-key", "high", r"\bsk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{80,200}\b"),
     ("google-api-key", "low", r"\bAIza[0-9A-Za-z_-]{35}\b"),
 ]
-SECRET_SUFFIXES = (
-    ".java",
-    ".kt",
-    ".kts",
-    ".swift",
-    ".m",
-    ".mm",
-    ".xml",
-    ".plist",
-    ".json",
-    ".properties",
-    ".gradle",
-    ".strings",
-)
+SECRET_SUFFIXES = tuple(sorted(CREDENTIAL_TEXT_SUFFIXES))
 MAX_SECRET_FINDINGS = 50
 RANDOM_REFERENCE = "https://developer.android.com/privacy-and-security/risks/weak-prng"
 # Identifier words that name security values; matched as whole camelCase/snake_case words.
@@ -147,10 +135,6 @@ BROAD_DIRECTORY = re.compile(
 
 def _line(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
-
-
-def _masked(value: str) -> str:
-    return f"{value[:4]}…({len(value)} characters)"
 
 
 def _exposed(component: dict, target_level: int | None) -> bool:
@@ -517,13 +501,25 @@ def _server_trust(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict
     ]
 
 
-def _secrets(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
+def _secrets(
+    sources: list[tuple[str, str]], *, packaged: bool = False, metadata: dict | None = None
+) -> tuple[list[dict], list[dict]]:
     findings: list[dict] = []
     truncated = False
     scanned = 0
+    rule = "PACKAGED-CREDENTIAL-TEXT" if packaged else "SOURCE-HARDCODED-SECRET"
     for path, text in sources:
         if not path.endswith(SECRET_SUFFIXES):
             continue
+        if (
+            path.endswith(".bundle")
+            and not packaged
+            and not (metadata and metadata.get("collection_enabled"))
+        ):
+            from .hybrid_analysis import hybrid_source_input
+
+            if hybrid_source_input(path, text.encode("utf-8"))[1] is None:
+                continue
         scanned += 1
         for kind, severity, pattern in SECRETS:
             for match in re.finditer(pattern, text):
@@ -532,7 +528,7 @@ def _secrets(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
                     break
                 findings.append(
                     finding(
-                        "SOURCE-HARDCODED-SECRET",
+                        rule,
                         f"Hard-coded credential ({kind})",
                         severity,
                         "candidate",
@@ -542,8 +538,9 @@ def _secrets(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
                                 "line": _line(text, match.start()),
                                 "offset": match.start(),
                                 "credential_type": kind,
-                                "masked_value": _masked(match[0]),
+                                "masked_value": "[REDACTED]",
                                 "basis": "credential format match; validity and scope are not checked",
+                                **({"scope": "packaged text member only"} if packaged else {}),
                             }
                         ],
                         "Remove the credential from the app, rotate it, and fetch scoped short-lived tokens "
@@ -552,12 +549,26 @@ def _secrets(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
                         [SECRET_REFERENCE],
                     )
                 )
+    unknown = bool(metadata and (metadata.get("partial") or not metadata.get("collection_enabled")))
+    # Direct API callers may supply text without an enumeration/decoding inventory.
+    unknown |= packaged and metadata is None
+    state = "partial" if truncated or unknown else "checked" if scanned else "not-run"
+    note = (
+        "Known credential formats in supported text suffixes only; encoded/generic secrets, binary resources, "
+        "credential validity, restrictions and runtime use are not established. Private-key headers are "
+        "candidates, not parsed-key validation. Google API keys may be public app identifiers; review API "
+        "and app restrictions."
+    )
+    if unknown:
+        note += " Credential-text input collection, decoding or enumeration is incomplete."
     return findings, [
         {
-            "rule_id": "SOURCE-HARDCODED-SECRET",
-            "state": "partial" if truncated else "checked" if scanned else "not-run",
-            "method": "source-pattern",
-            "note": "Known credential formats only; generic secrets and encoded values are not detected.",
+            "rule_id": rule,
+            "state": state,
+            "method": "packaged-credential-text-pattern" if packaged else "source-pattern",
+            "files_scanned": scanned,
+            "note": note,
+            **({"scope": metadata.get("scope", "supplied text only")} if metadata else {}),
         }
     ]
 
@@ -1124,6 +1135,7 @@ def _network_security_config(
             referenced.setdefault((_module_root(manifest), name), []).append(manifest)
     findings: list[dict] = []
     read, unreadable, compiled = 0, [], []
+    read_references: set[tuple[str, str]] = set()
     parsed_for: set[str] = set()
     matched: list[tuple[str, str, list[tuple[str, str]]]] = []
     for path, text in sources:
@@ -1167,6 +1179,7 @@ def _network_security_config(
             unreadable.append(path)
             continue
         read += 1
+        read_references.update(keys)
         # Without an explicit base-config value, targets below 28 still permit cleartext by default.
         target = android_levels(inventory).get("target")
         if handler.base_explicit or (isinstance(target, int) and target >= 28):
@@ -1221,9 +1234,9 @@ def _network_security_config(
     if placeholders:
         state = "partial"
         note = f"The networkSecurityConfig reference {placeholders[0]!r} is not a resolvable @xml resource."
-    elif unresolved and not referenced:
-        state = "not-run"
-        note = "The networkSecurityConfig reference is a compiled resource ID that was not resolved."
+    elif unresolved:
+        state = "partial" if referenced else "not-run"
+        note = f"{unresolved} networkSecurityConfig reference(s) are compiled resource IDs that were not resolved."
     elif not referenced:
         state, note = "checked", "No networkSecurityConfig is referenced; platform defaults apply."
     elif unreadable:
@@ -1232,6 +1245,12 @@ def _network_security_config(
     elif compiled and not read:
         state = "not-run"
         note = "The referenced configuration is a compiled or binary resource and is not decoded."
+    elif compiled:
+        state = "partial"
+        note = f"{len(compiled)} referenced network security configuration(s) are compiled or binary resources that were not decoded."
+    elif set(referenced) - read_references:
+        state = "partial"
+        note = f"{len(set(referenced) - read_references)} referenced network security configuration(s) are not among the parsed sources."
     elif not read:
         state = "partial"
         note = "The referenced network security configuration is not among the scanned sources."
@@ -1298,18 +1317,28 @@ def _app_links(inventory: dict) -> tuple[list[dict], list[dict]]:
     ]
 
 
-def platform_checks(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
+def platform_checks(
+    inventory: dict,
+    sources: list[tuple[str, str]],
+    *,
+    credential_text: list[tuple[str, str]] | None = None,
+) -> tuple[list[dict], list[dict]]:
     findings: list[dict] = []
     coverage: list[dict] = []
+    secrets = _secrets(
+        credential_text if credential_text is not None else sources,
+        packaged=inventory.get("input_kind") in {"apk", "ipa"},
+        metadata=inventory.get("credential_text"),
+    )
     if inventory.get("input_kind") in {"apk", "ipa"}:
-        # The bundled lint engine reports these for compiled packages.
-        return findings, coverage
+        # Other platform/source checks remain with the bundled compiled-package engine.
+        return secrets
     for part in (
         _android(inventory, sources),
         _privacy_manifest(inventory, sources),
         _ats_exceptions(inventory),
         _server_trust(sources),
-        _secrets(sources),
+        secrets,
         _insecure_random(inventory, sources),
         _local_auth(sources),
         _ios_webview_file_access(inventory, sources),

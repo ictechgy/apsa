@@ -592,6 +592,11 @@ def measurement_state(observations: list[dict], tool: str, category: str) -> str
     """A process/report return alone cannot establish complete category coverage."""
     if not MAPPING[category][tool]:
         return "unsupported"
+    return observation_state(observations)
+
+
+def observation_state(observations: list[dict]) -> str:
+    """Classify report execution independently of category support."""
     if any(
         observation.get("audit_incomplete") is True
         or observation.get("warnings")

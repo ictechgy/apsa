@@ -95,6 +95,10 @@ class Store:
           body TEXT, PRIMARY KEY(id,source,branch));
         CREATE TABLE IF NOT EXISTS intel_revisions(snapshot_hash TEXT PRIMARY KEY, id TEXT, source TEXT,
           branch TEXT, modified TEXT, observed TEXT, body TEXT);
+        CREATE TABLE IF NOT EXISTS intel_observations(sequence INTEGER PRIMARY KEY,
+          snapshot_hash TEXT NOT NULL, observed TEXT NOT NULL, kind TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS intel_revision_subject ON intel_revisions(id,source,branch);
+        CREATE INDEX IF NOT EXISTS intel_observation_snapshot ON intel_observations(snapshot_hash,sequence);
         CREATE INDEX IF NOT EXISTS intel_source ON intel(source);
         CREATE INDEX IF NOT EXISTS intel_branches_source ON intel_branches(source);
         """)
@@ -153,7 +157,30 @@ class Store:
                                 row["body"],
                             ),
                         )
-            self.db.execute(f"PRAGMA user_version={max(version, 2)}")
+            if version < 3:
+                # Payload snapshots remain immutable and deduplicated. A separate
+                # append-only sequence retains re-observation after A -> B -> A.
+                self.db.execute(
+                    "INSERT INTO intel_observations(snapshot_hash,observed,kind) "
+                    "SELECT snapshot_hash,observed,'legacy-first-observation' "
+                    "FROM intel_revisions ORDER BY observed,rowid"
+                )
+                for table in ("intel", "intel_branches"):
+                    for row in self.db.execute(f"SELECT * FROM {table}").fetchall():
+                        branch = row["branch"] if table == "intel_branches" else ""
+                        latest = self.db.execute(
+                            "SELECT r.snapshot_hash FROM intel_observations o JOIN intel_revisions r "
+                            "ON r.snapshot_hash=o.snapshot_hash WHERE r.id=? AND r.source=? AND r.branch=? "
+                            "ORDER BY o.sequence DESC LIMIT 1",
+                            (row["id"], row["source"], branch),
+                        ).fetchone()
+                        current_hash = digest(row["body"].encode())
+                        if latest is None or latest["snapshot_hash"] != current_hash:
+                            self.db.execute(
+                                "INSERT INTO intel_observations(snapshot_hash,observed,kind) VALUES(?,?,?)",
+                                (current_hash, now(), "cache-migration"),
+                            )
+            self.db.execute(f"PRAGMA user_version={max(version, 3)}")
             self.db.commit()
         except Exception:
             self.db.rollback()
@@ -163,6 +190,11 @@ class Store:
         self.db.close()
 
     def save_report(self, report: dict) -> dict:
+        identifier = report.get("id")
+        if not isinstance(identifier, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", identifier
+        ):
+            raise ValueError("Invalid report ID")
         body = canonical_json(report)
         # Freeze caller data once: the database and pretty export must describe
         # the same value, and the exact exported byte limit applies before writes.
@@ -324,7 +356,7 @@ class Store:
             clean = {
                 key: value
                 for key, value in record.items()
-                if key not in {"snapshot_hash", "branch_id", "observed_at"}
+                if key not in {"snapshot_hash", "branch_id", "observed_at", "observation_kind"}
             }
             body = canonical_json(clean)
             if len(body.encode()) > MAX_FILE:
@@ -376,6 +408,17 @@ class Store:
                         body,
                     ),
                 )
+                latest = self.db.execute(
+                    "SELECT r.snapshot_hash FROM intel_observations o JOIN intel_revisions r "
+                    "ON r.snapshot_hash=o.snapshot_hash WHERE r.id=? AND r.source=? AND r.branch=? "
+                    "ORDER BY o.sequence DESC LIMIT 1",
+                    (record["id"], record["source"], branch),
+                ).fetchone()
+                if latest is None or latest["snapshot_hash"] != digest(body.encode()):
+                    self.db.execute(
+                        "INSERT INTO intel_observations(snapshot_hash,observed,kind) VALUES(?,?,?)",
+                        (digest(body.encode()), now(), "content-change"),
+                    )
         return sorted(set(changed))
 
     def upsert_intel(self, records: list[dict]) -> list[str]:
@@ -404,7 +447,10 @@ class Store:
 
     def replace_vendor_documents(self, source: str, records: list[dict], urls: list[str]) -> list[str]:
         if source not in {"apple", "android"} or any(
-            record.get("source") != source or record.get("provenance", {}).get("document_url") not in urls
+            not isinstance(record, dict)
+            or record.get("source") != source
+            or not isinstance(record.get("provenance", {}), dict)
+            or record.get("provenance", {}).get("document_url") not in urls
             for record in records
         ):
             raise ValueError("Vendor replacement records require matching document provenance")
@@ -585,11 +631,14 @@ class Store:
             dict(
                 json.loads(row["body"]),
                 snapshot_hash=row["snapshot_hash"],
-                observed_at=row["observed"],
+                observed_at=row["observation_time"],
+                observation_kind=row["observation_kind"],
                 **({"branch_id": row["branch"]} if row["branch"] else {}),
             )
             for row in self.db.execute(
-                "SELECT * FROM intel_revisions WHERE id=? ORDER BY observed DESC,rowid DESC LIMIT ?",
+                "SELECT r.*,o.observed AS observation_time,o.kind AS observation_kind "
+                "FROM intel_observations o JOIN intel_revisions r ON r.snapshot_hash=o.snapshot_hash "
+                "WHERE r.id=? ORDER BY o.sequence DESC LIMIT ?",
                 (identifier, limit),
             )
         ]

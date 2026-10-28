@@ -14,12 +14,28 @@ This is a historical hash-only reference; this change does not read or reverify
 the holdout dataset. A development rerun must record its checkout SHA and the
 hash of the actual supplied truth, and must not claim a new blind measurement.
 
-The producer, `benchmarks.fpfn_eval`, emits `apsa-fpfn-results-v3`, binding
+The producer, `benchmarks.fpfn_eval`, emits `apsa-fpfn-results-v4`, binding
 `truth_sha256` to the exact truth bytes. The collector independently validates
 that binding, the exact pair IDs and commits, side archive URL/hash/size,
 provenance, label fields, outcomes, and recomputed totals. This workflow accepts
 unamended truth only. Producer schema changes require corresponding collector
-contract and synthetic fixture updates.
+contract and synthetic fixture updates. Historical v3 results remain readable.
+
+V4 attempts both sides independently and preserves identity and scope on failures.
+A failed side is `unscored`, never FN or TN; pair errors count in both applicable
+summary tables. `scored_pairs` counts eligible pairs with at least one scored
+side. A run with any failed pair saves results and exits nonzero. Returned partial
+reports still contribute observational findings; `report_returned` and
+`audit_incomplete` explicitly separate receiving a report from complete coverage.
+Neither a TN nor a collected artifact proves that a vulnerability was repaired.
+
+Each attempted CLI scan retains `execution.json`, `stdout.txt` and `stderr.txt`
+in its `scan` directory. Execution metadata includes argv, exit status, duration,
+timeout state, and each stream's full SHA-256 and byte count. Stream artifacts
+retain at most 1 MiB each with explicit truncation metadata. These diagnostics
+remain in the work directory; this report collector copies report JSON only.
+The v4 consumer validates execution metadata and rejects scored failure states,
+hidden side errors and incorrect scope/error totals.
 
 Reports have exactly the truth-derived path
 `<pair-id>/<vulnerable|fixed>/scan/report.json`. The collector never searches

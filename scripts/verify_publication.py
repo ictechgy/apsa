@@ -8,10 +8,11 @@ import json
 import os
 import re
 import time
+from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPOSITORY = "ictechgy/apsa"
 SERVER_NAME = "io.github.ictechgy/apsa"
@@ -83,26 +84,45 @@ def validate_artifacts(
     return {name: records[name] for name in sorted(expected)}
 
 
-def fetch(url: str, limit: int = 4 * 1024 * 1024) -> bytes:
+PUBLIC_HOSTS = {
+    "pypi.org",
+    "files.pythonhosted.org",
+    "api.github.com",
+    "github.com",
+    "registry.modelcontextprotocol.io",
+    "release-assets.githubusercontent.com",
+    "objects.githubusercontent.com",
+}
+
+
+def public_origin(url: str):
     parsed = urlsplit(url)
     if (
         parsed.scheme != "https"
-        or parsed.hostname
-        not in {
-            "pypi.org",
-            "files.pythonhosted.org",
-            "api.github.com",
-            "github.com",
-            "registry.modelcontextprotocol.io",
-        }
+        or parsed.hostname not in PUBLIC_HOSTS
         or parsed.username
         or parsed.password
+        or parsed.port not in {None, 443}
     ):
         raise ValueError("Unexpected public metadata/download origin")
+    return parsed
+
+
+class PublicRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = public_origin(newurl)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and target.hostname != urlsplit(req.full_url).hostname:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+def fetch(url: str, limit: int = 4 * 1024 * 1024) -> bytes:
+    parsed = public_origin(url)
     headers = {"User-Agent": "apsa-publication-verification"}
     if parsed.hostname == "api.github.com" and os.environ.get("GH_TOKEN"):
         headers["Authorization"] = "Bearer " + os.environ["GH_TOKEN"]
-    with urlopen(Request(url, headers=headers), timeout=45) as response:
+    with build_opener(PublicRedirect()).open(Request(url, headers=headers), timeout=45) as response:
         data = response.read(limit + 1)
     if len(data) > limit:
         raise ValueError("Public response exceeds verification budget")
@@ -139,7 +159,7 @@ def main() -> None:
                 observations[name] = json.loads(raw)
                 (args.out / (name + ".json")).write_bytes(raw)
                 break
-            except (HTTPError, URLError) as error:
+            except (HTTPError, URLError, OSError, HTTPException, json.JSONDecodeError) as error:
                 (args.out / f"{name}-attempt-{attempt}.json").write_text(
                     json.dumps(
                         {"error_type": type(error).__name__, "http_status": getattr(error, "code", None)}

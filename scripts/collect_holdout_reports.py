@@ -1,8 +1,8 @@
 """Retain only truth-derived CI reports; incomplete evaluation is always a failure.
 
 fpfn_eval stores archive hashes in results.json and reports at
-work/<truth pair ID>/<side>/scan/report.json. A caught pair error drops its side
-metadata, so both known side paths are also checked for partial evidence.
+work/<truth pair ID>/<side>/scan/report.json. Legacy v3 caught pair errors drop side
+metadata; v4 preserves independent side outcomes. Both known paths are checked for partial evidence.
 No source archives or other work-directory files are inspected.
 """
 
@@ -16,6 +16,10 @@ import re
 import stat
 from contextlib import contextmanager
 from pathlib import Path
+
+from mobile_audit.maswe import rule_state
+from mobile_audit.rules import rules as rule_catalog
+from mobile_audit.verify import COVERAGE_ALIASES
 
 SIDES = ("vulnerable", "fixed")
 MAX_PAIRS = 256
@@ -126,7 +130,7 @@ def truth_pairs(truth: dict) -> dict[str, dict]:
     return expected
 
 
-def totals(pairs: list[dict]) -> dict:
+def totals(pairs: list[dict], *, v4: bool = False) -> dict:
     scored = [
         pair for pair in pairs if (pair.get("expected_rules") or pair.get("weaknesses")) and "outcome" in pair
     ]
@@ -139,8 +143,101 @@ def totals(pairs: list[dict]) -> dict:
         "discriminating_tp": sum(pair["outcome"].get("discriminating_tp", False) for pair in scored),
         "errors": sum("error" in pair for pair in pairs),
         "unscored_sides": sum(pair["outcome"][side] == "unscored" for pair in scored for side in SIDES),
-        "scored_pairs": len(scored),
+        "scored_pairs": sum(
+            any(pair["outcome"][side] in {"tp", "fn", "fp", "tn"} for side in SIDES) for pair in scored
+        )
+        if v4
+        else len(scored),
     }
+
+
+def validate_execution(execution: object, *, successful: bool) -> None:
+    if not isinstance(execution, dict) or execution.get("schema") != "apsa-benchmark-scan-execution-v1":
+        raise ValueError("Missing or invalid scan execution metadata")
+    argv = execution.get("argv")
+    elapsed = execution.get("elapsed_seconds")
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or any(not isinstance(arg, str) for arg in argv)
+        or not isinstance(execution.get("cwd"), str)
+        or not isinstance(elapsed, (int, float))
+        or isinstance(elapsed, bool)
+        or not 0 <= elapsed <= 24 * 60 * 60
+        or type(execution.get("timed_out")) is not bool
+        or (execution.get("exit_code") is not None and type(execution["exit_code"]) is not int)
+    ):
+        raise ValueError("Invalid scan execution fields")
+    if successful and (execution["timed_out"] or execution.get("exit_code") not in {0, 3, 4}):
+        raise ValueError("Failed invocation cannot be a successful side")
+    if execution["timed_out"] and execution.get("exit_code") is not None:
+        raise ValueError("Timeout cannot claim a completed exit code")
+    for stream in ("stdout", "stderr"):
+        item = execution.get(stream)
+        if (
+            not isinstance(item, dict)
+            or item.get("path") != stream + ".txt"
+            or type(item.get("bytes")) is not int
+            or item["bytes"] < 0
+            or type(item.get("retained_bytes")) is not int
+            or not 0 <= item["retained_bytes"] <= min(item["bytes"], 1024 * 1024)
+            or type(item.get("truncated")) is not bool
+            or item["truncated"] != (item["retained_bytes"] < item["bytes"])
+            or not isinstance(item.get("sha256"), str)
+            or not DIGEST.fullmatch(item["sha256"])
+        ):
+            raise ValueError("Invalid scan stream evidence")
+
+
+def validate_archive(archive: object, truth: dict, side: str) -> None:
+    url = f"https://codeload.github.com/{truth['repository']}/zip/{truth[f'{side}_commit']}"
+    if not isinstance(archive, dict) or archive.get("url") != url:
+        raise ValueError("Missing or mismatched archive URL")
+    digest = archive.get("sha256")
+    size = archive.get("bytes")
+    if not isinstance(digest, str) or not DIGEST.fullmatch(digest) or type(size) is not int or size < 0:
+        raise ValueError("Missing or invalid archive hash/size")
+
+
+def relevant_rule_ids(pair: dict) -> set[str]:
+    """Independently derive execution checks from frozen labels and the catalog."""
+    checks = set(pair.get("expected_rules", []))
+    if not checks:
+        weaknesses = set(pair.get("weaknesses", []))
+        checks = {
+            rule["id"]
+            for rule in rule_catalog()
+            if rule.get("mode") in {"source", "ast", "source-pattern", "configuration"}
+            and not rule["id"].startswith("QG-")
+            and weaknesses & set(rule.get("maswe", []))
+        }
+    return {COVERAGE_ALIASES.get(check) or check for check in checks}
+
+
+def checked_labeled_scope(side: dict) -> bool:
+    checks = side.get("labeled_rule_states")
+    return (
+        not side.get("missing_labeled_paths")
+        and bool(side.get("labeled_file_states"))
+        and all(state == "checked" for state in side["labeled_file_states"].values())
+        and isinstance(checks, dict)
+        and all(state == "checked" for state in checks.values())
+    )
+
+
+def validate_report_rule_scope(report: dict, pair: dict, side: str) -> None:
+    """A summary cannot claim checked rules that the retained report did not run."""
+    coverage = report.get("coverage", [])
+    if not isinstance(coverage, list) or any(
+        not isinstance(row, dict) or not isinstance(row.get("state"), str) for row in coverage
+    ):
+        raise ValueError("Invalid retained rule coverage")
+    observed = {
+        rule: rule_state({row["state"] for row in coverage if row.get("rule_id") == rule})
+        for rule in relevant_rule_ids(pair)
+    }
+    if observed != pair[side].get("labeled_rule_states"):
+        raise ValueError("Retained rule coverage differs from labeled rule states")
 
 
 def successful_ids(results: dict, expected: dict[str, dict], truth_sha: str) -> set[str]:
@@ -160,7 +257,11 @@ def successful_ids(results: dict, expected: dict[str, dict], truth_sha: str) -> 
     }
     if not required <= results.keys():
         raise ValueError("Missing result provenance or summary fields")
-    if results.get("schema") != "apsa-fpfn-results-v3" or results.get("truth_sha256") != truth_sha:
+    v4 = results.get("schema") == "apsa-fpfn-results-v4"
+    if (
+        results.get("schema") not in {"apsa-fpfn-results-v3", "apsa-fpfn-results-v4"}
+        or results.get("truth_sha256") != truth_sha
+    ):
         raise ValueError("Results schema or frozen truth hash mismatch")
     if not isinstance(results["truth"], str) or not results["truth"]:
         raise ValueError("Missing result truth name")
@@ -189,7 +290,7 @@ def successful_ids(results: dict, expected: dict[str, dict], truth_sha: str) -> 
         if not isinstance(pair_id, str) or pair_id not in expected or pair_id in observed:
             raise ValueError("Unexpected or duplicate result pair ID")
         observed.add(pair_id)
-        if "error" in pair:
+        if "error" in pair and not v4:
             if set(pair) != {"id", "error"} or not isinstance(pair["error"], str) or not pair["error"]:
                 raise ValueError("Malformed pair error")
             continue
@@ -199,6 +300,15 @@ def successful_ids(results: dict, expected: dict[str, dict], truth_sha: str) -> 
         for field in ("expected_rules", "weaknesses"):
             if pair.get(field) != sorted(set(truth.get(field, []))):
                 raise ValueError("Result labels differ from frozen truth")
+        if v4:
+            expected_scope = bool(pair["expected_rules"]) or bool(
+                set(pair["weaknesses"]) & set(results["source_weaknesses"])
+            )
+            if pair["in_scope"] != expected_scope:
+                raise ValueError("Incorrect pair scope")
+            if "error" in pair and (not isinstance(pair["error"], str) or not pair["error"]):
+                raise ValueError("Malformed pair error")
+        failed_sides = []
         outcome = pair.get("outcome")
         if not isinstance(outcome, dict):
             raise ValueError("Missing successful pair outcome")
@@ -211,6 +321,33 @@ def successful_ids(results: dict, expected: dict[str, dict], truth_sha: str) -> 
             result_side = pair.get(side)
             if not isinstance(result_side, dict) or result_side.get("commit") != truth[f"{side}_commit"]:
                 raise ValueError("Missing or mismatched successful side commit")
+            if v4:
+                if type(result_side.get("report_returned")) is not bool:
+                    raise ValueError("Missing report-return observation")
+                if "error" in result_side:
+                    failed_sides.append(side)
+                    if (
+                        not isinstance(result_side["error"], str)
+                        or not result_side["error"]
+                        or result_side.get("error_phase")
+                        not in {"prepare", "fetch", "extract", "scan", "score"}
+                        or outcome[side] != "unscored"
+                        or (
+                            result_side.get("audit_incomplete") is not None
+                            and type(result_side["audit_incomplete"]) is not bool
+                        )
+                    ):
+                        raise ValueError("Malformed side failure or scored failed side")
+                    if result_side["report_returned"] and "execution" not in result_side:
+                        raise ValueError("Returned report lacks execution evidence")
+                    if "execution" in result_side:
+                        validate_execution(result_side["execution"], successful=False)
+                    if "archive" in result_side:
+                        validate_archive(result_side["archive"], truth, side)
+                    continue
+                if not result_side["report_returned"] or "error_phase" in result_side:
+                    raise ValueError("Successful side has no returned report")
+                validate_execution(result_side.get("execution"), successful=True)
             side_fields = {
                 "commit",
                 "archive",
@@ -244,26 +381,39 @@ def successful_ids(results: dict, expected: dict[str, dict], truth_sha: str) -> 
                 )
             ):
                 raise ValueError("Invalid successful side finding metadata")
-            archive = result_side.get("archive")
-            url = f"https://codeload.github.com/{truth['repository']}/zip/{truth[f'{side}_commit']}"
-            if not isinstance(archive, dict) or archive.get("url") != url:
-                raise ValueError("Missing or mismatched archive URL")
-            digest = archive.get("sha256")
-            size = archive.get("bytes")
-            if (
-                not isinstance(digest, str)
-                or not DIGEST.fullmatch(digest)
-                or type(size) is not int
-                or size < 0
-            ):
-                raise ValueError("Missing or invalid archive hash/size")
+            if v4:
+                checks = result_side.get("labeled_rule_states")
+                if (
+                    not isinstance(checks, dict)
+                    or set(checks) != relevant_rule_ids(truth)
+                    or any(
+                        not isinstance(state, str)
+                        or state not in {"checked", "partial", "not-run", "not-applicable"}
+                        for state in checks.values()
+                    )
+                ):
+                    raise ValueError("Missing or invalid relevant labeled rule coverage")
+            validate_archive(result_side.get("archive"), truth, side)
+            if v4 and outcome[side] in {"fn", "tn"} and not checked_labeled_scope(result_side):
+                raise ValueError("Scored silence requires completely checked labeled scope")
+        if v4:
+            if bool(failed_sides) != ("error" in pair):
+                raise ValueError("Pair error does not match side errors")
+            if failed_sides and outcome.get("discriminating_tp", False):
+                raise ValueError("Failed sides cannot discriminate a fix")
+            if "vulnerable" in failed_sides and outcome.get("vulnerable_line_level", False):
+                raise ValueError("Failed vulnerable side cannot be a line-level detection")
+            fixed = pair["fixed"]
+            if outcome.get("discriminating_tp", False) and not checked_labeled_scope(fixed):
+                raise ValueError("Fix discrimination requires checked fixed-side labeled scope")
         if pair["expected_rules"] or pair["weaknesses"]:
             if any(
                 type(outcome.get(field)) is not bool
                 for field in ("vulnerable_line_level", "discriminating_tp")
             ):
                 raise ValueError("Missing successful pair scoring fields")
-        successful.add(pair_id)
+        if not failed_sides:
+            successful.add(pair_id)
     for field, measured in (
         ("totals", pairs),
         ("in_scope_totals", [pair for pair in pairs if pair.get("in_scope")]),
@@ -273,7 +423,7 @@ def successful_ids(results: dict, expected: dict[str, dict], truth_sha: str) -> 
             type(value) is not int or value < 0 for value in counts.values()
         ):
             raise ValueError("Invalid result totals")
-        if counts != totals(measured):
+        if counts != totals(measured, v4=v4):
             raise ValueError("Results totals differ from pair outcomes")
     return successful
 
@@ -294,6 +444,7 @@ def collect(truth: Path, results: Path, work: Path, out: Path, evaluation_outcom
     }
     errors = manifest["errors"]
     expected = {}
+    summary = {}
     successful = set()
     truth_sha = ""
     if evaluation_outcome != "success":
@@ -345,6 +496,11 @@ def collect(truth: Path, results: Path, work: Path, out: Path, evaluation_outcom
                                         or not isinstance(report.get("inventory"), dict)
                                     ):
                                         raise ValueError("Invalid successful scan report")
+                                    if summary.get("schema") == "apsa-fpfn-results-v4":
+                                        pair_result = next(
+                                            row for row in summary["pairs"] if row["id"] == pair_id
+                                        )
+                                        validate_report_rule_scope(report, pair_result, side)
                             except FileNotFoundError:
                                 if pair_id in successful:
                                     errors.append(f"Missing required report: {relative}")

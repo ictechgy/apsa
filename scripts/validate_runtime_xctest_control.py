@@ -622,22 +622,19 @@ def main():
         generated = write_project(project_root, package, scheme, nonces, args.initial_state, args.url_driver)
         evidence["generated_source_sha256"] = generated["generated_source_sha256"]
         simctl = ["/usr/bin/xcrun", "simctl"]
-        device = str(
-            uuid.UUID(
-                commands.run(
-                    simctl
-                    + [
-                        "create",
-                        "APSA-NEW-XCTEST-" + uuid.uuid4().hex,
-                        transport.IOS_PINNED_DEVICE_TYPE,
-                        transport.IOS_PINNED_RUNTIME,
-                    ]
-                )
-                .decode()
-                .strip()
-            )
-        ).upper()
+        device = transport.create_owned_ios(
+            commands,
+            simctl
+            + [
+                "create",
+                "APSA-NEW-XCTEST-" + uuid.uuid4().hex,
+                transport.IOS_PINNED_DEVICE_TYPE,
+                transport.IOS_PINNED_RUNTIME,
+            ],
+            selector="default",
+        )
         resources.ios(device, selector="default")
+        (resources.root / "ios-create-pending.json").unlink(missing_ok=True)
         evidence["device_sha256"] = digest(device.encode())
         commands.run(simctl + ["boot", device])
         commands.run(simctl + ["bootstatus", device, "-b"], timeout=600)

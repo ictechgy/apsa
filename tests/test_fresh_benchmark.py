@@ -51,19 +51,9 @@ def test_freeze_rejects_source_path_escape_and_existing_output(tmp_path):
 
 
 def test_known_partial_contract_never_approves_accuracy_and_rejects_new_partial():
-    result = {
-        "passed": False,
-        "summary": {"fp": 0, "fn": 0},
-        "cases": [
-            {
-                "id": "java-cross-function-irrelevant",
-                "warnings": ["unsupported receiver"],
-                "incomplete_rules": [],
-                "error": None,
-            }
-        ],
-        "disagreements": [{"case_id": "java-cross-function-irrelevant"}],
-    }
+    from tests.test_external_fresh_gate import synthetic_result
+
+    result = synthetic_result()
     assert fresh.regression_contract(result)
     assert result["passed"] is False
     result["cases"].append({"id": "new-partial", "warnings": [], "incomplete_rules": ["rule"], "error": None})

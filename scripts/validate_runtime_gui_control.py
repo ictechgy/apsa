@@ -240,11 +240,17 @@ class GuiCommands(transport.Commands):
             "selector": self.selector,
             "state": "unconfirmed",
             "reaped": False,
+            "escalated": False,
         }
         try:
             if process.poll() is None:
                 process.terminate()
-            result["process_status"] = process.wait(timeout=GUI_WAIT_SECONDS)
+            try:
+                result["process_status"] = process.wait(timeout=GUI_WAIT_SECONDS)
+            except subprocess.TimeoutExpired:
+                result["escalated"] = True
+                process.kill()
+                result["process_status"] = process.wait(timeout=GUI_WAIT_SECONDS)
             result.update(state="confirmed", reaped=True)
         except (OSError, subprocess.SubprocessError) as error:
             result["reason"] = "owned-gui-reap-unconfirmed"

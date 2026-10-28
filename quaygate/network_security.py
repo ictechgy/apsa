@@ -5,13 +5,13 @@
 API 24+에서는 이 정책 파일이 usesCleartextTraffic을 덮어쓰므로, 해석에 성공하면
 정책 파일 기준으로 판정한다.
 """
+
 from __future__ import annotations
 
 import re
 
 from .apk import Apk
 from .axml import AxmlError, parse_axml
-
 
 UNKNOWN = "?"  # 참조형 속성을 해석하지 못함 — 단언 금지
 
@@ -25,16 +25,18 @@ def resolve_bool_attr(apk, value):
     """
     if value is None:
         return None
-    if value == "true":
+    if not isinstance(value, str):
+        return UNKNOWN
+    if value.lower() == "true" or value == "1":
         return True
-    if value == "false":
+    if value.lower() == "false" or value == "0":
         return False
     if value.startswith("@") and value[1:].isdigit():
         resolved = apk.resource_names().get(int(value[1:]))
         if resolved and len(resolved) > 2 and resolved[2] in ("true", "false"):
             return resolved[2] == "true"
         return UNKNOWN
-    return None
+    return UNKNOWN
 
 
 def _resolve_config_name(value, apk: Apk):
@@ -70,10 +72,9 @@ def load(apk: Apk, app_attrs: dict):
         match = path_hint  # 경로 난독화 APK — 값에 드러난 실제 경로
     if match is None:
         suffix = f"/{name}.xml"
-        match = next((n for n in entries
-                      if n.startswith("res/xml") and n.endswith(suffix)
-                      and n.lower() == n), None) or \
-            next((n for n in entries if n.startswith("res/xml") and n.endswith(suffix)), None)
+        match = next(
+            (n for n in entries if n.startswith("res/xml") and n.endswith(suffix) and n.lower() == n), None
+        ) or next((n for n in entries if n.startswith("res/xml") and n.endswith(suffix)), None)
     if match is None:
         return None, f"res/xml/{name}.xml 엔트리 없음"
     try:
@@ -90,8 +91,9 @@ def analyze(events: list, apk=None) -> dict:
     상속 규칙 전체를 재현하지 않는다 — 명시적 선언만 보고한다(보수적 판정).
     """
     result = {
-        "base_cleartext": None,       # True/False/None(선언 없음)
-        "base_unknown": False,        # 참조 해석 실패 — 단언 금지(na 유도)
+        "base_cleartext": None,  # True/False/None(선언 없음)
+        "domain_unknown": False,
+        "base_unknown": False,  # 참조 해석 실패 — 단언 금지(na 유도)
         "cleartext_domains": [],
         "user_trust": False,
         "debug_overrides": False,
@@ -114,7 +116,15 @@ def analyze(events: list, apk=None) -> dict:
                         else:
                             result["base_cleartext"] = resolved
                     else:
-                        result["base_cleartext"] = declared == "true"
+                        resolved = (
+                            resolve_bool_attr(None, declared)
+                            if not str(declared).startswith("@")
+                            else UNKNOWN
+                        )
+                        if resolved == UNKNOWN:
+                            result["base_unknown"] = True
+                        else:
+                            result["base_cleartext"] = resolved
             elif val == "domain-config":
                 node["cleartext"] = attrs.get("cleartextTrafficPermitted")
             elif val == "debug-overrides":
@@ -133,9 +143,15 @@ def analyze(events: list, apk=None) -> dict:
                         break
             elif node["tag"] == "domain-config":
                 node_cleartext = node.get("cleartext")
-                if node_cleartext is not None and apk is not None:
-                    resolved = resolve_bool_attr(apk, node_cleartext)
-                    node_cleartext = "true" if resolved is True else None if resolved == UNKNOWN else node_cleartext if resolved is None else "false"
+                if node_cleartext is not None:
+                    resolved = (
+                        resolve_bool_attr(apk, node_cleartext)
+                        if apk is not None or not str(node_cleartext).startswith("@")
+                        else UNKNOWN
+                    )
+                    if resolved == UNKNOWN:
+                        result["domain_unknown"] = True
+                    node_cleartext = "true" if resolved is True else "false"
                 if node_cleartext == "true":
                     result["cleartext_domains"].extend(node.get("domains", []))
     return result

@@ -698,8 +698,10 @@ def test_new_rules_have_catalog_entries_and_maswe_mapping():
 def test_swift_only_projects_mark_android_structural_rules_not_applicable(tmp_path: Path):
     result = analyze_sources([("A.swift", "func f() {}\n")])
     states = {c["rule_id"]: c["state"] for c in result["coverage"]}
-    for rule in ("AST-CRYPTO-WEAK-CIPHER", "AST-INTENT-REDIRECTION", "AST-IMPLICIT-INTENT"):
+    for rule in ("AST-INTENT-REDIRECTION", "AST-IMPLICIT-INTENT"):
         assert states[rule] == "not-applicable"
+    for rule in ("AST-CRYPTO-WEAK-CIPHER", "AST-CRYPTO-ECB", "AST-SQL-CONCAT"):
+        assert states[rule] == "not-run"
     for rule in ("AST-CRYPTO-HARDCODED-KEY", "AST-CRYPTO-STATIC-IV", "AST-PATH-TRAVERSAL"):
         assert states[rule] == "checked"
 

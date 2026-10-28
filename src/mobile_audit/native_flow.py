@@ -152,6 +152,7 @@ MODELED_EXTERNAL_METHODS = {
         "getName",
         "getCanonicalPath",
         "getCanonicalFile",
+        "getParentFile",
         "toPath",
         "toString",
         "writeText",
@@ -194,6 +195,7 @@ CONTEXT = (
     "private_keys",
     "target_names",
     "return_values",
+    "closure_depth",
     "guarded_paths",
     "unguarded_paths",
     "finding_start",
@@ -243,6 +245,9 @@ class NativeFlow:
         self.call_sites: list[str] = []
         self.evaluations = 0
         self.reasons: set[str] = set()
+        self.partial_events = 0
+        self.namespace_names: set[str] = set()
+        self.owners_with_constructor: set[str] = set()
         self.partial_details: set[tuple] = set()
         self.partial_details_truncated = False
         self.fields: dict[str, dict[str, Value]] = {}
@@ -251,6 +256,7 @@ class NativeFlow:
         self.type_parameter_cache: dict[tuple[int, int], dict[str, Any]] = {}
         self.empty_base_cache: dict[tuple[int, int, str], bool] = {}
         self.module_values: dict[str, list[tuple[Analyzer, Any]]] = {}
+        self.import_indexes: dict[tuple[int, bool], dict[str, set[str]]] = {}
         self.module_type_aliases: dict[str, list[tuple[Analyzer, Any]]] = {}
         self.swift_extensions_present = False
         # Member types added by an extension are lookup uncertainty, never
@@ -287,6 +293,7 @@ class NativeFlow:
                 else:
                     namespace = match[1]
             self.namespaces[id(analyzer)] = namespace
+            self.namespace_names.add(namespace)
             for node in nodes:
                 if (
                     analyzer.language in {"kotlin", "swift"}
@@ -398,13 +405,15 @@ class NativeFlow:
                 owner = self.owner(analyzer, node)
                 if owner:
                     self.classes.setdefault(owner.rsplit(".", 1)[-1], set()).add(owner)
-                name = analyzer.text(_field(node, "name"))
+                name = analyzer.symbol_name(analyzer.text(_field(node, "name")))
                 body = _field(node, "body") or next(
                     (child for child in node.named_children if child.type == "function_body"), None
                 )
                 self.by_name.setdefault(name, []).append(
                     Callable(analyzer, node, owner, name, tuple(analyzer.parameters(node)), body)
                 )
+                if node.type == "constructor_declaration":
+                    self.owners_with_constructor.add(owner)
 
     def owner(self, analyzer: Analyzer, function: Any) -> str:
         key = (id(analyzer), function.id)
@@ -437,6 +446,7 @@ class NativeFlow:
         call: Call | None = None,
     ) -> None:
         """Record diagnostic scope without narrowing conservative rule coverage."""
+        self.partial_events += 1
         self.reasons.add(reason)
         if analyzer is not None:
             analyzer.truncated_rules.update(RULES)
@@ -748,7 +758,7 @@ class NativeFlow:
         if base is None or index is None:
             return None
         root = analyzer.value(base, frame)
-        identity = root.identity or self.receiver_identity(analyzer, base, frame)
+        identity = root.identity or self.receiver_identity(analyzer, base, frame, root)
         literal = analyzer.text(index).strip()
         if not re.fullmatch(r"\d+", literal):
             literal = "*"
@@ -771,7 +781,11 @@ class NativeFlow:
         self.remember_effect_type(analyzer, declared, node, identity)
         return Value(_union([root, stored, parent_unknown]).traces, type_name=declared, identity=identity)
 
-    def receiver_identity(self, analyzer: Analyzer, receiver: Any, frame: Frame) -> str:
+    def receiver_identity(
+        self, analyzer: Analyzer, receiver: Any, frame: Frame, evaluated: Value | None = None
+    ) -> str:
+        # Callers with a value already computed in source order must not execute
+        # nested receivers again while collecting conservative storage effects.
         if receiver is None or analyzer.key(receiver) in {"this", "self"}:
             if self.receiver_field_context and self.receiver_field_context[-1] is not None:
                 return self.receiver_field_context[-1]
@@ -786,7 +800,7 @@ class NativeFlow:
             ):
                 self.uncertain_objects.add(identity)
             return identity
-        value = analyzer.value(receiver, frame)
+        value = evaluated if evaluated is not None else analyzer.value(receiver, frame)
         if value.identity:
             return value.identity
         key = analyzer.key(receiver)
@@ -794,7 +808,7 @@ class NativeFlow:
             owners = self.class_owners(analyzer, key, receiver)
             if len(owners) == 1:
                 return "@native-type:" + next(iter(owners))
-            if key in self.namespaces.values():
+            if key in self.namespace_names:
                 return "@native-namespace:" + repr((analyzer.path, key))
         self.partial("object alias identity unavailable", analyzer, node=receiver)
         # Unsupported expressions may refer to the same storage. Keep a weak,
@@ -903,10 +917,12 @@ class NativeFlow:
             fields = self.fields.setdefault(owner, {})
             fields[name] = self.merge([fields.get(name, Value()), value])
 
-    def static_owner(self, analyzer: Analyzer, base: Any, member: str, frame: Frame) -> str | None:
+    def static_owner(
+        self, analyzer: Analyzer, base: Any, member: str, frame: Frame, evaluated: Value | None = None
+    ) -> str | None:
         if analyzer.language == "swift" and analyzer.text(base).strip() == "Self":
             return self.owner(analyzer, analyzer.function) if member in analyzer.static_fields else None
-        value = analyzer.value(base, frame)
+        value = evaluated if evaluated is not None else analyzer.value(base, frame)
         declared = value.type_name or analyzer.key(base)
         for owner in self.class_owners(analyzer, declared, base):
             for source, nominal in self.class_definitions[owner]:
@@ -916,12 +932,14 @@ class NativeFlow:
                     return owner
         return None
 
-    def member_type(self, analyzer: Analyzer, base: Any, member: str, frame: Frame) -> str:
+    def member_type(
+        self, analyzer: Analyzer, base: Any, member: str, frame: Frame, evaluated: Value | None = None
+    ) -> str:
         if analyzer.key(base) in {"this", "self"} or (
             analyzer.language == "swift" and analyzer.text(base).strip() == "Self"
         ):
             return analyzer.field_types.get(member, "")
-        value = analyzer.value(base, frame)
+        value = evaluated if evaluated is not None else analyzer.value(base, frame)
         owners = self.class_owners(analyzer, value.type_name or analyzer.key(base), base)
         if len(owners) == 1:
             definitions = self.class_definitions[next(iter(owners))]
@@ -938,7 +956,7 @@ class NativeFlow:
     ) -> Value:
         stored = [
             value
-            for identity in self.affected_objects(analyzer, call, args, frame)
+            for identity in self.affected_objects(analyzer, call, receiver, args, frame)
             | self.reachable_reference_objects(analyzer, call, receiver, args, frame)
             for value in frame.object_fields.get(identity, {}).values()
         ]
@@ -948,9 +966,11 @@ class NativeFlow:
         stored.extend(frame.object_fields.get(StorageKey.UNRESOLVED_FIELDS, {}).values())
         return analyzer.changed(call.node, _union([receiver, *args, *stored]))
 
-    def affected_objects(self, analyzer: Analyzer, call: Call, args: list[Value], frame: Frame) -> set[str]:
+    def affected_objects(
+        self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
+    ) -> set[str]:
         """Track only the receiver and source-bound object arguments/captured fields."""
-        affected = {self.receiver_identity(analyzer, call.receiver, frame)}
+        affected = {self.receiver_identity(analyzer, call.receiver, frame, receiver)}
         for node, argument in zip(call.args, args, strict=True):
             if argument.identity:
                 affected.add(argument.identity)
@@ -958,7 +978,7 @@ class NativeFlow:
                 # A materialized source object carries its identity through
                 # binding/aliases. An unknown expression supplies no alias proof.
                 if self.object_type(analyzer, argument.type_name, node) is not None:
-                    affected.add(self.receiver_identity(analyzer, node, frame))
+                    affected.add(self.receiver_identity(analyzer, node, frame, argument))
         if call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}:
             affected.update(
                 value.identity
@@ -983,7 +1003,7 @@ class NativeFlow:
         for node, value in objects:
             identity = value.identity
             if not identity and self.object_type(analyzer, value.type_name, node) is not None:
-                identity = self.receiver_identity(analyzer, node, frame)
+                identity = self.receiver_identity(analyzer, node, frame, value)
             self.remember_effect_type(analyzer, value.type_name, node, identity)
             if identity in self.effect_nominals or identity in self.effect_aggregates:
                 pending.append((identity, 0, frozenset()))
@@ -1104,9 +1124,9 @@ class NativeFlow:
         if not value.traces:
             return
         if affected is None:
-            affected = self.affected_objects(analyzer, call, args, frame) | self.reachable_reference_objects(
+            affected = self.affected_objects(
                 analyzer, call, receiver, args, frame
-            )
+            ) | self.reachable_reference_objects(analyzer, call, receiver, args, frame)
         for identity in affected:
             fields = frame.object_fields.setdefault(identity, {})
             for name, previous in list(fields.items()):
@@ -1253,15 +1273,17 @@ class NativeFlow:
                 previous = fields.get(name, Value())
                 fields[name] = _union([previous, value], value.category, value.type_name)
 
-    def member(self, analyzer: Analyzer, base: Any, member: str, frame: Frame) -> Value | None:
+    def member(
+        self, analyzer: Analyzer, base: Any, member: str, frame: Frame, evaluated: Value | None = None
+    ) -> Value | None:
+        value = evaluated if evaluated is not None else analyzer.value(base, frame)
         if analyzer.key(base) in {"this", "self"}:
             if member in analyzer.unavailable_fields:
                 return self.unavailable_field(analyzer, frame, base)
             identity = self.field_identity(analyzer, member, frame)
         else:
-            static = self.static_owner(analyzer, base, member, frame)
+            static = self.static_owner(analyzer, base, member, frame, value)
             if static is None:
-                value = analyzer.value(base, frame)
                 bucket = self.binding_identity(analyzer, analyzer.function, "unavailable-storage")
                 if not value.identity and (
                     value.category != "unknown"
@@ -1274,7 +1296,7 @@ class NativeFlow:
             identity = (
                 (StorageKey.STATIC_FIELDS, static)
                 if static is not None
-                else self.receiver_identity(analyzer, base, frame)
+                else self.receiver_identity(analyzer, base, frame, value)
             )
         fields = frame.object_fields.get(identity, {})
         result = fields.get(member, fields.get(StorageKey.UNKNOWN_FIELDS))
@@ -1289,8 +1311,7 @@ class NativeFlow:
             and self.field_inputs
         ):
             return self.unavailable_field(analyzer, frame, base)
-        if result is None and (declared := self.member_type(analyzer, base, member, frame)):
-            value = analyzer.value(base, frame)
+        if result is None and (declared := self.member_type(analyzer, base, member, frame, value)):
             result = Value(value.traces, type_name=declared)
             if self.object_type(analyzer, declared, base) is not None:
                 result = self.materialize_object(
@@ -1328,6 +1349,7 @@ class NativeFlow:
                 self.partial("receiver field inventory unavailable", caller, call=call, node=left)
             return
         base, member = navigation
+        base_value = None
         if analyzer.key(base) in {"this", "self"}:
             identity = self.field_identity(analyzer, member, frame)
             if member not in analyzer.field_types:
@@ -1337,14 +1359,15 @@ class NativeFlow:
                 )
                 self.partial("receiver field inventory unavailable", caller, call=call, node=left)
         else:
-            static = self.static_owner(analyzer, base, member, frame)
+            base_value = analyzer.value(base, frame)
+            static = self.static_owner(analyzer, base, member, frame, base_value)
             identity = (
                 (StorageKey.STATIC_FIELDS, static)
                 if static is not None
-                else self.receiver_identity(analyzer, base, frame)
+                else self.receiver_identity(analyzer, base, frame, base_value)
             )
         fields = frame.object_fields.setdefault(identity, {})
-        member_type = self.member_type(analyzer, base, member, frame)
+        member_type = self.member_type(analyzer, base, member, frame, base_value)
         if not member_type:
             self.partial("receiver field inventory unavailable", analyzer, node=left)
             self.uncertain_objects.add(identity)
@@ -1438,26 +1461,33 @@ class NativeFlow:
         boundary = cls.unavailable_scope(node)
         return boundary.node if boundary is not None and boundary.kind == "anonymous" else None
 
-    @staticmethod
-    def imported_symbols(analyzer: Analyzer, name: str, *, classes: bool = False) -> set[str]:
-        """Exact source imports only; aliases bind to their declared symbol."""
-        result = set()
-        for declaration in analyzer.imports:
-            declaration = declaration.strip()
-            if analyzer.language == "java":
-                static = declaration.startswith("static ")
-                if static == classes:
-                    continue
-                declaration = declaration.removeprefix("static ")
-            elif analyzer.language == "swift":
-                scoped = re.fullmatch(r"(func|class|struct|enum|protocol|typealias)\s+([\w.]+)", declaration)
-                if not scoped or (scoped[1] == "func") == classes:
-                    continue
-                declaration = scoped[2]
-            match = re.fullmatch(r"([\w.]+)(?:\s+as\s+(\w+))?", declaration)
-            if match and (match[2] or match[1].rsplit(".", 1)[-1]) == name:
-                result.add(match[1])
-        return result
+    def imported_symbols(self, analyzer: Analyzer, name: str, *, classes: bool = False) -> set[str]:
+        """Exact immutable file imports, indexed once; callers receive an independent set."""
+        # prepare() finishes imports before flow evaluation; this index belongs
+        # to one NativeFlow and grows only from actual declarations, never queries.
+        name = analyzer.symbol_name(name)
+        key = (id(analyzer), classes)
+        if key not in self.import_indexes:
+            index: dict[str, set[str]] = {}
+            for declaration in analyzer.imports:
+                declaration = declaration.strip()
+                if analyzer.language == "java":
+                    static = declaration.startswith("static ")
+                    if static == classes:
+                        continue
+                    declaration = declaration.removeprefix("static ")
+                elif analyzer.language == "swift":
+                    scoped = re.fullmatch(
+                        r"(func|class|struct|enum|protocol|typealias)\s+([\w.]+)", declaration
+                    )
+                    if not scoped or (scoped[1] == "func") == classes:
+                        continue
+                    declaration = scoped[2]
+                match = re.fullmatch(r"([\w.]+)(?:\s+as\s+(\w+))?", declaration)
+                if match:
+                    index.setdefault(match[2] or match[1].rsplit(".", 1)[-1], set()).add(match[1])
+            self.import_indexes[key] = index
+        return self.import_indexes[key].get(name, set()).copy()
 
     def empty_source_ancestry(self, analyzer: Analyzer, nominal: Any, root: str) -> bool:
         """Discharge member lookup only for a unique, same-file empty class chain.
@@ -1816,7 +1846,7 @@ class NativeFlow:
                 elif child.type == "multi_variable_declaration":
                     declarations.extend(child.named_children)
             return {
-                analyzer.text(name)
+                analyzer.symbol_name(analyzer.text(name))
                 for declaration in declarations
                 for name in declaration.named_children[:1]
                 if name.type in IDENTIFIERS
@@ -1837,6 +1867,7 @@ class NativeFlow:
 
     def module_value_present(self, analyzer: Analyzer, name: str, *, aliases: bool = False) -> bool:
         """A potential expression binding supplies uncertainty, never a value/type proof."""
+        name = analyzer.symbol_name(name)
         imported = self.imported_symbols(analyzer, name)
         names = {name, *(symbol.rsplit(".", 1)[-1] for symbol in imported)}
         for source_name in names:
@@ -1962,11 +1993,7 @@ class NativeFlow:
             return False
         owner = next(iter(owners))
         definitions = self.class_definitions[owner]
-        if len(definitions) != 1 or any(
-            target.owner == owner and target.node.type == "constructor_declaration"
-            for targets in self.by_name.values()
-            for target in targets
-        ):
+        if len(definitions) != 1 or owner in self.owners_with_constructor:
             return False
         _source, node = definitions[0]
         if analyzer.language == "java" and node.type != "class_declaration":
@@ -2553,7 +2580,7 @@ class NativeFlow:
         identity = (
             self.binding_identity(analyzer, call.node, "allocation")
             if constructor
-            else self.receiver_identity(analyzer, call.receiver, frame)
+            else self.receiver_identity(analyzer, call.receiver, frame, receiver)
         )
         if constructor:
             self.allocation(
@@ -2568,11 +2595,11 @@ class NativeFlow:
         )
         if dispatch_dynamic:
             self.partial("receiver runtime dispatch unresolved", analyzer, call=call)
-        dynamic = dispatch_dynamic
+        dynamic = dispatch_dynamic or len(targets) > 1
         local_receiver = (call.receiver is None or analyzer.key(call.receiver) in {"this", "self"}) and all(
             target.owner == self.owner(analyzer, analyzer.function) for target in targets
         )
-        affected = self.affected_objects(analyzer, call, args, frame)
+        affected = self.affected_objects(analyzer, call, receiver, args, frame)
         prior_objects = {key: fields.copy() for key, fields in frame.object_fields.items()}
         uncertain_values = [receiver, *args]
         if local_receiver:
@@ -2621,6 +2648,7 @@ class NativeFlow:
             return frame.call_results[cache_key]
         results = []
         writes = []
+        object_writes = []
         for target in targets[:8]:
             if (
                 target.key in self.stack
@@ -2631,12 +2659,14 @@ class NativeFlow:
                 self.unavailable_write(analyzer, call, receiver, args, frame)
                 results.append(self.unavailable_result(analyzer, call, receiver, args, frame))
                 writes.append(frame.object_fields.get(identity, {}).copy())
+                object_writes.append({key: fields.copy() for key, fields in frame.object_fields.items()})
                 continue
             if target.body is None:
                 self.partial("callable body unavailable", analyzer, call=call)
                 self.unavailable_write(analyzer, call, receiver, args, frame)
                 results.append(self.unavailable_result(analyzer, call, receiver, args, frame))
                 writes.append(frame.object_fields.get(identity, {}).copy())
+                object_writes.append({key: fields.copy() for key, fields in frame.object_fields.items()})
                 continue
             callee = target.analyzer
             saved = {name: getattr(callee, name) for name in CONTEXT}
@@ -2655,9 +2685,10 @@ class NativeFlow:
             self.field_inputs.append((analyzer, call, unknown_write))
             self.call_sites.append(f"{analyzer.path}:{call.node.start_byte}")
             self.evaluations += 1
+            evaluation_start = self.partial_events
             try:
                 local = callee.start_function(target.node)
-                local.object_fields = {key: fields.copy() for key, fields in frame.object_fields.items()}
+                local.object_fields = {key: fields.copy() for key, fields in prior_objects.items()}
                 if self.lexical_function(target.node) and callee is analyzer:
                     # The lexical ancestor check above proves these captures are
                     # caller-local values, not similarly named values in another file.
@@ -2687,7 +2718,12 @@ class NativeFlow:
                 outer_unsafe = saved["unguarded_paths"] if callee is analyzer else analyzer.unguarded_paths
                 outer_safe = saved["guarded_paths"] if callee is analyzer else analyzer.guarded_paths
                 outer_unsafe.update(callee.unguarded_paths)
-                if not saved_conditions and len(targets) == 1 and not dynamic and not self.reasons:
+                if (
+                    not saved_conditions
+                    and len(targets) == 1
+                    and not dynamic
+                    and self.partial_events == evaluation_start
+                ):
                     outer_safe.update(callee.guarded_paths)
                 returned = self.merge(callee.return_values)
                 if (
@@ -2738,26 +2774,7 @@ class NativeFlow:
                         if origins <= returned_origins
                     )
                 writes.append(local.object_fields.get(identity, {}).copy())
-                if dynamic:
-                    for object_identity, fields in local.object_fields.items():
-                        previous = prior_objects.get(object_identity, {})
-                        if fields != previous or object_identity in affected:
-                            frame.object_fields[object_identity] = {
-                                name: fields.get(name, previous.get(name, Value()))
-                                if isinstance(name, tuple) and name[0] is StorageKey.AGGREGATE_ELEMENT
-                                else self.weak_write(
-                                    analyzer,
-                                    call,
-                                    previous.get(name, Value()),
-                                    fields.get(name, Value()),
-                                    unknown_write,
-                                )
-                                for name in set(previous) | set(fields) | {StorageKey.UNKNOWN_FIELDS}
-                            }
-                        else:
-                            frame.object_fields[object_identity] = fields
-                else:
-                    frame.object_fields.update(local.object_fields)
+                object_writes.append({key: fields.copy() for key, fields in local.object_fields.items()})
             finally:
                 self.stack.pop()
                 self.receiver_context.pop()
@@ -2768,6 +2785,38 @@ class NativeFlow:
                 self.active_conditions = saved_conditions
                 for name, value in saved.items():
                     setattr(callee, name, value)
+        if dynamic:
+            # Alternative targets all start from the same state. Join every
+            # object they can change, including argument objects, before commit.
+            for object_identity in set(prior_objects).union(*(branch.keys() for branch in object_writes)):
+                previous = prior_objects.get(object_identity, {})
+                alternatives = [branch.get(object_identity, previous) for branch in object_writes]
+                if object_identity in affected or any(fields != previous for fields in alternatives):
+                    frame.object_fields[object_identity] = {
+                        name: self.merge(
+                            [
+                                previous.get(name, Value()),
+                                *(fields.get(name, previous.get(name, Value())) for fields in alternatives),
+                            ]
+                        )
+                        if isinstance(name, tuple) and name[0] is StorageKey.AGGREGATE_ELEMENT
+                        else self.weak_write(
+                            analyzer,
+                            call,
+                            previous.get(name, Value()),
+                            self.merge(
+                                [fields.get(name, previous.get(name, Value())) for fields in alternatives]
+                            ),
+                            unknown_write,
+                        )
+                        for name in set(previous).union(
+                            *(fields.keys() for fields in alternatives), {StorageKey.UNKNOWN_FIELDS}
+                        )
+                    }
+                else:
+                    frame.object_fields[object_identity] = previous.copy()
+        elif object_writes:
+            frame.object_fields.update(object_writes[0])
         if len(targets) > 8:
             self.partial("ambiguous target budget", analyzer, call=call)
             results.append(analyzer.changed(call.node, _union([receiver, *args])))
@@ -2815,10 +2864,21 @@ class NativeFlow:
 
     def run(self) -> None:
         previous = None
+        failed_files = set()
         for _round_index in range(MAX_FIELD_ROUNDS):
             for analyzer, root, nodes in self.files:
+                if analyzer.path in failed_files:
+                    continue
                 analyzer.function_counts = {"observed": 0, "analyzed": 0, "skipped": 0, "without_body": 0}
-                analyzer.analyze(root, nodes, prepared=True)
+                try:
+                    analyzer.analyze(root, nodes, prepared=True)
+                except RecursionError:
+                    # One bounded but deeply nested source must not discard
+                    # findings from other files or claim complete local flow.
+                    failed_files.add(analyzer.path)
+                    analyzer.function_counts["analyzed"] = max(0, analyzer.function_counts["analyzed"] - 1)
+                    analyzer.function_counts["skipped"] += 1
+                    self.partial("native flow recursion budget", analyzer)
             state = tuple(
                 sorted(
                     (owner, name, self.signature(value))

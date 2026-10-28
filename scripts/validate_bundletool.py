@@ -240,6 +240,29 @@ def redact_argv(argv: list[str]) -> list[str]:
     return result
 
 
+def _wait_unreaped(process: subprocess.Popen, deadline: float) -> bool:
+    """Observe only this owned child's exit without releasing its PID custody."""
+    while True:
+        waitid = getattr(os, "waitid", None)
+        if waitid is not None:
+            event = waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            exited = event is not None
+        else:
+            # Darwin has no os.waitid; status() does not reap the owned child.
+            import psutil
+
+            try:
+                exited = psutil.Process(process.pid).status() == psutil.STATUS_ZOMBIE
+            except psutil.NoSuchProcess:
+                raise ChildProcessError("Owned child custody unavailable") from None
+        if exited:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.01, remaining))
+
+
 class Commands:
     def __init__(self, root: Path):
         self.root = root
@@ -261,6 +284,9 @@ class Commands:
         selector.register(process.stderr, selectors.EVENT_READ, "stderr")
         streams = {"stdout": bytearray(), "stderr": bytearray()}
         timed_out = truncated = False
+        custody_held = True
+        exited_observed = False
+        group_cleanup = "unconfirmed"
         try:
             while selector.get_map():
                 if time.monotonic() - started >= timeout:
@@ -280,15 +306,23 @@ class Commands:
                 if truncated:
                     break
             if not timed_out and not truncated:
-                try:
-                    process.wait(timeout=max(0.001, timeout - (time.monotonic() - started)))
-                except subprocess.TimeoutExpired:
-                    timed_out = True
+                exited_observed = _wait_unreaped(process, started + timeout)
+                timed_out = not exited_observed
+        except ChildProcessError:
+            custody_held = False
+            raise
         finally:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            if custody_held:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    group_cleanup = "signal-sent"
+                except ProcessLookupError:
+                    group_cleanup = "absent"
+                except PermissionError:
+                    # Keep the normal terminal status without claiming that
+                    # Darwin's denied zombie-group signal cleaned descendants.
+                    if not exited_observed:
+                        raise
             process.wait()
             selector.close()
             process.stdout.close()
@@ -300,6 +334,7 @@ class Commands:
                 "returncode": process.returncode,
                 "timed_out": timed_out,
                 "output_truncated": truncated,
+                "process_group_cleanup": group_cleanup,
                 "elapsed_seconds": time.monotonic() - started,
                 "stdout_bytes": len(stdout),
                 "stderr_bytes": len(stderr),
@@ -336,6 +371,8 @@ def failure_diagnostic(result: dict, records: list[dict]) -> dict:
             )
         }
         metadata["argv"] = redact_argv(record["argv"])
+        if "process_group_cleanup" in record:
+            metadata["process_group_cleanup"] = record["process_group_cleanup"]
 
     def selection_metadata(case: dict) -> dict:
         # Parser messages contain bounded schema labels, never APK contents.

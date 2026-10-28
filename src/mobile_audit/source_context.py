@@ -12,18 +12,57 @@ from urllib.parse import urlsplit
 from .selection import relative_source_path
 
 
-def _tokens(text: str) -> Iterator[tuple[str, str, int]]:
-    """Keep strings opaque and discard comments; unknown syntax remains visible."""
-    pattern = r'''//[^\n]*|/\*[\s\S]*?\*/|"""[\s\S]*?"""|\x27\x27\x27[\s\S]*?\x27\x27\x27|"(?:\\.|[^"\\])*"|\x27(?:\\.|[^\x27\\])*\x27|[A-Za-z_]\w*|[^\s]'''
-    line, end = 1, 0
-    for match in re.finditer(pattern, text):
-        line += text[end : match.start()].count("\n")
-        value = match.group()
-        if not value.startswith(("//", "/*")):
-            kind = "string" if value.startswith(('"', "'")) else "code"
-            yield kind, value, line
+def _tokens(text: str, *, token_limit: int | None = 200_000) -> Iterator[tuple[str, str, int]]:
+    """Keep literals opaque in one pass; malformed input cannot retry suffixes."""
+    identifier = re.compile(r"[A-Za-z_]\w*")
+    cursor, line, count = 0, 1, 0
+    while cursor < len(text):
+        start = cursor
+        if text[cursor].isspace():
+            line += text[cursor] == "\n"
+            cursor += 1
+            continue
+        if text.startswith("//", cursor):
+            end = text.find("\n", cursor + 2)
+            cursor = len(text) if end < 0 else end
+            continue
+        if text.startswith("/*", cursor):
+            end = text.find("*/", cursor + 2)
+            if end < 0:
+                raise ValueError("Unterminated source declaration comment; versions remain unresolved")
+            cursor = end + 2
+            line += text[start:cursor].count("\n")
+            continue
+        kind = "code"
+        if text[cursor] in {"'", '"'}:
+            kind = "string"
+            quote = text[cursor]
+            if text.startswith(quote * 3, cursor):
+                end = text.find(quote * 3, cursor + 3)
+                if end < 0:
+                    raise ValueError("Unterminated source declaration string; versions remain unresolved")
+                cursor = end + 3
+            else:
+                cursor += 1
+                while cursor < len(text):
+                    if text[cursor] == "\\":
+                        cursor += 2
+                    elif text[cursor] == quote:
+                        cursor += 1
+                        break
+                    else:
+                        cursor += 1
+                else:
+                    raise ValueError("Unterminated source declaration string; versions remain unresolved")
+        else:
+            match = identifier.match(text, cursor)
+            cursor = match.end() if match else cursor + 1
+        count += 1
+        if token_limit is not None and count > token_limit:
+            raise ValueError("Source declaration token budget exceeded")
+        value = text[start:cursor]
+        yield kind, value, line
         line += value.count("\n")
-        end = match.end()
 
 
 def tokens(text: str) -> list[tuple[str, str, int]]:
@@ -115,19 +154,49 @@ def literal_ext(path: str, text: str) -> tuple[dict, set[str]]:
     }
 
 
-def resolve_gradle(dependencies: list[dict], sources: list[tuple[str, str]]) -> None:
-    contexts = {}
-    imports = {}
+def resolve_gradle(
+    dependencies: list[dict], sources: list[tuple[str, str]], *, opaque_sources: set[str] | None = None
+) -> list[str]:
+    # The source inventory can know a script's name while its bytes were
+    # omitted or excluded as non-text. Absence must not look like no ancestor.
+    opaque_sources = {PurePosixPath(path).as_posix() for path in (opaque_sources or ())}
+    script_counts: dict[str, int] = {}
+    for path, _ in sources:
+        if path.endswith((".gradle", ".gradle.kts")):
+            canonical = PurePosixPath(path).as_posix()
+            script_counts[canonical] = script_counts.get(canonical, 0) + 1
+    collisions = {path for path, count in script_counts.items() if count > 1}
+    opaque_sources |= collisions
+    contexts = {path: ({}, {"*"}) for path in opaque_sources}
+    imports = {path: [] for path in opaque_sources}
+    warnings = [f"Gradle declaration context path collision: {path}" for path in sorted(collisions)]
+    opaque_roots = {
+        PurePosixPath(path).parent
+        for path in opaque_sources
+        if PurePosixPath(path).name in {"settings.gradle", "settings.gradle.kts"}
+    }
     project_roots = {
         PurePosixPath(path).parent
         for path, _ in sources
         if PurePosixPath(path).name in {"settings.gradle", "settings.gradle.kts"}
-    }
-    for path, text in sources:
-        if path.endswith((".gradle", ".gradle.kts")):
-            contexts[path] = literal_ext(path, text)
-            stream = tokens(text)
+    } | opaque_roots
+    for original_path, text in sources:
+        if original_path.endswith((".gradle", ".gradle.kts")):
+            path = PurePosixPath(original_path).as_posix()
+            if path in opaque_sources:
+                continue
             imports[path] = []
+            try:
+                # Lookup keys are canonical; evidence retains the exact source
+                # member spelling that supplied the literal declaration.
+                contexts[path] = literal_ext(original_path, text)
+                stream = tokens(text)
+            except ValueError as error:
+                # This file may define or mutate any property. Its descendants
+                # and importers must abstain, while independent files can resolve.
+                contexts[path] = ({}, {"*"})
+                warnings.append(f"Gradle declaration context unavailable: {path} ({error})")
+                continue
             for i, token in enumerate(stream):
                 if token[0] != "code" or token[1] != "apply":
                     continue
@@ -187,11 +256,13 @@ def resolve_gradle(dependencies: list[dict], sources: list[tuple[str, str]]) -> 
                     if key in values:
                         candidates.append(values[key])
             if parent in project_roots:
+                blocked |= parent in opaque_roots
                 break
         if not blocked and len(candidates) == 1:
             dep["version"] = candidates[0]["value"]
             dep["confidence"] = "declared"
             dep["version_source"] = candidates[0]
+    return warnings
 
 
 SHIPPED_CONFIGURATIONS = re.compile(r"(?:[a-z][A-Za-z0-9]*)?(?:[Ii]mplementation|[Aa]pi|[Rr]untimeOnly)")
@@ -715,44 +786,49 @@ def plist_references(sources: list[tuple[str, str]]) -> tuple[dict[str, list[dic
         if len(text.encode("utf-8")) > 8 * 1024 * 1024:
             warnings.append(f"INFOPLIST_FILE byte budget exceeded: {path}")
             continue
-        stream = iter(_tokens(text))
+        # This parser streams under its existing byte/declaration/value limits;
+        # it need not retain the full declaration token list used by Gradle.
         declarations = 0
-        for kind, key, line in stream:
-            if kind == "string" and key.strip('"').startswith("INFOPLIST_FILE["):
-                warnings.append(f"Unsupported conditional INFOPLIST_FILE declaration: {path}:{line}")
-                continue
-            if kind != "code" or key != "INFOPLIST_FILE":
-                continue
-            declarations += 1
-            if declarations > 4096:
-                warnings.append(f"INFOPLIST_FILE declaration budget exceeded: {path}")
-                break
-            tail = []
-            terminated = False
-            for token in islice(stream, 256):
-                if token[1] == ";":
-                    terminated = True
+        try:
+            stream = iter(_tokens(text, token_limit=None))
+            for kind, key, line in stream:
+                if kind == "string" and key.strip('"').startswith("INFOPLIST_FILE["):
+                    warnings.append(f"Unsupported conditional INFOPLIST_FILE declaration: {path}:{line}")
+                    continue
+                if kind != "code" or key != "INFOPLIST_FILE":
+                    continue
+                declarations += 1
+                if declarations > 4096:
+                    warnings.append(f"INFOPLIST_FILE declaration budget exceeded: {path}")
                     break
-                tail.append(token)
-            if not terminated:
-                warnings.append(f"INFOPLIST_FILE value budget or terminator missing: {path}:{line}")
-                break
-            if not tail or tail[0][1] != "=" or len(tail) < 2:
-                warnings.append(f"Unsupported INFOPLIST_FILE declaration: {path}:{line}")
-                continue
-            value = "".join(t[1] for t in tail[1:]).strip('"')
-            for prefix in ("$(SRCROOT)/", "$(PROJECT_DIR)/", "${SRCROOT}/", "${PROJECT_DIR}/"):
-                if value.startswith(prefix):
-                    value = value[len(prefix) :]
+                tail = []
+                terminated = False
+                for token in islice(stream, 256):
+                    if token[1] == ";":
+                        terminated = True
+                        break
+                    tail.append(token)
+                if not terminated:
+                    warnings.append(f"INFOPLIST_FILE value budget or terminator missing: {path}:{line}")
                     break
-            try:
-                value = relative_source_path(value)
-                if "$" in value or not value.endswith(".plist"):
-                    raise ValueError("Unresolved plist path")
-                destination = (PurePosixPath(path).parent.parent / value).as_posix()
-                references.setdefault(destination, []).append({"path": path, "line": line})
-            except ValueError:
-                warnings.append(f"Unsafe or unresolved INFOPLIST_FILE declaration: {path}:{line}")
+                if not tail or tail[0][1] != "=" or len(tail) < 2:
+                    warnings.append(f"Unsupported INFOPLIST_FILE declaration: {path}:{line}")
+                    continue
+                value = "".join(t[1] for t in tail[1:]).strip('"')
+                for prefix in ("$(SRCROOT)/", "$(PROJECT_DIR)/", "${SRCROOT}/", "${PROJECT_DIR}/"):
+                    if value.startswith(prefix):
+                        value = value[len(prefix) :]
+                        break
+                try:
+                    value = relative_source_path(value)
+                    if "$" in value or not value.endswith(".plist"):
+                        raise ValueError("Unresolved plist path")
+                    destination = (PurePosixPath(path).parent.parent / value).as_posix()
+                    references.setdefault(destination, []).append({"path": path, "line": line})
+                except ValueError:
+                    warnings.append(f"Unsafe or unresolved INFOPLIST_FILE declaration: {path}:{line}")
+        except ValueError as error:
+            warnings.append(f"INFOPLIST_FILE tokenization incomplete: {path}: {error}")
     return references, warnings
 
 

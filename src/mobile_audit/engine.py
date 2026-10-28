@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
 from .input_snapshot import identity, stage_input
-from .processes import command
+from .processes import CommandFailure, command
 
 PARSER_TIMEOUT = 90
 MAX_RESULT = 32 * 1024 * 1024
@@ -193,6 +194,14 @@ def analyze_target(
                 env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TMPDIR": str(scratch)},
             )
         except ValueError as error:
+            if (
+                isinstance(error, CommandFailure)
+                and hasattr(signal, "SIGXCPU")
+                and error.returncode == -signal.SIGXCPU
+            ):
+                raise ValueError(
+                    "Parser exceeded CPU time limit (SIGXCPU); audit incomplete. The audit was not retried."
+                ) from None
             if isolation["state"] == "enforced" and str(error).startswith("Command failed"):
                 raise ValueError(
                     f"Sandboxed parser failed under {isolation['backend']}; the audit was not retried "
@@ -239,6 +248,27 @@ def analyze_target(
         result["inventory"]["warnings"].extend(snapshot["warnings"])
         result["inventory"]["partial"] = True
         result["inventory"]["fingerprint_complete"] = False
+        credential_metadata = result["inventory"].get("credential_text")
+        if isinstance(credential_metadata, dict):
+            # The worker's observed counts cannot enumerate unstaged members.
+            credential_metadata["partial"] = True
+            credential_metadata["staging_incomplete"] = True
+        # The worker saw only staged files. A skipped ancestor or import can
+        # invalidate interpolation even when its remaining literal looks exact.
+        # Withdraw that derived provenance before the caller correlates versions;
+        # directly observed literals and lockfile coordinates remain evidence.
+        for dependency in result["inventory"]["dependencies"]:
+            expression = dependency.get("version_expression")
+            if (
+                dependency.get("version_interpolation")
+                and isinstance(expression, str)
+                and expression
+                and isinstance(dependency.get("version_source"), dict)
+            ):
+                dependency["version"] = expression
+                dependency["confidence"] = "unknown"
+                dependency.pop("version_source", None)
+                dependency.pop("resolution", None)
         # Without all app code and configuration, a rule may only look not-applicable
         # (for example, the platform's sources were left out).
         downgraded = {"checked"} | (set() if snapshot.get("app_scope_complete", True) else {"not-applicable"})

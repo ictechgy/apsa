@@ -12,8 +12,11 @@ import re
 import tomllib
 from pathlib import Path
 
+from .completeness import report_incomplete
 from .core import digest, read_bounded
 from .maswe import RULE_WEAKNESSES, aggregate_states, coverage_matrix, rule_state, weakness_index
+from .policy import _subject
+from .verify import COVERAGE_ALIASES
 
 MAX_CHECKLIST_BYTES = 256 * 1024
 MAX_ITEMS = 500
@@ -99,12 +102,26 @@ def checklist_view(report: dict, checklist: dict) -> dict:
     rows = []
     for item in checklist["items"]:
         weakness_rows = [matrix[w] for w in item["maswe"] if w in matrix]
-        checks = sorted({c for row in weakness_rows for c in row["checks"]} | set(item["rules"]))
+        checks = sorted(
+            c
+            for c in {c for row in weakness_rows for c in row["checks"]} | set(item["rules"])
+            if isinstance(c, str)
+        )
         findings = sorted(
             {f for row in weakness_rows for f in row["findings"]}
             | {f["id"] for f in report.get("findings", []) if f["rule_id"] in item["rules"]}
         )
-        state = aggregate_states([rule_state(states[c]) for c in checks if c in states] or ["not-run"])
+        # Explicitly requested checks cannot disappear from the denominator.
+        # MASWE-derived checks outside the platform retain their matrix semantics.
+        explicit = set(item["rules"])
+        state = aggregate_states(
+            [
+                rule_state(states.get(COVERAGE_ALIASES.get(c, c), set()))
+                for c in checks
+                if COVERAGE_ALIASES.get(c, c) in states or c in explicit
+            ]
+            or ["not-run"]
+        )
         if findings:
             status = "findings"
         elif not checks:
@@ -155,16 +172,37 @@ def checklist_markdown(view: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _same_analysis_specifications(before: dict, after: dict) -> bool:
+    """Preserve every declared spec representation, including absent vs present.
+
+    These are the spec fields checked by verify's portable-source eligibility;
+    its effective fallback alone could hide a changed secondary declaration.
+    """
+    for left, right, keys in (
+        (before, after, ("spec_hash", "specs", "analysis_specs")),
+        (
+            before.get("inventory", {}),
+            after.get("inventory", {}),
+            ("project_specification", "analysis_specs"),
+        ),
+    ):
+        if any((key in left) != (key in right) or left.get(key) != right.get(key) for key in keys):
+            return False
+    return True
+
+
 def timeline(store, target: str, limit: int = 200) -> dict:
     """First and last observation of each finding across saved reports of one target."""
     history = list(reversed(store.target_reports(target, limit=limit)))
     entries: dict[str, dict] = {}
+    observed_reports: dict[str, dict] = {}
     report_ids = []
     for item in history:
         report = store.report(item["id"])
         report_ids.append(item["id"])
         present = set()
         for finding in report.get("findings", []):
+            observed_reports[finding["id"]] = report
             present.add(finding["id"])
             entry = entries.setdefault(
                 finding["id"],
@@ -184,19 +222,40 @@ def timeline(store, target: str, limit: int = 200) -> dict:
             )
             entry.pop("resolved_in", None)
             entry.pop("resolved_at", None)
+            entry.pop("inconclusive_in", None)
         for finding_id, entry in entries.items():
             if (
                 finding_id not in present
                 and "resolved_in" not in entry
                 and entry["last_report"] != report["id"]
             ):
-                entry.update(resolved_in=report["id"], resolved_at=report["created"])
+                previous = observed_reports[finding_id]
+                check = COVERAGE_ALIASES.get(entry["rule_id"], entry["rule_id"])
+                states = {
+                    row.get("state") for row in report.get("coverage", []) if row.get("rule_id") == check
+                }
+                comparable = (
+                    not report_incomplete(report)
+                    and _subject(previous) == _subject(report)
+                    and _same_analysis_specifications(previous, report)
+                    and previous.get("rule_version") == report.get("rule_version")
+                    and previous.get("tool_version") == report.get("tool_version")
+                    and previous.get("inventory", {}).get("input_kind")
+                    == report.get("inventory", {}).get("input_kind")
+                    and rule_state(states) == "checked"
+                )
+                if comparable:
+                    entry.update(resolved_in=report["id"], resolved_at=report["created"])
+                    entry.pop("inconclusive_in", None)
+                else:
+                    entry["inconclusive_in"] = report["id"]
     open_items = [e for e in entries.values() if "resolved_in" not in e]
     return {
         "target": target,
         "reports": report_ids,
-        "note": "resolved means a later report of the same target no longer observed the finding; it is not proof "
-        "of remediation unless the same checks completed. Compare coverage before closing an item.",
+        "note": "resolved means a complete, comparable later report with the same subject, source selection, "
+        "input kind, analysis specifications and versions completed the related check without observing the finding. "
+        "inconclusive_in marks an absence that cannot establish resolution. Neither proves remediation.",
         "open": len(open_items),
         "resolved": len(entries) - len(open_items),
         "findings": sorted(entries.values(), key=lambda e: (e["first_seen"], e["finding_id"])),

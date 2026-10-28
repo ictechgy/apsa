@@ -102,10 +102,12 @@ does not contain those copied files.
 | traitlets | 5.16.1 | BSD 3-Clause License  - Copyright (c) 2001-, IPython Development Team  All rights reserved.  Redistribution and use in source and binary forms, with or without modification, are permitted provided tha (원문은 JSON 참조) | files-copied |
 | tree-sitter | 0.25.2 | License :: OSI Approved :: MIT License | files-copied |
 | tree-sitter-java | 0.23.5 | MIT | files-copied |
+| tree-sitter-javascript | 0.25.0 | MIT | files-copied |
 | tree-sitter-json | 0.24.8 | MIT | files-copied |
 | tree-sitter-kotlin | 1.1.0 | MIT | files-copied |
 | tree-sitter-objc | 3.0.2 | MIT | files-copied |
 | tree-sitter-swift | 0.7.4 | MIT | files-copied |
+| tree-sitter-typescript | 0.23.2 | MIT | files-copied |
 | typing_extensions | 4.16.0 | PSF-2.0 | files-copied |
 | typing-inspection | 0.4.4 | MIT | files-copied |
 | uvicorn | 0.54.0 | BSD-3-Clause | files-copied |

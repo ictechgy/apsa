@@ -87,7 +87,7 @@ def load_specs(path: Path) -> dict:
     raw = read_bounded(path, MAX_SPEC_BYTES)
     try:
         document = json.loads(raw) if path.suffix.lower() == ".json" else tomllib.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeError) as error:
+    except (ValueError, UnicodeError, RecursionError) as error:
         raise ValueError(f"Specification is not valid TOML/JSON: {error}") from None
     specs = normalize(document)
     return {**specs, "sha256": digest(raw)}

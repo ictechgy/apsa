@@ -116,7 +116,7 @@ def test_existing_mvp_database_migrates_without_changing_evidence(tmp_path):
     try:
         assert store.report("old") == report
         assert store.db.execute("SELECT body FROM reports").fetchone()[0] == old_body
-        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 3
         if os.name == "posix":
             assert (home / "audit.sqlite3").stat().st_mode & 0o777 == 0o600
     finally:

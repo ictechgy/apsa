@@ -1,77 +1,225 @@
+# Upstream Gradle executes only in build; recording runs from a new trusted checkout.
 name: Gradle dependency resolution oracle
-
 on:
   push:
-    branches: ["dev/dependency-evidence"]
-    paths: ["benchmarks/dependency_cases.json", "benchmarks/dependency_oracle.py", ".github/workflows/dependency-oracle.yml"]
-  workflow_dispatch:
-
+    branches:
+    - dev/dependency-evidence
+    paths:
+    - benchmarks/dependency_cases.json
+    - benchmarks/dependency_oracle.py
+    - .github/workflows/dependency-oracle.yml
+  workflow_dispatch: null
 permissions:
   contents: read
-
 jobs:
-  oracle:
-    name: Resolve ${{ matrix.case }} with Gradle
+  build:
+    name: Build untrusted Gradle outputs for ${{ matrix.case }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         include:
-          - case: owncloud
-            java: "21"
-          - case: nextcloud
-            java: "21"
-          - case: home-assistant
-            java: "21"
-          - case: signal
-            java: "21"
-          - case: amaze
-            java: "21"
+        - case: owncloud
+          java: '21'
+        - case: nextcloud
+          java: '21'
+        - case: home-assistant
+          java: '21'
+        - case: signal
+          java: '21'
+        - case: amaze
+          java: '21'
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          persist-credentials: false
-          path: apsa
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        with:
-          distribution: temurin
-          java-version: ${{ matrix.java }}
-      - name: Fetch the pinned public source archive
-        id: fetch
-        working-directory: apsa
-        run: |
-          SHA="$(python3 -I benchmarks/dependency_oracle.py prepare --case "${{ matrix.case }}" --work "$RUNNER_TEMP/oracle")"
-          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
-      - name: Let Gradle resolve and lock every configuration of the app module
-        run: |
-          cat > "$RUNNER_TEMP/lock-all.gradle" <<'GRADLE'
-          // Isolated-projects compatible (Gradle 8.8+): lock every configuration of every project.
-          gradle.lifecycle.beforeProject { project ->
-              project.dependencyLocking { lockAllConfigurations() }
-          }
-          GRADLE
-          cd "$(find "$RUNNER_TEMP/oracle/source" -mindepth 1 -maxdepth 1 -type d)"
-          grep -h distributionUrl gradle/wrapper/gradle-wrapper.properties
-          MODULE="$(python3 -c 'import json,sys; print(next(c["module"] for c in json.load(open(sys.argv[1]))["cases"] if c["id"] == sys.argv[2]))' "$GITHUB_WORKSPACE/apsa/benchmarks/dependency_cases.json" "${{ matrix.case }}")"
-          rm -f "$(echo "${MODULE#:}" | tr : /)/gradle.lockfile"
-          ./gradlew --no-daemon --init-script "$RUNNER_TEMP/lock-all.gradle" \
-            "$MODULE:dependencies" --write-locks > "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt" 2>&1 \
-            || { tail -80 "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt"; exit 1; }
-          java -version 2>&1 | head -1 > "$RUNNER_TEMP/oracle/${{ matrix.case }}.java.txt"
-          ./gradlew --no-daemon --version >> "$RUNNER_TEMP/oracle/${{ matrix.case }}.java.txt"
-      - name: Record the resolved oracle without running APSA
-        working-directory: apsa
-        run: python3 -I benchmarks/dependency_oracle.py record --case "${{ matrix.case }}" --work "$RUNNER_TEMP/oracle" --expected-sha256 "${{ steps.fetch.outputs.sha256 }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: dependency-oracle-${{ matrix.case }}
-          path: |
-            ${{ runner.temp }}/oracle/*.zip
-            ${{ runner.temp }}/oracle/*.json
-            ${{ runner.temp }}/oracle/*.lockfile
-            ${{ runner.temp }}/oracle/*.txt
-          retention-days: 90
-          if-no-files-found: error
-      # APSA is not installed or executed here; upstream Gradle build logic runs on this disposable runner without secrets.
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      with:
+        persist-credentials: false
+        path: apsa
+    - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
+      with:
+        distribution: temurin
+        java-version: ${{ matrix.java }}
+    - name: Fetch the pinned public source archive
+      working-directory: apsa
+      run: |
+        python3 -I benchmarks/dependency_oracle.py prepare --case "${{ matrix.case }}" --work "$RUNNER_TEMP/oracle"
+    - name: Let Gradle resolve and lock every configuration of the app module
+      run: |
+        cat > "$RUNNER_TEMP/lock-all.gradle" <<'GRADLE'
+        // Isolated-projects compatible (Gradle 8.8+): lock every configuration of every project.
+        gradle.lifecycle.beforeProject { project ->
+            project.dependencyLocking { lockAllConfigurations() }
+        }
+        GRADLE
+        cd "$(find "$RUNNER_TEMP/oracle/source" -mindepth 1 -maxdepth 1 -type d)"
+        grep -h distributionUrl gradle/wrapper/gradle-wrapper.properties
+        MODULE="$(python3 -c 'import json,sys; print(next(c["module"] for c in json.load(open(sys.argv[1]))["cases"] if c["id"] == sys.argv[2]))' "$GITHUB_WORKSPACE/apsa/benchmarks/dependency_cases.json" "${{ matrix.case }}")"
+        rm -f "$(echo "${MODULE#:}" | tr : /)/gradle.lockfile"
+        ./gradlew --no-daemon --init-script "$RUNNER_TEMP/lock-all.gradle" \
+          "$MODULE:dependencies" --write-locks > "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt" 2>&1 \
+          || { tail -80 "$RUNNER_TEMP/oracle/${{ matrix.case }}.dependencies.txt"; exit 1; }
+        java -version 2>&1 | head -1 > "$RUNNER_TEMP/oracle/${{ matrix.case }}.java.txt"
+        ./gradlew --no-daemon --version >> "$RUNNER_TEMP/oracle/${{ matrix.case }}.java.txt"
+    - name: Stage only bounded raw build outputs
+      if: always()
+      working-directory: apsa
+      env:
+        ORACLE_CASE: ${{ matrix.case }}
+      run: |
+        python3 -I - <<'PY'
+        import os, runpy, stat
+        from pathlib import Path
+
+        identifier = os.environ["ORACLE_CASE"]
+        root = Path(os.environ["RUNNER_TEMP"])
+        work, output = root / "oracle", root / "raw-oracle-output"
+        output.mkdir(exist_ok=False)
+        recorder = runpy.run_path("benchmarks/dependency_oracle.py")
+        spec = recorder["case"](identifier)
+        source = next(p for p in (work / "source").iterdir() if p.is_dir())
+        module = source / spec["module"].strip(":").replace(":", "/")
+        inputs = [(work / (identifier + ".zip"), 512 * 1024 * 1024, identifier + ".zip"),
+                  (module / "gradle.lockfile", 8 * 1024 * 1024, identifier + ".lockfile"),
+                  (work / (identifier + ".dependencies.txt"), 8 * 1024 * 1024, identifier + ".dependencies.txt"),
+                  (work / (identifier + ".java.txt"), 1024 * 1024, identifier + ".java.txt")]
+        for path, limit, name in inputs:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, "rb") as handle:
+                metadata = os.fstat(handle.fileno())
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+                    raise ValueError("Raw output exceeds its byte budget")
+                value = handle.read(limit + 1)
+                if len(value) > limit or len(value) != metadata.st_size:
+                    raise ValueError("Raw output grew or was truncated")
+            (output / name).write_bytes(value)
+        PY
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: untrusted-gradle-output-${{ matrix.case }}
+        path: ${{ runner.temp }}/raw-oracle-output/
+        retention-days: 90
+        if-no-files-found: error
+  record:
+    name: Record ${{ matrix.case }} from fresh trusted code
+    needs: build
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - case: owncloud
+          java: '21'
+        - case: nextcloud
+          java: '21'
+        - case: home-assistant
+          java: '21'
+        - case: signal
+          java: '21'
+        - case: amaze
+          java: '21'
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      with:
+        persist-credentials: false
+        path: apsa
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: untrusted-gradle-output-${{ matrix.case }}
+        path: ${{ runner.temp }}/untrusted-gradle-output
+    - name: Verify manifest-commit source and record bounded observations
+      working-directory: apsa
+      env:
+        ORACLE_CASE: ${{ matrix.case }}
+      run: |
+        python3 -I - <<'PY'
+        import hashlib, json, os, runpy, stat, subprocess, sys, zipfile
+        from pathlib import Path
+
+        identifier = os.environ["ORACLE_CASE"]
+        root = Path(os.environ["RUNNER_TEMP"]).resolve()
+        raw = root / "untrusted-gradle-output"
+        work = root / "trusted-oracle"
+        if raw.is_symlink() or not raw.is_dir() or work.exists():
+            raise ValueError("Fresh downloaded build inputs and a new trusted work directory are required")
+        limits = {identifier + ".zip": 512 * 1024 * 1024,
+                  identifier + ".lockfile": 8 * 1024 * 1024,
+                  identifier + ".dependencies.txt": 8 * 1024 * 1024,
+                  identifier + ".java.txt": 1024 * 1024}
+        entries = list(raw.iterdir())
+        if len(entries) != len(limits) or {p.name for p in entries} != set(limits):
+            raise ValueError("Only the four bounded raw build-output files are accepted")
+        def read_regular(path, limit):
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as source:
+                before = os.fstat(source.fileno())
+                if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+                    raise ValueError("Raw build output exceeds its regular-file byte budget")
+                value = source.read(limit + 1)
+                after = os.fstat(source.fileno())
+                if len(value) > limit or len(value) != before.st_size or (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                    raise ValueError("Raw build output changed or exceeded its byte budget")
+                return value
+        payloads = {p.name: read_regular(p, limits[p.name]) for p in entries}
+        recorder = runpy.run_path("benchmarks/dependency_oracle.py")
+        spec = recorder["case"](identifier)  # Trusted checkout, never an uploaded manifest.
+        if len(spec["commit"]) != 40 or any(c not in "0123456789abcdef" for c in spec["commit"]):
+            raise ValueError("The trusted case must pin a complete Git commit")
+        work.mkdir(mode=0o700)
+        archive_path = work / (identifier + ".zip")
+        # Fetch in this fresh trusted job. No upstream build code is executed here.
+        archive = recorder["fetch"](spec, archive_path)
+        expected_sha = archive["sha256"]
+        if hashlib.sha256(payloads[identifier + ".zip"]).hexdigest() != expected_sha:
+            raise ValueError("Uploaded source archive differs from fresh trusted manifest-commit bytes")
+        # Existing reviewed archive pins strengthen cases that already have a frozen truth.
+        for truth_path in Path("benchmarks").glob("dependency_truth*.json"):
+            for prior in json.loads(truth_path.read_text()).get("cases", []):
+                if prior["id"] == identifier and prior["commit"] == spec["commit"]:
+                    if prior["archive"]["sha256"] != expected_sha:
+                        raise ValueError("Fresh source differs from the reviewed frozen archive pin")
+        # Bound extraction before the existing recorder's regular-member extractor runs.
+        with zipfile.ZipFile(archive_path) as bundle:
+            members = bundle.infolist()
+            if len(members) > 100000 or sum(p.file_size for p in members) > 512 * 1024 * 1024:
+                raise ValueError("Trusted source ZIP exceeds the extraction budget")
+            if any(p.file_size > 64 * 1024 * 1024 for p in members):
+                raise ValueError("Trusted source ZIP member exceeds the extraction budget")
+        source = recorder["extract"](archive_path, work / "source")
+        module = source / spec["module"].strip(":").replace(":", "/")
+        if not module.is_dir() or not module.resolve().is_relative_to(source.resolve()):
+            raise ValueError("Trusted source module is unavailable")
+        (module / "gradle.lockfile").write_bytes(payloads[identifier + ".lockfile"])
+        (work / (identifier + ".archive.json")).write_text(json.dumps(archive, indent=2) + "\n")
+        for suffix in ("dependencies.txt", "java.txt"):
+            (work / (identifier + "." + suffix)).write_bytes(payloads[identifier + "." + suffix])
+        subprocess.run([sys.executable, "-I", "benchmarks/dependency_oracle.py", "record",
+                        "--case", identifier, "--work", str(work), "--expected-sha256", expected_sha], check=True)
+        result_path = work / (identifier + ".oracle.json")
+        result = json.loads(read_regular(result_path, 32 * 1024 * 1024))
+        result["recording_provenance"] = {
+            "recorder": "fresh-trusted-checkout-job",
+            "source_identity": "fresh-HTTPS-capture-of-trusted-manifest-repository-and-commit",
+            "expected_archive_sha256": expected_sha,
+            "repository": spec["repository"], "commit": spec["commit"],
+            "upstream_build_executed_in_recording_job": False,
+            "resolved_outputs": "untrusted-upstream-Gradle-build-observations",
+            "reviewed_truth": False,
+            "limitation": "A fresh recorder protects code integrity; it does not prove that upstream build output is truthful or that coordinates are installed code.",
+            "input_sha256": {name: hashlib.sha256(value).hexdigest() for name, value in payloads.items()},
+        }
+        result_path.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
+        PY
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: dependency-oracle-${{ matrix.case }}
+        path: |
+          ${{ runner.temp }}/trusted-oracle/*.zip
+          ${{ runner.temp }}/trusted-oracle/*.json
+          ${{ runner.temp }}/trusted-oracle/*.lockfile
+          ${{ runner.temp }}/trusted-oracle/*.txt
+        retention-days: 90
+        if-no-files-found: error

@@ -25,6 +25,12 @@ from .core import (
     read_bounded,
     read_under,
 )
+from .credential_text import (
+    CREDENTIAL_TEXT_SUFFIXES,
+    credential_only_input,
+    credential_text_input,
+    decode_credential_text,
+)
 
 ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 SKIP_DIRS = {
@@ -132,7 +138,9 @@ def parse_dependencies(path: str, raw: bytes) -> list[dict]:
                 )
             exact = (
                 standalone
-                and not any(c in version for c in "$+[](),")
+                # Classifier / artifact-extension notation is not an exact
+                # version query until those Gradle suffixes are resolved.
+                and not any(c in version for c in "$+[](),:@")
                 and version.lower() != "latest.release"
             )
             entry = dependency(package, version, "Maven", path, "declared" if exact else "unknown")
@@ -220,9 +228,23 @@ def parse_dependencies(path: str, raw: bytes) -> list[dict]:
             if entry.get("version"):
                 found.append(dependency(package, entry["version"], "npm", path))
     elif name.endswith(".cdx.json") or name == "sbom.json":
-        value = json.loads(text)
-        for entry in value.get("components", []):
+        try:
+            value = json.loads(text)
+        except RecursionError:
+            raise ValueError("SBOM JSON nesting exceeds the parser limit") from None
+        except ValueError as error:
+            raise ValueError(f"Invalid SBOM JSON: {error}") from None
+        if not isinstance(value, dict):
+            raise ValueError("SBOM must be a JSON object")
+        components = value.get("components", [])
+        if not isinstance(components, list):
+            raise ValueError("SBOM components must be an array of objects")
+        for index, entry in enumerate(components):
+            if not isinstance(entry, dict):
+                raise ValueError(f"SBOM component {index} must be an object")
             purl = entry.get("purl", "")
+            if not isinstance(purl, str):
+                raise ValueError(f"SBOM component {index} purl must be a string")
             match = re.match(r"pkg:(maven|npm|pypi|golang|pub|swift)/(.+?)@([^?]+)", purl)
             if match:
                 kind, package, version = match.groups()
@@ -423,6 +445,53 @@ def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True) -> None
     value = load_plist(raw)
     if not isinstance(value, dict):
         raise ValueError("Info.plist must be a dictionary")
+    # Validate all copied fields before mutating inventory. Plists can contain
+    # dates/data and malformed security values must not become safe defaults.
+    for key in ("CFBundleIdentifier", "CFBundleShortVersionString", "MinimumOSVersion"):
+        if key in value and not isinstance(value[key], str):
+            raise ValueError(f"Info.plist {key} must be a string")
+    ats = value.get("NSAppTransportSecurity", {})
+    if not isinstance(ats, dict):
+        raise ValueError("Info.plist NSAppTransportSecurity must be a dictionary")
+    try:
+        json.dumps(ats, allow_nan=False)
+    except (TypeError, ValueError, RecursionError):
+        raise ValueError("Info.plist NSAppTransportSecurity contains unsupported JSON values") from None
+    for key in (
+        "NSAllowsArbitraryLoads",
+        "NSAllowsArbitraryLoadsForMedia",
+        "NSAllowsArbitraryLoadsInWebContent",
+        "NSAllowsLocalNetworking",
+    ):
+        if key in ats and not isinstance(ats[key], bool):
+            raise ValueError(f"Info.plist {key} must be a boolean")
+    domains = ats.get("NSExceptionDomains", {})
+    if not isinstance(domains, dict):
+        raise ValueError("Info.plist NSExceptionDomains must be a dictionary")
+    for settings in domains.values():
+        if not isinstance(settings, dict):
+            raise ValueError("Info.plist ATS exception domain settings must be dictionaries")
+        for key in (
+            "NSIncludesSubdomains",
+            "NSExceptionAllowsInsecureHTTPLoads",
+            "NSThirdPartyExceptionAllowsInsecureHTTPLoads",
+            "NSExceptionRequiresForwardSecrecy",
+            "NSThirdPartyExceptionRequiresForwardSecrecy",
+        ):
+            if key in settings and not isinstance(settings[key], bool):
+                raise ValueError(f"Info.plist {key} must be a boolean")
+        for key in ("NSExceptionMinimumTLSVersion", "NSThirdPartyExceptionMinimumTLSVersion"):
+            if key in settings and not isinstance(settings[key], str):
+                raise ValueError(f"Info.plist {key} must be a string")
+    url_types = value.get("CFBundleURLTypes", [])
+    if not isinstance(url_types, list):
+        raise ValueError("Info.plist CFBundleURLTypes must be an array of dictionaries")
+    for entry in url_types:
+        if not isinstance(entry, dict):
+            raise ValueError("Info.plist CFBundleURLTypes entries must be dictionaries")
+        schemes = entry.get("CFBundleURLSchemes", [])
+        if not isinstance(schemes, list) or any(not isinstance(scheme, str) for scheme in schemes):
+            raise ValueError("Info.plist CFBundleURLSchemes must be an array of strings")
     inventory["platforms"].append("ios")
     if primary:
         inventory["package"] = value.get("CFBundleIdentifier", inventory.get("package", ""))
@@ -439,13 +508,13 @@ def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True) -> None
     inventory["ios_config"].append(
         {
             "path": origin,
-            "ats": value.get("NSAppTransportSecurity", {}),
+            "ats": ats,
             "minimum_os": value.get("MinimumOSVersion", ""),
             "version": value.get("CFBundleShortVersionString", ""),
             "bundle_role": "main" if primary else "embedded",
         }
     )
-    for entry in value.get("CFBundleURLTypes", []):
+    for entry in url_types:
         for scheme in entry.get("CFBundleURLSchemes", []):
             inventory["deep_links"].append(
                 {
@@ -480,6 +549,7 @@ def inspect_target(
     configuration: str | None = None,
     dependency_selection: dict | None = None,
     ipa_trust_policy: dict | None = None,
+    credential_text: list[tuple[str, str]] | None = None,
 ) -> tuple[dict, list[tuple[str, str]]]:
     target = target if authorized else target.expanduser().resolve()
     if not target.exists():
@@ -508,6 +578,19 @@ def inspect_target(
         "partial": False,
     }
     sources = []
+    # Raw text is kept only in the caller's in-memory sink, never in inventory/report JSON.
+    credential_metadata = {
+        "collection_enabled": credential_text is not None,
+        "eligible_files": 0,
+        "decoded_files": 0,
+        "omitted_files": 0,
+        "partial": False,
+        "scope": "supported credential-text suffixes in the selected input",
+        "supported_suffixes": sorted(CREDENTIAL_TEXT_SUFFIXES),
+    }
+    inventory["credential_text"] = credential_metadata
+    unsupported_credential_files = 0
+    opaque_gradle: set[str] = set()
     from .hybrid_analysis import MAX_INPUT_DETAILS, compiled_hybrid_input, hybrid_source_input
 
     inventory["hybrid_inputs"] = []
@@ -558,13 +641,42 @@ def inspect_target(
             or (target.suffix.lower() == ".aab" and name == "base/manifest/AndroidManifest.xml")
         )
 
+    def credential_member(name: str) -> bool:
+        if not credential_text_input(name):
+            return False
+        # IPA evidence is scoped to its declared main app, including embedded resources.
+        return (
+            target.is_dir()
+            or target.suffix.lower() != ".ipa"
+            or any(name.startswith(Path(main).parent.as_posix() + "/") for main in main_plists)
+        )
+
+    def credential_omitted(name: str) -> None:
+        if credential_member(name):
+            credential_metadata["omitted_files"] += 1
+            credential_metadata["partial"] = True
+
     def consume(name: str, raw: bytes):
+        nonlocal unsupported_credential_files
         if inventory["bytes_scanned"] + len(raw) > MAX_SOURCE_TOTAL:
             inventory["fingerprint_complete"] = False
             raise SourceBudgetExceeded("Source/configuration total byte limit reached; coverage incomplete")
         inventory["bytes_scanned"] += len(raw)
         hasher.update(name.encode() + b"\0" + raw)
         inventory["files_scanned"] += 1
+        if credential_member(name):
+            credential_metadata["eligible_files"] += 1
+            if credential_text is not None:
+                decoded = decode_credential_text(raw)
+                if decoded is None:
+                    credential_omitted(name)
+                    unsupported_credential_files += 1
+                    inventory["partial"] = True
+                else:
+                    credential_metadata["decoded_files"] += 1
+                    credential_text.append((name, decoded))
+        if credential_only_input(name):
+            return
         if source_input and name.endswith(".plist"):
             source_plists[name] = raw
         if name.endswith((".gradle", ".gradle.kts")) and source_input and not configuration:
@@ -644,6 +756,12 @@ def inspect_target(
         ) as error:
             inventory["warnings"].append(f"Could not parse {name}: {type(error).__name__}")
             inventory["partial"] = True
+        if name.endswith((".gradle", ".gradle.kts")) and raw.startswith(b"bplist"):
+            # Bytes can be fingerprinted without being usable Gradle source.
+            # An excluded script must remain an opaque ancestor/import target.
+            opaque_gradle.add(Path(name).as_posix())
+            inventory["warnings"].append(f"Non-text Gradle context omitted: {name}")
+            inventory["partial"] = True
         if Path(name).suffix in TEXT_SUFFIXES and not raw.startswith(b"bplist"):
             if Path(name).suffix in {".js", ".jsx", ".jsbundle", ".bundle", ".ts", ".tsx", ".dart"}:
                 record, text = hybrid_source_input(name, raw)
@@ -658,6 +776,13 @@ def inspect_target(
                     sources.append((name, text))
             else:
                 sources.append((name, raw.decode("utf-8", errors="replace")))
+
+    def opaque_entry(relative: Path) -> None:
+        canonical = relative.as_posix()
+        if canonical.endswith((".gradle", ".gradle.kts")) and canonical not in opaque_gradle:
+            opaque_gradle.add(canonical)
+            inventory["warnings"].append(f"Non-regular Gradle context omitted without reading: {relative}")
+            inventory["partial"] = True
 
     if target.is_dir():
 
@@ -682,6 +807,7 @@ def inspect_target(
                 if name in SKIP_DIRS:
                     continue
                 child = Path(directory) / name
+                opaque_entry(child.relative_to(target))
                 try:
                     if not child.is_symlink():
                         kept.append(name)
@@ -698,7 +824,11 @@ def inspect_target(
                             inventory["partial"] = True
                     except OSError as error:
                         source_error(error, "inspect compiled hybrid entry", path.relative_to(target))
-                if path.suffix in TEXT_SUFFIXES or path.name in {"Podfile.lock", "Package.resolved"}:
+                if (
+                    path.suffix in TEXT_SUFFIXES
+                    or credential_only_input(path)
+                    or path.name in {"Podfile.lock", "Package.resolved"}
+                ):
                     source_paths.append(path)
                 if len(source_paths) > MAX_FILES:
                     break
@@ -726,9 +856,15 @@ def inspect_target(
                 stat.S_ISLNK(metadata.st_mode)
                 or not stat.S_ISREG(metadata.st_mode)
                 or (
-                    path.suffix not in TEXT_SUFFIXES and path.name not in {"Podfile.lock", "Package.resolved"}
+                    path.suffix not in TEXT_SUFFIXES
+                    and not credential_only_input(path)
+                    and path.name not in {"Podfile.lock", "Package.resolved"}
                 )
             ):
+                opaque_entry(relative)
+                credential_omitted(str(relative))
+                if credential_member(str(relative)):
+                    inventory["partial"] = True
                 continue
             if inventory["files_scanned"] >= MAX_FILES:
                 inventory["warnings"].append("Source file limit reached; coverage incomplete")
@@ -736,6 +872,7 @@ def inspect_target(
                 inventory["fingerprint_complete"] = False
                 break
             if metadata.st_size > MAX_FILE:
+                credential_omitted(str(relative))
                 inventory["warnings"].append(f"Oversized source omitted: {relative}")
                 inventory["partial"] = True
                 inventory["fingerprint_complete"] = False
@@ -743,6 +880,7 @@ def inspect_target(
             try:
                 consume(str(relative), read_under(target, relative))
             except OSError as error:
+                credential_omitted(str(relative))
                 source_error(error, "read source file", relative)
                 continue
             except ValueError as error:
@@ -813,6 +951,19 @@ def inspect_target(
             source_input = target.suffix.lower() == ".zip" and not app_archive
             if target.suffix.lower() == ".zip":
                 inventory["archive_role"] = "ios-app-build" if app_archive else "source-zip"
+            if source_input:
+                # ZIP directories need not have explicit headers. A member's
+                # parents establish known script directories without reading or
+                # extracting either the directory or any symlink target.
+                for item in items:
+                    for parent in Path(item.filename).parents:
+                        if parent.name in {
+                            "build.gradle",
+                            "build.gradle.kts",
+                            "settings.gradle",
+                            "settings.gradle.kts",
+                        }:
+                            opaque_entry(parent)
             for item in items:
                 parts = Path(item.filename).parts
                 if (
@@ -853,8 +1004,31 @@ def inspect_target(
             for item in items:
                 name = item.filename
                 if item.is_dir():
+                    if source_input:
+                        opaque_entry(Path(name))
                     continue
                 compiled = compiled_hybrid_input(name)
+                if stat.S_ISDIR(item.external_attr >> 16):
+                    if source_input:
+                        opaque_entry(Path(name))
+                    if compiled is not None:
+                        compiled["reason"] = (
+                            "non-regular archive member; compiled artifact name only; content not inspected"
+                        )
+                        record_hybrid(compiled)
+                    if (
+                        compiled is not None
+                        or name.endswith("AndroidManifest.xml")
+                        or re.match(r"Payload/[^/]+\.app/Info\.plist$", name)
+                        or Path(name).suffix in TEXT_SUFFIXES
+                        or credential_only_input(name)
+                    ):
+                        credential_omitted(name)
+                        inventory["warnings"].append(
+                            f"Archive non-regular member omitted without reading: {name}"
+                        )
+                        inventory["partial"] = True
+                    continue
                 if compiled is not None:
                     record_hybrid(compiled)
                     inventory["partial"] = True
@@ -862,18 +1036,36 @@ def inspect_target(
                 # Read in place. Never extract untrusted archive paths.
                 if name.startswith("/") or ".." in Path(name).parts:
                     raise ValueError("Unsafe archive member path")
-                if item.file_size > MAX_FILE:
-                    inventory["warnings"].append(f"Oversized archive member omitted: {name}")
-                    inventory["partial"] = True
-                    continue
                 if (
                     name.endswith("AndroidManifest.xml")
                     or re.match(r"Payload/[^/]+\.app/Info\.plist$", name)
                     or Path(name).suffix in TEXT_SUFFIXES
+                    or credential_only_input(name)
                 ):
+                    mode = stat.S_IFMT(item.external_attr >> 16)
+                    if mode == stat.S_IFLNK or (
+                        source_input
+                        and name.endswith((".gradle", ".gradle.kts"))
+                        and mode not in {0, stat.S_IFREG}
+                    ):
+                        if source_input:
+                            opaque_entry(Path(name))
+                        credential_omitted(name)
+                        kind = "symlink" if mode == stat.S_IFLNK else "non-regular member"
+                        inventory["warnings"].append(f"Archive {kind} omitted without reading: {name}")
+                        inventory["partial"] = True
+                        continue
+                    if item.file_size > MAX_FILE:
+                        credential_omitted(name)
+                        inventory["warnings"].append(f"Oversized archive member omitted: {name}")
+                        inventory["partial"] = True
+                        if name.endswith((".gradle", ".gradle.kts")):
+                            opaque_gradle.add(Path(name).as_posix())
+                        continue
                     try:
                         consume(name, archive.read(item))
                     except SourceBudgetExceeded as error:
+                        credential_metadata["partial"] = True
                         inventory["warnings"].append(str(error))
                         inventory["partial"] = True
                         break
@@ -886,6 +1078,7 @@ def inspect_target(
                         EOFError,
                         zlib.error,
                     ) as error:
+                        credential_omitted(name)
                         inventory["warnings"].append(
                             f"Archive member unreadable: {name}: {type(error).__name__}"
                         )
@@ -928,9 +1121,18 @@ def inspect_target(
     if source_input:
         from .source_context import plist_references, resolve_catalog_usage, resolve_gradle, supersede
 
-        if not inventory["partial"]:
+        # A parse failure in a fully read file must not suppress independent
+        # declarations. Unknown source membership/read gaps block resolution;
+        # known omitted Gradle scripts and parse failures remain opaque only to
+        # their descendants/importers. Archive-byte identity alone does not
+        # establish that every script was available for context resolution.
+        if inventory["fingerprint_complete"]:
             try:
-                resolve_gradle(inventory["dependencies"], sources)
+                context_warnings = resolve_gradle(
+                    inventory["dependencies"], sources, opaque_sources=opaque_gradle
+                )
+                inventory["warnings"].extend(context_warnings)
+                inventory["partial"] |= bool(context_warnings)
             except ValueError as error:
                 inventory["warnings"].append(str(error))
                 inventory["partial"] = True
@@ -1044,4 +1246,14 @@ def inspect_target(
                 + inventory["warnings"][0]
             )
         raise ValueError("No supported source or configuration files found")
+    credential_metadata["partial"] |= not inventory["fingerprint_complete"]
+    if unsupported_credential_files:
+        inventory["warnings"].append(
+            f"Non-text/unsupported credential-text members omitted: {unsupported_credential_files}; "
+            "credential coverage incomplete"
+        )
+    if target.suffix.lower() == ".ipa":
+        credential_metadata["scope"] = "supported credential-text members under the declared main IPA app"
+    elif target.suffix.lower() == ".apk":
+        credential_metadata["scope"] = "supported credential-text APK archive members"
     return inventory, sources

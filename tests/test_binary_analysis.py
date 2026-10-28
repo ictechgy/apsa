@@ -209,7 +209,10 @@ def test_entitlements_and_pie_are_observations_with_signature_limit(tmp_path):
         "BINARY-IOS-PIE",
         "BINARY-IOS-DEBUG-ENTITLEMENT",
     }
-    assert all(finding["status"] == "configuration-confirmed" for finding in report["findings"])
+    assert {finding["rule_id"]: finding["status"] for finding in report["findings"]} == {
+        "BINARY-IOS-PIE": "configuration-confirmed",
+        "BINARY-IOS-DEBUG-ENTITLEMENT": "candidate",
+    }
     signature = report["metadata"]["apps"][0]["slices"][0]["code_signature"]
     assert signature["entitlements"]["get-task-allow"] is True
     assert signature["entitlements"]["keychain-access-groups-count"] == 1

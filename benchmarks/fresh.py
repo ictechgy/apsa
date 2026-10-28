@@ -12,8 +12,37 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_PARTIAL_CASES = {"java-cross-function-irrelevant"}
+EXPECTED_PARTIAL_CASES = {
+    "java-cross-function-irrelevant",
+    "swift-url-vulnerable",
+    "swift-url-fixed",
+    "swift-documentation-irrelevant",
+    "swift-navigation-vulnerable",
+    "swift-navigation-fixed",
+    "swift-query-javascript-vulnerable",
+    "swift-query-javascript-fixed",
+    "swift-unrelated-shadow",
+}
 BINARY_CONTROLS = {"dex-unsafe": "unsafe", "dex-safe": "safe"}
+SWIFT_INCOMPLETE_RULES = ["AST-CRYPTO-ECB", "AST-CRYPTO-WEAK-CIPHER", "AST-SQL-CONCAT"]
+JAVA_INCOMPLETE_RULES = [
+    "AST-CRYPTO-ECB",
+    "AST-CRYPTO-HARDCODED-KEY",
+    "AST-CRYPTO-STATIC-IV",
+    "AST-CRYPTO-WEAK-CIPHER",
+    "AST-CRYPTO-WEAK-HASH",
+    "AST-IMPLICIT-INTENT",
+    "AST-INTENT-REDIRECTION",
+    "AST-PATH-TRAVERSAL",
+    "AST-PENDINGINTENT-MUTABLE",
+    "AST-SQL-CONCAT",
+    "AST-WEBVIEW-HOST-ALLOWLIST",
+    "AST-WEBVIEW-JS-BRIDGE",
+    "AST-WEBVIEW-SSL-BYPASS",
+    "AST-WEBVIEW-UNTRUSTED-URL",
+]
+# This semantic diagnostic contains no machine path or temporary identifier.
+JAVA_PARTIAL_WARNING = "Native flow remains partial: object alias identity unavailable; unresolved callable identity or argument signature."
 
 
 def load_module(name: str, path: Path):
@@ -73,14 +102,85 @@ def freeze_corpus(output: Path, compiled: Path, labels: Path = ROOT / "benchmark
     return frozen
 
 
-def regression_contract(result: dict) -> bool:
-    """Known incomplete analysis remains partial; any new disagreement fails."""
-    partial = {case["id"] for case in result["cases"] if case["warnings"] or case["incomplete_rules"]}
+def _observations(value: object) -> set[tuple[str, str]] | None:
+    """Preserve rule/status identity and reject malformed or duplicate labels."""
+    if not isinstance(value, list):
+        return None
+    labels = set()
+    for entry in value:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"rule_id", "status"}
+            or not isinstance(entry["rule_id"], str)
+            or not entry["rule_id"]
+            or not isinstance(entry["status"], str)
+            or not entry["status"]
+        ):
+            return None
+        label = (entry["rule_id"], entry["status"])
+        if label in labels:
+            return None
+        labels.add(label)
+    return labels
+
+
+def regression_contract(result: dict, labels: Path = ROOT / "benchmarks/corpus.json") -> bool:
+    """Check frozen observations separately from deliberately unscored partials."""
+    summary, cases, disagreements = result.get("summary"), result.get("cases"), result.get("disagreements")
+    if (
+        not isinstance(summary, dict)
+        or any(type(summary.get(key)) is not int or summary[key] != 0 for key in ("fp", "fn"))
+        or not isinstance(cases, list)
+        or not isinstance(disagreements, list)
+        or result.get("passed") is not False
+        or ("published_baseline_approved" in result and result["published_baseline_approved"] is not False)
+    ):
+        return False
+    try:
+        truth = json.loads(labels.read_text())["cases"]
+        selected = [case for case in truth if case["kind"] == "source" or case["id"] in BINARY_CONTROLS]
+        expected = {case["id"]: _observations(case["expected"]) for case in selected}
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    if len(expected) != len(selected) or any(value is None for value in expected.values()):
+        return False
+    seen = set()
+    for case in cases:
+        if not isinstance(case, dict):
+            return False
+        identifier = case.get("id")
+        if not isinstance(identifier, str) or identifier not in expected or identifier in seen:
+            return False
+        seen.add(identifier)
+        if (
+            "error" not in case
+            or case["error"] is not None
+            or _observations(case.get("expected")) != expected[identifier]
+            or _observations(case.get("observed")) != expected[identifier]
+        ):
+            return False
+        if identifier == "java-cross-function-irrelevant":
+            rules, warnings = JAVA_INCOMPLETE_RULES, [JAVA_PARTIAL_WARNING]
+        elif identifier in EXPECTED_PARTIAL_CASES:
+            rules, warnings = SWIFT_INCOMPLETE_RULES, []
+        else:
+            rules, warnings = [], []
+        if (
+            case.get("incomplete_rules") != rules
+            or case.get("warnings") != warnings
+            or case.get("scored") is not (identifier not in EXPECTED_PARTIAL_CASES)
+        ):
+            return False
+    if seen != set(expected) or summary.get("cases") != len(cases):
+        return False
+    disagreement_ids = []
+    for row in disagreements:
+        if not isinstance(row, dict) or not isinstance(row.get("case_id"), str):
+            return False
+        disagreement_ids.append(row["case_id"])
     return (
-        result["summary"]["fp"] == result["summary"]["fn"] == 0
-        and all(case["error"] is None for case in result["cases"])
-        and partial == EXPECTED_PARTIAL_CASES
-        and {row["case_id"] for row in result["disagreements"]} == EXPECTED_PARTIAL_CASES
+        len(disagreement_ids) == len(EXPECTED_PARTIAL_CASES)
+        and set(disagreement_ids) == EXPECTED_PARTIAL_CASES
     )
 
 

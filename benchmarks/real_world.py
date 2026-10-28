@@ -32,6 +32,7 @@ from benchmarks.competitive import (
     engine_metadata,
     mobsf_observation,
     observation_signature,
+    observation_state,
 )
 from mobile_audit.audit import correlate
 from mobile_audit.inputs import TEXT_SUFFIXES
@@ -274,8 +275,13 @@ class OSVTransport:
             )
         record = self.records[key]
         path = self.root / f"{key}.json"
-        body = path.read_bytes()
-        if path.is_symlink() or sha(body) != record["sha256"] or len(body) > MAX_RESPONSE:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_RESPONSE:
+                raise ValueError("Frozen OSV response outside file/byte bounds")
+            body = stream.read(MAX_RESPONSE + 1)
+        if sha(body) != record["sha256"] or len(body) > MAX_RESPONSE:
             raise ValueError("Frozen OSV response bytes changed")
         return httpx.Response(record["status"], content=body, headers={"Content-Type": "application/json"})
 
@@ -289,7 +295,9 @@ def dependency_result(case: dict, transport: OSVTransport, home: Path) -> dict:
     dependency = case["dependency"]
     store = Store(home)
     try:
-        records, errors = query_dependencies(store, [dependency], client=transport.client)
+        records, errors = query_dependencies(
+            store, [dependency], client=transport.client, query_mode="legacy"
+        )
         findings, _ = correlate({"dependencies": [dependency], "platforms": []}, records)
         health = [f for f in store.feeds() if f["source"].startswith("osv:")]
     finally:
@@ -524,7 +532,11 @@ def run(root: Path, output: Path, python: str, repeats: int, mobsf: MobSF | None
                     errors.append(f"{type(error).__name__}: {error}"[:700])
             stable = len(set(signatures)) <= 1
             tools[tool] = {
-                "state": "failed" if errors else "completed" if stable else "unstable",
+                "state": "failed"
+                if errors
+                else "unstable"
+                if not stable
+                else observation_state(observations),
                 "seconds": elapsed,
                 "median_seconds": statistics.median(elapsed) if elapsed else None,
                 "errors": errors,

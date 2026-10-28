@@ -510,7 +510,7 @@ def verify_claim(
     elif observed == "partial" or file_state == "partial":
         verdict = "partial"
     elif observed == "checked":
-        verdict = "not-observed"
+        verdict = "partial" if report_incomplete(report) else "not-observed"
     else:
         verdict = "not-run"
     strongest = max(
@@ -523,6 +523,7 @@ def verify_claim(
         "report_id": report.get("id"),
         "claim": {"path": claimed, "line": line, "weakness": weakness, "rule": rule, "window": window},
         "verdict": verdict,
+        "report_incomplete": report_incomplete(report),
         "strongest_status": strongest,
         "weaknesses": [{"id": w, "title": titles[w]} for w in weaknesses],
         "related_checks": [{"rule_id": c, "states": sorted(states.get(c, set()))} for c in checks],

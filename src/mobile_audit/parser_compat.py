@@ -278,11 +278,11 @@ def adapted_source(raw: bytes, language: str, nodes: list[Any]) -> tuple[bytes, 
     if language == "swift":
         kind = "swift-nonisolated-unsafe-variable"
         for node in nodes:
+            if node.type != "ERROR":
+                continue
             fragment = raw[node.start_byte : node.end_byte]
-            if (
-                node.type == "ERROR"
-                and re.fullmatch(rb"nonisolated\(unsafe\)", fragment)
-                and re.match(rb"\s*(?:var|let)\b", raw[node.end_byte :])
+            if re.fullmatch(rb"nonisolated\(unsafe\)", fragment) and re.match(
+                rb"\s*(?:var|let)\b", raw[node.end_byte :]
             ):
                 # The local flow analysis does not model concurrency isolation.
                 start = node.start_byte

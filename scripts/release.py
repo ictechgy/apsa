@@ -156,36 +156,53 @@ SOURCE_SUFFIXES = frozenset(
     }
 )
 PUBLIC_FIXTURE_SOURCES = (
-    "tests/fixtures/native_context_legacy/java-vulnerable.java",
-    "tests/fixtures/native_context_legacy/java-fixed.java",
-    "tests/fixtures/native_context_legacy/kotlin-vulnerable.kt",
-    "tests/fixtures/native_context_legacy/kotlin-fixed.kt",
-    "tests/fixtures/native_context_legacy/swift-vulnerable.swift",
-    "tests/fixtures/native_context_legacy/swift-fixed.swift",
-    "tests/fixtures/binary_analysis/build.py",
-    "tests/fixtures/binary_analysis/unsafe/Calls.java",
-    "tests/fixtures/binary_analysis/safe/Calls.java",
-    "tests/fixtures/runtime/build.py",
-    "tests/fixtures/runtime/build_evidence.py",
-    "tests/fixtures/runtime/acquire_compiled.py",
-    "tests/fixtures/runtime/verify.py",
-    "tests/fixtures/runtime/android/MainActivity.java",
-    "tests/fixtures/runtime/android/AndroidManifest.xml",
-    "tests/fixtures/runtime/ios/Main.swift",
-    "tests/fixtures/runtime/ios/Instrumented.swift",
-    "tests/fixtures/runtime/transport/TransportActivity.java",
-    "tests/fixtures/runtime/transport/Transport.swift",
-    "tests/fixtures/runtime/transport/UrlDispatcher.swift",
-    "tests/fixtures/runtime/README.md",
-    "tests/fixtures/runtime/COMPILED.md",
-    "tests/fixtures/mcp_tool_manifest.json",
-) + tuple(
-    f"tests/fixtures/skills/{name}-{version}.md"
-    for version in ("1.0.1", "1.0.2", "1.0.3", "1.0.6", "1.1.0")
-    for name in (
-        ("quaygate", "mobile-audit")
-        if version in {"1.0.1", "1.0.2"}
-        else ("apsa", "quaygate", "mobile-audit")
+    (
+        "tests/fixtures/native_context_legacy/java-vulnerable.java",
+        "tests/fixtures/native_context_legacy/java-fixed.java",
+        "tests/fixtures/native_context_legacy/kotlin-vulnerable.kt",
+        "tests/fixtures/native_context_legacy/kotlin-fixed.kt",
+        "tests/fixtures/native_context_legacy/swift-vulnerable.swift",
+        "tests/fixtures/native_context_legacy/swift-fixed.swift",
+        "tests/fixtures/binary_analysis/build.py",
+        "tests/fixtures/binary_analysis/unsafe/Calls.java",
+        "tests/fixtures/binary_analysis/safe/Calls.java",
+        "tests/fixtures/runtime/build.py",
+        "tests/fixtures/runtime/build_evidence.py",
+        "tests/fixtures/runtime/acquire_compiled.py",
+        "tests/fixtures/runtime/verify.py",
+        "tests/fixtures/runtime/android/MainActivity.java",
+        "tests/fixtures/runtime/android/AndroidManifest.xml",
+        "tests/fixtures/runtime/ios/Main.swift",
+        "tests/fixtures/runtime/ios/Instrumented.swift",
+        "tests/fixtures/runtime/transport/TransportActivity.java",
+        "tests/fixtures/runtime/transport/Transport.swift",
+        "tests/fixtures/runtime/transport/UrlDispatcher.swift",
+        "tests/fixtures/runtime/README.md",
+        "tests/fixtures/runtime/COMPILED.md",
+        "tests/fixtures/mcp_tool_manifest.json",
+    )
+    + tuple(
+        f"tests/fixtures/skills/{name}-{version}.md"
+        for version in (
+            "1.0.1",
+            "1.0.2",
+            "1.0.3",
+            "1.0.6",
+            "1.1.0",
+            "1.2.0",
+            "1.3.0",
+            "1.4.0",
+            "1.5.0",
+            "1.5.1",
+        )
+        for name in (
+            ("quaygate", "mobile-audit")
+            if version in {"1.0.1", "1.0.2"}
+            else ("apsa", "quaygate", "mobile-audit")
+        )
+    )
+    + tuple(
+        f"tests/fixtures/skills/{name}-1.6.2prereview.md" for name in ("apsa", "quaygate", "mobile-audit")
     )
 )
 PUBLIC_DEMO_SOURCES = tuple(
@@ -543,6 +560,28 @@ def fresh_binary_fixture(stage: Path, destination: Path, environment: dict[str, 
     return Path(result["artifacts"]["unsafe"]["path"])
 
 
+def smoke_report_verification(verified: dict) -> dict:
+    verification = verified.get("data", {})
+    if (
+        verified.get("ok") is not True
+        or not isinstance(verification, dict)
+        or verification.get("state") != "passed"
+        or type(verification.get("checked")) is not int
+        or verification["checked"] < 1
+        or verification.get("failures") != []
+    ):
+        raise RuntimeError("Clean release report integrity verification did not pass")
+    return verification
+
+
+def smoke_network_requested(*reports: dict) -> bool:
+    for report in reports:
+        query = report.get("online_query")
+        if not isinstance(query, dict) or query.get("requested") is not False:
+            raise RuntimeError("Clean release offline smoke lacks explicit offline query evidence")
+    return False
+
+
 def smoke(python: Path, directory: Path, environment: dict[str, str], version: str, stage: Path) -> dict:
     cli = python.parent / "apsa"
     home = directory / "audit-home"
@@ -611,6 +650,7 @@ def smoke(python: Path, directory: Path, environment: dict[str, str], version: s
     verified = json.loads(
         run([str(cli), "reports", "verify", "--home", str(home), "--json"], directory, environment)
     )
+    smoke_report_verification(verified)
     binary = fresh_binary_fixture(stage, directory / "synthetic-binary", environment)
     binary_report = json.loads(
         run([str(cli), "scan", str(binary), "--home", str(home), "--json"], directory, environment, 180)
@@ -621,6 +661,7 @@ def smoke(python: Path, directory: Path, environment: dict[str, str], version: s
         raise RuntimeError("Quaygate did not inspect the exact scanned build")
     if not any(item["rule_id"] == "QG-APP-SIGNATURE" for item in binary_report["findings"]):
         raise RuntimeError("Quaygate binary findings are missing from the common report")
+    offline_requested = smoke_network_requested(scanned, binary_report)
     protocol_smoke = """import asyncio, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -656,7 +697,7 @@ asyncio.run(check())
         "binary_input_hash_matches": True,
         "mcp_stdio_binary_scan": "passed",
         "packaged_skill_install": ["apsa", "quaygate", "mobile-audit"],
-        "intel_network_requested": False,
+        "intel_network_requested": offline_requested,
     }
 
 

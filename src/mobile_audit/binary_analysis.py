@@ -131,6 +131,10 @@ def _analyze_dex(raw: bytes, path: str, remaining: dict[str, int]) -> dict:
         "instructions": 0,
         "calls": {},
         "complete": True,
+        "budget_reasons": [],
+        # Count visited methods with omitted instructions; do not enumerate the
+        # potentially large set of methods left after a global stop.
+        "methods_truncated": 0,
         "methods_without_value_tracking": 0,
         "features": [
             feature
@@ -144,22 +148,49 @@ def _analyze_dex(raw: bytes, path: str, remaining: dict[str, int]) -> dict:
         ],
     }
     warnings = []
+
+    def reached_budget(reason: str, warning: str) -> None:
+        stats["complete"] = False
+        # These fixed reasons also bound diagnostic size for many large methods.
+        if reason not in stats["budget_reasons"]:
+            stats["budget_reasons"].append(reason)
+            warnings.append(warning)
+
     for cls in dex.get_classes():
         for method in cls.get_methods():
             code = method.get_code()
             if code is None:
                 continue
-            if remaining["methods"] <= 0 or remaining["instructions"] <= 0:
-                stats["complete"] = False
-                warnings.append(f"DEX instruction/method budget reached: {path}")
+            if remaining["methods"] <= 0:
+                reached_budget("global-method-limit", f"DEX global method budget reached: {path}")
+                return {"findings": findings, "metadata": stats, "warnings": warnings}
+            if remaining["instructions"] <= 0:
+                reached_budget("global-instruction-limit", f"DEX global instruction budget reached: {path}")
+                return {"findings": findings, "metadata": stats, "warnings": warnings}
+            if remaining["findings"] <= 0:
+                reached_budget("finding-limit", f"DEX finding budget reached: {path}")
                 return {"findings": findings, "metadata": stats, "warnings": warnings}
             remaining["methods"] -= 1
             stats["methods"] += 1
             instructions = []
+            method_truncated = False
+            stop_for_global_budget = False
             for offset, ins in method.get_instructions_idx():
-                if len(instructions) >= MAX_METHOD_INSTRUCTIONS or remaining["instructions"] <= 0:
-                    stats["complete"] = False
-                    warnings.append(f"DEX method instruction budget reached: {path}")
+                # A next instruction establishes omitted work. Merely consuming
+                # the final available slot does not make an exact fit partial.
+                if remaining["instructions"] <= 0:
+                    reached_budget(
+                        "global-instruction-limit", f"DEX global instruction budget reached: {path}"
+                    )
+                    method_truncated = bool(instructions)
+                    stop_for_global_budget = True
+                    break
+                if len(instructions) >= MAX_METHOD_INSTRUCTIONS:
+                    reached_budget(
+                        "per-method-instruction-limit",
+                        f"DEX per-method instruction budget reached: {path}",
+                    )
+                    method_truncated = bool(instructions)
                     break
                 remaining["instructions"] -= 1
                 stats["instructions"] += 1
@@ -175,7 +206,12 @@ def _analyze_dex(raw: bytes, path: str, remaining: dict[str, int]) -> dict:
             if not track_values:
                 stats["methods_without_value_tracking"] += 1
             caller = _safe_text(f"{method.get_class_name()}->{method.get_name()}{method.get_descriptor()}")
-            for offset, ins in instructions:
+            for index, (offset, ins) in enumerate(instructions):
+                if remaining["findings"] <= 0:
+                    reached_budget("finding-limit", f"DEX finding budget reached: {path}")
+                    if method_truncated or index > 0:
+                        stats["methods_truncated"] += 1
+                    return {"findings": findings, "metadata": stats, "warnings": warnings}
                 if offset in boundaries:
                     constants.clear()
                     pending_result = None
@@ -322,15 +358,8 @@ def _analyze_dex(raw: bytes, path: str, remaining: dict[str, int]) -> dict:
                                 "https://developer.android.com/reference/android/util/Log",
                             )
                     if output is not None:
-                        if remaining["findings"] > 0:
-                            findings.append(output)
-                            remaining["findings"] -= 1
-                        else:
-                            stats["complete"] = False
-                            if not warnings:
-                                warnings.append(
-                                    "Binary finding budget reached; additional call sites may be omitted"
-                                )
+                        findings.append(output)
+                        remaining["findings"] -= 1
                     continue
                 if opcode.startswith("move-result"):
                     if registers:
@@ -370,10 +399,10 @@ def _analyze_dex(raw: bytes, path: str, remaining: dict[str, int]) -> dict:
                         constants[registers[0]] = value
                 elif opcode != "nop":
                     constants.clear()
-            if not stats["complete"]:
+            if method_truncated:
+                stats["methods_truncated"] += 1
+            if stop_for_global_budget:
                 return {"findings": findings, "metadata": stats, "warnings": warnings}
-    if remaining["findings"] == 0:
-        warnings.append("Binary finding budget reached; additional call sites may be omitted")
     return {"findings": findings, "metadata": stats, "warnings": warnings}
 
 
@@ -392,6 +421,25 @@ def _entitlement_summary(value: Any) -> dict:
         if isinstance(value.get(key), list):
             summary[key + "-count"] = len(value[key])
     return summary
+
+
+def _xml_entitlements_bound(signature: dict) -> bool:
+    """XML observation is bound only when every directory seals slot 5.
+
+    This establishes internal hash concordance, never signer/app authenticity.
+    DER or unsupported entitlement slots leave the effective value ambiguous.
+    """
+    return (
+        "entitlements" in signature
+        and not signature.get("der_entitlements_present")
+        and bool(signature.get("code_directories"))
+        and all(
+            directory.get("entitlements_bound") is True
+            and directory.get("der_entitlements_state", "not-sealed") == "not-sealed"
+            and not directory.get("unsupported_entitlement_slots")
+            for directory in signature["code_directories"]
+        )
+    )
 
 
 CODE_HASHES = {1: ("sha1", 20), 2: ("sha256", 32), 3: ("sha256", 20), 4: ("sha384", 48)}
@@ -976,7 +1024,7 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                 item
                 for item in items
                 if re.fullmatch(
-                    (r"[^/]+/dex/" if kind == ".aab" else "") + r"classes(?:[2-9]\d*|1\d+)?.dex",
+                    (r"[^/]+/dex/" if kind == ".aab" else "") + r"classes(?:[2-9]\d*|1\d+)?\.dex",
                     item.filename,
                 )
             ]
@@ -1066,15 +1114,27 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                     app["executable_bytes"] = len(raw)
                     bundle_root = str(PurePosixPath(item.filename).parent)
                     envelope_path = bundle_root + "/_CodeSignature/CodeResources"
-                    envelope = (
-                        _read_member(archive, archive.getinfo(envelope_path), MAX_PLIST_BYTES)
-                        if envelope_path in names
-                        else None
-                    )
                     bundle_blobs = {1: info_raw}
-                    if envelope is not None:
-                        bundle_blobs[3] = envelope
-                    app["resource_seal"] = verify_resource_seal(archive, bundle_root, executable, envelope)
+                    envelope = None
+                    try:
+                        if envelope_path in names:
+                            envelope = _read_member(archive, archive.getinfo(envelope_path), MAX_PLIST_BYTES)
+                            # Raw-byte slot-3 concordance is independent of the
+                            # resource envelope's supported structure or rules.
+                            bundle_blobs[3] = envelope
+                        app["resource_seal"] = verify_resource_seal(
+                            archive, bundle_root, executable, envelope
+                        )
+                    except Exception as error:
+                        app["resource_seal"] = {
+                            "state": "unverifiable",
+                            "reason": f"Resource envelope inspection failed: {type(error).__name__}",
+                            "hashes_verified": False,
+                            "app_authenticity_verified": False,
+                        }
+                        result["warnings"].append(
+                            f"IPA resource envelope inspection incomplete for {envelope_path}: {type(error).__name__}"
+                        )
                     app["slices"] = inspect_macho(raw, collected.get("ipa_trust_policy"), bundle_blobs)
                     directories = [
                         directory
@@ -1124,19 +1184,21 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                             )
                         signature = slice_["code_signature"]
                         if signature.get("entitlements", {}).get("get-task-allow") is True:
+                            entitlements_bound = _xml_entitlements_bound(signature)
                             result["findings"].append(
                                 finding(
                                     "BINARY-IOS-DEBUG-ENTITLEMENT",
                                     "Embedded XML app entitlements request debugging",
                                     "medium",
-                                    "candidate"
-                                    if signature.get("der_entitlements_present")
-                                    else "configuration-confirmed",
+                                    "configuration-confirmed" if entitlements_bound else "candidate",
                                     [
                                         {
                                             **evidence,
                                             "basis": "codesign-entitlement-observed",
                                             "get-task-allow": True,
+                                            "entitlements_binding_state": "bound"
+                                            if entitlements_bound
+                                            else "unverifiable",
                                             "signature_verified": False,
                                         }
                                     ],
@@ -1195,18 +1257,7 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                 )
             )
             signatures = [slice_["code_signature"] for app in apps for slice_ in app.get("slices", [])]
-            entitlements_complete = bool(signatures) and all(
-                "entitlements" in signature
-                and not signature.get("der_entitlements_present")
-                and bool(signature.get("code_directories"))
-                and all(
-                    directory.get("entitlements_bound") is True
-                    and directory.get("der_entitlements_state", "not-sealed") == "not-sealed"
-                    and not directory.get("unsupported_entitlement_slots")
-                    for directory in signature["code_directories"]
-                )
-                for signature in signatures
-            )
+            entitlements_complete = bool(signatures) and all(_xml_entitlements_bound(s) for s in signatures)
             result["coverage"].append(
                 _coverage(
                     "BINARY-IOS-ENTITLEMENTS",
@@ -1293,7 +1344,17 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                 )
             )
             if len(result["findings"]) > MAX_FINDINGS:
+                affected = set()
+                for omitted in result["findings"][MAX_FINDINGS:]:
+                    if any("parent_app" in e for e in omitted["evidence"]):
+                        affected.add("BINARY-IOS-EMBEDDED-MACHO")
+                    elif omitted["rule_id"] == "BINARY-IOS-PIE":
+                        affected.add("BINARY-IOS-MACHO")
+                    elif omitted["rule_id"] == "BINARY-IOS-DEBUG-ENTITLEMENT":
+                        affected.add("BINARY-IOS-ENTITLEMENTS")
                 result["findings"] = result["findings"][:MAX_FINDINGS]
                 result["warnings"].append("IPA executable finding budget reached; coverage incomplete")
-                result["coverage"][-1]["state"] = "partial"
+                for row in result["coverage"]:
+                    if row["rule_id"] in affected:
+                        row["state"] = "partial"
     return result

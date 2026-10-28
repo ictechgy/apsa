@@ -62,10 +62,28 @@ def test_fresh_corpus_runs_actual_engines_and_is_reproducible():
     second = benchmark.run()
     assert first == second
     assert first["summary"]["cases"] == 31
-    # The undefined audit.record receiver keeps this source control partial.
-    # Candidate labels still match; unresolved analysis cannot become a clean pass.
+    # The undefined audit.record receiver is partial. Unsupported Swift checks
+    # are explicitly not-run; neither can establish benchmark completion.
     assert first["passed"] is False
-    assert [row["case_id"] for row in first["disagreements"]] == ["java-cross-function-irrelevant"]
+    swift_unmeasured = {
+        "swift-url-vulnerable",
+        "swift-url-fixed",
+        "swift-documentation-irrelevant",
+        "swift-navigation-vulnerable",
+        "swift-navigation-fixed",
+        "swift-query-javascript-vulnerable",
+        "swift-query-javascript-fixed",
+        "swift-unrelated-shadow",
+    }
+    assert {row["case_id"] for row in first["disagreements"]} == {
+        "java-cross-function-irrelevant",
+        *swift_unmeasured,
+    }
+    for case in first["cases"]:
+        if case["id"] in swift_unmeasured:
+            assert case["observed"] == case["expected"]
+            assert case["incomplete_rules"] == ["AST-CRYPTO-ECB", "AST-CRYPTO-WEAK-CIPHER", "AST-SQL-CONCAT"]
+            assert case["scored"] is False
     assert first["disagreements"][0]["warnings"]
     assert first["summary"]["fp"] == first["summary"]["fn"] == 0
     assert any(case["kind"] == "binary" and case["observed"] for case in first["cases"])
@@ -165,7 +183,9 @@ def test_binary_fixture_drift_requires_relabeling_before_analysis(tmp_path, monk
     result = benchmark.run(path)
     assert result["passed"] is False
     assert "Fixture SHA-256 differs" in result["disagreements"][0]["error"]
-    assert result["summary"]["fn"] == 6
+    assert result["summary"]["fn"] == 0
+    assert result["summary"]["errored_cases"] == 1
+    assert sum(metric["errored"] for metric in result["metrics"].values()) == 6
 
 
 def test_cli_writes_same_json_and_returns_nonzero_for_genuine_disagreement(tmp_path, monkeypatch, capsys):

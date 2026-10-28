@@ -436,7 +436,9 @@ def test_live_normalization_preserves_later_and_ghsa_only_alias_overlap(store, a
         )
     assert not errors and findings[0]["aliases"] == aliases
     assert findings[0]["osv_id"] == raw["id"]
-    assert findings[0]["id"] == next((alias for alias in aliases if alias.startswith("CVE-")), raw["id"])
+    assert findings[0]["id"] == min(
+        (alias for alias in aliases if alias.startswith("CVE-")), default=raw["id"]
+    )
     apsa = parse_apsa_osv(case, findings, errors, states)
     scanner = parse_osv(_execution(1, stdout=json.dumps(_osv(case, [raw]))), case, Path("/fresh/bom.json"))
     assert apsa["state"] == scanner["state"] == "ambiguous"

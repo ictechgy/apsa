@@ -1,4 +1,5 @@
 """점검 결과 리포트(텍스트/JSON)와 종료 코드."""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +8,6 @@ from datetime import datetime, timezone
 
 from . import __version__
 from .checks import SEVERITY_LABEL, SEVERITY_ORDER, STATUS_LABEL
-
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -43,8 +43,10 @@ def format_finding(finding) -> str:
     if finding.status in ("pass", "na", "error"):
         head = f"[{status_label}] {_sanitize(finding.title)} ({finding.check_id})"
     else:
-        head = (f"[{SEVERITY_LABEL.get(finding.severity, '?')}/{status_label}] "
-                f"{_sanitize(finding.title)} ({finding.check_id})")
+        head = (
+            f"[{SEVERITY_LABEL.get(finding.severity, '?')}/{status_label}] "
+            f"{_sanitize(finding.title)} ({finding.check_id})"
+        )
     lines = [head]
     if finding.detail:
         lines.append(f"    {_sanitize(finding.detail)}")
@@ -55,7 +57,7 @@ def format_finding(finding) -> str:
 
 def render_text(device_desc: str, findings: list) -> str:
     counts = summarize(findings)
-    out = [f"대상: {device_desc}", ""]
+    out = [f"대상: {_sanitize(device_desc)}", ""]
     for f in sorted(findings, key=_sort_key):
         out.append(format_finding(f))
         out.append("")
@@ -95,34 +97,41 @@ def render_sarif(target_uri: str, findings: list) -> str:
     for f in findings:
         if f.status not in ("fail", "error", "warn", "info"):
             continue
-        rules.setdefault(f.check_id, {"id": f.check_id,
-                                      "shortDescription": {"text": f.title}})
+        rules.setdefault(f.check_id, {"id": f.check_id, "shortDescription": {"text": f.title}})
         message = f.detail or f.title
         if f.recommendation:
             message += " — 권장: " + f.recommendation
         level, kind = _sarif_level_kind(f.status)
-        results.append({
-            "ruleId": f.check_id,
-            "kind": kind,
-            "level": level,
-            "message": {"text": message},
-            "locations": [{"physicalLocation": {
-                "artifactLocation": {"uri": target_uri},
-            }}],
-            "properties": {"severity": f.severity, "status": f.status},
-        })
+        results.append(
+            {
+                "ruleId": f.check_id,
+                "kind": kind,
+                "level": level,
+                "message": {"text": message},
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": target_uri},
+                        }
+                    }
+                ],
+                "properties": {"severity": f.severity, "status": f.status},
+            }
+        )
     payload = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
-        "runs": [{
-            "tool": {
-                "driver": {
-                    "name": "apsa",
-                    "version": __version__,
-                    "rules": [rules[k] for k in sorted(rules)],
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "apsa",
+                        "version": __version__,
+                        "rules": [rules[k] for k in sorted(rules)],
+                    },
                 },
-            },
-            "results": results,
-        }],
+                "results": results,
+            }
+        ],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)

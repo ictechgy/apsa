@@ -545,7 +545,7 @@ def test_database_and_sidecars_are_private_in_an_existing_shared_home(tmp_path, 
         reopened = Store(home)
         try:
             assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in home.glob("audit.sqlite3*"))
-            assert reopened.db.execute("PRAGMA user_version").fetchone()[0] == 2
+            assert reopened.db.execute("PRAGMA user_version").fetchone()[0] == 3
             assert reopened.db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         finally:
             reopened.close()

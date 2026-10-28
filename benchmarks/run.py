@@ -114,7 +114,7 @@ def run(manifest_path: Path = DEFAULT_MANIFEST, case_ids: list[str] | None = Non
     if selected - available:
         raise ValueError(f"Unknown benchmark case IDs: {', '.join(sorted(selected - available))}")
     cases = [case for case in manifest["cases"] if not selected or case["id"] in selected]
-    counts = {rule: {"tp": 0, "fp": 0, "fn": 0} for rule in manifest["rules"]}
+    counts = {rule: {"tp": 0, "fp": 0, "fn": 0, "errored": 0, "incomplete": 0} for rule in manifest["rules"]}
     outcomes = []
     disagreements = []
     for case in cases:
@@ -152,9 +152,18 @@ def run(manifest_path: Path = DEFAULT_MANIFEST, case_ids: list[str] | None = Non
         matched = expected & observed
         missing = expected - observed
         unexpected = observed - expected
-        for label_set, kind in ((matched, "tp"), (missing, "fn"), (unexpected, "fp")):
-            for rule, _status in label_set:
-                counts.setdefault(rule, {"tp": 0, "fp": 0, "fn": 0})[kind] += 1
+        scored = not error and not warnings and not partial
+        if scored:
+            for label_set, kind in ((matched, "tp"), (missing, "fn"), (unexpected, "fp")):
+                for rule, _status in label_set:
+                    counts.setdefault(rule, {"tp": 0, "fp": 0, "fn": 0, "errored": 0, "incomplete": 0})[
+                        kind
+                    ] += 1
+        else:
+            for rule in {rule for rule, _ in expected | observed} | set(partial):
+                counts.setdefault(rule, {"tp": 0, "fp": 0, "fn": 0, "errored": 0, "incomplete": 0})[
+                    "errored" if error else "incomplete"
+                ] += 1
         outcome = {
             "id": case["id"],
             "kind": case["kind"],
@@ -164,6 +173,7 @@ def run(manifest_path: Path = DEFAULT_MANIFEST, case_ids: list[str] | None = Non
             "input_sha256": input_hash,
             "expected": _records(expected),
             "observed": _records(observed),
+            "scored": scored,
             "matched": not missing and not unexpected and not error and not warnings and not partial,
             "warnings": warnings,
             "incomplete_rules": partial,
@@ -176,8 +186,9 @@ def run(manifest_path: Path = DEFAULT_MANIFEST, case_ids: list[str] | None = Non
             disagreements.append(
                 {
                     "case_id": case["id"],
-                    "false_negatives": _records(missing),
-                    "false_positives": _records(unexpected),
+                    "false_negatives": _records(missing) if scored else [],
+                    "false_positives": _records(unexpected) if scored else [],
+                    "scored": scored,
                     "warnings": warnings,
                     "incomplete_rules": partial,
                     "error": error,
@@ -227,6 +238,8 @@ def run(manifest_path: Path = DEFAULT_MANIFEST, case_ids: list[str] | None = Non
             "cases": len(cases),
             "matched_cases": len(cases) - len(disagreements),
             "disagreements": len(disagreements),
+            "errored_cases": sum(bool(row["error"]) for row in outcomes),
+            "incomplete_cases": sum(not row["error"] and not row["scored"] for row in outcomes),
             **totals,
         },
         "metrics": metrics,

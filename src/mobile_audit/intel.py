@@ -746,7 +746,7 @@ def _normalize_osv(value: Any, dep: dict) -> dict:
     aliases = [_text(alias, "OSV alias") for alias in _list(vuln.get("aliases", []), "OSV aliases")]
     if any(not alias or any(character.isspace() for character in alias) for alias in aliases):
         raise ValueError("Malformed OSV alias: expected a nonempty identifier without whitespace")
-    identifier = next((alias for alias in aliases if re.fullmatch(r"CVE-\d{4}-\d{4,}", alias)), osv_id)
+    identifier = min((alias for alias in aliases if re.fullmatch(r"CVE-\d{4}-\d{4,}", alias)), default=osv_id)
     for field in ("summary", "details", "modified"):
         _text(vuln.get(field, ""), f"OSV {field}")
     if vuln.get("withdrawn") is not None:
@@ -780,8 +780,8 @@ def _normalize_osv(value: Any, dep: dict) -> dict:
         "references": references,
         "query_match": {key: dep[key] for key in ("name", "ecosystem", "version")},
         "osv_id": osv_id,
-        # The first CVE remains the display ID for compatibility, but it cannot
-        # stand in for the complete upstream identity set when correlating records.
+        # Alias ordering is non-semantic. Keep a deterministic display CVE while
+        # retaining the complete upstream identity set for correlation.
         "aliases": aliases,
         **_osv_severity(vuln),
     }

@@ -57,6 +57,8 @@ def threshold_exceeded(path: str, fail_on: str) -> bool:
     policy's own setting and fail-on-incomplete govern: tolerating partial
     parsing must not switch off required rules, waivers or baseline checks.
     """
+    if fail_on not in {*RANK, ""}:
+        raise SystemExit("::error::unsupported fail-on value")
     result = envelope(path)
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     gate = data.get("gate") if isinstance(data, dict) else None

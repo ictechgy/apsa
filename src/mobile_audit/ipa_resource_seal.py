@@ -51,6 +51,17 @@ def verify_resource_seal(
         "missing_files": 0,
         "unsupported_entries": 0,
     }
+
+    def incomplete(reason: str) -> dict:
+        # A later coverage gap cannot erase a hash mismatch, missing sealed file
+        # or modeled catch-all violation that this inspection already observed.
+        modified = (
+            result["modified_files"]
+            or result["missing_files"]
+            or (result["rules_state"] == "checked" and result.get("unsealed_files", 0))
+        )
+        return {**result, "state": "modified" if modified else "partial", "partial": True, "reason": reason}
+
     if envelope is None:
         return result
     if len(envelope) > MAX_ENVELOPE_BYTES:
@@ -76,10 +87,16 @@ def verify_resource_seal(
         return {**result, "state": "unsupported", "reason": "invalid resource map or file budget"}
     bundle_members = [i for i in archive.infolist() if i.filename.startswith(root + "/") and not i.is_dir()]
     if len(bundle_members) > MAX_RESOURCE_FILES:
-        return {**result, "state": "partial", "reason": "bundle member budget"}
+        return incomplete("bundle member budget")
     members = {i.filename[len(root) + 1 :]: i for i in bundle_members}
     if len(members) != len(bundle_members) or any(not _safe_relative(name) for name in members):
         return {**result, "state": "unsupported", "reason": "ambiguous or unsafe resource member paths"}
+    excluded = {"Info.plist", PurePosixPath(executable).name}
+    unsealed = sum(
+        name not in files and name not in excluded and not name.startswith("_CodeSignature/")
+        for name in members
+    )
+    result["unsealed_files"] = unsealed
     total = 0
     for name, seal in files.items():
         if not _safe_relative(name):
@@ -109,7 +126,7 @@ def verify_resource_seal(
             result["unsupported_entries"] += 1
             continue
         if total + member.file_size > MAX_RESOURCE_BYTES:
-            return {**result, "state": "partial", "reason": "resource byte budget"}
+            return incomplete("resource byte budget")
         digests = {k: hashlib.new(d[0]) for k, d in hashes}
         count = 0
         try:
@@ -117,21 +134,15 @@ def verify_resource_seal(
                 while chunk := stream.read(65536):
                     count += len(chunk)
                     if count > member.file_size or total + count > MAX_RESOURCE_BYTES:
-                        return {**result, "state": "partial", "reason": "resource stream budget"}
+                        return incomplete("resource stream budget")
                     for digest in digests.values():
                         digest.update(chunk)
         except (OSError, ValueError, RuntimeError, NotImplementedError, zipfile.BadZipFile):
-            return {**result, "state": "partial", "reason": "resource member unreadable"}
+            return incomplete("resource member unreadable")
         total += count
         result["checked_files"] += 1
         if count != member.file_size or any(digests[k].digest()[: d[1]] != seal[k] for k, d in hashes):
             result["modified_files"] += 1
-    excluded = {"Info.plist", PurePosixPath(executable).name}
-    unsealed = sum(
-        name not in files and name not in excluded and not name.startswith("_CodeSignature/")
-        for name in members
-    )
-    result["unsealed_files"] = unsealed
     result["hashes_verified"] = not (
         result["modified_files"] or result["missing_files"] or result["unsupported_entries"]
     )

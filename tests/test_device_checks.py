@@ -2,11 +2,25 @@ import unittest
 from datetime import date
 
 from quaygate.checks import (
-    HIGH, INFO, LOW, MEDIUM, check_adb_enabled, check_android_version,
-    check_backup, check_crypto_state, check_dev_options, check_flash_locked,
-    check_install_unknown, check_lock_screen, check_oem_unlock,
-    check_patch_level, check_selinux, check_verifier, check_wireless_debug,
-    parse_getprop, run_device_checks,
+    HIGH,
+    INFO,
+    LOW,
+    MEDIUM,
+    check_adb_enabled,
+    check_android_version,
+    check_backup,
+    check_crypto_state,
+    check_dev_options,
+    check_flash_locked,
+    check_install_unknown,
+    check_lock_screen,
+    check_oem_unlock,
+    check_patch_level,
+    check_selinux,
+    check_verifier,
+    check_wireless_debug,
+    parse_getprop,
+    run_device_checks,
 )
 
 TODAY = date(2026, 10, 4)
@@ -40,10 +54,13 @@ def props(**kw):
 class GetpropTest(unittest.TestCase):
     def test_parse(self):
         text = "[ro.build.version.release]: [15]\n[ro.product.model]: [SM-S928N]\n"
-        self.assertEqual(parse_getprop(text), {
-            "ro.build.version.release": "15",
-            "ro.product.model": "SM-S928N",
-        })
+        self.assertEqual(
+            parse_getprop(text),
+            {
+                "ro.build.version.release": "15",
+                "ro.product.model": "SM-S928N",
+            },
+        )
 
     def test_parse_empty(self):
         self.assertEqual(parse_getprop(""), {})
@@ -118,8 +135,9 @@ class SelinuxTest(unittest.TestCase):
 
 
 class LockScreenTest(unittest.TestCase):
-    def test_enabled(self):
-        self.assertEqual(check_lock_screen(FakeRunner({"locksettings get-disabled": "false\n"})).status, "pass")
+    def test_enabled_does_not_establish_a_secure_credential(self):
+        # AOSP get-disabled distinguishes None from Swipe/PIN/pattern/password.
+        self.assertEqual(check_lock_screen(FakeRunner({"locksettings get-disabled": "false\n"})).status, "na")
 
     def test_disabled(self):
         f = check_lock_screen(FakeRunner({"locksettings get-disabled": "true\n"}))
@@ -214,11 +232,13 @@ class RunDeviceChecksTest(unittest.TestCase):
     }
 
     def test_all_checks_run(self):
-        runner = FakeRunner({
-            "getenforce": "Enforcing\n",
-            "locksettings get-disabled": "false\n",
-            "bmgr enabled": "Backup Manager currently disabled\n",
-        })
+        runner = FakeRunner(
+            {
+                "getenforce": "Enforcing\n",
+                "locksettings get-disabled": "false\n",
+                "bmgr enabled": "Backup Manager currently disabled\n",
+            }
+        )
         findings = run_device_checks(runner, self.GOOD_PROPS, TODAY)
         self.assertEqual(len(findings), 13)
         statuses = {f.status for f in findings}

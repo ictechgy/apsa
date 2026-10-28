@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import psutil
@@ -22,6 +23,21 @@ def interrupted(_signum, _frame):
     raise KeyboardInterrupt
 
 
+@contextmanager
+def report_commit_signals():
+    """Defer worker SIGTERM only during persistence and terminal job publication."""
+    prior = (
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+        if hasattr(signal, "pthread_sigmask")
+        else None
+    )
+    try:
+        yield
+    finally:
+        if prior is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, prior)
+
+
 def main() -> None:
     store = Store(Path(sys.argv[1]))
     identifier = sys.argv[2]
@@ -38,6 +54,19 @@ def main() -> None:
             if not jobs.update(store, identifier, stage=stage, progress=percent):
                 raise JobCancelled
 
+        original_save = store.save_report
+
+        def commit_report(report: dict) -> dict:
+            # Cancellation wins before persistence starts. Once a report commits,
+            # publish its ID even if a later cancellation request arrives.
+            with report_commit_signals():
+                if not jobs.update(store, identifier, stage="evidence-report", progress=95):
+                    raise JobCancelled
+                saved = original_save(report)
+                jobs.finish(store, identifier, "completed", report_id=saved["id"], persisted=True)
+                return saved
+
+        store.save_report = commit_report
         if payload["kind"] == "scan":
             report = scan(
                 store,

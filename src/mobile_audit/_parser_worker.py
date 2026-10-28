@@ -77,6 +77,7 @@ def analyze(
     from .inputs import inspect_target
     from .rules import static_checks
 
+    credential_text: list[tuple[str, str]] = []
     inventory, sources = inspect_target(
         target,
         sbom,
@@ -84,6 +85,7 @@ def analyze(
         configuration=configuration,
         dependency_selection=dependency_selection,
         ipa_trust_policy=ipa_trust_policy,
+        credential_text=credential_text,
     )
     from .platform_checks import android_levels, exposed_providers
     from .source_analysis import analyze_sources
@@ -101,7 +103,9 @@ def analyze(
     findings, coverage = static_checks(inventory, sources, structural.get("pattern_exclusions"))
     from .platform_checks import platform_checks
 
-    platform_findings, platform_coverage = platform_checks(inventory, sources)
+    platform_findings, platform_coverage = platform_checks(
+        inventory, sources, credential_text=credential_text
+    )
     # With a parsed network security configuration, Android 7+ ignores usesCleartextTraffic.
     minimum = android_levels(inventory).get("min")
     overridden = (
@@ -222,9 +226,19 @@ def main() -> None:
                 hybrid_observations,
             )
             result["inventory"]["target"] = str(target)
-    except (ValueError, OSError, TypeError, KeyError) as error:
-        result = {"error": f"Input analysis failed ({type(error).__name__}): {error}"}
-    sys.stdout.write(json.dumps(result, ensure_ascii=False))
+        output = json.dumps(result, ensure_ascii=False, allow_nan=False)
+    except MemoryError:
+        # Resource exhaustion must retain its process-level diagnostic.
+        raise
+    except (ValueError, OSError, TypeError, KeyError, RecursionError) as error:
+        output = json.dumps({"error": f"Input analysis failed ({type(error).__name__}): {error}"})
+    except Exception as error:
+        # A parser defect is distinct from an OS-isolation activation failure.
+        # SystemExit/KeyboardInterrupt and resource kills are not caught here.
+        output = json.dumps(
+            {"error": f"Parser analysis failed ({type(error).__name__}): {error}; audit incomplete"}
+        )
+    sys.stdout.write(output)
 
 
 PROBE_MODULES = (
@@ -236,10 +250,12 @@ PROBE_MODULES = (
     "androguard.core.axml",
     "tree_sitter",
     "tree_sitter_java",
+    "tree_sitter_javascript",
     "tree_sitter_kotlin",
     "tree_sitter_swift",
     "tree_sitter_objc",
     "tree_sitter_json",
+    "tree_sitter_typescript",
 )
 
 

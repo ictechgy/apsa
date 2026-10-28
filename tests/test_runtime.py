@@ -364,7 +364,7 @@ def test_ci_residual_requires_captured_baseline_evidence(store, demo, tmp_path, 
 
     current = run(store, tmp_path / "frozen.json", report["id"], adapter=Missing(), scenario=scenario)
     assert current["runtime"][-1]["assertions"][0]["state"] == expected
-    assert next(c for c in current["coverage"] if c["rule_id"] == "RUNTIME-RESIDUAL")["state"] == "not-run"
+    assert next(c for c in current["coverage"] if c["rule_id"] == "RUNTIME-RESIDUAL")["state"] == "partial"
     gate = evaluate(
         current, {"schema_version": 1, "required_rules": ["RUNTIME-RESIDUAL"], "fail_on_partial": False}
     )

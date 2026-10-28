@@ -329,7 +329,10 @@ def test_valid_worker_dto_supports_scan_refresh_and_report_exports(worker_bounda
     refreshed = audit.refresh_report(store, report["id"])
     assert refreshed["inventory"]["dependencies"] == [dep]
     assert "Synthetic candidate" in output.markdown(refreshed)
-    assert output.sarif(refreshed)["runs"][0]["results"][0]["ruleId"] == "SYNTHETIC"
+    result = output.sarif(refreshed)["runs"][0]["results"][0]
+    assert result["ruleId"] == "SYNTHETIC/candidate"
+    assert result["properties"]["apsaRuleId"] == "SYNTHETIC"
+    assert result["partialFingerprints"] == {"apsaFindingIdentity/v1": report["findings"][0]["id"]}
     assert output.assistant_context(refreshed)["findings"][0]["status"] == "candidate"
     assert sbom.cyclonedx(refreshed)["components"][0]["name"] == "synthetic-package"
 

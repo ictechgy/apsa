@@ -58,6 +58,9 @@ class Process:
     def terminate(self):
         self.calls.append("terminate")
 
+    def kill(self):
+        self.calls.append("kill")
+
     def wait(self, *, timeout):
         self.calls.append(("wait", timeout))
         if self.reap_failure:

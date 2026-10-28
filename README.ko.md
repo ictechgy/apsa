@@ -1,13 +1,30 @@
 # APSA (앱사)
 
+**APSA 1.6.3.** [변경 범위와 업그레이드 안내](docs/RELEASE_163.md)를 확인하세요.
+[릴리스 검증 기록](RELEASE_READINESS.md)은 로컬 검증과 호스팅된 배포·공개 설치 검증을
+구분합니다.
+
 **근거 중심의 Android·iOS 보안 감사 도구.**
 
 [English](https://github.com/ictechgy/apsa/blob/main/README.md) · [한국어](https://github.com/ictechgy/apsa/blob/main/README.ko.md)
 
 영문 README가 원본입니다. 이 문서는 영문 원본을 기준으로 작성한 한국어 번역입니다.
 
+**1.6.3의 AI 기반 공격 대응 개선.** 패키지의 평문 자격증명은 별도의 마스킹된
+후보 검사로 다루며, 컴파일된 코드의 소스 흐름 검사와 범위를 구분합니다. AI용 상세·축약
+페이지에도 신뢰하지 않는 증거라는 안내를 유지합니다. [조사와 적용 범위](docs/AI_ASSISTED_ATTACK_DEFENSE.md)를
+참고하세요. 현재는 `apsa tui`로 터미널 UI를 이용할 수 있습니다.
+[데스크톱 앱 계획](docs/DESKTOP_APP_ROADMAP.md)은 같은 엔진을 사용하는 향후 로컬 앱의
+구조와 배포 조건을 정리한 문서이며, 이번 릴리스에는 데스크톱 설치 파일이 포함되지 않습니다.
+
 1.6.2는 Objective-C 이름 범위, 불완전한 OSV 조회, 주장 검증, 런타임 작업 취소,
 APK-set 발견 출처를 수정합니다. [변경 범위와 업그레이드 영향](docs/RELEASE_162.md)을 확인하세요.
+
+**1.6.3으로 업그레이드할 때.** 보고서 비교나 기준선 승인 전에 다시 검사하세요.
+명시적인 합성 증거 경로 종류와 여러 CVE 별칭의 결정적 선택으로 발견 ID가 바뀔 수 있습니다.
+후보 전용 SARIF descriptor ID도 변경되며, 이 SARIF 변경 자체는 APSA 규칙 ID나 발견
+fingerprint를 바꾸지 않습니다. [업그레이드 안내](docs/RELEASE_163.md)에서 기준선·예외 영향을
+확인하세요.
 
 **APSA 1.6 분석 확장.** 이번 버전은 제한된 네이티브 파일 간 흐름과 같은 입력의 경로 검증,
 JS/TS/Dart 후보 탐지, 기록된 Gradle 변형 선택, OSV 배치·전송 제외 정책, 인증 상태별
@@ -21,7 +38,7 @@ JS/TS/Dart 후보 탐지, 기록된 Gradle 변형 선택, OSV 배치·전송 제
 설치한 iOS 시뮬레이터 실행 결과와 패키지·경쟁 도구·bundletool·백엔드 측정 범위를 기록했습니다.
 
 **APSA 1.6 대형 입력 개선.** 규칙 버전은 `2026.10.15.apsa.160`이며,
-1.6 릴리스 후보의 범위와 업그레이드 영향은 [검증 안내](docs/RELEASE_160.md)에 기록합니다. 입력 스테이징과 AST 분석이 같은 코드 우선순위를
+최초 1.6 검증 범위와 업그레이드 영향은 [검증 안내](docs/RELEASE_160.md)에 기록합니다. 입력 스테이징과 AST 분석이 같은 코드 우선순위를
 쓰고, 추정 모듈 그룹 안에서 번갈아 파일을 처리합니다. lock 목록은 앱 코드 뒤로 보내며,
 모호한 `*Tests/`와 일반 `Frameworks/` 폴더는 운영 코드 우선순위를 유지합니다. 보고서에 모듈별 생략
 내역을 기록하고, 비교 결과에는 입력 완전성, Action 요약에는 스테이징 생략 내역을 표시합니다.
@@ -220,10 +237,11 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 
 **macOS 또는 Linux**에서 **uv**를 설치합니다. APSA의 지원 대상은 **CPython 3.11과 3.12**이며, 모든 호스트·Python 조합을 테스트한 것은 아닙니다([지원 표](https://github.com/ictechgy/apsa/blob/main/docs/SUPPORTED_MATRIX.md) 참고). 예제는 Python 3.12를 선택하고 필요하면 uv가 내려받습니다. 최초 설치는 네트워크를 사용할 수 있으며, 이후 검사는 로컬 입력과 캐시를 사용할 수 있습니다.
 
-[PyPI](https://pypi.org/project/apsa/)에서 배포 패키지를 설치합니다.
+1.6.3의 배포 검증을 통과한 뒤 [PyPI](https://pypi.org/project/apsa/)에서 설치합니다.
+배포 상태는 [릴리스 검증 기록](RELEASE_READINESS.md)에서 확인하세요.
 
 ```sh
-uv tool install --python 3.12 apsa==1.6.2
+uv tool install --python 3.12 apsa==1.6.3
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -309,6 +327,14 @@ apsa reports verify
 
 재평가는 저장된 인벤토리에 현재 취약점 정보를 적용합니다. 파일 변경이나 새 정적 검사를 반영하려면 `scan`을 다시 실행하세요. 연결한 AI 클라이언트는 보고서 메타데이터를 모델 제공자에게 전송할 수 있습니다. APSA의 MCP context는 소스 발췌, 소스 원문, 스크린샷 바이트를 제외하지만, 클라이언트의 데이터 처리는 해당 클라이언트에 따라 달라집니다.
 
+**1.6.3의 발견 추적 기능:**
+`apsa reports followup audit_BEFORE audit_AFTER --finding F-ID --out followup.json`
+또는 MCP `reports_followup`으로 개별 발견 사항을 추적할 수 있습니다. 보고서 해시를
+유지하고 줄 이동에 따른 연속 후보, 검사 범위 변화, 부족한 근거와 다음 확인 행동을
+구분합니다. 발견이 사라졌다는 이유로 수정 완료를 판정하지 않습니다.
+[사용법과 한계](docs/FINDING_FOLLOWUP.md),
+[경쟁 제품 조사와 구현 결정](docs/COMPETITIVE_STRATEGY.md)을 참고하세요.
+
 ## CI와 백그라운드 작업
 
 ```sh
@@ -345,7 +371,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.6.2; 전체 커밋 SHA로 고정
+  - uses: ictechgy/apsa@<commit-sha> # v1.6.3; 전체 릴리스 커밋 SHA로 고정
     with:
       path: android            # 소스 폴더 또는 workspace 안의 APK/AAB/IPA
       fail-on-incomplete: "true"

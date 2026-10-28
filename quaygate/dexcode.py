@@ -2,14 +2,22 @@
 
 디컴파일러가 아니다: invoke 계열 명령의 method_id와 메서드 내 const-string만
 추적해 '어떤 메서드가 어떤 API를 어떤 문자열과 호출했는지'를 본다. 문자열 인자
-귀속은 메서드 범위 휴리스틱이고(레지스터 데이터플로 미추적), 알 수 없는 명령은
-해당 지점만 건너뛴다(보수적 파싱, 부분 결과 허용).
+귀속은 메서드 범위 휴리스틱이다. 단, bare AES는 분기 전 선형 명령의 문자열
+레지스터가 실제 Cipher.getInstance 인자인 경우만 수집한다. 일반적인 데이터플로·
+taint 분석은 아니며 알 수 없는 명령은 부분 결과를 허용한다.
 """
+
 from __future__ import annotations
 
 import struct
 
 from . import dex as dexmod
+
+MAX_METHODS = 100000
+MAX_CLASS_DATA_ENTRIES = 200000
+MAX_INSTRUCTIONS = 1000000
+MAX_METHOD_INSTRUCTIONS = 65536
+MAX_FINDINGS = 10000
 
 CRYPTO_GETINSTANCE_CLASSES = ("Ljavax/crypto/Cipher;", "Ljava/security/MessageDigest;")
 WEBVIEW_APIS = {
@@ -32,11 +40,37 @@ DYNAMIC_APIS = {
 def _build_sizes():
     sizes = [1] * 256
     for op, size in [
-        (0x02, 2), (0x03, 3), (0x05, 2), (0x06, 3), (0x08, 2), (0x09, 3),
-        (0x13, 2), (0x14, 3), (0x15, 2), (0x16, 2), (0x17, 3), (0x18, 5), (0x19, 2),
-        (0x1A, 2), (0x1B, 3), (0x1C, 2), (0x1F, 2), (0x20, 2), (0x22, 2), (0x23, 2),
-        (0x24, 3), (0x25, 3), (0x26, 3), (0x29, 2), (0x2A, 3), (0x2B, 3), (0x2C, 3),
-        (0xFA, 4), (0xFB, 4), (0xFC, 3), (0xFD, 3),
+        (0x02, 2),
+        (0x03, 3),
+        (0x05, 2),
+        (0x06, 3),
+        (0x08, 2),
+        (0x09, 3),
+        (0x13, 2),
+        (0x14, 3),
+        (0x15, 2),
+        (0x16, 2),
+        (0x17, 3),
+        (0x18, 5),
+        (0x19, 2),
+        (0x1A, 2),
+        (0x1B, 3),
+        (0x1C, 2),
+        (0x1F, 2),
+        (0x20, 2),
+        (0x22, 2),
+        (0x23, 2),
+        (0x24, 3),
+        (0x25, 3),
+        (0x26, 3),
+        (0x29, 2),
+        (0x2A, 3),
+        (0x2B, 3),
+        (0x2C, 3),
+        (0xFA, 4),
+        (0xFB, 4),
+        (0xFC, 3),
+        (0xFD, 3),
     ]:
         sizes[op] = size
     for op in range(0x2D, 0x3E):  # cmp*(23x) 0x2D-0x31 + if*(22t) 0x32-0x3D — 모두 2유닛
@@ -85,9 +119,26 @@ class DexCode:
         (self.proto_count, self.proto_off) = struct.unpack_from("<II", data, 0x48)
         (self.method_count, self.method_off) = struct.unpack_from("<II", data, 0x58)
         (self.class_count, self.class_off) = struct.unpack_from("<II", data, 0x60)
+        for count, offset, width in (
+            (self.string_count, self.string_off, 4),
+            (self.type_count, self.type_off, 4),
+            (self.proto_count, self.proto_off, 12),
+            (self.method_count, self.method_off, 8),
+            (self.class_count, self.class_off, 32),
+        ):
+            if count > MAX_CLASS_DATA_ENTRIES or offset + count * width > len(data):
+                raise ValueError("Invalid/budgeted DEX metadata table")
+        self.complete = True
+        self.reasons = []
+        self._instruction_count = 0
+        self.instruction_budget = MAX_INSTRUCTIONS
+        self.method_budget = MAX_METHODS
+        self.entry_budget = MAX_CLASS_DATA_ENTRIES
+        self.metadata_entries = 0
         self.data = data
         self.strings = dexmod.dex_strings(data)
         self._scan_cache = {}
+        self._bare_aes_calls = {}
 
     def _u32(self, off):
         return struct.unpack_from("<I", self.data, off)[0]
@@ -110,48 +161,69 @@ class DexCode:
         name = self.strings[name_idx] if 0 <= name_idx < len(self.strings) else "?"
         return self.type_name(class_idx), name
 
+    def _incomplete(self, reason):
+        self.complete = False
+        if not hasattr(self, "reasons"):
+            self.reasons = []
+        if reason not in self.reasons:
+            self.reasons.append(reason)
+
     def iter_methods(self):
-        """(선언 클래스 타입, method_id, code_off) 목록."""
+        """Walk each class-data block once, with a global metadata-entry budget."""
+        visited, entries, methods = set(), 0, 0
         for i in range(self.class_count):
             base = self.class_off + 32 * i
             if base + 32 > len(self.data):
-                break
+                self._incomplete("truncated class definitions")
+                return
             class_idx = self._u32(base)
             code_data_off = self._u32(base + 24)
             decl = self.type_name(class_idx)
-            if not code_data_off or code_data_off >= len(self.data):
+            if not code_data_off:
                 continue
+            if code_data_off in visited:
+                self._incomplete("aliased class-data block")
+                continue
+            visited.add(code_data_off)
             pos = code_data_off
 
-            def uleb(pos):
+            def uleb(at):
                 result = 0
-                shift = 0
-                while pos < len(self.data) and shift <= 28:  # uleb128 최대 5바이트
-                    b = self.data[pos]
-                    pos += 1
-                    result |= (b & 0x7F) << shift
-                    if not b & 0x80:
-                        return result, pos
-                    shift += 7
-                return result, pos
+                for shift in range(0, 35, 7):
+                    if at >= len(self.data):
+                        raise ValueError("truncated class-data ULEB")
+                    byte = self.data[at]
+                    at += 1
+                    result |= (byte & 0x7F) << shift
+                    if not byte & 0x80:
+                        return result, at
+                raise ValueError("invalid class-data ULEB")
 
             counts = []
             for _ in range(4):
                 value, pos = uleb(pos)
                 counts.append(value)
-            # 비정상적으로 큰 개수 필드 — 남은 바이트로 상한(2바이트/엔트리 최소)
-            budget = max(0, (len(self.data) - pos) // 2)
-            for _ in range(min(counts[0] + counts[1], budget)):  # 필드 건너뛰기
+            if entries + sum(counts) > self.entry_budget:
+                self._incomplete("class-data entry budget")
+                return
+            entries += sum(counts)
+            self.metadata_entries = entries
+            for _ in range(counts[0] + counts[1]):
                 _, pos = uleb(pos)
                 _, pos = uleb(pos)
-            for group in (counts[2], counts[3]):  # direct, virtual 메서드
-                group = min(group, budget)
+            for group in (counts[2], counts[3]):
                 mid_acc = 0
                 for _ in range(group):
+                    if methods >= self.method_budget:
+                        self._incomplete("method budget")
+                        return
+                    methods += 1
                     diff, pos = uleb(pos)
                     _access, pos = uleb(pos)
                     code_off, pos = uleb(pos)
                     mid_acc += diff
+                    if mid_acc >= self.method_count:
+                        raise ValueError("method index outside table")
                     yield decl, mid_acc, code_off
 
     def scan_code(self, code_off: int):
@@ -160,6 +232,7 @@ class DexCode:
         여러 메서드가 같은 code_off를 공유하는 비정상 DEX에서 반복 스캔을 피한다.
         """
         if not code_off or code_off + 16 > len(self.data):
+            self._incomplete("truncated code item")
             return [], []
         if code_off in self._scan_cache:
             return self._scan_cache[code_off]
@@ -170,8 +243,18 @@ class DexCode:
 
     def _scan_code_impl(self, code_off: int):
         insns_size = self._u32(code_off + 12)
+        register_count = self._u16(code_off)
+        # Only the entry prefix is proven: no exception entries or unmodelled
+        # control flow may reach a call while bypassing its const-string.
+        linear_prefix = self._u16(code_off + 6) == 0
+        aes_registers, bare_aes_calls = set(), set()
         base = code_off + 16
-        limit = min(insns_size, (len(self.data) - base) // 2)
+        remaining = max(
+            0, getattr(self, "instruction_budget", MAX_INSTRUCTIONS) - getattr(self, "_instruction_count", 0)
+        )
+        limit = min(insns_size, (len(self.data) - base) // 2, MAX_METHOD_INSTRUCTIONS, remaining)
+        if limit < insns_size:
+            self._incomplete("truncated/budgeted instructions")
         calls, strings = [], []
         pos = 0
         while pos < limit:
@@ -198,6 +281,59 @@ class DexCode:
                 size = INSTRUCTION_SIZES[op]
             if size <= 0:
                 size = 1
+            if pos + size > limit:
+                self._incomplete("truncated instruction")
+                break
+            if linear_prefix:
+                if op in (0x1A, 0x1B):
+                    idx = self._u16(base + 2 * (pos + 1)) if op == 0x1A else self._u32(base + 2 * (pos + 1))
+                    aes_registers.discard(ident)
+                    if ident < register_count and idx < len(self.strings) and self.strings[idx] == "AES":
+                        aes_registers.add(ident)
+                elif op in (0x07, 0x08, 0x09):  # move-object[/from16|/16]
+                    if op == 0x07:
+                        dest, source = ident & 0xF, ident >> 4
+                    elif op == 0x08:
+                        dest, source = ident, self._u16(base + 2 * (pos + 1))
+                    else:
+                        dest = self._u16(base + 2 * (pos + 1))
+                        source = self._u16(base + 2 * (pos + 2))
+                    is_aes = source in aes_registers and source < register_count
+                    aes_registers.discard(dest)
+                    if is_aes and dest < register_count:
+                        aes_registers.add(dest)
+                elif op in (0x71, 0x77):  # invoke-static (35c), invoke-static/range (3rc)
+                    count = ident >> 4 if op == 0x71 else ident
+                    args = self._u16(base + 2 * (pos + 2))
+                    first = args & 0xF if op == 0x71 else args
+                    if op == 0x71:
+                        registers = [*(args >> shift & 0xF for shift in (0, 4, 8, 12)), ident & 0xF]
+                        valid = 1 <= count <= 5 and all(r < register_count for r in registers[:count])
+                    else:
+                        valid = 1 <= count <= register_count - first
+                    if valid and first in aes_registers:
+                        call_mid = self._u16(base + 2 * (pos + 1))
+                        bare_aes_calls.add(call_mid)
+                elif op in (0x6E, 0x6F, 0x70, 0x72, 0x74, 0x75, 0x76, 0x78) or unit == 0:
+                    pass  # Invokes do not overwrite caller registers; move-result does.
+                elif op in (0x0E, 0x0F, 0x10, 0x11, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C) or (
+                    0x32 <= op <= 0x3D
+                ):
+                    linear_prefix = False
+                elif (
+                    0x01 <= op <= 0x26
+                    or 0x2D <= op <= 0x31
+                    or 0x44 <= op <= 0x6D
+                    or 0x7B <= op <= 0xE2
+                    or op in (0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF)
+                ):
+                    # Conservatively invalidate all literals for other known
+                    # instructions, including wide writes and field/array reads.
+                    aes_registers.clear()
+                else:
+                    # Unknown opcodes/payloads could alter control flow. Keep
+                    # already proven prefix calls, but never resume attribution.
+                    linear_prefix = False
             if 0x6E <= op <= 0x78 and op != 0x73 and pos + 1 < limit:
                 calls.append(self._u16(base + 2 * (pos + 1)))
             if op == 0x1A and pos + 1 < limit:
@@ -209,40 +345,68 @@ class DexCode:
                 if idx < len(self.strings):
                     strings.append(self.strings[idx])
             pos += size
+        if not hasattr(self, "_bare_aes_calls"):
+            self._bare_aes_calls = {}
+        self._bare_aes_calls[code_off] = bare_aes_calls
+        self._instruction_count = getattr(self, "_instruction_count", 0) + limit
         return calls, strings
 
 
-def analyze_dex(data: bytes):
+def analyze_dex(data: bytes, *, instruction_budget=None, method_budget=None, entry_budget=None):
     """단일 DEX의 민감 API 호출 분석. 파싱 실패 시 None."""
     try:
         dx = DexCode(data)  # __init__에서 문자열 테이블까지 파싱(예외 여기서 발견)
     except (ValueError, struct.error, IndexError):
         return None
+    if instruction_budget is not None:
+        dx.instruction_budget = max(0, min(MAX_INSTRUCTIONS, instruction_budget))
+    if method_budget is not None:
+        dx.method_budget = max(0, min(MAX_METHODS, method_budget))
+    if entry_budget is not None:
+        dx.entry_budget = max(0, min(MAX_CLASS_DATA_ENTRIES, entry_budget))
     weak, webview, dynamic = [], [], []
     scanned = 0
     try:
         for decl, mid, code_off in dx.iter_methods():
             if not code_off:
                 continue
+            if dx._instruction_count >= dx.instruction_budget:
+                dx._incomplete("global instruction budget")
+                break
             scanned += 1
             calls, strings = dx.scan_code(code_off)
             if not calls:
                 continue
-            label = f"{pretty_type(decl)}->{dx.method_ref(mid)[1]}"
-            for call_mid in calls:
+            label = f"{pretty_type(decl)[:512]}->{dx.method_ref(mid)[1][:512]}"
+            weak_strings = sorted({s for s in set(strings) if _weak_algo(s)})
+            for call_mid in set(calls):
+                if len(weak) + len(webview) + len(dynamic) >= MAX_FINDINGS:
+                    dx._incomplete("finding budget")
+                    break
                 cls, name = dx.method_ref(call_mid)
                 if cls in CRYPTO_GETINSTANCE_CLASSES and name == "getInstance":
-                    for s in strings:
-                        if _weak_algo(s):
-                            weak.append(f"{label} ▸ {_short(cls)}.getInstance('{s}')")
+                    values = weak_strings
+                    if cls == "Ljavax/crypto/Cipher;" and call_mid in dx._bare_aes_calls.get(code_off, ()):
+                        values = [*values, "AES"]
+                    for value in values:
+                        if len(weak) + len(webview) + len(dynamic) >= MAX_FINDINGS:
+                            dx._incomplete("finding budget")
+                            break
+                        weak.append(f"{label} ▸ {_short(cls)}.getInstance('{value[:160]}')")
                 if (cls, name) in WEBVIEW_APIS:
                     webview.append(f"{label} ▸ {_short(cls)}.{name}()")
                 if (cls, name) in DYNAMIC_APIS:
                     dynamic.append(f"{label} ▸ {pretty_type(cls)}.{name}()")
-    except (struct.error, IndexError):
-        pass  # 부분 결과라도 반환
+            if not dx.complete and "finding budget" in dx.reasons:
+                break
+    except (struct.error, IndexError, ValueError):
+        dx._incomplete("malformed bytecode metadata")
     return {
         "scanned": scanned,
+        "complete": dx.complete,
+        "instructions": dx._instruction_count,
+        "metadata_entries": dx.metadata_entries,
+        "reasons": dx.reasons,
         "weak_crypto": sorted(set(weak)),
         "webview": sorted(set(webview)),
         "dynamic": sorted(set(dynamic)),
@@ -250,22 +414,59 @@ def analyze_dex(data: bytes):
 
 
 def scan_apk(apk) -> dict:
-    """APK 전체 DEX 분석. 분석 가능한 dex가 하나라도 있으면 available=True."""
-    result = {"available": False, "scanned": 0,
-              "weak_crypto": [], "webview": [], "dynamic": []}
+    """Aggregate results without allowing one good DEX to hide incomplete peers."""
+    result = {
+        "available": False,
+        "complete": True,
+        "failed": 0,
+        "entries": 0,
+        "scanned": 0,
+        "reasons": [],
+        "weak_crypto": [],
+        "webview": [],
+        "dynamic": [],
+    }
     import re as _re
 
+    remaining_instructions, remaining_methods, remaining_entries = (
+        MAX_INSTRUCTIONS,
+        MAX_METHODS,
+        MAX_CLASS_DATA_ENTRIES,
+    )
     for name in apk.entry_names():
-        if _re.fullmatch(r"classes\d*\.dex", name):
-            try:
-                data = apk.read(name)
-            except Exception:
-                continue  # 손상 엔트리 — 부분 결과라도 계속
-            analysis = analyze_dex(data)
-            if analysis is None or analysis["scanned"] == 0:
-                continue
-            result["available"] = True
-            result["scanned"] += analysis["scanned"]
-            for key in ("weak_crypto", "webview", "dynamic"):
-                result[key] = sorted(set(result[key] + analysis[key]))
+        if not _re.fullmatch(r"classes\d*\.dex", name):
+            continue
+        result["entries"] += 1
+        try:
+            analysis = (
+                analyze_dex(
+                    apk.read(name),
+                    instruction_budget=remaining_instructions,
+                    method_budget=remaining_methods,
+                    entry_budget=remaining_entries,
+                )
+                if min(remaining_instructions, remaining_methods, remaining_entries) > 0
+                else None
+            )
+        except Exception:
+            analysis = None
+        if analysis is None or not analysis["complete"] or analysis["scanned"] == 0:
+            result["complete"] = False
+            result["failed"] += 1
+        if analysis is None:
+            continue
+        remaining_instructions -= analysis["instructions"]
+        remaining_methods -= analysis["scanned"]
+        remaining_entries -= analysis["metadata_entries"]
+        result["available"] = result["available"] or analysis["scanned"] > 0
+        result["scanned"] += analysis["scanned"]
+        for key in ("weak_crypto", "webview", "dynamic"):
+            merged = sorted(set(result[key]).union(analysis[key]))
+            if len(merged) > MAX_FINDINGS:
+                result["complete"] = False
+                if "aggregate finding budget" not in result["reasons"]:
+                    result["reasons"].append("aggregate finding budget")
+            result[key] = merged[:MAX_FINDINGS]
+    if result["entries"] == 0:
+        result["complete"] = False
     return result

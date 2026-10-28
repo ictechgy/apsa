@@ -34,8 +34,10 @@ analysis, verification, dependency, job and report paths.
   actual evidence, dependency and archive paths to the selected APK member.
 
 Package and rule versions advance to `1.6.2` and `2026.10.22.apsa.162`.
-No dependencies or public MCP tools are added. Existing report snapshots and
-approved policy baselines are not rewritten. Source, mock HTTP, in-memory or new
+The public-APK follow-up adds pinned `tree-sitter-javascript` and
+`tree-sitter-typescript` grammars for sensitive-log call boundaries. No public MCP
+tools are added. Existing report snapshots and approved policy baselines are not
+rewritten. See [PUBLIC_APK_IMPROVEMENTS.md](PUBLIC_APK_IMPROVEMENTS.md). Source, mock HTTP, in-memory or new
 temporary databases and newly generated APK sets supply regression evidence;
 runtime cancellation tests use synthetic adapters rather than live devices.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from .core import report_incomplete
-from .output import assistant_context, assistant_finding
+from .output import MODEL_CONTEXT_INSTRUCTIONS, assistant_context, assistant_finding
 
 SECTIONS = (
     "findings",
@@ -32,6 +32,8 @@ def page(base: dict, section: str, values: list, cursor=0, limit=20, max_bytes=D
         raise ValueError("max_bytes must be 4096–262144")
     result = {
         **base,
+        # This boundary is fixed guidance, never report- or app-controlled metadata.
+        "instructions": MODEL_CONTEXT_INSTRUCTIONS,
         section: [],
         "page": {
             "section": section,
@@ -54,6 +56,7 @@ def page(base: dict, section: str, values: list, cursor=0, limit=20, max_bytes=D
                 "rule_id",
                 "severity",
                 "status",
+                "instructions",
                 "audit_incomplete",
                 section,
                 "page",
@@ -124,7 +127,6 @@ def report_context(
         state: sum(c["state"] == state for c in report["coverage"])
         for state in {c["state"] for c in report["coverage"]}
     }
-    base["findings"] = []
     base["audit_incomplete"] = report_incomplete(report)
     base["filters"] = {"severity": severity, "status": status}
     return page(base, section, values, cursor, limit, max_bytes)

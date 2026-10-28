@@ -6,10 +6,19 @@ APSA's MCP server reads app source and builds that may be untrusted, on behalf o
 a model that may be steered by that content. This page states what the server
 does to limit that, mapped to the
 [OWASP MCP Top 10 (2025, beta)](https://owasp.org/www-project-mcp-top-10/), and
-what remains the client's or user's responsibility. It describes APSA 1.6.2; publication is tracked separately.
+what remains the client's or user's responsibility. It describes APSA 1.6.3;
+publication is tracked separately in [release readiness](../RELEASE_READINESS.md).
 
 ## Fixed, inspectable tool surface
 
+- APSA 1.6.3 additionally serves read-only `reports_followup`.
+  Its default hash is
+  `50d13aa27af77b75c26363b07f8419d5c22a43077ed8f896e24d98f708d9b53d` and the runtime hash is
+  `753ef690e9b7be50446cadf1ee37d795bac26f6b64f3f4f2c7f00f11228e6ee4`.
+  `tests/contracts/mcp_tool_manifest_pending.json` pins this surface; published
+  historical hashes below are retained. Follow-up authorizes both report roots,
+  emits bounded metadata without source excerpts, and never starts a scan or
+  device action. See [finding follow-up](FINDING_FOLLOWUP.md).
 - The server speaks stdio only and opens no network listener.
 - The tool set is fixed for the life of a process; `tools.listChanged`,
   `resources.listChanged` and `prompts.listChanged` are `false`.
@@ -23,7 +32,7 @@ what remains the client's or user's responsibility. It describes APSA 1.6.2; pub
   selection and digest-bound IPA chain policies. Its source contract is
   `60374d3e5418f366c2bd8e3833ea33bbae89610bfa81b699661f8a268a2f1382` by default
   and `a9d1a2eb461eb48e497ecfc78957eac4f43091145ae01a6c7d9b54a675bb8692` with
-  `--allow-runtime`. A test pins both values and recomputes them from the
+  `--allow-runtime`. These are historical 1.6 source-contract hashes; the pending contract test instead recomputes the current 1.6.3 surface from the
   `tools/list` response; any change to a tool's name, description, parameters or
   annotations must update them deliberately.
 - Published 1.5.1 retains default `fdb8e4a2fdcf13a35df71a9a7290336b50a2e7f7fad66eff782959b6b0ba9037`
@@ -53,7 +62,7 @@ what remains the client's or user's responsibility. It describes APSA 1.6.2; pub
 | MCP01 Token mismanagement and secret exposure | No API key, token or model credential is needed or stored. Runtime scenarios use test canaries. Model context omits source excerpts, storage dumps and screenshot bytes. | Secrets inside scanned apps can appear in finding metadata such as file paths and rule IDs. |
 | MCP02 Privilege escalation via scope creep | `--root` is required and every target, report and job is checked against it; `--allow-any-root` must be explicit. Device execution tools exist only with `--allow-runtime` and preview unless `execute=true`. | Keep roots narrow; enable runtime tools only for authorized test devices. |
 | MCP03 Tool poisoning | Tool descriptions are static code, pinned by a published manifest hash; no dynamic tool registration. | Verify the package source (below) and compare the `tools/list` hash with the published values after upgrades. |
-| MCP04 Supply chain and dependency tampering | PyPI Trusted Publishing with attestations, repeated builds and release checksums; the MCP Registry entry is published from the tag workflow by OIDC. The GitHub Action pins every action by commit SHA and installs APSA's dependencies from the release's hash-locked `requirements-release.txt`. | `uvx apsa@1.5.1`, the plugin and the registry entry pin APSA itself but resolve its dependencies at install time without hashes. For locked dependencies install with `--constraints requirements-release.txt` (or `--require-hashes`) from the release, or use the Action pinned by commit SHA. |
+| MCP04 Supply chain and dependency tampering | PyPI Trusted Publishing with attestations, repeated builds and release checksums; the MCP Registry entry is published from the tag workflow by OIDC. The GitHub Action pins every action by commit SHA and installs APSA's dependencies from the release's hash-locked `requirements-release.txt`. | `uvx apsa@1.6.3`, the plugin and the registry entry pin APSA itself but resolve its dependencies at install time without hashes. For locked dependencies install with `--constraints requirements-release.txt` (or `--require-hashes`) from the release, or use the Action pinned by commit SHA. |
 | MCP05 Command injection and execution | Tools take structured arguments; subprocesses are argument lists, never a shell. Parsers run under resource limits and, where available, a Seatbelt/bubblewrap sandbox. Advisory and app text is never executed. | Clients that build shell commands from registry metadata must not use a shell. |
 | MCP06 Prompt injection via contextual payloads | App files and advisory text are labelled untrusted data in the server instructions and every report context. Context omits source excerpts and is bounded (20 records, 64 KiB per page by default). | The model can still be influenced by file paths, titles and advisory summaries; keep a human in the loop for actions. |
 | MCP07 Insufficient authentication and authorization | Local stdio only; authorization is the root check above. | The client process's OS user is the trust boundary. |
@@ -62,6 +71,13 @@ what remains the client's or user's responsibility. It describes APSA 1.6.2; pub
 | MCP10 Context injection and over-sharing | Paginated, filtered context; dependency query matches are reduced to name/ecosystem/version; no screenshots or excerpts. MCP scans are offline. Only `dependency_check`, `intelligence_sync` and `intelligence_get` with `refresh` contact the network (plus the opt-in runtime tools, which talk to a local device): OSV receives inventoried package names, ecosystems and versions; advisory and CVE records are downloaded. No app files or findings are sent. | Finding metadata is sent to the model provider chosen by the client; dependency names and versions go to OSV when online tools run; follow your data policy. |
 
 ## Known limits
+
+The fixed untrusted-evidence instruction is required on report pages and exact
+finding contexts, including later pages and metadata-truncated responses. It is
+owned by APSA rather than copied from the target and counts toward the response
+byte limit. Source excerpts stay omitted. This maintains a data/action boundary
+for autonomous clients; it is not proof that a model will resist prompt injection.
+Root authorization and explicit runtime execution remain server-side checks.
 
 - Tool output schemas are generic JSON objects; structure is documented, not
   enforced by a strict schema.

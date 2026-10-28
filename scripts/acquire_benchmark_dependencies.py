@@ -224,16 +224,10 @@ def main() -> int:
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted":
         print(MARKER + json.dumps({"schema": 1, "status": "failed", "reason": "hosted_ci_required"}))
         return 1
-    runner_temp = Path(os.environ["RUNNER_TEMP"]).resolve()
-    work = args.work.resolve()
-    if work == runner_temp or not work.is_relative_to(runner_temp):
-        raise AcquisitionError("new_runner_temp_child_required")
-    work.mkdir(parents=True, exist_ok=False)
+    work = None
+    created = False
     record = {
         "schema": 1,
-        "head_sha": os.environ["GITHUB_SHA"],
-        "run_id": os.environ["GITHUB_RUN_ID"],
-        "run_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
         "acquired_at_utc": datetime.now(timezone.utc).isoformat(),
         "mode": "acquisition-only-no-extraction-no-container-or-tool-execution",
         "vendor_signature_verified": False,
@@ -243,6 +237,28 @@ def main() -> int:
     }
     exit_code = 1
     try:
+        if not os.environ.get("RUNNER_TEMP"):
+            raise AcquisitionError("runner_temp_required")
+        runner_temp = Path(os.environ["RUNNER_TEMP"]).resolve()
+        work = args.work.resolve()
+        if (
+            args.work.is_symlink()
+            or work == runner_temp
+            or not work.is_relative_to(runner_temp)
+            or work.exists()
+        ):
+            raise AcquisitionError("new_runner_temp_child_required")
+        work.mkdir(parents=True, exist_ok=False)
+        created = True
+        if not all(os.environ.get(key) for key in ("GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_REPOSITORY")):
+            raise AcquisitionError("hosted_metadata_required")
+        record.update(
+            {
+                "head_sha": os.environ["GITHUB_SHA"],
+                "run_id": os.environ["GITHUB_RUN_ID"],
+                "run_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+            }
+        )
         opener = urllib.request.build_opener(PublicRedirects())
         record["jadx"].update(checksum_metadata(opener))
         record["jadx"]["acquisitions"] = acquire_jadx(opener, record["jadx"])
@@ -257,10 +273,14 @@ def main() -> int:
     except Exception as error:
         record["status"] = "failed"
         record["error_type"] = type(error).__name__
-        if isinstance(error, AcquisitionError):
-            record["reason"] = str(error)
+        record["reason"] = str(error) if isinstance(error, AcquisitionError) else "acquisition_failed"
     finally:
-        (work / "acquisition.json").write_text(json.dumps(record, sort_keys=True, indent=2) + "\n")
+        try:
+            if created and work is not None:
+                (work / "acquisition.json").write_text(json.dumps(record, sort_keys=True, indent=2) + "\n")
+        except OSError:
+            record.update(status="failed", reason="record_write_failed")
+            exit_code = 1
         print(MARKER + json.dumps(record, sort_keys=True))
     return exit_code
 

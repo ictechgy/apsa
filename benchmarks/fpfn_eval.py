@@ -13,23 +13,32 @@ Declared before the first blind v2 run, as the secondary measure: ``discriminati
 sides with an in-range hit from a rule that has no hit in the fixed side's labeled files, so the fix made
 that rule go quiet; a fixed side whose labeled files are missing cannot show that and does not count. ``totals`` covers all pairs, where pairs outside APSA's source checks count as FN;
 ``in_scope_totals`` covers pairs with a weakness some source check relates to.
+
+These are observed findings, including partial reports, not proof of complete coverage or repair.
+Execution errors are unscored; each side is attempted independently, with bounded subprocess streams
+and execution metadata retained. A run with any failed pair writes its results and returns nonzero.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.request
+import zipfile
 from pathlib import Path, PurePosixPath
 
 from benchmarks.dependency_oracle import extract
 from mobile_audit.core import report_incomplete
-from mobile_audit.maswe import finding_weaknesses
+from mobile_audit.maswe import finding_weaknesses, rule_state
 from mobile_audit.rules import rules as rule_catalog
+from mobile_audit.verify import COVERAGE_ALIASES
 
 # Weaknesses a source tree can be checked for; runtime, binary and package-lint rules do not run on source.
 SOURCE_MODES = {"source", "ast", "source-pattern", "configuration"}
@@ -39,6 +48,7 @@ TRUTH = HERE / "fpfn_truth.json"
 AMENDMENTS = HERE / "fpfn_truth_amendments.json"
 MAX_ARCHIVE = 768 * 1024 * 1024
 LINE_TOLERANCE = 3
+MAX_STREAM_BYTES = 1024 * 1024
 
 
 def sha(data: bytes) -> str:
@@ -55,22 +65,82 @@ def fetch(repository: str, commit: str, out: Path) -> dict:
     return {"url": url, "sha256": sha(raw), "bytes": len(raw)}
 
 
-def scan(target: Path, output: Path) -> dict:
+class ScanError(ValueError):
+    """A failed CLI invocation with replayable execution evidence."""
+
+    def __init__(self, message: str, execution: dict):
+        super().__init__(message)
+        self.execution = execution
+
+
+def retain_stream(stream, path: Path) -> dict:
+    """Retain a bounded prefix and hash the full stream, explicitly recording truncation."""
+    stream.seek(0)
+    digest = hashlib.sha256()
+    total = retained = 0
+    with path.open("xb") as output:
+        while chunk := stream.read(64 * 1024):
+            digest.update(chunk)
+            total += len(chunk)
+            prefix = chunk[: max(0, MAX_STREAM_BYTES - retained)]
+            output.write(prefix)
+            retained += len(prefix)
+    return {
+        "path": path.name,
+        "bytes": total,
+        "retained_bytes": retained,
+        "truncated": retained < total,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def scan(target: Path, output: Path) -> tuple[dict, dict]:
     output.mkdir(parents=True)
     env = os.environ.copy()
     env["APSA_PARSER_LOCK_DIR"] = str(output / "parser-locks")
-    process = subprocess.run(
-        [sys.executable, "-I", "-m", "apsa", "--home", str(output / "home"), "scan", str(target)]
-        + ["--out", str(output / "report.json"), "--json"],
-        capture_output=True,
-        text=True,
-        timeout=900,
-        env=env,
-    )
-    if process.returncode not in {0, 3, 4} or not (output / "report.json").is_file():
-        raise ValueError(f"APSA execution failed with code {process.returncode}: {process.stderr[-500:]}")
-    report = json.loads((output / "report.json").read_text())
-    return report.get("report", report)
+    argv = [sys.executable, "-I", "-m", "apsa", "--home", str(output / "home"), "scan", str(target)]
+    argv += ["--out", str(output / "report.json"), "--json"]
+    execution = {
+        "schema": "apsa-benchmark-scan-execution-v1",
+        "argv": argv,
+        "cwd": str(Path.cwd()),
+        "exit_code": None,
+        "timed_out": False,
+    }
+    started = time.monotonic()
+    failure = None
+    with tempfile.TemporaryFile(dir=output) as stdout, tempfile.TemporaryFile(dir=output) as stderr:
+        try:
+            process = subprocess.run(argv, stdout=stdout, stderr=stderr, timeout=900, env=env)
+            execution["exit_code"] = process.returncode
+        except subprocess.TimeoutExpired as error:
+            execution["timed_out"] = True
+            failure = "APSA execution timed out after 900 seconds"
+            # Real file-backed subprocesses leave output in these streams. Also preserve available
+            # TimeoutExpired output from alternate runners, without duplicating already-written bytes.
+            for stream, available in ((stdout, error.output), (stderr, error.stderr)):
+                if stream.tell() == 0 and available:
+                    stream.write(available.encode() if isinstance(available, str) else available)
+        except OSError as error:
+            failure = f"APSA execution could not start: {error}"
+        execution["elapsed_seconds"] = time.monotonic() - started
+        execution["stdout"] = retain_stream(stdout, output / "stdout.txt")
+        execution["stderr"] = retain_stream(stderr, output / "stderr.txt")
+    (output / "execution.json").write_text(json.dumps(execution, indent=2, sort_keys=True) + "\n")
+    if failure is None and execution["exit_code"] not in {0, 3, 4}:
+        failure = f"APSA execution failed with code {execution['exit_code']}; see stdout.txt and stderr.txt"
+    if failure is not None:
+        raise ScanError(failure, execution)
+    try:
+        report = json.loads((output / "report.json").read_text())
+        if not isinstance(report, dict):
+            raise ValueError("Report is not an object")
+        report = report.get("report", report)
+        if not isinstance(report, dict):
+            raise ValueError("Report payload is not an object")
+    except (OSError, ValueError, RecursionError) as error:
+        raise ScanError(f"APSA did not return a readable report: {error}", execution) from error
+    return report, execution
 
 
 def located(report: dict, rules: set[str], path: str, weaknesses: frozenset[str] = frozenset()) -> list[dict]:
@@ -132,93 +202,166 @@ def provenance() -> dict:
     }
 
 
+def pair_identity(pair: dict) -> dict:
+    rules = sorted(set(pair.get("expected_rules", [])))
+    weaknesses = sorted(set(pair.get("weaknesses", [])))
+    return {
+        "id": pair["id"],
+        "repository": pair["repository"],
+        "expected_rules": rules,
+        "weaknesses": weaknesses,
+        "in_scope": bool(rules) or bool(set(weaknesses) & source_weaknesses()),
+    }
+
+
+def relevant_rule_ids(pair: dict) -> set[str]:
+    """Execution checks required before silence on these labels can be scored."""
+    rules = set(pair.get("expected_rules", []))
+    if not rules:
+        weaknesses = set(pair.get("weaknesses", []))
+        rules = {rule["id"] for rule in source_rules() if weaknesses & set(rule.get("maswe", []))}
+    return {COVERAGE_ALIASES.get(rule) or rule for rule in rules}
+
+
+def labeled_rule_states(report: dict, pair: dict) -> dict[str, str]:
+    return {
+        rule: rule_state({row["state"] for row in report.get("coverage", []) if row.get("rule_id") == rule})
+        for rule in sorted(relevant_rule_ids(pair))
+    }
+
+
+def labeled_scope_checked(side: dict) -> bool:
+    states = side.get("labeled_file_states", {})
+    checks = side.get("labeled_rule_states")
+    return (
+        bool(states)
+        and not side.get("missing_labeled_paths")
+        and all(state == "checked" for state in states.values())
+        and isinstance(checks, dict)
+        and all(state == "checked" for state in checks.values())
+    )
+
+
 def evaluate(pair: dict, work: Path) -> dict:
     locations = pair["vulnerable_locations"]
     root_name = PurePosixPath(locations[0]["path"]).parts[0]
     rules = set(pair.get("expected_rules", []))
     weaknesses = frozenset(pair.get("weaknesses", []))
-    covered = source_weaknesses()
-    result = {
-        "id": pair["id"],
-        "repository": pair["repository"],
-        "expected_rules": sorted(rules),
-        "weaknesses": sorted(weaknesses),
-        # A weakness pair is in scope when some APSA check relates to one of its weaknesses.
-        "in_scope": bool(rules) or bool(weaknesses & covered),
-    }
+    result = pair_identity(pair)
     for side, commit, places in (
         ("vulnerable", pair["vulnerable_commit"], locations),
         ("fixed", pair["fixed_commit"], pair["fixed_locations"]),
     ):
-        folder = work / pair["id"] / side
-        folder.mkdir(parents=True)
-        archive = fetch(pair["repository"], commit, folder / "source.zip")
-        source = extract(folder / "source.zip", folder / "src")
-        target = source / root_name
-        report = scan(target if target.is_dir() else source, folder / "scan")
-        relative = [
-            str(PurePosixPath(place["path"]).relative_to(root_name)) if target.is_dir() else place["path"]
-            for place in places
-        ]
-        missing = [
-            path for path in relative if not ((target if target.is_dir() else source) / path).is_file()
-        ]
-        hits = []
-        in_range = []
-        for path, place in zip(relative, places, strict=True):
-            for hit in located(report, rules, path, weaknesses):
-                hits.append(hit)
-                start, end = place.get("start_line"), place.get("end_line")
-                line = hit["line"]
-                if (
-                    start
-                    and end
-                    and isinstance(line, int)
-                    and start - LINE_TOLERANCE <= line <= end + LINE_TOLERANCE
-                ):
-                    in_range.append(hit)
-        files = {
-            f["path"]: f.get("state") for f in report["inventory"].get("source_analysis", {}).get("files", [])
-        }
-        result[side] = {
-            "commit": commit,
-            "archive": archive,
-            "scan_root": root_name if target.is_dir() else ".",
-            "audit_incomplete": report_incomplete(report),
-            "rule_version": report.get("rule_version"),
-            "missing_labeled_paths": missing,
-            "labeled_file_states": {path: files.get(path, "not-analyzed-as-source") for path in relative},
-            "hits": hits[:20],
-            "hit_rules": sorted({hit["rule_id"] for hit in hits}),
-            "hits_in_labeled_lines": in_range[:20],
-            "in_range_rules": sorted({hit["rule_id"] for hit in in_range}),
-            "any_rule_findings_in_labeled_files": [
-                hit for path in relative for hit in located(report, set(), path)
-            ][:20],
-        }
+        side_result = result[side] = {"commit": commit, "report_returned": False, "audit_incomplete": None}
+        phase = "prepare"
+        try:
+            folder = work / pair["id"] / side
+            folder.mkdir(parents=True)
+            phase = "fetch"
+            archive = fetch(pair["repository"], commit, folder / "source.zip")
+            side_result["archive"] = archive
+            phase = "extract"
+            source = extract(folder / "source.zip", folder / "src")
+            target = source / root_name
+            phase = "scan"
+            report, execution = scan(target if target.is_dir() else source, folder / "scan")
+            side_result.update(report_returned=True, execution=execution)
+            phase = "score"
+            relative = [
+                str(PurePosixPath(place["path"]).relative_to(root_name)) if target.is_dir() else place["path"]
+                for place in places
+            ]
+            missing = [
+                path for path in relative if not ((target if target.is_dir() else source) / path).is_file()
+            ]
+            hits = []
+            in_range = []
+            for path, place in zip(relative, places, strict=True):
+                for hit in located(report, rules, path, weaknesses):
+                    hits.append(hit)
+                    start, end = place.get("start_line"), place.get("end_line")
+                    line = hit["line"]
+                    if (
+                        start
+                        and end
+                        and isinstance(line, int)
+                        and start - LINE_TOLERANCE <= line <= end + LINE_TOLERANCE
+                    ):
+                        in_range.append(hit)
+            files = {
+                f["path"]: f.get("state")
+                for f in report["inventory"].get("source_analysis", {}).get("files", [])
+            }
+            side_result.update(
+                {
+                    "commit": commit,
+                    "archive": archive,
+                    "scan_root": root_name if target.is_dir() else ".",
+                    "audit_incomplete": report_incomplete(report),
+                    "rule_version": report.get("rule_version"),
+                    "missing_labeled_paths": missing,
+                    "labeled_file_states": {
+                        path: files.get(path, "not-analyzed-as-source") for path in relative
+                    },
+                    "labeled_rule_states": labeled_rule_states(report, pair),
+                    "hits": hits[:20],
+                    "hit_rules": sorted({hit["rule_id"] for hit in hits}),
+                    "hits_in_labeled_lines": in_range[:20],
+                    "in_range_rules": sorted({hit["rule_id"] for hit in in_range}),
+                    "any_rule_findings_in_labeled_files": [
+                        hit for path in relative for hit in located(report, set(), path)
+                    ][:20],
+                }
+            )
+        except (
+            ValueError,
+            OSError,
+            KeyError,
+            TypeError,
+            subprocess.TimeoutExpired,
+            zipfile.BadZipFile,
+            http.client.HTTPException,
+            RecursionError,
+        ) as error:
+            side_result.update(error=f"{type(error).__name__}: {error}"[:1000], error_phase=phase)
+            if isinstance(error, ScanError):
+                side_result["execution"] = error.execution
+    failed = [side for side in ("vulnerable", "fixed") if "error" in result[side]]
+    if failed:
+        result["error"] = "Failed sides: " + ", ".join(failed)
+    outcome = {}
+    for side, positive, negative in (("vulnerable", "tp", "fn"), ("fixed", "fp", "tn")):
+        observed = result[side]
+        outcome[side] = (
+            "unscored"
+            if "error" in observed
+            else "out-of-scope"
+            if not (rules or weaknesses)
+            else "unscored"
+            if observed["missing_labeled_paths"] and (side == "vulnerable" or not observed["hits"])
+            else positive
+            if observed["hits"]
+            else "unscored"
+            if not labeled_scope_checked(observed)
+            else negative
+        )
+        if outcome[side] == "unscored" and "error" not in observed:
+            observed["scoring_abstention"] = (
+                "Labeled source files or relevant rules were absent, incomplete or unmeasured"
+            )
     if rules or weaknesses:
-        vulnerable_hit = bool(result["vulnerable"]["hits"])
-        fixed_hit = bool(result["fixed"]["hits"])
-        # A labeled path absent from the source cannot be measured.
-        result["outcome"] = {
-            "vulnerable": "unscored"
-            if result["vulnerable"]["missing_labeled_paths"]
-            else "tp"
-            if vulnerable_hit
-            else "fn",
-            "fixed": "unscored"
-            if result["fixed"]["missing_labeled_paths"] and not fixed_hit
-            else "fp"
-            if fixed_hit
-            else "tn",
-            "vulnerable_line_level": bool(result["vulnerable"]["hits_in_labeled_lines"]),
-            # An in-range rule that no longer fires anywhere in the fixed labeled files.
-            "discriminating_tp": not result["vulnerable"]["missing_labeled_paths"]
-            and not result["fixed"]["missing_labeled_paths"]
-            and bool(set(result["vulnerable"]["in_range_rules"]) - set(result["fixed"]["hit_rules"])),
-        }
-    else:
-        result["outcome"] = {"vulnerable": "out-of-scope", "fixed": "out-of-scope"}
+        vulnerable, fixed = result["vulnerable"], result["fixed"]
+        outcome["vulnerable_line_level"] = "error" not in vulnerable and bool(
+            vulnerable["hits_in_labeled_lines"]
+        )
+        outcome["discriminating_tp"] = (
+            not failed
+            and not vulnerable["missing_labeled_paths"]
+            and not fixed["missing_labeled_paths"]
+            and labeled_scope_checked(fixed)
+            and bool(set(vulnerable["in_range_rules"]) - set(fixed["hit_rules"]))
+        )
+    result["outcome"] = outcome
     return result
 
 
@@ -235,7 +378,10 @@ def totals_for(results: list[dict]) -> dict:
         "unscored_sides": sum(
             side == "unscored" for r in scored for side in (r["outcome"]["vulnerable"], r["outcome"]["fixed"])
         ),
-        "scored_pairs": len(scored),
+        "scored_pairs": sum(
+            any(r["outcome"][side] in {"tp", "fn", "fp", "tn"} for side in ("vulnerable", "fixed"))
+            for r in scored
+        ),
     }
 
 
@@ -262,13 +408,10 @@ def main() -> None:
         pair.update(amendments["pairs"].get(pair["id"], {}))
     results = []
     for pair in truth["pairs"]:
-        try:
-            results.append(evaluate(pair, args.work))
-        except (ValueError, OSError, subprocess.TimeoutExpired) as error:
-            results.append({"id": pair["id"], "error": f"{type(error).__name__}: {error}"[:500]})
+        results.append(evaluate(pair, args.work))
     totals = totals_for(results)
     summary = {
-        "schema": "apsa-fpfn-results-v3",
+        "schema": "apsa-fpfn-results-v4",
         "truth": str(args.truth.resolve().relative_to(HERE.parent))
         if args.truth.resolve().is_relative_to(HERE.parent)
         else args.truth.name,
@@ -284,6 +427,8 @@ def main() -> None:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(json.dumps(totals, indent=2))
+    if totals["errors"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
