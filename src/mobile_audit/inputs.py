@@ -640,6 +640,17 @@ def _swift_platform_code(text: str) -> str | None:
             )
             if not before and start > len(prefix):
                 return None
+            if (
+                not expression
+                and re.search(r'[\w)\]}"\']$', before)
+                and text[start - 1].isspace()
+                and cursor < len(text)
+                and text[cursor].isspace()
+            ):
+                # Leading whitespace rules out a bare regex body even when the
+                # operand's name is also a contextual keyword or starts with "_".
+                chunks.append("/")
+                continue
             word = re.search(r"([A-Za-z_]\w*)[?!]?$", before)
             if not expression and word and (word[1] in keywords or word[1].startswith("_")):
                 return None
@@ -716,9 +727,33 @@ def _swift_platform_code(text: str) -> str | None:
                             while back > start and text[back - 1] == "\\":
                                 back -= 1
                         if hashes or (opening - back) % 2 == 0:
-                            # Nested interpolation grammar is outside this lexer.
-                            return None
-                        opening = text.find(interpolation, opening + len(interpolation), end)
+                            position = opening + len(interpolation)
+                            bound = min(end, position + 512)
+                            depth, value = 1, False
+                            while position < bound:
+                                char = text[position]
+                                if char == "(":
+                                    depth += 1
+                                    if depth > 32:
+                                        return None
+                                elif char == ")":
+                                    depth -= 1
+                                    if depth == 0:
+                                        break
+                                elif char.isalnum() or char in "_$":
+                                    value = True
+                                elif char in "\"'#/\\\r\n" or (ord(char) < 32 and char != "\t"):
+                                    return None
+                                position += 1
+                            else:
+                                return None
+                            if not value:
+                                return None
+                            # Only a bounded quote-free expression is masked;
+                            # nested string/regex/interpolation grammar stays opaque.
+                            opening = text.find(interpolation, position + 1, end)
+                        else:
+                            opening = text.find(interpolation, opening + len(interpolation), end)
                 if hashes:
                     escaped = text[max(start, end - len(hashes) - 1) : end] == "\\" + hashes
                 else:

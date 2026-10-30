@@ -295,3 +295,110 @@ def test_nested_interpolation_and_keyword_regex_keep_ios_privacy_candidates(tmp_
     assert inventory["apple_source_scope"]["partial"] is True
     assert len([row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]) == 1
     assert next(row["state"] for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST") == "partial"
+
+
+@pytest.mark.parametrize("hashes", ["", "#", "##"])
+@pytest.mark.parametrize("multiline", [False, True])
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "b",
+        "String(b)",
+        "(b)",
+        "render(value: b + 1)",
+        "outer(inner(b), c)",
+        "b * (c + 2)",
+        "items[index]",
+        "$0",
+        "이름",
+        "items.map { $0 + 1 }",
+        "values[key]?.count",
+        "tuple.0",
+    ],
+)
+def test_simple_bounded_interpolation_keeps_outer_literal_masked(hashes, multiline, expression):
+    quote = '"""' if multiline else '"'
+    newline = "\n" if multiline else ""
+    text = "import UIKit\nlet text = " + hashes + quote + newline + "literal; import AppKit "
+    text += "\\" + hashes + "(" + expression + ")" + newline + quote + hashes
+    code = _swift_platform_code(text)
+    assert code is not None and "import UIKit" in code
+    assert "import AppKit" not in code and expression not in code
+    assert code.count("\n") == text.count("\n")
+
+
+@pytest.mark.parametrize("hashes", ["", "#", "##"])
+def test_multiple_simple_interpolations_remain_in_one_masked_literal(hashes):
+    text = "import UIKit\nlet text = " + hashes + '"first \\' + hashes + "(b), second \\"
+    text += hashes + '(outer(inner(c), 2)); import AppKit"' + hashes
+    code = _swift_platform_code(text)
+    assert code is not None and "import UIKit" in code and "import AppKit" not in code
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ['String("nested")', "b / c", "b#c", r"b\c", "b\nc", "f(", "", " ", "b" * 513, "(" * 33 + "b" + ")" * 33],
+)
+def test_non_simple_or_exhausted_interpolation_stays_opaque(expression):
+    assert _swift_platform_code('let text = "a \\(' + expression + ')"') is None
+
+
+@pytest.mark.parametrize("operand", ["left", "_value", "copy", "consume", "some"])
+def test_spaced_division_is_clear_even_for_contextual_operand_names(operand):
+    code = "let ratio = " + operand + " / 2\nimport UIKit"
+    assert _swift_platform_code(code) == code
+
+
+@pytest.mark.parametrize("archive", [False, True], ids=["folder", "source-zip"])
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        r'let text = "a \(b)"',
+        r'let text = #"a \#(b)"#',
+        'let text = """\na \\(b)\n"""',
+        r'let text = "a \(outer(inner(b), 2)), \(c + 1)"',
+    ],
+)
+def test_plistless_uikit_with_simple_interpolation_keeps_privacy_candidates(tmp_path, archive, snippet):
+    raw = ("import UIKit\n" + snippet + '\nUserDefaults.standard.set(true, forKey: "seen")\n').encode()
+    if archive:
+        target = tmp_path / "source.zip"
+        with zipfile.ZipFile(target, "x") as output:
+            output.writestr("Main.swift", raw)
+    else:
+        target = tmp_path / "source"
+        target.mkdir()
+        (target / "Main.swift").write_bytes(raw)
+    inventory, sources = inspect_target(target)
+    findings, coverage = platform_checks.platform_checks(inventory, sources)
+    assert inventory["platforms"] == ["ios"] and inventory["apps"] == []
+    assert inventory["apple_source_scope"]["files"][0]["state"] == "observed"
+    assert len([row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]) == 1
+    assert next(row["state"] for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST") == "checked"
+
+
+@pytest.mark.parametrize("archive", [False, True], ids=["folder", "source-zip"])
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        r'let items = [1]; let index = 0; let text = "value \(items[index])"',
+        r'let values = [1, 2]; let text = values.map { "value \($0)" }',
+        r'let 이름 = 1; let text = "value \(이름)"',
+    ],
+)
+def test_quote_free_unicode_subscript_closure_interpolation_retains_ios_scope(tmp_path, archive, snippet):
+    raw = ("import UIKit\n" + snippet + '\nUserDefaults.standard.set(true, forKey: "seen")\n').encode()
+    if archive:
+        target = tmp_path / "source.zip"
+        with zipfile.ZipFile(target, "x") as output:
+            output.writestr("Main.swift", raw)
+    else:
+        target = tmp_path / "source"
+        target.mkdir()
+        (target / "Main.swift").write_bytes(raw)
+    inventory, sources = inspect_target(target)
+    findings, coverage = platform_checks.platform_checks(inventory, sources)
+    assert inventory["platforms"] == ["ios"] and inventory["apps"] == []
+    assert inventory["apple_source_scope"]["files"][0]["state"] == "observed"
+    assert len([row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]) == 1
+    assert next(row["state"] for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST") == "checked"

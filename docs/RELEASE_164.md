@@ -30,8 +30,12 @@ device or credential service was contacted.
   deployment minimums do not prove exclusive target membership. Mixed platform
   scope remains partial. See [SwiftPM deployment settings](https://docs.swift.org/latest/documentation/packagedescription/supportedplatform/).
   Qualified Swift imports retain their framework hints. Import-looking text in
-  Swift regex literals does not establish platform evidence; unresolved lexical
-  syntax retains partial scope rather than proving desktop-only membership.
+  Swift regex literals does not establish platform evidence. Simple string
+  interpolation retains platform hints when its bounded parentheses resolve
+  without nested literal syntax. Complex interpolation and unresolved lexical
+  syntax retain partial scope rather than proving desktop-only membership.
+  Ambiguous no-space division involving contextual or underscore-prefixed names
+  can also retain partial scope; clear spaced division remains supported.
   Privacy declarations in
   short module paths and shared resource directories remain available when a
   desktop ancestor import does not prove their exclusive target membership.
