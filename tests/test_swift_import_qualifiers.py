@@ -162,3 +162,136 @@ def test_regex_import_text_cannot_hide_ios_privacy_candidates(tmp_path, archive,
     assert len([row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]) == 1
     state = next(row["state"] for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST")
     assert state == ("partial" if ambiguous else "checked")
+
+
+@pytest.mark.parametrize("hashes", ["", "#", "##", "###"])
+@pytest.mark.parametrize("multiline", [False, True])
+def test_active_string_interpolation_is_opaque_before_any_inner_quote(hashes, multiline):
+    quote = '"""' if multiline else '"'
+    newline = "\n" if multiline else ""
+    text = "let text = " + hashes + quote + newline
+    text += "prefix \\" + hashes + '(String("; import AppKit"))'
+    text += newline + quote + hashes + "; import UIKit"
+    assert _swift_platform_code(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        r'let text = "prefix \\(literal)"; import UIKit',
+        r'let text = #"prefix \##(literal)"#; import UIKit',
+        r'let text = ##"prefix \#(literal)"##; import UIKit',
+        r'let text = ###"prefix \##(literal)"###; import UIKit',
+    ],
+)
+def test_escaped_or_mismatched_interpolation_markers_still_mask_literal_text(text):
+    code = _swift_platform_code(text)
+    assert code is not None and "import UIKit" in code
+    assert "literal" not in code
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "try",
+        "try?",
+        "try!",
+        "await",
+        "if",
+        "while",
+        "switch",
+        "guard",
+        "in",
+        "where",
+        "copy",
+        "consume",
+        "borrow",
+        "borrowing",
+        "consuming",
+        "yield",
+        "return",
+        "throw",
+        "case",
+        "for",
+        "catch",
+        "repeat",
+        "as",
+        "is",
+        "some",
+        "any",
+        "each",
+        "isolated",
+        "sending",
+        "async",
+        "do",
+        "else",
+        "defer",
+        "_futureContext",
+        "futureContext",
+    ],
+)
+@pytest.mark.parametrize("spacing", ["", " ", "\t"])
+@pytest.mark.parametrize("trailing", [";", ")", "]", "}", "\n"])
+def test_keyword_and_unresolved_contexts_never_expose_regex_imports(prefix, spacing, trailing):
+    text = "let regex = " + prefix + spacing + "/foo; import AppKit/" + trailing
+    code = _swift_platform_code(text)
+    assert code is None or "import AppKit" not in code
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        r'let text = "prefix \\\(String("; import AppKit"))"',
+        "let regex = futureContext/[a/; import AppKit]+/;",
+        "let regex = try" + " " * 257 + "/foo; import AppKit/;",
+        "let regex = futureContext/" + "a" * 600 + "; import AppKit/;",
+    ],
+)
+def test_nested_or_bounded_unknown_contexts_remain_opaque(text):
+    assert _swift_platform_code(text) is None
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "let ratio = total/count; import UIKit",
+        "let ratio = total / count\nimport UIKit",
+        "var count = 10; count/=2; import UIKit",
+    ],
+)
+def test_clear_division_controls_preserve_real_imports_after_keyword_guard(code):
+    assert _swift_platform_code(code) == code
+
+
+@pytest.mark.parametrize("archive", [False, True], ids=["folder", "source-zip"])
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        r'let text = "a \(String("; import AppKit"))"',
+        "let regex = try/foo; import AppKit/;",
+        "let regex = await/foo; import AppKit/;",
+    ],
+)
+def test_nested_interpolation_and_keyword_regex_keep_ios_privacy_candidates(tmp_path, archive, snippet):
+    contents = {
+        "Info.plist": plistlib.dumps({"CFBundleIdentifier": "org.synthetic.mobile"}),
+        "Main.swift": (
+            "import Foundation\n" + snippet + '\nUserDefaults.standard.set(true, forKey: "seen")\n'
+        ).encode(),
+    }
+    if archive:
+        target = tmp_path / "source.zip"
+        with zipfile.ZipFile(target, "x") as output:
+            for name, raw in contents.items():
+                output.writestr(name, raw)
+    else:
+        target = tmp_path / "source"
+        target.mkdir()
+        for name, raw in contents.items():
+            (target / name).write_bytes(raw)
+    inventory, sources = inspect_target(target)
+    findings, coverage = platform_checks.platform_checks(inventory, sources)
+    assert inventory["platforms"] == ["ios"]
+    assert inventory["apple_source_scope"]["partial"] is True
+    assert len([row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]) == 1
+    assert next(row["state"] for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST") == "partial"

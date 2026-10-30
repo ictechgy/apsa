@@ -595,6 +595,20 @@ def _swift_platform_code(text: str) -> str | None:
     """
     regions = re.compile(r'//|/\*|(?<!\#)(?P<regex_hashes>\#+)/|(?<!\#)(?P<hashes>\#*)(?P<quote>"""|")|/')
     comment_boundary = re.compile(r"/\*|\*/")
+    # Reserved and contextual words cannot establish an ordinary division operand.
+    keywords = set(
+        (
+            "associatedtype borrowing class consuming deinit enum extension fileprivate func import "
+            "init inout internal let nonisolated open operator precedencegroup private protocol public "
+            "rethrows static struct subscript typealias var break case catch continue default defer do "
+            "else fallthrough for guard if in repeat return switch throw where while Any as await false "
+            "is nil self Self super throws true try _ associativity async convenience didSet dynamic "
+            "final get indirect infix lazy left mutating none nonmutating optional override package "
+            "postfix precedence prefix Protocol required right set some Type unowned weak willSet "
+            "actor any borrow consume copy discard each isolated sending yield"
+        ).split()
+    )
+    import_word = re.compile(r"\bimport\b")
     chunks, cursor = [], 0
     for _ in range(len(text) + 1):
         match = regions.search(text, cursor)
@@ -626,7 +640,22 @@ def _swift_platform_code(text: str) -> str | None:
             )
             if not before and start > len(prefix):
                 return None
+            word = re.search(r"([A-Za-z_]\w*)[?!]?$", before)
+            if not expression and word and (word[1] in keywords or word[1].startswith("_")):
+                return None
             if not expression and re.search(r'[\w)\]}"\']$', before):
+                if word:
+                    # An unfamiliar contextual word may still prefix a regex.
+                    # Never expose a possible literal's import-like contents.
+                    bound = min(len(text), cursor + 512)
+                    newline = text.find("\n", cursor, bound)
+                    if newline < 0 and bound < len(text):
+                        return None
+                    bound = newline if newline >= 0 else bound
+                    semicolon = text.find(";", cursor, bound)
+                    imported = import_word.search(text, semicolon, bound) if semicolon >= 0 else None
+                    if imported and text.find("/", imported.end(), bound) >= 0:
+                        return None
                 end = cursor + (cursor < len(text) and text[cursor] == "=")
                 left_space = text[start - 1].isspace()
                 right_space = end == len(text) or text[end].isspace()
@@ -678,6 +707,18 @@ def _swift_platform_code(text: str) -> str | None:
                 end = text.find(delimiter, cursor)
                 if end < 0:
                     return None
+                if quote != "/":
+                    interpolation = "\\" + hashes + "("
+                    opening = text.find(interpolation, cursor, end)
+                    while opening >= 0:
+                        back = opening
+                        if not hashes:
+                            while back > start and text[back - 1] == "\\":
+                                back -= 1
+                        if hashes or (opening - back) % 2 == 0:
+                            # Nested interpolation grammar is outside this lexer.
+                            return None
+                        opening = text.find(interpolation, opening + len(interpolation), end)
                 if hashes:
                     escaped = text[max(start, end - len(hashes) - 1) : end] == "\\" + hashes
                 else:
