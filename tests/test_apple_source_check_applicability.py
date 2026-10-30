@@ -146,12 +146,13 @@ def test_module_hint_is_not_exclusive_shared_file_membership(tmp_path, hint):
     assert any(row["rule_id"] == "IOS-PRIVACY-MANIFEST" for row in findings)
 
 
-def test_conditional_module_privacy_declaration_is_not_excluded(tmp_path):
+@pytest.mark.parametrize("hint", ["import AppKit", "#if os(macOS)\nimport AppKit\n#endif"])
+def test_configured_ios_module_privacy_declaration_is_not_excluded(tmp_path, hint):
     _, findings, _ = inspect_source(
         tmp_path,
         {
             "Info.plist": plistlib.dumps({"CFBundleIdentifier": "org.synthetic.shared"}),
-            "Platform.swift": "#if os(macOS)\nimport AppKit\n#endif",
+            "Platform.swift": hint,
             "Shared.swift": 'import Foundation\nUserDefaults.standard.set(true, forKey: "seen")',
             "PrivacyInfo.xcprivacy": PRIVACY,
         },
