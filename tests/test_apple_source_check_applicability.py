@@ -108,3 +108,52 @@ def test_explicit_mobile_app_configuration_keeps_foundation_privacy_screening(tm
     assert inventory["apple_source_scope"]["partial"] is False
     assert inventory["apple_source_scope"]["files"][0]["platforms"] == ["ios"]
     assert any(row["rule_id"] == "IOS-PRIVACY-MANIFEST" for row in findings)
+
+
+@pytest.mark.parametrize("sibling", [False, True])
+@pytest.mark.parametrize("guard", ["os(macOS)", "canImport(AppKit)"])
+def test_conditional_desktop_hint_cannot_suppress_shared_ios_privacy(tmp_path, sibling, guard):
+    hint = f"#if {guard}\nimport AppKit\n#endif\n"
+    shared = 'import Foundation\nUserDefaults.standard.set(true, forKey: "seen")'
+    files = {
+        "Info.plist": plistlib.dumps({"CFBundleIdentifier": "org.synthetic.shared"}),
+        "Shared.swift": shared if sibling else hint + shared,
+    }
+    if sibling:
+        files["Platform.swift"] = hint
+    inventory, findings, coverage = inspect_source(tmp_path, files)
+    scope = next(row for row in inventory["apple_source_scope"]["files"] if row["path"] == "Shared.swift")
+    assert scope["state"] == "conditional" and "ios" in scope["platforms"]
+    assert any(row["rule_id"] == "IOS-PRIVACY-MANIFEST" for row in findings)
+    assert next(row for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST")["state"] == "partial"
+
+
+@pytest.mark.parametrize("hint", ["import AppKit", "swiftpm-macos-minimum"])
+def test_module_hint_is_not_exclusive_shared_file_membership(tmp_path, hint):
+    files = {
+        "Info.plist": plistlib.dumps({"CFBundleIdentifier": "org.synthetic.shared"}),
+        "Shared.swift": 'import Foundation\nUserDefaults.standard.set(true, forKey: "seen")',
+    }
+    if hint == "swiftpm-macos-minimum":
+        files["Package.swift"] = (
+            'import PackageDescription\nlet package = Package(name: "Shared", platforms: [.macOS(.v14)])'
+        )
+    else:
+        files["Desktop.swift"] = hint
+    inventory, findings, _ = inspect_source(tmp_path, files)
+    scope = next(row for row in inventory["apple_source_scope"]["files"] if row["path"] == "Shared.swift")
+    assert scope["state"] == "inferred" and set(scope["platforms"]) == {"ios", "macos"}
+    assert any(row["rule_id"] == "IOS-PRIVACY-MANIFEST" for row in findings)
+
+
+def test_conditional_module_privacy_declaration_is_not_excluded(tmp_path):
+    _, findings, _ = inspect_source(
+        tmp_path,
+        {
+            "Info.plist": plistlib.dumps({"CFBundleIdentifier": "org.synthetic.shared"}),
+            "Platform.swift": "#if os(macOS)\nimport AppKit\n#endif",
+            "Shared.swift": 'import Foundation\nUserDefaults.standard.set(true, forKey: "seen")',
+            "PrivacyInfo.xcprivacy": PRIVACY,
+        },
+    )
+    assert not any(row["rule_id"] == "IOS-PRIVACY-MANIFEST" for row in findings)

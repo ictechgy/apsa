@@ -850,7 +850,8 @@ def analyze_hybrid(
         else:
             warnings.append(
                 f"Hybrid {kind} for {len(paths)} files: {reason}; "
-                "per-file reasons remain in inventory.hybrid_analysis.files; coverage incomplete"
+                "per-file reasons remain in local JSON inventory.hybrid_analysis.files "
+                "(CLI reports export --format json); coverage incomplete"
             )
     observations_truncated |= len(observations) > MAX_INPUT_DETAILS
     if observations_truncated:

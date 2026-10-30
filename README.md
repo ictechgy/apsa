@@ -2,9 +2,9 @@
 
 **APSA 1.6.4.** See the [release scope and upgrade notes](docs/RELEASE_164.md).
 [Release readiness](RELEASE_READINESS.md) separates local validation from the
+hosted publication and public installation gates.
 
 **Public-app regression fixes in 1.6.4.** Terminal JavaScript/TypeScript postfix expressions no longer crash the bounded parser. Private-key candidates require a matching envelope with plausible body content. Apple source platform scope separates positive iOS evidence from macOS and ambiguous Swift sources. Repeated hybrid omissions are counted while retaining per-file reasons. See the release notes for remaining analysis limits.
-hosted publication and public installation gates.
 
 **Evidence-first security audits for Android and iOS.**
 

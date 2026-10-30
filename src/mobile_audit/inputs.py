@@ -717,6 +717,7 @@ def _apple_source_scope(sources: list[tuple[str, str]], inventory: dict) -> None
                 if platform
             }
         )
+        module["conditional"] = any(entry.get("conditional") for entry in module["evidence"])
     unresolved, conditional_files = 0, 0
     ios_roots = {
         Path(config["path"]).parent.as_posix()
@@ -725,17 +726,32 @@ def _apple_source_scope(sources: list[tuple[str, str]], inventory: dict) -> None
     }
     for item in files:
         own = sorted({entry["platform"] for entry in item["evidence"]})
-        conditional = item["malformed"] or any(entry["conditional"] for entry in item["evidence"])
-        item["platforms"] = own or modules[item["module"]]["platforms"]
-        if not item["platforms"] and any(
-            root == "." or item["path"].startswith(root + "/") for root in ios_roots
-        ):
+        module = modules[item["module"]]
+        conditional = (
+            item["malformed"]
+            or any(entry["conditional"] for entry in item["evidence"])
+            or (not own and module["conditional"])
+        )
+        item["platforms"] = own or module["platforms"]
+        inferred = bool(not own and item["platforms"])
+        item["platform_basis"] = "direct-framework-import" if own else "module-platform-hint"
+        configured_ios = any(root == "." or item["path"].startswith(root + "/") for root in ios_roots)
+        if configured_ios and (not own or conditional):
             # Preserve explicit source app configurations without treating a
-            # Foundation/SwiftUI import as an independent iOS identity signal.
-            item["platforms"] = ["ios"]
+            # sibling import or deployment minimum as exclusive target membership.
+            item["platforms"] = sorted(set(item["platforms"]) | {"ios"})
+            inferred = bool(set(item["platforms"]) - {"ios"})
             item["platform_basis"] = "containing source app Info.plist; target membership unverified"
-        item["state"] = "conditional" if conditional else "observed" if item["platforms"] else "unknown"
-        unresolved += not item["platforms"]
+        item["state"] = (
+            "conditional"
+            if conditional
+            else "inferred"
+            if inferred
+            else "observed"
+            if item["platforms"]
+            else "unknown"
+        )
+        unresolved += not item["platforms"] or inferred
         conditional_files += conditional
         del item["evidence"], item["malformed"]
     observed = sorted(

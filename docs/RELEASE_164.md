@@ -15,10 +15,18 @@ device or credential service was contacted.
 - Apple source inventory separates positive iOS/macOS evidence from ambiguous
   Swift. The presence of a Swift file alone does not establish an iOS app.
   Common Apple source security checks remain available without inventing an
-  iOS app identity. Mixed platform scope remains partial.
+  iOS app identity. Conditional and inherited hints retain uncertainty; SwiftPM
+  deployment minimums do not prove exclusive target membership. Mixed platform
+  scope remains partial. See [SwiftPM deployment settings](https://docs.swift.org/latest/documentation/packagedescription/supportedplatform/).
 - Repeated hybrid input omissions produce counted diagnostics. Each observed
   file retains its skipped state and reason in `inventory.hybrid_analysis.files`;
   aggregated warnings do not mean that omitted code was checked.
+
+MCP's bounded report context does not include the complete per-file analysis
+inventory. For every omission path and reason, export the local report with
+`apsa reports export REPORT_ID --format json --out report.json` and inspect
+`inventory.hybrid_analysis.files`. MCP warnings retain counted incompleteness;
+they do not establish that each omitted path is accessible through report pages.
 
 Rescan before comparing or approving a baseline: corrected platform scope and
 removed header-only candidates can change observations. An absent finding does

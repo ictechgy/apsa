@@ -352,7 +352,13 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
                 "note": "Swift alone does not establish iOS applicability; unresolved Apple source scope remains unknown.",
             }
         ]
-    desktop_files = {item["path"] for item in scope.get("files", []) if item.get("platforms") == ["macos"]}
+    desktop_files = {
+        item["path"]
+        for item in scope.get("files", [])
+        if item.get("platforms") == ["macos"]
+        and item.get("state") == "observed"
+        and item.get("platform_basis") == "direct-framework-import"
+    }
     modules = sorted(scope.get("modules", []), key=lambda item: len(item["root"]), reverse=True)
     declared: set[str] = set()
     manifests, unreadable = [], []
@@ -363,7 +369,14 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
             (item for item in modules if item["root"] == "." or path.startswith(item["root"] + "/")),
             {},
         )
-        if module.get("platforms") == ["macos"]:
+        if (
+            module.get("platforms") == ["macos"]
+            and not module.get("conditional")
+            and any(
+                entry.get("kind") == "swift-import" and entry.get("platform") == "macos"
+                for entry in module.get("evidence", [])
+            )
+        ):
             continue
         manifests.append(path)
         try:
