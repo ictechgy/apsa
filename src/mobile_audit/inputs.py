@@ -441,7 +441,7 @@ def feature_manifest(raw: bytes, origin: str, inventory: dict) -> None:
     )
 
 
-def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True) -> None:
+def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True, source=False) -> None:
     value = load_plist(raw)
     if not isinstance(value, dict):
         raise ValueError("Info.plist must be a dictionary")
@@ -492,6 +492,49 @@ def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True) -> None
         schemes = entry.get("CFBundleURLSchemes", [])
         if not isinstance(schemes, list) or any(not isinstance(scheme, str) for scheme in schemes):
             raise ValueError("Info.plist CFBundleURLSchemes must be an array of strings")
+    if source:
+        supported = value.get("CFBundleSupportedPlatforms", [])
+        supported = supported if isinstance(supported, list) else []
+        macos_hints = []
+        if isinstance(value.get("LSMinimumSystemVersion"), str) and value["LSMinimumSystemVersion"]:
+            macos_hints.append("LSMinimumSystemVersion")
+        if "MacOSX" in supported:
+            macos_hints.append("CFBundleSupportedPlatforms:MacOSX")
+        if macos_hints:
+            ios_hints = [
+                key
+                for key in (
+                    "MinimumOSVersion",
+                    "UIDeviceFamily",
+                    "LSRequiresIPhoneOS",
+                    "UIMainStoryboardFile",
+                    "UILaunchStoryboardName",
+                    "UIRequiredDeviceCapabilities",
+                    "UIApplicationSceneManifest",
+                    "UISupportedInterfaceOrientations",
+                )
+                if value.get(key)
+            ]
+            if any(platform in supported for platform in ("iPhoneOS", "iPhoneSimulator")):
+                ios_hints.append("CFBundleSupportedPlatforms:iPhoneOS/iPhoneSimulator")
+            inventory.setdefault("apple_source_plists", []).append(
+                {
+                    "path": origin,
+                    "platforms": ["ios", "macos"] if ios_hints else ["macos"],
+                    "basis": macos_hints + ios_hints,
+                    "package": value.get("CFBundleIdentifier", ""),
+                    "bundle_role": "main" if primary else "embedded",
+                    "target_membership": "unverified",
+                }
+            )
+            inventory["platforms"].append("macos")
+            inventory["partial"] = True
+            inventory["warnings"].append(
+                f"Source Info.plist includes macOS platform hints: {origin}; "
+                "mobile target membership is unverified and coverage remains partial."
+            )
+            if not ios_hints:
+                return
     inventory["platforms"].append("ios")
     if primary:
         inventory["package"] = value.get("CFBundleIdentifier", inventory.get("package", ""))
@@ -725,6 +768,11 @@ def _apple_source_scope(sources: list[tuple[str, str]], inventory: dict) -> None
         for config in inventory["ios_config"]
         if config.get("bundle_role") != "embedded"
     }
+    macos_plist_roots = {
+        Path(config["path"]).parent.as_posix()
+        for config in inventory.get("apple_source_plists", [])
+        if "macos" in config.get("platforms", []) and config.get("bundle_role") != "embedded"
+    }
     for item in files:
         own = sorted({entry["platform"] for entry in item["evidence"]})
         module = modules[item["module"]]
@@ -736,6 +784,10 @@ def _apple_source_scope(sources: list[tuple[str, str]], inventory: dict) -> None
         item["platforms"] = own or module["platforms"]
         inferred = bool(not own and item["platforms"])
         item["platform_basis"] = "direct-framework-import" if own else "module-platform-hint"
+        if not own and any(root == "." or item["path"].startswith(root + "/") for root in macos_plist_roots):
+            item["platforms"] = sorted(set(item["platforms"]) | {"macos"})
+            inferred = True
+            item["platform_basis"] = "containing source macOS Info.plist; target membership unverified"
         configured_ios = any(root == "." or item["path"].startswith(root + "/") for root in ios_roots)
         if configured_ios and (not own or conditional):
             # Preserve explicit source app configurations without treating a
@@ -980,9 +1032,9 @@ def inspect_target(
                     else target.is_dir() or name in main_plists
                 )
                 if main_plist:
-                    ios_plist(raw, name, inventory)
+                    ios_plist(raw, name, inventory, source=source_input)
                 else:
-                    ios_plist(raw, name, inventory, primary=False)
+                    ios_plist(raw, name, inventory, primary=False, source=source_input)
                     value = load_plist(raw)
                     if isinstance(value, dict) and value.get("CFBundleIdentifier"):
                         inventory.setdefault("embedded_bundles", []).append(
@@ -1420,13 +1472,27 @@ def inspect_target(
         for name, origins in references.items():
             if configuration and name != configuration:
                 continue
-            existing = next((c for c in inventory["ios_config"] if c["path"] == name), None)
+            existing = next(
+                (
+                    c
+                    for c in inventory["ios_config"] + inventory.get("apple_source_plists", [])
+                    if c["path"] == name
+                ),
+                None,
+            )
             if existing is None:
                 try:
                     if name not in source_plists:
                         raise ValueError("Referenced plist was not read within source bounds")
-                    ios_plist(source_plists[name], name, inventory)
-                    existing = inventory["ios_config"][-1]
+                    ios_plist(source_plists[name], name, inventory, source=True)
+                    existing = next(
+                        (
+                            c
+                            for c in inventory["ios_config"] + inventory.get("apple_source_plists", [])
+                            if c["path"] == name
+                        ),
+                        None,
+                    )
                 except (ValueError, TypeError, plistlib.InvalidFileException, RecursionError):
                     inventory["warnings"].append(f"Referenced source plist unavailable or invalid: {name}")
                     inventory["partial"] = True
@@ -1468,7 +1534,9 @@ def inspect_target(
         inventory[key] = sorted(set(inventory[key]))
     unique = {(d["ecosystem"], d["name"], d["version"], d["path"]): d for d in inventory["dependencies"]}
     inventory["dependencies"] = list(unique.values())
-    configurations = inventory["android_config"] + inventory["ios_config"]
+    configurations = (
+        inventory["android_config"] + inventory["ios_config"] + inventory.get("apple_source_plists", [])
+    )
     if configuration and not any(c["path"] == configuration for c in configurations):
         raise ValueError("Selected source configuration was absent, unreadable, excluded or invalid")
     multiple_apps = any(

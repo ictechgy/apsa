@@ -127,21 +127,41 @@ def test_header_footer_recognizer_constants_do_not_join_unrelated_source_fragmen
 
 
 @pytest.mark.parametrize("packaged", [False, True], ids=["source", "packaged"])
-@pytest.mark.parametrize("form", ["concatenated", "margin", "json-escaped-slash"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        "concatenated",
+        "adjacent",
+        "margin",
+        "line-continuation-lf",
+        "line-continuation-crlf",
+        "json-escaped-slash",
+        "unwrapped-json-escaped-slash",
+    ],
+)
 def test_recognized_unreconstructed_literal_forms_are_partial_without_candidates(packaged, form):
     header, footer = "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----"
-    if form == "concatenated":
-        text = " +\n".join(json.dumps(part) for part in (header + "\n", _body() + "\n", footer))
+    if form in {"concatenated", "adjacent"}:
+        separator = " +\n" if form == "concatenated" else "\n"
+        text = separator.join(json.dumps(part) for part in (header + "\n", _body() + "\n", footer))
     elif form == "margin":
         text = '"""|' + _pem().replace("\n", "\n|") + '""".trimMargin()'
+    elif form.startswith("line-continuation"):
+        newline = "\r\n" if form.endswith("crlf") else "\n"
+        text = "key=" + header + "\\n\\" + newline + "  " + _body() + "\\n" + footer
     else:
         # Arbitrary all-ones bytes produce slashes, without generating a real key.
-        body = base64.b64encode(b"\xff" * 96).decode("ascii")
+        prefix = base64.b64encode(bytes(range(192))).decode("ascii")
+        body = (prefix if form.startswith("unwrapped") else "") + base64.b64encode(b"\xff" * 96).decode(
+            "ascii"
+        )
         text = json.dumps(header + "\n" + body + "\n" + footer).replace("/", r"\/")
     findings, coverage = _check(text, packaged=packaged)
     assert not _private(findings)
     assert coverage["state"] == "partial"
-    assert "concatenated literals, margin-prefixed bodies and JSON-escaped slashes" in coverage["note"]
+    assert "concatenated or adjacent literals" in coverage["note"]
+    assert "margin-prefixed bodies, backslash line continuations" in coverage["note"]
+    assert "JSON-escaped slashes" in coverage["note"]
 
 
 @pytest.mark.parametrize("packaged", [False, True], ids=["source", "packaged"])
@@ -151,6 +171,7 @@ def test_recognized_unreconstructed_literal_forms_are_partial_without_candidates
         '" + "ordinary identifier";',
         '"; const body = "' + _body() + '";',
         "|ordinary words without a body",
+        "\\\n  ordinary words without a body",
         r"AA\/BB",
     ],
 )
@@ -276,6 +297,34 @@ def test_footer_at_the_screening_boundary_is_admitted_and_crossing_it_is_partial
     monkeypatch.setattr(platform_checks, "MAX_PRIVATE_KEY_ENVELOPE", len(text) - 1)
     findings, coverage = _check(text)
     assert not _private(findings) and coverage["state"] == "partial"
+
+
+@pytest.mark.parametrize("packaged", [False, True], ids=["source", "packaged"])
+@pytest.mark.parametrize(
+    ("separator", "cut"),
+    [(r"\n", 1), (r"\r\n", 1), (r"\r\n", 2), (r"\r\n", 3), ("\r\n", 1)],
+    ids=["escaped-lf", "escaped-crlf-1", "escaped-crlf-2", "escaped-crlf-3", "actual-crlf"],
+)
+def test_bound_split_inside_line_break_is_partial_and_preserves_later_candidates(
+    monkeypatch, packaged, separator, cut
+):
+    header, footer = "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----"
+    cap = platform_checks.MAX_PRIVATE_KEY_ENVELOPE
+    # Align a valid base64 line so the actual screening limit divides this line break.
+    indent = next(i for i in range(4) if (cap - len(header) - i - len(separator) - cut) % 4 == 0)
+    prefix = header + " " * indent + separator
+    body_size = cap - len(prefix) - cut
+    text = prefix + "A" * body_size + separator + "A" * 64 + separator + footer
+    with monkeypatch.context() as whole:
+        whole.setattr(platform_checks, "MAX_PRIVATE_KEY_ENVELOPE", len(text))
+        findings, coverage = _check(text, packaged=packaged)
+        assert len(_private(findings)) == 1 and coverage["state"] == "checked"
+    findings, coverage = _check(text, packaged=packaged)
+    assert not _private(findings) and coverage["state"] == "partial"
+    text += "\n" + _pem()
+    findings, coverage = _check(text, packaged=packaged)
+    assert len(_private(findings)) == 1 and coverage["state"] == "partial"
+    assert findings[0]["evidence"][0]["offset"] == text.rindex("-----BEGIN")
 
 
 def test_finding_cap_and_collection_partial_contracts_are_preserved(monkeypatch):

@@ -64,7 +64,8 @@ MAX_PRIVATE_KEY_ENVELOPE = 65_536
 _PEM_BREAK = r"(?:\r\n?|\n|\\r\\n|\\[rn])"
 _PEM_HEADER_BREAK = re.compile(r"[ \t]*" + _PEM_BREAK)
 _PEM_BODY_LINE = re.compile(r"([A-Za-z0-9+/]*={0,2})[ \t]*" + _PEM_BREAK)
-_PEM_BODY_PARTIAL = re.compile(r"[A-Za-z0-9+/= \t]*")
+# The screening bound may split an escaped line break immediately after its backslash.
+_PEM_BODY_PARTIAL = re.compile(r"[A-Za-z0-9+/= \t\\]*")
 _PEM_ENCRYPTION_LINE = re.compile(
     r"(?:Proc-Type:[ \t]*4,ENCRYPTED|DEK-Info:[ \t]*[A-Z0-9-]{1,32},[0-9A-Fa-f]{16,64})[ \t]*" + _PEM_BREAK
 )
@@ -72,10 +73,11 @@ _PEM_ARMOR_LINE = re.compile(r"(?:Version|Comment|MessageID|Charset|Hash):[ \t]*
 _PEM_ARMOR_CHECKSUM = re.compile(r"=[A-Za-z0-9+/]{4}[ \t]*" + _PEM_BREAK)
 _PEM_RECONSTRUCTION_LOOKAHEAD = 512
 _PEM_CONCATENATED_BODY = re.compile(
-    r"[\"'`][ \t\r\n]{0,64}\+[ \t\r\n]{0,64}@?[\"'`][ \t]{0,16}[A-Za-z0-9+/]{32,128}"
+    r"[\"'`][ \t\r\n]{0,64}(?:\+[ \t\r\n]{0,64})?@?[\"'`][ \t]{0,16}[A-Za-z0-9+/]{32,128}"
 )
 _PEM_MARGIN_BODY = re.compile(r"\|[ \t]{0,16}[A-Za-z0-9+/]{32,128}")
-_PEM_ESCAPED_SLASH_LINE = re.compile(r"(?:[A-Za-z0-9+/]|\\/){32,128}={0,2}[ \t]{0,16}" + _PEM_BREAK)
+_PEM_CONTINUED_BODY = re.compile(r"\\\r?\n[ \t]{0,64}[A-Za-z0-9+/]{32,128}")
+_PEM_ESCAPED_SLASH_PREFIX = re.compile(r"(?:[A-Za-z0-9+/]|\\/){32,512}")
 RANDOM_REFERENCE = "https://developer.android.com/privacy-and-security/risks/weak-prng"
 # Identifier words that name security values; matched as whole camelCase/snake_case words.
 SECURITY_WORDS = {"token", "nonce", "salt", "otp", "secret", "password", "passcode", "pin", "iv"}
@@ -578,9 +580,13 @@ def _server_trust(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict
 def _private_key_requires_reconstruction(text: str, position: int, limit: int) -> bool:
     """Recognize narrow unsupported literal forms without joining or decoding them."""
     end = min(limit, position + _PEM_RECONSTRUCTION_LOOKAHEAD)
-    if _PEM_CONCATENATED_BODY.match(text, position, end) or _PEM_MARGIN_BODY.match(text, position, end):
+    if (
+        _PEM_CONCATENATED_BODY.match(text, position, end)
+        or _PEM_MARGIN_BODY.match(text, position, end)
+        or _PEM_CONTINUED_BODY.match(text, position, end)
+    ):
         return True
-    escaped = _PEM_ESCAPED_SLASH_LINE.match(text, position, end)
+    escaped = _PEM_ESCAPED_SLASH_PREFIX.match(text, position, end)
     return escaped is not None and r"\/" in escaped[0]
 
 
@@ -708,7 +714,8 @@ def _secrets(
         "Known credential formats in supported text suffixes only; encoded/generic secrets, binary resources, "
         "credential validity, restrictions and runtime use are not established. Private-key candidates require "
         "a matching contiguous PEM envelope and plausible base64 body within 65,536 characters; "
-        "concatenated literals, margin-prefixed bodies and JSON-escaped slashes are not reconstructed. "
+        "concatenated or adjacent literals, margin-prefixed bodies, backslash line continuations "
+        "and JSON-escaped slashes are not reconstructed. "
         "Recognized unsupported forms make coverage partial; cryptographic validity is not checked. "
         "Google API keys may be public app identifiers; review API "
         "and app restrictions."

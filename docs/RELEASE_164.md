@@ -14,7 +14,11 @@ device or credential service was contacted.
   does not validate a key, establish deployment, or prove a credential leak.
   Concatenated source literals, Kotlin margin-prefixed strings and JSON-escaped
   slash bodies are not reconstructed into keys. Recognizable unsupported
-  envelopes retain partial screening coverage instead of becoming findings.
+  prefixes within a 512-character lookahead retain partial screening coverage
+  instead of becoming findings. This is a bounded raw-text screen, not program
+  evaluation: arbitrary comments, distant fragments and other encodings are
+  outside its coverage. A `checked` state completes that named screen; it does
+  not establish the absence of dynamically assembled keys.
   Repeated valid header lines are screened without repeated large text copies.
 - Apple source inventory separates positive iOS/macOS evidence from ambiguous
   Swift. The presence of a Swift file alone does not establish an iOS app.
@@ -25,6 +29,8 @@ device or credential service was contacted.
   Qualified Swift imports retain their framework hints. Privacy declarations in
   short module paths and shared resource directories remain available when a
   root-level desktop import does not prove their exclusive target membership.
+  Positive macOS-only source plist evidence does not establish an iOS app or
+  complete mobile coverage; compiled-package identity requirements remain intact.
   C/NDK headers alone do not enable common Apple source rules.
 - Repeated hybrid input omissions produce counted diagnostics. Each observed
   file retains its skipped state and reason in `inventory.hybrid_analysis.files`;
