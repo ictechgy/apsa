@@ -402,3 +402,45 @@ def test_quote_free_unicode_subscript_closure_interpolation_retains_ios_scope(tm
     assert inventory["apple_source_scope"]["files"][0]["state"] == "observed"
     assert len([row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]) == 1
     assert next(row["state"] for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST") == "checked"
+
+
+@pytest.mark.parametrize("prefix", ["try", "await"])
+@pytest.mark.parametrize("whitespace", ["\u00a0", "\u2028", "\u2029", "\u0085"])
+@pytest.mark.parametrize("archive", [False, True], ids=["folder", "source-zip"])
+def test_non_ascii_regex_whitespace_cannot_invent_macos_scope(tmp_path, archive, prefix, whitespace):
+    raw = (
+        "import Foundation\nlet regex = "
+        + prefix
+        + " /"
+        + whitespace
+        + '; import AppKit/;\nUserDefaults.standard.set(true, forKey: "seen")\n'
+    ).encode()
+    contents = {
+        "Main.swift": raw,
+        "Info.plist": plistlib.dumps({"CFBundleIdentifier": "org.synthetic.mobile"}),
+    }
+    if archive:
+        target = tmp_path / "source.zip"
+        with zipfile.ZipFile(target, "x") as output:
+            for name, body in contents.items():
+                output.writestr(name, body)
+    else:
+        target = tmp_path / "source"
+        target.mkdir()
+        for name, body in contents.items():
+            (target / name).write_bytes(body)
+    inventory, sources = inspect_target(target)
+    findings, coverage = platform_checks.platform_checks(inventory, sources)
+    assert inventory["platforms"] == ["ios"]
+    assert inventory["apple_source_scope"]["partial"] is True
+    assert len([row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]) == 1
+    assert next(row["state"] for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST") == "partial"
+
+
+@pytest.mark.parametrize("prefix", ["try", "await", "consume", "_futureContext"])
+@pytest.mark.parametrize(
+    "whitespace",
+    ["\v", "\f", "\u00a0", "\u0085", "\u1680", "\u2000", "\u2028", "\u2029", "\u202f", "\u205f", "\u3000"],
+)
+def test_non_ascii_or_control_spacing_never_exposes_regex_imports(prefix, whitespace):
+    assert _swift_platform_code("let regex = " + prefix + " /" + whitespace + "; import AppKit/;") is None

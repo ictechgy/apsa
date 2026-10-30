@@ -643,9 +643,9 @@ def _swift_platform_code(text: str) -> str | None:
             if (
                 not expression
                 and re.search(r'[\w)\]}"\']$', before)
-                and text[start - 1].isspace()
+                and text[start - 1] in " \t"
                 and cursor < len(text)
-                and text[cursor].isspace()
+                and text[cursor] in " \t\r\n"
             ):
                 # Leading whitespace rules out a bare regex body even when the
                 # operand's name is also a contextual keyword or starts with "_".
@@ -668,8 +668,8 @@ def _swift_platform_code(text: str) -> str | None:
                     if imported and text.find("/", imported.end(), bound) >= 0:
                         return None
                 end = cursor + (cursor < len(text) and text[cursor] == "=")
-                left_space = text[start - 1].isspace()
-                right_space = end == len(text) or text[end].isspace()
+                left_space = text[start - 1] in " \t\r\n"
+                right_space = end == len(text) or text[end] in " \t\r\n"
                 if left_space != right_space:
                     return None
                 chunks.append(text[start:end])

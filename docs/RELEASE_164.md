@@ -35,7 +35,8 @@ device or credential service was contacted.
   without nested literal syntax. Complex interpolation and unresolved lexical
   syntax retain partial scope rather than proving desktop-only membership.
   Ambiguous no-space division involving contextual or underscore-prefixed names
-  can also retain partial scope; clear spaced division remains supported.
+  can also retain partial scope; clear ASCII-spaced division remains supported.
+  Non-ASCII whitespace is not treated as proof of a division operator.
   Privacy declarations in
   short module paths and shared resource directories remain available when a
   desktop ancestor import does not prove their exclusive target membership.
