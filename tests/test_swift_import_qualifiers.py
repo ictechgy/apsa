@@ -497,7 +497,9 @@ def test_projection_cuts_do_not_expose_partial_literal_contents(literal):
         assert projected is None or "import AppKit" not in projected, cut
 
 
-@pytest.mark.parametrize("separator", ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"])
+@pytest.mark.parametrize(
+    "separator", ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x1f", "\x85", "\u2028", "\u2029"]
+)
 def test_non_ascii_physical_line_separators_never_invent_code_imports(tmp_path, separator):
     # This is a lexical ambiguity property, not a claim that the Swift compiler accepts the source.
     code = "let y = x/" + separator + "import AppKit/z"
@@ -507,7 +509,9 @@ def test_non_ascii_physical_line_separators_never_invent_code_imports(tmp_path, 
     assert inventory["platforms"] == [] and inventory["apple_source_scope"]["partial"] is True
 
 
-@pytest.mark.parametrize("separator", ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"])
+@pytest.mark.parametrize(
+    "separator", ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x1f", "\x85", "\u2028", "\u2029"]
+)
 @pytest.mark.parametrize("region", ["string", "line-comment", "block-comment"])
 def test_extra_line_separators_in_masked_regions_do_not_hide_actual_import(tmp_path, separator, region):
     contents = "text" + separator + "; import AppKit"
@@ -629,3 +633,61 @@ def test_line_comment_projection_cut_can_mask_the_rest_of_its_physical_line():
     code = "let aspect = width/height; // " + "a" * 700 + "import/export\nimport UIKit\n"
     masked = _swift_platform_code(code)
     assert masked is not None and "import UIKit" in masked and "import/export" not in masked
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"])
+@pytest.mark.parametrize("framework,platform", [("UIKit", "ios"), ("AppKit", "macos")])
+@pytest.mark.parametrize("tail", ["// note", "// " + "a" * 700], ids=["eof", "window-cut"])
+@pytest.mark.parametrize("archive", [False, True], ids=["folder", "source-zip"])
+def test_later_line_comment_preserves_actual_import_and_privacy_scope(
+    tmp_path, newline, framework, platform, tail, archive
+):
+    code = (
+        "let aspect = width/height; import "
+        + framework
+        + '; UserDefaults.standard.set(true, forKey: "seen")'
+        + newline
+        + tail
+    )
+    masked = _swift_platform_code(code)
+    assert masked is not None and "import " + framework in masked and "//" not in masked
+    if archive:
+        target = tmp_path / "source.zip"
+        with zipfile.ZipFile(target, "x") as output:
+            output.writestr("Main.swift", code)
+    else:
+        target = tmp_path / "source"
+        target.mkdir()
+        (target / "Main.swift").write_bytes(code.encode())
+    inventory, sources = inspect_target(target)
+    findings, coverage = platform_checks.platform_checks(inventory, sources)
+    assert inventory["platforms"] == [platform] and inventory["apps"] == []
+    assert inventory["apple_source_scope"]["partial"] is (platform != "ios")
+    assert inventory["apple_source_scope"]["files"][0]["state"] == "observed"
+    assert inventory["apple_source_scope"]["modules"][0]["evidence"][0]["line"] == 1
+    assert len([row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]) == (
+        1 if platform == "ios" else 0
+    )
+    if platform == "ios":
+        assert next(row["state"] for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST") == "checked"
+
+
+@pytest.mark.parametrize("prefix", ["ctx", "futureContext"])
+@pytest.mark.parametrize("tail", ["// note", "// " + "a" * 700])
+def test_same_line_comment_slash_retains_unknown_context_opacity(prefix, tail):
+    # Lexical ambiguity only; this does not claim the Swift compiler accepts the source.
+    assert _swift_platform_code("let r = " + prefix + "/a; import AppKit " + tail) is None
+
+
+@pytest.mark.parametrize("prefix", ["", ";", "let y = x;"])
+def test_unmasked_unit_separator_cannot_create_import_whitespace(tmp_path, prefix):
+    # Lexical property only: Python's whitespace class includes US, but it cannot establish code hints.
+    code = prefix + '\x1fimport AppKit\nUserDefaults.standard.set(true, forKey: "seen")'
+    assert _swift_platform_code(code) is None
+    (tmp_path / "Main.swift").write_bytes(code.encode())
+    (tmp_path / "Scope.swift").write_text("import UIKit\n")
+    inventory, sources = inspect_target(tmp_path)
+    findings, coverage = platform_checks.platform_checks(inventory, sources)
+    assert inventory["platforms"] == ["ios"] and inventory["apple_source_scope"]["partial"] is True
+    assert len([row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]) == 1
+    assert next(row["state"] for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST") == "partial"

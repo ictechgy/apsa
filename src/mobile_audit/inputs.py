@@ -598,7 +598,7 @@ def _swift_platform_code(
     regions = re.compile(r'//|/\*|(?<!\#)(?P<regex_hashes>\#+)/|(?<!\#)(?P<hashes>\#*)(?P<quote>"""|")|/')
     comment_boundary = re.compile(r"/\*|\*/")
     line_break = re.compile(r"\r\n?|\n")
-    unsupported_lines = re.compile(r"[\v\f\x1c-\x1e\x85\u2028\u2029]")
+    unsupported_lines = re.compile(r"[\v\f\x1c-\x1f\x85\u2028\u2029]")
     # Reserved and contextual words cannot establish an ordinary division operand.
     keywords = set(
         (
@@ -690,9 +690,7 @@ def _swift_platform_code(
                     imported = import_word.search(projected, semicolon, bound) if semicolon >= 0 else None
                     # Projection selects code imports; aligned raw offsets retain
                     # possible closing slashes hidden inside projected regions.
-                    if imported and (
-                        truncated or text.find("/", cursor + imported.end(), cursor + bound) >= 0
-                    ):
+                    if imported and text.find("/", cursor + imported.end(), cursor + bound) >= 0:
                         return None
                 end = cursor + (cursor < len(text) and text[cursor] == "=")
                 left_space = text[start - 1] in " \t\r\n"
