@@ -158,3 +158,17 @@ def test_configured_ios_module_privacy_declaration_is_not_excluded(tmp_path, hin
         },
     )
     assert not any(row["rule_id"] == "IOS-PRIVACY-MANIFEST" for row in findings)
+
+
+def test_unresolved_shared_module_retains_its_privacy_declaration(tmp_path):
+    inventory, findings, _ = inspect_source(
+        tmp_path,
+        {
+            "Desktop/Platform.swift": "import AppKit",
+            "Desktop/Shared.swift": 'import Foundation\nUserDefaults.standard.set(true, forKey: "seen")',
+            "Desktop/PrivacyInfo.xcprivacy": PRIVACY,
+            "Mobile/Main.swift": "import UIKit",
+        },
+    )
+    assert inventory["apple_source_scope"]["partial"] is True
+    assert not any(row["rule_id"] == "IOS-PRIVACY-MANIFEST" for row in findings)

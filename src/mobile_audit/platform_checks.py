@@ -360,6 +360,11 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
         and item.get("platform_basis") == "direct-framework-import"
     }
     modules = sorted(scope.get("modules", []), key=lambda item: len(item["root"]), reverse=True)
+    possible_ios_modules = {
+        item["module"]
+        for item in scope.get("files", [])
+        if "ios" in item.get("platforms", []) or item.get("state") != "observed"
+    }
     ios_roots = {
         config["path"].rsplit("/", 1)[0] if "/" in config["path"] else "."
         for config in inventory.get("ios_config", [])
@@ -377,6 +382,7 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
         if (
             module.get("platforms") == ["macos"]
             and not module.get("conditional")
+            and module.get("root") not in possible_ios_modules
             and not any(root == "." or path.startswith(root + "/") for root in ios_roots)
             and any(
                 entry.get("kind") == "swift-import" and entry.get("platform") == "macos"
