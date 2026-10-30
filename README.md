@@ -1,7 +1,9 @@
 # APSA
 
-**APSA 1.6.3.** See the [release scope and upgrade notes](docs/RELEASE_163.md).
+**APSA 1.6.4.** See the [release scope and upgrade notes](docs/RELEASE_164.md).
 [Release readiness](RELEASE_READINESS.md) separates local validation from the
+
+**Public-app regression fixes in 1.6.4.** Terminal JavaScript/TypeScript postfix expressions no longer crash the bounded parser. Private-key candidates require a matching envelope with plausible body content. Apple source platform scope separates positive iOS evidence from macOS and ambiguous Swift sources. Repeated hybrid omissions are counted while retaining per-file reasons. See the release notes for remaining analysis limits.
 hosted publication and public installation gates.
 
 **Evidence-first security audits for Android and iOS.**
@@ -300,12 +302,12 @@ OWASP mappings describe relevant checks; APSA does not certify MASVS compliance 
 
 Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; not every host/Python combination has been tested (see the [support matrix](https://github.com/ictechgy/apsa/blob/main/docs/SUPPORTED_MATRIX.md)). The examples select Python 3.12, which uv can download if needed. Initial installation can use the network; scans can then use local inputs and cached intelligence.
 
-After the 1.6.3 publication gates pass, install it from
+After the 1.6.4 publication gates pass, install it from
 [PyPI](https://pypi.org/project/apsa/). Check [release readiness](RELEASE_READINESS.md)
 for publication status:
 
 ```sh
-uv tool install --python 3.12 apsa==1.6.3
+uv tool install --python 3.12 apsa==1.6.4
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -435,7 +437,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.6.3; pin the full release commit SHA
+  - uses: ictechgy/apsa@<commit-sha> # v1.6.4; pin the full release commit SHA
     with:
       path: android            # source folder, or a built APK/AAB/IPA in the workspace
       fail-on-incomplete: "true"

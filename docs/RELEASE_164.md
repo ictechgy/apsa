@@ -1,0 +1,35 @@
+# APSA 1.6.4
+
+Package version: `1.6.4`. Rule version: `2026.10.30.apsa.164`.
+
+This release addresses regressions observed while statically analyzing public
+Android apps and public Orca desktop source. App code was not executed and no
+device or credential service was contacted.
+
+- The bounded JS/TS/Dart binding parser checks both ends of token ranges, avoiding
+  a crash on a postfix increment/decrement at the end of a function body.
+- Private-key detection requires matching BEGIN/END labels and plausible bounded
+  body content. Header/footer recognizer constants alone are not key material.
+  Complete synthetic or public test material remains a masked candidate; this
+  does not validate a key, establish deployment, or prove a credential leak.
+- Apple source inventory separates positive iOS/macOS evidence from ambiguous
+  Swift. The presence of a Swift file alone does not establish an iOS app.
+  Common Apple source security checks remain available without inventing an
+  iOS app identity. Mixed platform scope remains partial.
+- Repeated hybrid input omissions produce counted diagnostics. Each observed
+  file retains its skipped state and reason in `inventory.hybrid_analysis.files`;
+  aggregated warnings do not mean that omitted code was checked.
+
+Rescan before comparing or approving a baseline: corrected platform scope and
+removed header-only candidates can change observations. An absent finding does
+not by itself prove remediation.
+
+Analysis remains bounded and partial. Hermes bytecode is not decoded, source
+file/byte/function limits are unchanged, and the hybrid engine is not a complete
+JavaScript/TypeScript/Dart grammar. Static candidates do not establish runtime
+reachability or exploitability. This release includes CLI, MCP and plugin
+metadata updates; it does not include a GUI installer.
+
+Publication is performed by the existing immutable-tag workflow after independent
+review and hosted checks. PyPI/MCP/GitHub publication and Linux/macOS public
+installation checks are separate gates; a local build alone is not publication.

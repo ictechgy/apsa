@@ -6,6 +6,8 @@ credential-text pass below runs for those packages.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 from itertools import islice
 from xml.sax.handler import ContentHandler
@@ -38,7 +40,11 @@ APPLE_SOURCES = (".swift", ".m", ".mm")
 
 # High-confidence credential formats; generic entropy is out of scope.
 SECRETS = [
-    ("private-key", "high", r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"),
+    (
+        "private-key",
+        "high",
+        r"-----BEGIN (?P<label>(?:(?:RSA|EC|DSA|OPENSSH|ENCRYPTED) )?PRIVATE KEY|PGP PRIVATE KEY(?: BLOCK)?)-----",
+    ),
     ("aws-access-key-id", "high", r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
     ("github-token", "high", r"\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{60,255})\b"),
     ("slack-token", "high", r"\bxox[baprs]-[A-Za-z0-9-]{10,72}\b"),
@@ -53,6 +59,17 @@ SECRETS = [
 ]
 SECRET_SUFFIXES = tuple(sorted(CREDENTIAL_TEXT_SUFFIXES))
 MAX_SECRET_FINDINGS = 50
+# Bound each envelope independently, including direct API calls without an input inventory.
+MAX_PRIVATE_KEY_ENVELOPE = 65_536
+_PEM_BREAK = r"(?:\r\n?|\n|\\r\\n|\\[rn])"
+_PEM_HEADER_BREAK = re.compile(r"[ \t]*" + _PEM_BREAK)
+_PEM_BODY_LINE = re.compile(r"([A-Za-z0-9+/]*={0,2})[ \t]*" + _PEM_BREAK)
+_PEM_BODY_PARTIAL = re.compile(r"[A-Za-z0-9+/= \t]*")
+_PEM_ENCRYPTION_LINE = re.compile(
+    r"(?:Proc-Type:[ \t]*4,ENCRYPTED|DEK-Info:[ \t]*[A-Z0-9-]{1,32},[0-9A-Fa-f]{16,64})[ \t]*" + _PEM_BREAK
+)
+_PEM_ARMOR_LINE = re.compile(r"(?:Version|Comment|MessageID|Charset|Hash):[ \t]*[ -~]{1,256}?" + _PEM_BREAK)
+_PEM_ARMOR_CHECKSUM = re.compile(r"=[A-Za-z0-9+/]{4}[ \t]*" + _PEM_BREAK)
 RANDOM_REFERENCE = "https://developer.android.com/privacy-and-security/risks/weak-prng"
 # Identifier words that name security values; matched as whole camelCase/snake_case words.
 SECURITY_WORDS = {"token", "nonce", "salt", "otp", "secret", "password", "passcode", "pin", "iv"}
@@ -324,14 +341,29 @@ def _android(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict
 
 
 def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
+    scope = inventory.get("apple_source_scope", {})
+    unknown = bool(scope.get("unresolved_files") or scope.get("conditional_files"))
     if "ios" not in inventory.get("platforms", []):
         return [], [
-            {"rule_id": "IOS-PRIVACY-MANIFEST", "state": "not-applicable", "method": "source-pattern"}
+            {
+                "rule_id": "IOS-PRIVACY-MANIFEST",
+                "state": "partial" if unknown else "not-applicable",
+                "method": "source-pattern",
+                "note": "Swift alone does not establish iOS applicability; unresolved Apple source scope remains unknown.",
+            }
         ]
+    desktop_files = {item["path"] for item in scope.get("files", []) if item.get("platforms") == ["macos"]}
+    modules = sorted(scope.get("modules", []), key=lambda item: len(item["root"]), reverse=True)
     declared: set[str] = set()
     manifests, unreadable = [], []
     for path, text in sources:
         if not path.endswith(".xcprivacy"):
+            continue
+        module = next(
+            (item for item in modules if item["root"] == "." or path.startswith(item["root"] + "/")),
+            {},
+        )
+        if module.get("platforms") == ["macos"]:
             continue
         manifests.append(path)
         try:
@@ -349,7 +381,7 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
     first_use: dict[str, tuple[str, int, int]] = {}
     scanned = 0
     for path, text in sources:
-        if not path.endswith(APPLE_SOURCES):
+        if not path.endswith(APPLE_SOURCES) or path in desktop_files:
             continue
         scanned += 1
         cleaned = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", lambda m: re.sub(r"[^\n]", " ", m[0]), text)
@@ -387,10 +419,16 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
         note += (
             f" {len(unreadable)} privacy manifest(s) could not be read, so their declarations are unknown."
         )
+    if scope.get("partial"):
+        note += " Apple source platform/target scope is incomplete; known macOS sources are excluded."
     return findings, [
         {
             "rule_id": "IOS-PRIVACY-MANIFEST",
-            "state": ("partial" if unreadable else "checked") if scanned else "not-run",
+            "state": ("partial" if unreadable or scope.get("partial") else "checked")
+            if scanned
+            else "partial"
+            if unknown
+            else "not-run",
             "method": "source-pattern",
             "note": note,
         }
@@ -501,6 +539,66 @@ def _server_trust(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict
     ]
 
 
+def _private_key_material(text: str, header: re.Match[str]) -> tuple[bool, bool]:
+    """Screen a bounded PEM envelope, retaining the original header's location.
+
+    Only contiguous plaintext or a string's escaped line breaks are admitted;
+    source punctuation cannot join independent header/body/footer constants.
+    Base64 shape is checked, never cryptographic validity or credential scope.
+    The second result records an envelope stopped by the screening bound.
+    """
+    limit = min(len(text), header.start() + MAX_PRIVATE_KEY_ENVELOPE)
+    opening = _PEM_HEADER_BREAK.match(text, header.end(), limit)
+    if opening is None:
+        return False, False
+    label = header.group("label")
+    footer = f"-----END {label}-----"
+    armored = label.startswith("PGP ")
+    position = opening.end()
+    body: list[str] = []
+    checksum = False
+    while position < limit:
+        while position < limit and text[position] in " \t":
+            position += 1
+        if text.startswith(footer, position) and position + len(footer) <= limit:
+            end = position + len(footer)
+            if end < len(text) and (text[end].isalnum() or text[end] in "-_+/="):
+                return False, False
+            try:
+                # Small nonempty base64 strings are ordinary identifiers, not plausible key bodies.
+                return len(base64.b64decode("".join(body), validate=True)) >= 32, False
+            except binascii.Error:
+                return False, False
+        line = _PEM_BODY_LINE.match(text, position, limit)
+        if line is not None:
+            value = line.group(1)
+            if value:
+                if checksum or (body and "=" in body[-1]):
+                    return False, False
+                body.append(value)
+            position = line.end()
+            continue
+        if not body:
+            metadata = _PEM_ENCRYPTION_LINE.match(text, position, limit)
+            if metadata is None and armored:
+                metadata = _PEM_ARMOR_LINE.match(text, position, limit)
+            if metadata is not None:
+                position = metadata.end()
+                continue
+        elif armored and not checksum:
+            check = _PEM_ARMOR_CHECKSUM.match(text, position, limit)
+            if check is not None:
+                checksum = True
+                position = check.end()
+                continue
+        limited = limit < len(text) and (
+            _PEM_BODY_PARTIAL.fullmatch(text, position, limit) is not None
+            or footer.startswith(text[position:limit])
+        )
+        return False, limited
+    return False, limit < len(text)
+
+
 def _secrets(
     sources: list[tuple[str, str]], *, packaged: bool = False, metadata: dict | None = None
 ) -> tuple[list[dict], list[dict]]:
@@ -523,6 +621,11 @@ def _secrets(
         scanned += 1
         for kind, severity, pattern in SECRETS:
             for match in re.finditer(pattern, text):
+                if kind == "private-key":
+                    material, limited = _private_key_material(text, match)
+                    truncated |= limited
+                    if not material:
+                        continue
                 if len(findings) >= MAX_SECRET_FINDINGS:
                     truncated = True
                     break
@@ -555,8 +658,9 @@ def _secrets(
     state = "partial" if truncated or unknown else "checked" if scanned else "not-run"
     note = (
         "Known credential formats in supported text suffixes only; encoded/generic secrets, binary resources, "
-        "credential validity, restrictions and runtime use are not established. Private-key headers are "
-        "candidates, not parsed-key validation. Google API keys may be public app identifiers; review API "
+        "credential validity, restrictions and runtime use are not established. Private-key candidates require "
+        "a matching PEM envelope and plausible base64 body within 65,536 characters; cryptographic validity "
+        "is not checked. Google API keys may be public app identifiers; review API "
         "and app restrictions."
     )
     if unknown:
@@ -580,7 +684,8 @@ def _words(identifier: str) -> list[str]:
 
 def _insecure_random(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict]]:
     platforms = inventory.get("platforms", [])
-    suffixes = (".kt", ".java") * ("android" in platforms) + APPLE_SOURCES * ("ios" in platforms)
+    apple_source = any(path.endswith(APPLE_SOURCES) for path, _ in sources)
+    suffixes = (".kt", ".java") * ("android" in platforms) + APPLE_SOURCES * apple_source
     if not suffixes:
         return [], [
             {"rule_id": "SOURCE-INSECURE-RANDOM", "state": "not-applicable", "method": "source-pattern"}
@@ -924,7 +1029,9 @@ def _assigned_values(text: str, name: str) -> list[str]:
 def _ios_webview_file_access(
     inventory: dict, sources: list[tuple[str, str]]
 ) -> tuple[list[dict], list[dict]]:
-    if "ios" not in inventory.get("platforms", []):
+    if "ios" not in inventory.get("platforms", []) and not any(
+        path.endswith(APPLE_SOURCES) for path, _ in sources
+    ):
         return [], [
             {"rule_id": "IOS-WEBVIEW-FILE-ACCESS", "state": "not-applicable", "method": "source-pattern"}
         ]

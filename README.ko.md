@@ -1,7 +1,9 @@
 # APSA (앱사)
 
-**APSA 1.6.3.** [변경 범위와 업그레이드 안내](docs/RELEASE_163.md)를 확인하세요.
+**APSA 1.6.4.** [변경 범위와 업그레이드 안내](docs/RELEASE_164.md)를 확인하세요.
 [릴리스 검증 기록](RELEASE_READINESS.md)은 로컬 검증과 호스팅된 배포·공개 설치 검증을
+
+**1.6.4의 공개 앱 회귀 수정.** JavaScript/TypeScript 후위 증감식의 파서 충돌을 수정했습니다. 개인 키 후보는 대응하는 시작·끝 표식과 본문을 요구합니다. Apple 소스는 iOS 근거, macOS 근거, 불명확한 Swift를 구분합니다. 반복 누락 경고는 개수로 묶으며 파일별 사유는 보존합니다. 남은 분석 한계는 릴리스 안내에 기록했습니다.
 구분합니다.
 
 **근거 중심의 Android·iOS 보안 감사 도구.**
@@ -237,11 +239,11 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 
 **macOS 또는 Linux**에서 **uv**를 설치합니다. APSA의 지원 대상은 **CPython 3.11과 3.12**이며, 모든 호스트·Python 조합을 테스트한 것은 아닙니다([지원 표](https://github.com/ictechgy/apsa/blob/main/docs/SUPPORTED_MATRIX.md) 참고). 예제는 Python 3.12를 선택하고 필요하면 uv가 내려받습니다. 최초 설치는 네트워크를 사용할 수 있으며, 이후 검사는 로컬 입력과 캐시를 사용할 수 있습니다.
 
-1.6.3의 배포 검증을 통과한 뒤 [PyPI](https://pypi.org/project/apsa/)에서 설치합니다.
+1.6.4의 배포 검증을 통과한 뒤 [PyPI](https://pypi.org/project/apsa/)에서 설치합니다.
 배포 상태는 [릴리스 검증 기록](RELEASE_READINESS.md)에서 확인하세요.
 
 ```sh
-uv tool install --python 3.12 apsa==1.6.3
+uv tool install --python 3.12 apsa==1.6.4
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -371,7 +373,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.6.3; 전체 릴리스 커밋 SHA로 고정
+  - uses: ictechgy/apsa@<commit-sha> # v1.6.4; 전체 릴리스 커밋 SHA로 고정
     with:
       path: android            # 소스 폴더 또는 workspace 안의 APK/AAB/IPA
       fail-on-incomplete: "true"

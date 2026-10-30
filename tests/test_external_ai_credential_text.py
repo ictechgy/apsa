@@ -24,6 +24,8 @@ AWS = "AKIA" + "SYNTHETIC123456X"
 OPENAI = "sk-proj-" + "A" * 24 + "T3BlbkFJ" + "B" * 24
 GOOGLE = "AIza" + "C" * 35
 PRIVATE_HEADER = "-----BEGIN PRIVATE KEY-----"
+# Synthetic base64-shaped material; no real key is embedded or validated.
+PRIVATE_MATERIAL = PRIVATE_HEADER + "\n" + "QUJD" * 24 + "\n-----END PRIVATE KEY-----"
 MANIFEST = (
     '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
     'package="org.synthetic.credentials"><application/></manifest>'
@@ -111,12 +113,12 @@ def test_resource_only_package_negatives_do_not_invent_credentials(tmp_path, kin
     assert _coverage(coverage)["state"] == "checked"
 
 
-def test_public_google_api_key_and_unparsed_private_key_header_are_candidates(tmp_path):
+def test_public_google_api_key_and_private_key_material_are_candidates(tmp_path):
     _, findings, _ = _checks(
         _package(
             tmp_path,
             "apk",
-            {"assets/config.json": GOOGLE.encode(), "assets/client.pem": PRIVATE_HEADER.encode()},
+            {"assets/config.json": GOOGLE.encode(), "assets/client.pem": PRIVATE_MATERIAL.encode()},
         )
     )
     found = {row["evidence"][0]["credential_type"]: row for row in _credential_findings(findings)}
@@ -171,7 +173,7 @@ def test_many_binary_resources_have_one_counted_warning_without_losing_candidate
 
 
 @pytest.mark.parametrize("kind", ["apk", "ipa"])
-@pytest.mark.parametrize("credential", [AWS, OPENAI, OPENAI + "Z" * 12, GOOGLE, PRIVATE_HEADER])
+@pytest.mark.parametrize("credential", [AWS, OPENAI, OPENAI + "Z" * 12, GOOGLE, PRIVATE_MATERIAL])
 def test_credential_mask_never_discloses_a_prefix_length_or_value_fingerprint(tmp_path, kind, credential):
     prefix = "assets/" if kind == "apk" else "Payload/New.app/Resources/"
     _, findings, _ = _checks(_package(tmp_path, kind, {prefix + "config.key": credential.encode()}))

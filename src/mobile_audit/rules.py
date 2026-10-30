@@ -193,6 +193,18 @@ def static_checks(
     findings = []
     coverage = []
     compiled_package = inventory.get("input_kind") in {"apk", "ipa"}
+    # Screen Apple API symbols without asserting an iOS application identity.
+    # UIWebView remains an iOS API mention; the other APIs also exist on macOS.
+    apple_symbol_rules = {
+        "IOS-KEYCHAIN-ACCESS",
+        "IOS-CRYPTO-WEAK-CIPHER",
+        "IOS-ATS-BYPASS-API",
+        "IOS-INSECURE-UNARCHIVE",
+        "IOS-UIWEBVIEW",
+    }
+    apple_source = not compiled_package and any(
+        PathSuffix(path) in {".swift", ".m", ".mm", ".h"} for path, _ in sources
+    )
     packaged_source_suffixes = {".js", ".jsx", ".jsbundle", ".bundle", ".ts", ".tsx", ".dart"}
     admitted_bundles = set()
     for path, text in sources:
@@ -204,7 +216,11 @@ def static_checks(
     for rule in rules():
         if rule["mode"] != "source":
             continue
-        applicable = not rule.get("platform") or rule["platform"] in inventory["platforms"]
+        applicable = (
+            not rule.get("platform")
+            or rule["platform"] in inventory["platforms"]
+            or (apple_source and rule["id"] in apple_symbol_rules)
+        )
         # Native code and manifests in compiled packages are not source input,
         # even if a member happens to contain plaintext. Bundled hybrid sources
         # remain inspectable by the source rules that support their language.
@@ -410,6 +426,8 @@ def static_checks(
                 )
             )
     for platform in inventory["platforms"]:
+        if platform not in {"android", "ios"}:
+            continue
         coverage.append(
             {
                 "rule_id": f"{platform.upper()}-CONFIG",

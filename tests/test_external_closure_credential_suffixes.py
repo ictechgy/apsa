@@ -31,7 +31,9 @@ OPENAI = "sk-proj-" + "A" * 24 + "T3BlbkFJ" + "B" * 24
 AWS = "AKIA" + "SYNTHETIC123456X"
 GOOGLE = "AIza" + "C" * 35
 PRIVATE_HEADER = "-----BEGIN PRIVATE KEY-----"
-PAYLOAD = "\n".join((OPENAI, AWS, GOOGLE, PRIVATE_HEADER))
+# Synthetic base64-shaped material; no real key is embedded or validated.
+PRIVATE_MATERIAL = PRIVATE_HEADER + "\n" + "QUJD" * 24 + "\n-----END PRIVATE KEY-----"
+PAYLOAD = "\n".join((OPENAI, AWS, GOOGLE, PRIVATE_MATERIAL))
 TYPES = {"openai-api-key", "aws-access-key-id", "google-api-key", "private-key"}
 MANIFEST = (
     '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
@@ -109,7 +111,7 @@ def test_admitted_packaged_text_has_masked_typed_candidates(tmp_path, kind, suff
     assert _coverage(coverage)["state"] == "checked"
     assert {row["rule_id"] for row in coverage} == {RULE}
     exported = json.dumps({"inventory": inventory, "findings": findings, "coverage": coverage})
-    assert all(value not in exported for value in (OPENAI, AWS, GOOGLE, PRIVATE_HEADER))
+    assert all(value not in exported for value in (OPENAI, AWS, GOOGLE, PRIVATE_MATERIAL))
     _, static_coverage = rules.static_checks(inventory, sources)
     assert not any(row["rule_id"] == RULE for row in static_coverage)
 

@@ -51,7 +51,8 @@ class Tokens {
 }
 """
 
-SWIFT = """import Foundation
+SWIFT = """import UIKit
+import Foundation
 
 // UserDefaults in a comment is not use.
 final class Settings {

@@ -541,6 +541,230 @@ def _outer_app_index(parts: tuple[str, ...]) -> int | None:
     return None
 
 
+def _swift_platform_code(text: str) -> str | None:
+    """Mask Swift literals/comments, including raw strings and nested comments.
+
+    This only supplies bounded lexical platform hints. An unterminated region
+    makes the file opaque rather than turning its contents into declarations.
+    """
+    regions = re.compile(r'//|/\*|(?<!\#)(?P<regex_hashes>\#+)/|(?<!\#)(?P<hashes>\#*)(?P<quote>"""|")')
+    comment_boundary = re.compile(r"/\*|\*/")
+    chunks, cursor = [], 0
+    for _ in range(len(text) + 1):
+        match = regions.search(text, cursor)
+        if match is None:
+            chunks.append(text[cursor:])
+            return "".join(chunks)
+        chunks.append(text[cursor : match.start()])
+        start, cursor = match.start(), match.end()
+        if match[0] == "//":
+            end = text.find("\n", cursor)
+            cursor = len(text) if end < 0 else end
+        elif match[0] == "/*":
+            depth = 1
+            while depth:
+                boundary = comment_boundary.search(text, cursor)
+                if boundary is None:
+                    return None
+                cursor = boundary.end()
+                depth += 1 if boundary[0] == "/*" else -1
+        else:
+            hashes = match["regex_hashes"] if match["regex_hashes"] is not None else match["hashes"]
+            quote = "/" if match["regex_hashes"] is not None else match["quote"]
+            delimiter = quote + hashes
+            while True:
+                end = text.find(delimiter, cursor)
+                if end < 0:
+                    return None
+                if hashes:
+                    escaped = text[max(start, end - len(hashes) - 1) : end] == "\\" + hashes
+                else:
+                    back = end
+                    while back > start and text[back - 1] == "\\":
+                        back -= 1
+                    escaped = (end - back) % 2 == 1
+                cursor = end + len(delimiter)
+                if not escaped:
+                    break
+        chunks.append(re.sub(r"[^\n]", " ", text[start:cursor]))
+    return None
+
+
+def _swift_package_platforms(code: str) -> list[str]:
+    """Read only a literal platforms list directly in one Package(...) call."""
+    calls = []
+    for match in re.finditer(r"\bPackage\s*\(", code):
+        calls.append(match)
+        if len(calls) > 1:
+            return []
+    if len(calls) != 1:
+        return []
+    start, depth = calls[0].end(), 1
+    for cursor in range(start, len(code)):
+        char = code[cursor]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                return []
+        elif (
+            depth == 1
+            and code.startswith("platforms", cursor)
+            and (cursor == start or not (code[cursor - 1].isalnum() or code[cursor - 1] == "_"))
+        ):
+            declaration = re.match(r"platforms\s*:\s*\[([^\[\]]*)\]", code[cursor:])
+            if declaration is None:
+                return []
+            body = declaration[1]
+            if "#" in body:
+                return []
+            entries = [entry.strip() for entry in body.split(",") if entry.strip()]
+            platforms = []
+            for entry in entries:
+                item = re.fullmatch(r"\.\s*(iOS|macOS|tvOS|watchOS|visionOS|macCatalyst)\s*\([^()]*\)", entry)
+                if item is None:
+                    return []
+                platforms.append({"iOS": "ios", "macOS": "macos"}.get(item[1], item[1].lower()))
+            return sorted(set(platforms))
+    return []
+
+
+def _apple_source_scope(sources: list[tuple[str, str]], inventory: dict) -> None:
+    """Record source platform evidence without inventing an iOS app identity.
+
+    A SwiftPM declaration is scoped to its subtree, stopping at a nested
+    package. Other import hints are scoped to a source directory. Neither is
+    a build-system target-membership or supported-platform proof.
+    """
+    swift = [(name, text) for name, text in sources if Path(name).suffix == ".swift"]
+    if not swift:
+        return
+    frameworks = {"UIKit": "ios", "AppKit": "macos", "Cocoa": "macos", "Carbon": "macos"}
+    packages: dict[str, dict] = {}
+    files: list[dict] = []
+    imports = re.compile(
+        r"(?:^|;)\s*(?:@(?:preconcurrency|testable|_implementationOnly)\s+)*import\s+"
+        r"(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?(UIKit|AppKit|Cocoa|Carbon)\b"
+    )
+    for name, text in swift:
+        code = _swift_platform_code(text)
+        evidence = []
+        seen = set()
+        conditional, malformed = 0, code is None
+        if code is not None:
+            for line, value in enumerate(code.splitlines(), 1):
+                directive = re.match(r"\s*#(if|elseif|else|endif)\b", value)
+                if directive:
+                    if directive[1] == "if":
+                        conditional += 1
+                    elif directive[1] == "endif":
+                        conditional -= 1
+                    malformed |= conditional < 0
+                for imported in imports.finditer(value):
+                    if (imported[1], conditional != 0) in seen:
+                        continue
+                    seen.add((imported[1], conditional != 0))
+                    evidence.append(
+                        {
+                            "path": name,
+                            "line": line,
+                            "kind": "swift-import",
+                            "framework": imported[1],
+                            "platform": frameworks[imported[1]],
+                            "conditional": conditional != 0,
+                        }
+                    )
+            malformed |= conditional != 0
+        if Path(name).name == "Package.swift":
+            declared = (
+                _swift_package_platforms(code)
+                if code is not None and not malformed and not re.search(r"(?m)^\s*#if\b", code)
+                else []
+            )
+            packages[Path(name).parent.as_posix()] = {
+                "path": name,
+                "kind": "swiftpm-platform-declaration",
+                "platforms": declared,
+            }
+        else:
+            files.append({"path": name, "evidence": evidence, "malformed": malformed})
+    modules: dict[str, dict] = {}
+    for item in files:
+        path = Path(item["path"])
+        package_root = next(
+            (parent.as_posix() for parent in path.parents if parent.as_posix() in packages), None
+        )
+        root = package_root if package_root is not None else path.parent.as_posix()
+        module = modules.setdefault(root, {"root": root, "platforms": [], "source_files": 0, "evidence": []})
+        item["module"] = root
+        module["source_files"] += 1
+        module["evidence"].extend(item["evidence"])
+        if package_root is not None and not any(
+            e["kind"] == "swiftpm-platform-declaration" for e in module["evidence"]
+        ):
+            module["evidence"].append(packages[package_root])
+    # Include source packages containing only a manifest without treating
+    # PackageDescription (or the Swift language) as iOS evidence.
+    for root, evidence in packages.items():
+        modules.setdefault(root, {"root": root, "platforms": [], "source_files": 0, "evidence": [evidence]})
+    for module in modules.values():
+        module["platforms"] = sorted(
+            {
+                platform
+                for evidence in module["evidence"]
+                for platform in evidence.get("platforms", [evidence.get("platform")])
+                if platform
+            }
+        )
+    unresolved, conditional_files = 0, 0
+    ios_roots = {
+        Path(config["path"]).parent.as_posix()
+        for config in inventory["ios_config"]
+        if config.get("bundle_role") != "embedded"
+    }
+    for item in files:
+        own = sorted({entry["platform"] for entry in item["evidence"]})
+        conditional = item["malformed"] or any(entry["conditional"] for entry in item["evidence"])
+        item["platforms"] = own or modules[item["module"]]["platforms"]
+        if not item["platforms"] and any(
+            root == "." or item["path"].startswith(root + "/") for root in ios_roots
+        ):
+            # Preserve explicit source app configurations without treating a
+            # Foundation/SwiftUI import as an independent iOS identity signal.
+            item["platforms"] = ["ios"]
+            item["platform_basis"] = "containing source app Info.plist; target membership unverified"
+        item["state"] = "conditional" if conditional else "observed" if item["platforms"] else "unknown"
+        unresolved += not item["platforms"]
+        conditional_files += conditional
+        del item["evidence"], item["malformed"]
+    observed = sorted({platform for module in modules.values() for platform in module["platforms"]})
+    inventory["platforms"].extend(observed)
+    identity = any(app["platform"] == "ios" for app in inventory["apps"])
+    incomplete = bool(
+        inventory["partial"]
+        or not observed
+        or unresolved
+        or conditional_files
+        or any(platform != "ios" for platform in observed)
+    )
+    inventory["apple_source_scope"] = {
+        "method": "bounded Swift imports and scoped SwiftPM deployment declarations; no build-system target resolution",
+        "app_identity_established": identity,
+        "partial": incomplete,
+        "modules": sorted(modules.values(), key=lambda module: module["root"]),
+        "files": files,
+        "unresolved_files": unresolved,
+        "conditional_files": conditional_files,
+    }
+    if incomplete:
+        inventory["partial"] = True
+        inventory["warnings"].append(
+            "Apple source platform scope is partial: macOS/other Apple platforms are outside validated mobile coverage; "
+            "ambiguous or conditional Swift sources do not establish an iOS app. No build-system target resolution was performed."
+        )
+
+
 def inspect_target(
     target: Path,
     sbom: Path | None = None,
@@ -1195,7 +1419,9 @@ def inspect_target(
                     "state": "observed" if existing is not None else "unavailable",
                 }
             )
-    if not target.is_dir() and not inventory["platforms"]:
+    if source_input:
+        _apple_source_scope(sources, inventory)
+    if not target.is_dir() and not source_input and not inventory["platforms"]:
         raise ValueError("Archive has no readable Android manifest or main iOS Info.plist")
     if (
         (target.is_dir() and target.suffix.lower() == ".app")
@@ -1216,8 +1442,6 @@ def inspect_target(
             inventory["features"].append("webview")
         if "addJavascriptInterface" in text or "WKScriptMessageHandler" in text:
             inventory["features"].append("javascript_bridge")
-        if Path(name).suffix == ".swift" and source_input:
-            inventory["platforms"].append("ios")
         if Path(name).suffix in {".kt", ".java"} and source_input:
             inventory["platforms"].append("android")
     for key in ("platforms", "features"):

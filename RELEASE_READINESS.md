@@ -1,5 +1,19 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## 1.6.4 public-input corrections — 2026-10-30
+
+[Release scope](docs/RELEASE_164.md) covers terminal postfix parser safety,
+complete-envelope private-key screening, Apple source platform scope and counted
+hybrid omission diagnostics. Review, supported hosted CI, immutable-tag publishing
+and public Linux/macOS installations are separate gates on the final commit.
+No publication is claimed by this candidate entry.
+
+The previous 1.6.3 publication completed at commit
+`f384745a86487a15178d579825525a11154e4080` via
+[the release workflow](https://github.com/ictechgy/apsa/actions/runs/40742167604),
+including PyPI, MCP Registry, GitHub assets and both public installation checks.
+The dated local 1.6.3 entry below preserves its original candidate meaning.
+
 ## 1.6.3 locally verified; hosted release gates pending — 2026-10-29
 
 [Release scope and upgrade notes](docs/RELEASE_163.md) cover bounded input

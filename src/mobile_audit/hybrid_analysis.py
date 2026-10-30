@@ -228,7 +228,7 @@ def _bindings(
     closing = {close: start for start, close in pairs.items()}
 
     def target(end: int) -> None:
-        if end < 0:
+        if end < 0 or end >= len(tokens):
             return
         if tokens[end].kind == "identifier":
             if (
@@ -789,6 +789,7 @@ def analyze_hybrid(
 ) -> dict:
     functions, texts, imports, files, warnings = [], {}, {}, [], []
     total = 0
+    file_warnings: dict[tuple[str, str], list[str]] = {}
     for index in prioritized_paths([path for path, _ in sources]):
         path, text = sources[index]
         if PurePosixPath(path).suffix.lower() not in SUFFIXES | {".bundle"}:
@@ -832,16 +833,25 @@ def analyze_hybrid(
         except ValueError as error:
             record["error"] = str(error)
             record["reason"] = str(error)
-            warnings.append(f"Hybrid analysis incomplete for {path}: {error}")
+            file_warnings.setdefault(("analysis incomplete", str(error)), []).append(path)
     source_paths = {record["path"] for record in files}
     observations = sorted(observed_inputs or [], key=lambda item: item["path"])
     for observed in observations[:MAX_INPUT_DETAILS]:
         if observed["path"] in source_paths:
             continue
         files.append({**observed, "state": "partial", "analysis_state": "skipped"})
-        warnings.append(
-            f"Hybrid source not analyzed for {observed['path']}: {observed.get('reason', 'source unavailable')}"
-        )
+        reason = observed.get("reason", "source unavailable")
+        file_warnings.setdefault(("source not analyzed", reason), []).append(observed["path"])
+    # Keep every per-file state/reason above while bounding repeated diagnostics
+    # for large repositories. A counted warning must never imply checked absence.
+    for (kind, reason), paths in sorted(file_warnings.items()):
+        if len(paths) <= 3:
+            warnings.extend(f"Hybrid {kind} for {path}: {reason}" for path in paths)
+        else:
+            warnings.append(
+                f"Hybrid {kind} for {len(paths)} files: {reason}; "
+                "per-file reasons remain in inventory.hybrid_analysis.files; coverage incomplete"
+            )
     observations_truncated |= len(observations) > MAX_INPUT_DETAILS
     if observations_truncated:
         warnings.append("Hybrid input observation budget reached; additional framework content is unknown")
@@ -913,6 +923,10 @@ def analyze_hybrid(
             "files": files,
             "frameworks": frameworks,
             "input_observations_truncated": observations_truncated,
+            "file_warning_counts": [
+                {"kind": kind, "reason": reason, "files": len(paths)}
+                for (kind, reason), paths in sorted(file_warnings.items())
+            ],
             "bytes": total,
             "operations": {
                 "summary": summary_operations,
