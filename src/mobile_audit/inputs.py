@@ -738,7 +738,10 @@ def _apple_source_scope(sources: list[tuple[str, str]], inventory: dict) -> None
         unresolved += not item["platforms"]
         conditional_files += conditional
         del item["evidence"], item["malformed"]
-    observed = sorted({platform for module in modules.values() for platform in module["platforms"]})
+    observed = sorted(
+        {platform for module in modules.values() for platform in module["platforms"]}
+        | {platform for item in files for platform in item["platforms"]}
+    )
     inventory["platforms"].extend(observed)
     identity = any(app["platform"] == "ios" for app in inventory["apps"])
     incomplete = bool(

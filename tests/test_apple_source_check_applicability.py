@@ -105,4 +105,6 @@ def test_explicit_mobile_app_configuration_keeps_foundation_privacy_screening(tm
         },
     )
     assert inventory["apps"][0]["platform"] == "ios"
+    assert inventory["apple_source_scope"]["partial"] is False
+    assert inventory["apple_source_scope"]["files"][0]["platforms"] == ["ios"]
     assert any(row["rule_id"] == "IOS-PRIVACY-MANIFEST" for row in findings)
