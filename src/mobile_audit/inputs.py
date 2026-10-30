@@ -644,7 +644,8 @@ def _apple_source_scope(sources: list[tuple[str, str]], inventory: dict) -> None
     packages: dict[str, dict] = {}
     files: list[dict] = []
     imports = re.compile(
-        r"(?:^|;)\s*(?:@(?:preconcurrency|testable|_implementationOnly)\s+)*import\s+"
+        r"(?:^|;)\s*(?:@(?:preconcurrency|testable|_implementationOnly|_exported|_spi\s*\([^()\n]*\))\s+)*"
+        r"(?:(?:public|package|internal|fileprivate|private)\s+)?import\s+"
         r"(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?(UIKit|AppKit|Cocoa|Carbon)\b"
     )
     for name, text in swift:

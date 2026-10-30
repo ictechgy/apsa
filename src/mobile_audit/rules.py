@@ -203,7 +203,7 @@ def static_checks(
         "IOS-UIWEBVIEW",
     }
     apple_source = not compiled_package and any(
-        PathSuffix(path) in {".swift", ".m", ".mm", ".h"} for path, _ in sources
+        PathSuffix(path) in {".swift", ".m", ".mm"} for path, _ in sources
     )
     packaged_source_suffixes = {".js", ".jsx", ".jsbundle", ".bundle", ".ts", ".tsx", ".dart"}
     admitted_bundles = set()

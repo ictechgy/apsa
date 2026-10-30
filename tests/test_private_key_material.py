@@ -127,6 +127,41 @@ def test_header_footer_recognizer_constants_do_not_join_unrelated_source_fragmen
 
 
 @pytest.mark.parametrize("packaged", [False, True], ids=["source", "packaged"])
+@pytest.mark.parametrize("form", ["concatenated", "margin", "json-escaped-slash"])
+def test_recognized_unreconstructed_literal_forms_are_partial_without_candidates(packaged, form):
+    header, footer = "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----"
+    if form == "concatenated":
+        text = " +\n".join(json.dumps(part) for part in (header + "\n", _body() + "\n", footer))
+    elif form == "margin":
+        text = '"""|' + _pem().replace("\n", "\n|") + '""".trimMargin()'
+    else:
+        # Arbitrary all-ones bytes produce slashes, without generating a real key.
+        body = base64.b64encode(b"\xff" * 96).decode("ascii")
+        text = json.dumps(header + "\n" + body + "\n" + footer).replace("/", r"\/")
+    findings, coverage = _check(text, packaged=packaged)
+    assert not _private(findings)
+    assert coverage["state"] == "partial"
+    assert "concatenated literals, margin-prefixed bodies and JSON-escaped slashes" in coverage["note"]
+
+
+@pytest.mark.parametrize("packaged", [False, True], ids=["source", "packaged"])
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        '" + "ordinary identifier";',
+        '"; const body = "' + _body() + '";',
+        "|ordinary words without a body",
+        r"AA\/BB",
+    ],
+)
+def test_reconstruction_uncertainty_needs_adjacent_body_shaped_syntax(packaged, suffix):
+    text = 'const header = "-----BEGIN PRIVATE KEY-----\\n' + suffix
+    findings, coverage = _check(text, packaged=packaged)
+    assert not _private(findings)
+    assert coverage["state"] == "checked"
+
+
+@pytest.mark.parametrize("packaged", [False, True], ids=["source", "packaged"])
 @pytest.mark.parametrize("wrapper", ["json", "javascript", "template", "xml"])
 def test_literal_encoded_and_multiline_embedded_material_keeps_header_offsets(packaged, wrapper):
     pem = _pem()
@@ -260,6 +295,21 @@ def test_many_header_constants_and_large_nonmatching_lines_stay_bounded():
     text = ('"-----BEGIN PRIVATE KEY-----",\n' * 10_000) + "A" * 1_000_000
     findings, coverage = _check(text)
     assert not _private(findings) and coverage["state"] == "checked"
+
+
+def test_repeated_newline_headers_do_not_copy_a_screening_window_per_header():
+    class NoLargeSlices(str):
+        def __getitem__(self, key):
+            value = super().__getitem__(key)
+            if isinstance(key, slice):
+                # A dense recognizer input must not allocate a 64 KiB window for every header.
+                assert len(value) <= 64
+            return value
+
+    text = NoLargeSlices("-----BEGIN PRIVATE KEY-----\n" * 5_000)
+    findings, coverage = _check(text)
+    assert not _private(findings)
+    assert coverage["state"] == "checked"
 
 
 @pytest.mark.parametrize("kind", ["source", "apk", "ipa"])

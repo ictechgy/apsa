@@ -70,6 +70,12 @@ _PEM_ENCRYPTION_LINE = re.compile(
 )
 _PEM_ARMOR_LINE = re.compile(r"(?:Version|Comment|MessageID|Charset|Hash):[ \t]*[ -~]{1,256}?" + _PEM_BREAK)
 _PEM_ARMOR_CHECKSUM = re.compile(r"=[A-Za-z0-9+/]{4}[ \t]*" + _PEM_BREAK)
+_PEM_RECONSTRUCTION_LOOKAHEAD = 512
+_PEM_CONCATENATED_BODY = re.compile(
+    r"[\"'`][ \t\r\n]{0,64}\+[ \t\r\n]{0,64}@?[\"'`][ \t]{0,16}[A-Za-z0-9+/]{32,128}"
+)
+_PEM_MARGIN_BODY = re.compile(r"\|[ \t]{0,16}[A-Za-z0-9+/]{32,128}")
+_PEM_ESCAPED_SLASH_LINE = re.compile(r"(?:[A-Za-z0-9+/]|\\/){32,128}={0,2}[ \t]{0,16}" + _PEM_BREAK)
 RANDOM_REFERENCE = "https://developer.android.com/privacy-and-security/risks/weak-prng"
 # Identifier words that name security values; matched as whole camelCase/snake_case words.
 SECURITY_WORDS = {"token", "nonce", "salt", "otp", "secret", "password", "passcode", "pin", "iv"}
@@ -359,7 +365,11 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
         and item.get("state") == "observed"
         and item.get("platform_basis") == "direct-framework-import"
     }
-    modules = sorted(scope.get("modules", []), key=lambda item: len(item["root"]), reverse=True)
+    modules = sorted(
+        scope.get("modules", []),
+        key=lambda item: item["root"].count("/") + 1 if item["root"] != "." else 0,
+        reverse=True,
+    )
     possible_ios_modules = {
         item["module"]
         for item in scope.get("files", [])
@@ -383,6 +393,7 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
             module.get("platforms") == ["macos"]
             and not module.get("conditional")
             and module.get("root") not in possible_ios_modules
+            and not (module.get("root") == "." and possible_ios_modules)
             and not any(root == "." or path.startswith(root + "/") for root in ios_roots)
             and any(
                 entry.get("kind") == "swift-import" and entry.get("platform") == "macos"
@@ -564,13 +575,23 @@ def _server_trust(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict
     ]
 
 
+def _private_key_requires_reconstruction(text: str, position: int, limit: int) -> bool:
+    """Recognize narrow unsupported literal forms without joining or decoding them."""
+    end = min(limit, position + _PEM_RECONSTRUCTION_LOOKAHEAD)
+    if _PEM_CONCATENATED_BODY.match(text, position, end) or _PEM_MARGIN_BODY.match(text, position, end):
+        return True
+    escaped = _PEM_ESCAPED_SLASH_LINE.match(text, position, end)
+    return escaped is not None and r"\/" in escaped[0]
+
+
 def _private_key_material(text: str, header: re.Match[str]) -> tuple[bool, bool]:
     """Screen a bounded PEM envelope, retaining the original header's location.
 
     Only contiguous plaintext or a string's escaped line breaks are admitted;
     source punctuation cannot join independent header/body/footer constants.
     Base64 shape is checked, never cryptographic validity or credential scope.
-    The second result records an envelope stopped by the screening bound.
+    The second result records the screening bound or an unsupported literal
+    form that would require reconstruction, without treating it as a finding.
     """
     limit = min(len(text), header.start() + MAX_PRIVATE_KEY_ENVELOPE)
     opening = _PEM_HEADER_BREAK.match(text, header.end(), limit)
@@ -616,11 +637,13 @@ def _private_key_material(text: str, header: re.Match[str]) -> tuple[bool, bool]
                 checksum = True
                 position = check.end()
                 continue
+        unsupported = _private_key_requires_reconstruction(text, position, limit)
+        available = limit - position
         limited = limit < len(text) and (
             _PEM_BODY_PARTIAL.fullmatch(text, position, limit) is not None
-            or footer.startswith(text[position:limit])
+            or (available < len(footer) and text.startswith(footer[:available], position))
         )
-        return False, limited
+        return False, limited or unsupported
     return False, limit < len(text)
 
 
@@ -684,8 +707,10 @@ def _secrets(
     note = (
         "Known credential formats in supported text suffixes only; encoded/generic secrets, binary resources, "
         "credential validity, restrictions and runtime use are not established. Private-key candidates require "
-        "a matching PEM envelope and plausible base64 body within 65,536 characters; cryptographic validity "
-        "is not checked. Google API keys may be public app identifiers; review API "
+        "a matching contiguous PEM envelope and plausible base64 body within 65,536 characters; "
+        "concatenated literals, margin-prefixed bodies and JSON-escaped slashes are not reconstructed. "
+        "Recognized unsupported forms make coverage partial; cryptographic validity is not checked. "
+        "Google API keys may be public app identifiers; review API "
         "and app restrictions."
     )
     if unknown:
