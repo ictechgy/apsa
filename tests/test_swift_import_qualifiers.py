@@ -404,6 +404,120 @@ def test_quote_free_unicode_subscript_closure_interpolation_retains_ios_scope(tm
     assert next(row["state"] for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST") == "checked"
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"])
+@pytest.mark.parametrize("framework,platform", [("UIKit", "ios"), ("AppKit", "macos")])
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "// import/export",
+        "/* outer /* import/export */ tail */",
+        'let text = "import/module"',
+        'let text = #"import/module"#',
+        'let text = """\nimport/module\n"""',
+        "/* " + "a" * 700 + "import/export */",
+        'let text = "' + "a" * 700 + 'import/module"',
+    ],
+)
+def test_division_guard_ignores_literal_and_comment_tail_contents(
+    tmp_path, newline, framework, platform, tail
+):
+    code = "let aspect = width/height; " + tail + "\nimport " + framework + "\n"
+    code = code.replace("\n", newline)
+    masked = _swift_platform_code(code)
+    assert masked is not None and "import/module" not in masked and "import/export" not in masked
+    (tmp_path / "Main.swift").write_bytes(code.encode())
+    inventory, _ = inspect_target(tmp_path)
+    assert inventory["platforms"] == [platform]
+    assert inventory["apple_source_scope"]["files"][0]["state"] == "observed"
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "/* outer /* import/export */ tail */",
+        'let text = "import/module"',
+        'let text = #"import/module"#',
+    ],
+)
+def test_same_line_actual_import_survives_masked_tail(tmp_path, tail):
+    code = "let aspect = width/height; " + tail + "; import UIKit\n"
+    assert _swift_platform_code(code) is not None
+    (tmp_path / "Main.swift").write_text(code)
+    inventory, _ = inspect_target(tmp_path)
+    assert inventory["platforms"] == ["ios"]
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+def test_assignment_division_comment_keeps_next_physical_import(tmp_path, newline):
+    code = newline.join(["var count = 4", "count /= 2; // import/export", "import UIKit"])
+    assert _swift_platform_code(code) is not None
+    (tmp_path / "Main.swift").write_bytes(code.encode())
+    inventory, _ = inspect_target(tmp_path)
+    assert inventory["platforms"] == ["ios"]
+    evidence = inventory["apple_source_scope"]["modules"][0]["evidence"]
+    assert evidence[0]["line"] == 3
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'let regex = futureContext/foo; let s = "ignored"; import AppKit/;',
+        'let regex = futureContext/foo; let s = #"ignored"#; import AppKit/;',
+        "let regex = futureContext/foo; /* ignored */ import AppKit/;",
+        "let regex = futureContext/foo; import AppKit/;",
+        "let regex = try/foo; import AppKit/;",
+        "let regex = await/foo; import AppKit/;",
+    ],
+)
+def test_literal_projection_does_not_disable_code_import_ambiguity_guard(text):
+    assert _swift_platform_code(text) is None
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        '"value; import AppKit/module"',
+        '#"value; import AppKit/module"#',
+        '##"value; import AppKit/module"##',
+        '"""value; import AppKit/module"""',
+        "#/value; import AppKit/module/#",
+        "##/value; import AppKit/module/##",
+        '"value \\(String("; import AppKit"))"',
+    ],
+)
+def test_projection_cuts_do_not_expose_partial_literal_contents(literal):
+    for cut in range(1, len(literal) + 1):
+        projected = _swift_platform_code("let s = " + literal[:cut], _projection=True)
+        assert projected is None or "import AppKit" not in projected, cut
+
+
+@pytest.mark.parametrize("separator", ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"])
+def test_non_ascii_physical_line_separators_never_invent_code_imports(tmp_path, separator):
+    # This is a lexical ambiguity property, not a claim that the Swift compiler accepts the source.
+    code = "let y = x/" + separator + "import AppKit/z"
+    assert _swift_platform_code(code) is None
+    (tmp_path / "Main.swift").write_text(code)
+    inventory, _ = inspect_target(tmp_path)
+    assert inventory["platforms"] == [] and inventory["apple_source_scope"]["partial"] is True
+
+
+@pytest.mark.parametrize("separator", ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"])
+@pytest.mark.parametrize("region", ["string", "line-comment", "block-comment"])
+def test_extra_line_separators_in_masked_regions_do_not_hide_actual_import(tmp_path, separator, region):
+    contents = "text" + separator + "; import AppKit"
+    if region == "string":
+        code = 'let text = "' + contents + '"'
+    elif region == "line-comment":
+        code = "// " + contents
+    else:
+        code = "/* " + contents + " */"
+    code += "\nimport UIKit\n"
+    assert _swift_platform_code(code) is not None
+    (tmp_path / "Main.swift").write_text(code)
+    inventory, _ = inspect_target(tmp_path)
+    assert inventory["platforms"] == ["ios"]
+
+
 @pytest.mark.parametrize("prefix", ["try", "await"])
 @pytest.mark.parametrize("whitespace", ["\u00a0", "\u2028", "\u2029", "\u0085"])
 @pytest.mark.parametrize("archive", [False, True], ids=["folder", "source-zip"])

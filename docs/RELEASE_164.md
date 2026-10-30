@@ -37,6 +37,9 @@ device or credential service was contacted.
   Ambiguous no-space division involving contextual or underscore-prefixed names
   can also retain partial scope; clear ASCII-spaced division remains supported.
   Non-ASCII whitespace is not treated as proof of a division operator.
+  Comment and string contents after ordinary division do not supply import hints.
+  Only ASCII CR/LF boundaries establish code lines; other line separators in
+  unmasked code retain partial scope.
   Privacy declarations in
   short module paths and shared resource directories remain available when a
   desktop ancestor import does not prove their exclusive target membership.

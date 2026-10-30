@@ -587,7 +587,9 @@ def _outer_app_index(parts: tuple[str, ...]) -> int | None:
     return None
 
 
-def _swift_platform_code(text: str) -> str | None:
+def _swift_platform_code(
+    text: str, *, _projection: bool = False, _truncation: list[bool] | None = None
+) -> str | None:
     """Mask Swift literals/comments, including raw strings and nested comments.
 
     This only supplies bounded lexical platform hints. Unterminated regions or
@@ -595,6 +597,8 @@ def _swift_platform_code(text: str) -> str | None:
     """
     regions = re.compile(r'//|/\*|(?<!\#)(?P<regex_hashes>\#+)/|(?<!\#)(?P<hashes>\#*)(?P<quote>"""|")|/')
     comment_boundary = re.compile(r"/\*|\*/")
+    line_break = re.compile(r"\r\n?|\n")
+    unsupported_lines = re.compile(r"[\v\f\x1c-\x1e\x85\u2028\u2029]")
     # Reserved and contextual words cannot establish an ordinary division operand.
     keywords = set(
         (
@@ -614,20 +618,33 @@ def _swift_platform_code(text: str) -> str | None:
         match = regions.search(text, cursor)
         if match is None:
             chunks.append(text[cursor:])
-            return "".join(chunks)
+            code = "".join(chunks)
+            return None if unsupported_lines.search(code) else code
         chunks.append(text[cursor : match.start()])
         start, cursor = match.start(), match.end()
         if match[0] == "//":
-            end = text.find("\n", cursor)
-            cursor = len(text) if end < 0 else end
+            boundary = line_break.search(text, cursor)
+            cursor = boundary.start() if boundary else len(text)
+            if boundary is None and _projection and _truncation is not None:
+                _truncation.append(True)
         elif match[0] == "/*":
             depth = 1
             while depth:
                 boundary = comment_boundary.search(text, cursor)
                 if boundary is None:
+                    if _projection:
+                        cursor = len(text)
+                        if _truncation is not None:
+                            _truncation.append(True)
+                        break
                     return None
                 cursor = boundary.end()
                 depth += 1 if boundary[0] == "/*" else -1
+        elif match[0] == "/" and _projection:
+            # Projection is called only on a <=512-character guard window.
+            # It ignores bare slashes, so recursion cannot exceed one level.
+            chunks.append("/")
+            continue
         elif match[0] == "/":
             # SE-0354 makes bare regex recognition context-sensitive. Preserve
             # clear division; unfamiliar operator/expression contexts stay opaque.
@@ -658,14 +675,20 @@ def _swift_platform_code(text: str) -> str | None:
                 if word:
                     # An unfamiliar contextual word may still prefix a regex.
                     # Never expose a possible literal's import-like contents.
-                    bound = min(len(text), cursor + 512)
-                    newline = text.find("\n", cursor, bound)
-                    if newline < 0 and bound < len(text):
+                    end = min(len(text), cursor + 512)
+                    truncated: list[bool] = []
+                    projected = _swift_platform_code(
+                        text[cursor:end], _projection=True, _truncation=truncated
+                    )
+                    if projected is None:
                         return None
-                    bound = newline if newline >= 0 else bound
-                    semicolon = text.find(";", cursor, bound)
-                    imported = import_word.search(text, semicolon, bound) if semicolon >= 0 else None
-                    if imported and text.find("/", imported.end(), bound) >= 0:
+                    newline = line_break.search(projected)
+                    if newline is None and end < len(text) and not truncated:
+                        return None
+                    bound = newline.start() if newline else len(projected)
+                    semicolon = projected.find(";", 0, bound)
+                    imported = import_word.search(projected, semicolon, bound) if semicolon >= 0 else None
+                    if imported and projected.find("/", imported.end(), bound) >= 0:
                         return None
                 end = cursor + (cursor < len(text) and text[cursor] == "=")
                 left_space = text[start - 1] in " \t\r\n"
@@ -717,6 +740,11 @@ def _swift_platform_code(text: str) -> str | None:
             while True:
                 end = text.find(delimiter, cursor)
                 if end < 0:
+                    if _projection:
+                        cursor = len(text)
+                        if _truncation is not None:
+                            _truncation.append(True)
+                        break
                     return None
                 if quote != "/":
                     interpolation = "\\" + hashes + "("
@@ -764,7 +792,7 @@ def _swift_platform_code(text: str) -> str | None:
                 cursor = end + len(delimiter)
                 if not escaped:
                     break
-        chunks.append(re.sub(r"[^\n]", " ", text[start:cursor]))
+        chunks.append(re.sub(r"[^\r\n]", " ", text[start:cursor]))
     return None
 
 
@@ -832,7 +860,7 @@ def _apple_source_scope(sources: list[tuple[str, str]], inventory: dict) -> None
         seen = set()
         conditional, malformed = 0, code is None
         if code is not None:
-            for line, value in enumerate(code.splitlines(), 1):
+            for line, value in enumerate(re.split(r"\r\n?|\n", code), 1):
                 directive = re.match(r"\s*#(if|elseif|else|endif)\b", value)
                 if directive:
                     if directive[1] == "if":
