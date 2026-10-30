@@ -29,7 +29,10 @@ device or credential service was contacted.
   iOS app identity. Conditional and inherited hints retain uncertainty; SwiftPM
   deployment minimums do not prove exclusive target membership. Mixed platform
   scope remains partial. See [SwiftPM deployment settings](https://docs.swift.org/latest/documentation/packagedescription/supportedplatform/).
-  Qualified Swift imports retain their framework hints. Privacy declarations in
+  Qualified Swift imports retain their framework hints. Import-looking text in
+  Swift regex literals does not establish platform evidence; unresolved lexical
+  syntax retains partial scope rather than proving desktop-only membership.
+  Privacy declarations in
   short module paths and shared resource directories remain available when a
   desktop ancestor import does not prove their exclusive target membership.
   Positive macOS-only source plist evidence does not establish an iOS app or
@@ -37,7 +40,8 @@ device or credential service was contacted.
   C/NDK headers alone do not enable common Apple source rules.
   Desktop privacy-source exclusion requires direct, unconditional Swift framework
   evidence; Objective-C platform classification and inferred sibling membership
-  are not resolved by that exclusion.
+  are not resolved by that exclusion. Modules containing unclassified Objective-C
+  sources retain their observed privacy declarations.
 - Repeated hybrid input omissions produce counted diagnostics. Each observed
   file retains its skipped state and reason in `inventory.hybrid_analysis.files`;
   aggregated warnings do not mean that omitted code was checked.

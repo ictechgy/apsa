@@ -77,3 +77,42 @@ def test_separate_desktop_manifest_does_not_mask_mobile_declaration_gap(
     privacy = [row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]
     assert len(privacy) == 1
     assert privacy[0]["evidence"][0]["path"] == mobile_root + "/Main.swift"
+
+
+@pytest.mark.parametrize("archive", [False, True])
+@pytest.mark.parametrize("suffix", ["m", "mm"])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("desktop_root", [".", "Desktop", "Workspace/Desktop"])
+def test_unclassified_objc_source_keeps_its_possible_privacy_declaration(
+    tmp_path, archive, suffix, nested, desktop_root
+):
+    prefix = "" if desktop_root == "." else desktop_root + "/"
+    objc_path = prefix + ("Deep/" if nested else "") + "Use." + suffix
+    files = {
+        prefix + "Main.swift": b"import AppKit",
+        prefix + "PrivacyInfo.xcprivacy": PRIVACY,
+        objc_path: b'[NSUserDefaults.standardUserDefaults boolForKey:@"seen"];',
+        "Mobile/Main.swift": b"import UIKit",
+    }
+    inventory, sources = inspect_target(source_target(tmp_path, files, archive))
+    assert objc_path not in {row["path"] for row in inventory["apple_source_scope"]["files"]}
+    findings, coverage = platform_checks(inventory, sources)
+    assert not any(row["rule_id"] == "IOS-PRIVACY-MANIFEST" for row in findings)
+    privacy = next(row for row in coverage if row["rule_id"] == "IOS-PRIVACY-MANIFEST")
+    assert privacy["state"] == "partial"
+
+
+@pytest.mark.parametrize("archive", [False, True])
+@pytest.mark.parametrize("suffix", ["m", "mm"])
+def test_objc_path_prefix_sibling_does_not_reclassify_desktop_manifest(tmp_path, archive, suffix):
+    files = {
+        "Desktop/Main.swift": b"import AppKit",
+        "Desktop/PrivacyInfo.xcprivacy": PRIVACY,
+        "DesktopExtra/Use." + suffix: b"@interface Thing : NSObject\n@end",
+        "Mobile/Main.swift": b'import UIKit\nUserDefaults.standard.set(true, forKey: "seen")',
+    }
+    inventory, sources = inspect_target(source_target(tmp_path, files, archive))
+    findings, _ = platform_checks(inventory, sources)
+    privacy = [row for row in findings if row["rule_id"] == "IOS-PRIVACY-MANIFEST"]
+    assert len(privacy) == 1
+    assert privacy[0]["evidence"][0]["path"] == "Mobile/Main.swift"

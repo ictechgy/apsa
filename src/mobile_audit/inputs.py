@@ -590,10 +590,10 @@ def _outer_app_index(parts: tuple[str, ...]) -> int | None:
 def _swift_platform_code(text: str) -> str | None:
     """Mask Swift literals/comments, including raw strings and nested comments.
 
-    This only supplies bounded lexical platform hints. An unterminated region
-    makes the file opaque rather than turning its contents into declarations.
+    This only supplies bounded lexical platform hints. Unterminated regions or
+    unresolved slash syntax make the file opaque rather than inventing imports.
     """
-    regions = re.compile(r'//|/\*|(?<!\#)(?P<regex_hashes>\#+)/|(?<!\#)(?P<hashes>\#*)(?P<quote>"""|")')
+    regions = re.compile(r'//|/\*|(?<!\#)(?P<regex_hashes>\#+)/|(?<!\#)(?P<hashes>\#*)(?P<quote>"""|")|/')
     comment_boundary = re.compile(r"/\*|\*/")
     chunks, cursor = [], 0
     for _ in range(len(text) + 1):
@@ -614,6 +614,62 @@ def _swift_platform_code(text: str) -> str | None:
                     return None
                 cursor = boundary.end()
                 depth += 1 if boundary[0] == "/*" else -1
+        elif match[0] == "/":
+            # SE-0354 makes bare regex recognition context-sensitive. Preserve
+            # clear division; unfamiliar operator/expression contexts stay opaque.
+            prefix = text[max(0, start - 256) : start]
+            before = prefix.rstrip(" \t")
+            expression = (
+                not before
+                or before.endswith(("\n", "\r", "=", "(", "[", "{", ",", ":", ";"))
+                or re.search(r"\b(?:return|throw|case|yield)[ \t]*$", before) is not None
+            )
+            if not before and start > len(prefix):
+                return None
+            if not expression and re.search(r'[\w)\]}"\']$', before):
+                end = cursor + (cursor < len(text) and text[cursor] == "=")
+                left_space = text[start - 1].isspace()
+                right_space = end == len(text) or text[end].isspace()
+                if left_space != right_space:
+                    return None
+                chunks.append(text[start:end])
+                cursor = end
+                continue
+            if not expression or cursor == len(text) or text[cursor].isspace():
+                return None
+            brackets, parentheses = 0, 0
+            while cursor < len(text):
+                char = text[cursor]
+                if char in "\r\n":
+                    return None
+                if char == "\\":
+                    if cursor + 1 == len(text) or text[cursor + 1] in "\r\nQ":
+                        return None
+                    cursor += 2
+                    continue
+                if char == "[":
+                    if text.startswith(("[]", "[^]"), cursor):
+                        return None
+                    brackets += 1
+                elif char == "]" and brackets:
+                    brackets -= 1
+                elif not brackets:
+                    if char == "(":
+                        if text.startswith("(?", cursor):
+                            return None
+                        parentheses += 1
+                    elif char == ")":
+                        if not parentheses:
+                            return None
+                        parentheses -= 1
+                    elif char == "/":
+                        if parentheses or text[cursor - 1] in " \t":
+                            return None
+                        cursor += 1
+                        break
+                cursor += 1
+            else:
+                return None
         else:
             hashes = match["regex_hashes"] if match["regex_hashes"] is not None else match["hashes"]
             quote = "/" if match["regex_hashes"] is not None else match["quote"]

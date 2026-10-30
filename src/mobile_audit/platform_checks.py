@@ -388,6 +388,14 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
         for item in scope.get("files", [])
         if "ios" in item.get("platforms", []) or item.get("state") != "observed"
     }
+    # Unclassified Objective-C sources are still screened below. A sibling
+    # Swift import cannot establish that their module is desktop-only.
+    scoped_files = {item["path"] for item in scope.get("files", [])}
+    possible_ios_modules.update(
+        path.rsplit("/", 1)[0] if "/" in path else "."
+        for path, _ in sources
+        if path.endswith((".m", ".mm")) and path not in scoped_files
+    )
     ios_roots = {
         config["path"].rsplit("/", 1)[0] if "/" in config["path"] else "."
         for config in inventory.get("ios_config", [])
