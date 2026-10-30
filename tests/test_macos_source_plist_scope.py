@@ -174,3 +174,84 @@ def test_source_plist_guard_preserves_packaged_main_identity_contract(tmp_path, 
     assert inventory["ios_config"][0]["minimum_os"] == ""
     assert "apple_source_plists" not in inventory
     assert "apple_source_scope" not in inventory
+
+
+@pytest.mark.parametrize("archive", [False, True])
+@pytest.mark.parametrize(
+    "hints",
+    [
+        {"LSMinimumSystemVersion": 13},
+        {"LSMinimumSystemVersion": 13.5},
+        {"LSMinimumSystemVersion": {"version": "13.0"}},
+        {"LSMinimumSystemVersion": []},
+        {"LSMinimumSystemVersion": True},
+        {"LSMinimumSystemVersion": b"13.0"},
+        {"CFBundleSupportedPlatforms": "MacOSX"},
+        {"CFBundleSupportedPlatforms": 13},
+        {"CFBundleSupportedPlatforms": {}},
+        {"CFBundleSupportedPlatforms": [1]},
+        {"CFBundleSupportedPlatforms": ["MacOSX", 1]},
+    ],
+)
+def test_malformed_source_platform_hints_cannot_complete_ios_identity(tmp_path, archive, hints):
+    target = source_target(
+        tmp_path,
+        {
+            "Desktop/Info.plist": plistlib.dumps({"CFBundleIdentifier": "org.synthetic.desktop", **hints}),
+            "Desktop/App.swift": SWIFT,
+        },
+        archive,
+    )
+    inventory, sources = inspect_target(target)
+    assert inventory["apps"] == inventory["ios_config"] == []
+    assert inventory["platforms"] == []
+    assert inventory["partial"] and inventory["apple_source_scope"]["partial"]
+    assert not inventory["apple_source_scope"]["app_identity_established"]
+    assert privacy_coverage(inventory, sources)["state"] == "partial"
+    assert any("Desktop/Info.plist" in warning for warning in inventory["warnings"])
+
+
+@pytest.mark.parametrize("archive", [False, True])
+@pytest.mark.parametrize("hints", [{"LSMinimumSystemVersion": ""}, {"CFBundleSupportedPlatforms": []}])
+def test_empty_typed_source_hints_preserve_bundle_identifier_only_behavior(tmp_path, archive, hints):
+    target = source_target(
+        tmp_path,
+        {
+            "Mobile/Info.plist": plistlib.dumps({"CFBundleIdentifier": "org.synthetic.legacy", **hints}),
+            "Mobile/App.swift": SWIFT,
+        },
+        archive,
+    )
+    inventory, sources = inspect_target(target)
+    assert inventory["platforms"] == ["ios"]
+    assert inventory["apps"][0]["package"] == "org.synthetic.legacy"
+    assert inventory["apple_source_scope"]["partial"] is False
+    assert privacy_coverage(inventory, sources)["state"] == "checked"
+
+
+@pytest.mark.parametrize("archive", [False, True])
+def test_null_source_platform_hint_is_an_invalid_plist_not_ios_evidence(tmp_path, archive):
+    raw = (
+        b'<?xml version="1.0"?><plist version="1.0"><dict>'
+        b"<key>CFBundleIdentifier</key><string>org.synthetic.desktop</string>"
+        b"<key>LSMinimumSystemVersion</key><null/></dict></plist>"
+    )
+    target = source_target(tmp_path, {"Desktop/Info.plist": raw, "Desktop/App.swift": SWIFT}, archive)
+    inventory, _ = inspect_target(target)
+    assert inventory["apps"] == inventory["ios_config"] == []
+    assert inventory["partial"]
+
+
+@pytest.mark.parametrize(
+    "hints", [{"LSMinimumSystemVersion": 13}, {"CFBundleSupportedPlatforms": "iPhoneOS"}]
+)
+def test_source_only_hint_validation_preserves_packaged_ipa_behavior(tmp_path, hints):
+    target = tmp_path / "mobile.ipa"
+    with zipfile.ZipFile(target, "w") as output:
+        output.writestr(
+            "Payload/Mobile.app/Info.plist",
+            plistlib.dumps({"CFBundleIdentifier": "org.synthetic.mobile", **hints}),
+        )
+    inventory, _ = inspect_target(target)
+    assert inventory["platforms"] == ["ios"]
+    assert inventory["apps"][0]["package"] == "org.synthetic.mobile"

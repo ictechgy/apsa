@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import plistlib
+import re
 import zipfile
 from pathlib import Path
 
@@ -359,6 +360,136 @@ def test_repeated_newline_headers_do_not_copy_a_screening_window_per_header():
     findings, coverage = _check(text)
     assert not _private(findings)
     assert coverage["state"] == "checked"
+
+
+def _screening_prefix_cases():
+    separators = ("\n", "\r\n", r"\n", r"\r\n")
+    for label in LABELS:
+        for index, separator in enumerate(separators):
+            yield f"{label}-{index}", _pem(label, size=96).replace("\n", separator), (True, False)
+    for label in ("RSA PRIVATE KEY", "EC PRIVATE KEY", "DSA PRIVATE KEY"):
+        metadata = "Proc-Type:\t4,ENCRYPTED \nDEK-Info: AES-256-CBC," + "A" * 64 + "\n\n"
+        text = _pem(label, size=96).replace("-----\n", "-----\n" + metadata, 1)
+        for index, separator in enumerate(separators):
+            yield f"encrypted-{label}-{index}", text.replace("\n", separator), (True, False)
+    for label in ("PGP PRIVATE KEY", "PGP PRIVATE KEY BLOCK"):
+        for field in ("Version", "Comment", "MessageID", "Charset", "Hash"):
+            text = _pem(label, size=96).replace("-----\n", f"-----\n{field}: Synthetic\n\n", 1)
+            text = text.replace("\n-----END", "\n=AAAA\n-----END")
+            for index, separator in enumerate(separators):
+                yield f"armor-{label}-{field}-{index}", text.replace("\n", separator), (True, False)
+    for index, separator in enumerate(separators):
+        text = _pem("PGP PRIVATE KEY BLOCK", size=96).replace(
+            "-----\n", "-----\nVersion: " + "V" * 256 + "\n", 1
+        )
+        yield f"armor-max-value-{index}", text.replace("\n", separator), (True, False)
+    for name, marker in (
+        ("concatenated", '" + "'),
+        ("adjacent", '"\n"'),
+        ("objc-adjacent", '" \n@"'),
+        ("margin", "|"),
+        ("continued-lf", "\\\n"),
+        ("continued-crlf", "\\\r\n"),
+    ):
+        text = "-----BEGIN PRIVATE KEY-----\n" + _body(size=48) + "\n" + marker
+        text += _body(size=48) + "\n-----END PRIVATE KEY-----"
+        yield name, text, (False, True)
+
+
+@pytest.mark.parametrize(("case", "text", "whole"), list(_screening_prefix_cases()))
+def test_every_supported_or_recognized_prefix_cut_preserves_partial(monkeypatch, case, text, whole):
+    pattern = next(pattern for kind, _, pattern in platform_checks.SECRETS if kind == "private-key")
+    header = re.search(pattern, text)
+    assert header is not None
+    monkeypatch.setattr(platform_checks, "MAX_PRIVATE_KEY_ENVELOPE", len(text))
+    assert platform_checks._private_key_material(text, header) == whole, case
+    for cut in range(header.end(), len(text)):
+        monkeypatch.setattr(platform_checks, "MAX_PRIVATE_KEY_ENVELOPE", cut)
+        assert platform_checks._private_key_material(text, header) == (False, True), (case, cut)
+
+
+def _default_boundary_case(stage):
+    cap = platform_checks.MAX_PRIVATE_KEY_ENVELOPE
+    header, footer = "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----"
+    if stage.startswith("opening"):
+        separator = {
+            "opening-lf": "\n",
+            "opening-crlf": "\r\n",
+            "opening-escaped-lf": r"\n",
+            "opening-escaped-crlf": r"\r\n",
+        }[stage]
+        return header + " " * cap + separator + _body() + separator + footer, (1, "checked")
+    if stage in {"proc", "dek", "armor"}:
+        label, tail = {
+            "proc": ("Proc-Type:", "4,ENCRYPTED"),
+            "dek": ("DEK-Info:", "AES-256-CBC," + "A" * 32),
+            "armor": ("Version:", "Synthetic"),
+        }[stage]
+        if stage == "armor":
+            header, footer = "-----BEGIN PGP PRIVATE KEY BLOCK-----", "-----END PGP PRIVATE KEY BLOCK-----"
+        return header + "\n" + label + " " * cap + tail + "\n" + _body() + "\n" + footer, (1, "checked")
+    marker = {
+        "concat": '" + "',
+        "adjacent": '"\n"',
+        "margin": "|",
+        "continue-lf": "\\\n",
+        "continue-crlf": "\\\r\n",
+    }[stage]
+    cut = min(2, len(marker))
+    indent = next(i for i in range(4) if (cap - len(header) - i - 2 - cut) % 4 == 0)
+    prefix = header + " " * indent + "\n" + "A" * (cap - len(header) - indent - 2 - cut) + "\n"
+    return prefix + marker + _body() + "\n" + footer, (0, "partial")
+
+
+@pytest.mark.parametrize("packaged", [False, True], ids=["source", "packaged"])
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "opening-lf",
+        "opening-crlf",
+        "opening-escaped-lf",
+        "opening-escaped-crlf",
+        "proc",
+        "dek",
+        "armor",
+        "concat",
+        "adjacent",
+        "margin",
+        "continue-lf",
+        "continue-crlf",
+    ],
+)
+def test_default_bound_preserves_opening_metadata_and_reconstruction_uncertainty(
+    monkeypatch, packaged, stage
+):
+    text, expected_whole = _default_boundary_case(stage)
+    with monkeypatch.context() as whole:
+        whole.setattr(platform_checks, "MAX_PRIVATE_KEY_ENVELOPE", len(text))
+        findings, coverage = _check(text, packaged=packaged)
+        assert (len(_private(findings)), coverage["state"]) == expected_whole
+    findings, coverage = _check(text, packaged=packaged)
+    assert not _private(findings) and coverage["state"] == "partial"
+    text += "\n" + _pem()
+    findings, coverage = _check(text, packaged=packaged)
+    assert len(_private(findings)) == 1 and coverage["state"] == "partial"
+    assert findings[0]["evidence"][0]["offset"] == text.rindex("-----BEGIN")
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "-----BEGIN PRIVATE KEY----- invalid",
+        "-----BEGIN PRIVATE KEY-----\nProc-Type: 4,WRONG",
+        "-----BEGIN PRIVATE KEY-----\nDEK-Info: invalid_algorithm",
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----\nCreated: unknown",
+        "-----BEGIN PRIVATE KEY-----\n" + _body(size=48) + "\nProc-Type: 4,ENCRYPTED",
+        'const prefix = "-----BEGIN PRIVATE KEY-----\\n";',
+    ],
+)
+def test_malformed_or_recognizer_prefix_is_not_mistaken_for_screening_exhaustion(prefix):
+    text = prefix + "!" + "A" * platform_checks.MAX_PRIVATE_KEY_ENVELOPE
+    findings, coverage = _check(text)
+    assert not _private(findings) and coverage["state"] == "checked"
 
 
 @pytest.mark.parametrize("kind", ["source", "apk", "ipa"])

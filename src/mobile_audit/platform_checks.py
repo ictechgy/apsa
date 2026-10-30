@@ -63,6 +63,7 @@ MAX_SECRET_FINDINGS = 50
 MAX_PRIVATE_KEY_ENVELOPE = 65_536
 _PEM_BREAK = r"(?:\r\n?|\n|\\r\\n|\\[rn])"
 _PEM_HEADER_BREAK = re.compile(r"[ \t]*" + _PEM_BREAK)
+_PEM_OPENING_PARTIAL = re.compile(r"[ \t]*\\?")
 _PEM_BODY_LINE = re.compile(r"([A-Za-z0-9+/]*={0,2})[ \t]*" + _PEM_BREAK)
 # The screening bound may split an escaped line break immediately after its backslash.
 _PEM_BODY_PARTIAL = re.compile(r"[A-Za-z0-9+/= \t\\]*")
@@ -71,6 +72,11 @@ _PEM_ENCRYPTION_LINE = re.compile(
 )
 _PEM_ARMOR_LINE = re.compile(r"(?:Version|Comment|MessageID|Charset|Hash):[ \t]*[ -~]{1,256}?" + _PEM_BREAK)
 _PEM_ARMOR_CHECKSUM = re.compile(r"=[A-Za-z0-9+/]{4}[ \t]*" + _PEM_BREAK)
+_PEM_ENCRYPTION_VALUE_PARTIAL = re.compile(
+    r"[ \t]*(?:[A-Z0-9-]{0,32}|[A-Z0-9-]{1,32},(?:[0-9A-Fa-f]{0,64}|[0-9A-Fa-f]{16,64}[ \t]*\\?))"
+)
+_PEM_ARMOR_VALUE_PARTIAL = re.compile(r"[ \t]*[ -~]{0,256}\\?")
+_PEM_ARMOR_LABELS = ("Version:", "Comment:", "MessageID:", "Charset:", "Hash:")
 _PEM_RECONSTRUCTION_LOOKAHEAD = 512
 _PEM_CONCATENATED_BODY = re.compile(
     r"[\"'`][ \t\r\n]{0,64}(?:\+[ \t\r\n]{0,64})?@?[\"'`][ \t]{0,16}[A-Za-z0-9+/]{32,128}"
@@ -78,6 +84,11 @@ _PEM_CONCATENATED_BODY = re.compile(
 _PEM_MARGIN_BODY = re.compile(r"\|[ \t]{0,16}[A-Za-z0-9+/]{32,128}")
 _PEM_CONTINUED_BODY = re.compile(r"\\\r?\n[ \t]{0,64}[A-Za-z0-9+/]{32,128}")
 _PEM_ESCAPED_SLASH_PREFIX = re.compile(r"(?:[A-Za-z0-9+/]|\\/){32,512}")
+_PEM_RECONSTRUCTION_PARTIAL = re.compile(
+    r"(?:[\"'\x60][ \t\r\n]{0,64}(?:\+[ \t\r\n]{0,64})?@?(?:[\"'\x60][ \t]{0,16}[A-Za-z0-9+/]{0,31})?"
+    r"|\|[ \t]{0,16}[A-Za-z0-9+/]{0,31}"
+    r"|\\(?:\r|\r?\n[ \t]{0,64}[A-Za-z0-9+/]{0,31})?)"
+)
 RANDOM_REFERENCE = "https://developer.android.com/privacy-and-security/risks/weak-prng"
 # Identifier words that name security values; matched as whole camelCase/snake_case words.
 SECURITY_WORDS = {"token", "nonce", "salt", "otp", "secret", "password", "passcode", "pin", "iv"}
@@ -391,11 +402,14 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
             (item for item in modules if item["root"] == "." or path.startswith(item["root"] + "/")),
             {},
         )
+        module_root = module.get("root", "")
         if (
             module.get("platforms") == ["macos"]
             and not module.get("conditional")
-            and module.get("root") not in possible_ios_modules
-            and not (module.get("root") == "." and possible_ios_modules)
+            and not any(
+                module_root == "." or candidate == module_root or candidate.startswith(module_root + "/")
+                for candidate in possible_ios_modules
+            )
             and not any(root == "." or path.startswith(root + "/") for root in ios_roots)
             and any(
                 entry.get("kind") == "swift-import" and entry.get("platform") == "macos"
@@ -458,7 +472,10 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
             f" {len(unreadable)} privacy manifest(s) could not be read, so their declarations are unknown."
         )
     if scope.get("partial"):
-        note += " Apple source platform/target scope is incomplete; known macOS sources are excluded."
+        note += (
+            " Apple source platform/target scope is incomplete; only Swift sources with direct, "
+            "unconditional observed macOS framework imports are excluded."
+        )
     return findings, [
         {
             "rule_id": "IOS-PRIVACY-MANIFEST",
@@ -577,6 +594,34 @@ def _server_trust(sources: list[tuple[str, str]]) -> tuple[list[dict], list[dict
     ]
 
 
+def _private_key_metadata_prefix(text: str, position: int, limit: int, *, armored: bool) -> bool:
+    """Recognize incomplete prefixes of already-supported PEM metadata."""
+    labels = ("Proc-Type:", "DEK-Info:") + (_PEM_ARMOR_LABELS if armored else ())
+    for label in labels:
+        available = limit - position
+        if available <= len(label):
+            if text.startswith(label[:available], position):
+                return True
+            continue
+        if not text.startswith(label, position):
+            continue
+        value = position + len(label)
+        if label == "Proc-Type:":
+            while value < limit and text[value] in " \t":
+                value += 1
+            marker = "4,ENCRYPTED"
+            available = limit - value
+            if available <= len(marker):
+                return text.startswith(marker[:available], value)
+            return (
+                text.startswith(marker, value)
+                and _PEM_OPENING_PARTIAL.fullmatch(text, value + len(marker), limit) is not None
+            )
+        partial = _PEM_ENCRYPTION_VALUE_PARTIAL if label == "DEK-Info:" else _PEM_ARMOR_VALUE_PARTIAL
+        return partial.fullmatch(text, value, limit) is not None
+    return False
+
+
 def _private_key_requires_reconstruction(text: str, position: int, limit: int) -> bool:
     """Recognize narrow unsupported literal forms without joining or decoding them."""
     end = min(limit, position + _PEM_RECONSTRUCTION_LOOKAHEAD)
@@ -602,7 +647,9 @@ def _private_key_material(text: str, header: re.Match[str]) -> tuple[bool, bool]
     limit = min(len(text), header.start() + MAX_PRIVATE_KEY_ENVELOPE)
     opening = _PEM_HEADER_BREAK.match(text, header.end(), limit)
     if opening is None:
-        return False, False
+        return False, (
+            limit < len(text) and _PEM_OPENING_PARTIAL.fullmatch(text, header.end(), limit) is not None
+        )
     label = header.group("label")
     footer = f"-----END {label}-----"
     armored = label.startswith("PGP ")
@@ -648,6 +695,11 @@ def _private_key_material(text: str, header: re.Match[str]) -> tuple[bool, bool]
         limited = limit < len(text) and (
             _PEM_BODY_PARTIAL.fullmatch(text, position, limit) is not None
             or (available < len(footer) and text.startswith(footer[:available], position))
+            or (not body and _private_key_metadata_prefix(text, position, limit, armored=armored))
+            or (
+                available <= _PEM_RECONSTRUCTION_LOOKAHEAD
+                and _PEM_RECONSTRUCTION_PARTIAL.fullmatch(text, position, limit) is not None
+            )
         )
         return False, limited or unsupported
     return False, limit < len(text)

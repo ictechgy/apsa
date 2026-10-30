@@ -493,8 +493,11 @@ def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True, source=
         if not isinstance(schemes, list) or any(not isinstance(scheme, str) for scheme in schemes):
             raise ValueError("Info.plist CFBundleURLSchemes must be an array of strings")
     if source:
+        if "LSMinimumSystemVersion" in value and not isinstance(value["LSMinimumSystemVersion"], str):
+            raise ValueError("Info.plist LSMinimumSystemVersion must be a string")
         supported = value.get("CFBundleSupportedPlatforms", [])
-        supported = supported if isinstance(supported, list) else []
+        if not isinstance(supported, list) or any(not isinstance(platform, str) for platform in supported):
+            raise ValueError("Info.plist CFBundleSupportedPlatforms must be an array of strings")
         macos_hints = []
         if isinstance(value.get("LSMinimumSystemVersion"), str) and value["LSMinimumSystemVersion"]:
             macos_hints.append("LSMinimumSystemVersion")

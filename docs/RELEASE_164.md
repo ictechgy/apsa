@@ -19,6 +19,9 @@ device or credential service was contacted.
   evaluation: arbitrary comments, distant fragments and other encodings are
   outside its coverage. A `checked` state completes that named screen; it does
   not establish the absence of dynamically assembled keys.
+  The screen is line-oriented: same-line header/body/footer envelopes are not
+  recognized. Screening caps preserve uncertainty across supported opening,
+  body, metadata, footer and recognized reconstruction prefixes.
   Repeated valid header lines are screened without repeated large text copies.
 - Apple source inventory separates positive iOS/macOS evidence from ambiguous
   Swift. The presence of a Swift file alone does not establish an iOS app.
@@ -28,13 +31,20 @@ device or credential service was contacted.
   scope remains partial. See [SwiftPM deployment settings](https://docs.swift.org/latest/documentation/packagedescription/supportedplatform/).
   Qualified Swift imports retain their framework hints. Privacy declarations in
   short module paths and shared resource directories remain available when a
-  root-level desktop import does not prove their exclusive target membership.
+  desktop ancestor import does not prove their exclusive target membership.
   Positive macOS-only source plist evidence does not establish an iOS app or
   complete mobile coverage; compiled-package identity requirements remain intact.
   C/NDK headers alone do not enable common Apple source rules.
+  Desktop privacy-source exclusion requires direct, unconditional Swift framework
+  evidence; Objective-C platform classification and inferred sibling membership
+  are not resolved by that exclusion.
 - Repeated hybrid input omissions produce counted diagnostics. Each observed
   file retains its skipped state and reason in `inventory.hybrid_analysis.files`;
   aggregated warnings do not mean that omitted code was checked.
+
+Source directories and source ZIPs use the same identity policy: missing mobile
+manifests do not prevent supported source screening and do not establish an app
+identity. Compiled APK/IPA and app-bundle identity requirements are unchanged.
 
 MCP's bounded report context does not include the complete per-file analysis
 inventory. For every omission path and reason, export the local report with
