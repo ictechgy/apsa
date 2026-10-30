@@ -38,8 +38,12 @@ device or credential service was contacted.
   can also retain partial scope; clear ASCII-spaced division remains supported.
   Non-ASCII whitespace is not treated as proof of a division operator.
   Comment and string contents after ordinary division do not supply import hints.
-  Only ASCII CR/LF boundaries establish code lines; other line separators in
-  unmasked code retain partial scope.
+  Ambiguous no-space division whose 512-character lookahead cuts a delimited
+  literal or block comment retains partial scope; clear ASCII-spaced division
+  remains supported with long tails. Only ASCII CR/LF boundaries establish code
+  lines; unsupported separators or control whitespace in unmasked code retain
+  partial scope. Required-reason comment screening and finding locations also
+  preserve CR/LF boundaries.
   Privacy declarations in
   short module paths and shared resource directories remain available when a
   desktop ancestor import does not prove their exclusive target membership.

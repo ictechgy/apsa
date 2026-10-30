@@ -170,7 +170,7 @@ BROAD_DIRECTORY = re.compile(
 
 
 def _line(text: str, offset: int) -> int:
-    return text.count("\n", 0, offset) + 1
+    return text.count("\n", 0, offset) + text.count("\r", 0, offset) - text.count("\r\n", 0, offset) + 1
 
 
 def _exposed(component: dict, target_level: int | None) -> bool:
@@ -444,7 +444,7 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
         if not path.endswith(APPLE_SOURCES) or path in desktop_files:
             continue
         scanned += 1
-        cleaned = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", lambda m: re.sub(r"[^\n]", " ", m[0]), text)
+        cleaned = re.sub(r"//[^\r\n]*|/\*[\s\S]*?\*/", lambda m: re.sub(r"[^\r\n]", " ", m[0]), text)
         for category, pattern in REQUIRED_REASON.items():
             if category in first_use or category in declared:
                 continue

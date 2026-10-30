@@ -418,17 +418,23 @@ def test_quote_free_unicode_subscript_closure_interpolation_retains_ios_scope(tm
         'let text = "' + "a" * 700 + 'import/module"',
     ],
 )
-def test_division_guard_ignores_literal_and_comment_tail_contents(
+def test_division_guard_masks_bounded_tails_and_marks_delimited_cutoffs(
     tmp_path, newline, framework, platform, tail
 ):
     code = "let aspect = width/height; " + tail + "\nimport " + framework + "\n"
     code = code.replace("\n", newline)
     masked = _swift_platform_code(code)
-    assert masked is not None and "import/module" not in masked and "import/export" not in masked
+    if len(tail) > 512:
+        assert masked is None
+    else:
+        assert masked is not None and "import/module" not in masked and "import/export" not in masked
     (tmp_path / "Main.swift").write_bytes(code.encode())
     inventory, _ = inspect_target(tmp_path)
-    assert inventory["platforms"] == [platform]
-    assert inventory["apple_source_scope"]["files"][0]["state"] == "observed"
+    if len(tail) > 512:
+        assert inventory["platforms"] == [] and inventory["apple_source_scope"]["partial"] is True
+    else:
+        assert inventory["platforms"] == [platform]
+        assert inventory["apple_source_scope"]["files"][0]["state"] == "observed"
 
 
 @pytest.mark.parametrize(
@@ -558,3 +564,68 @@ def test_non_ascii_regex_whitespace_cannot_invent_macos_scope(tmp_path, archive,
 )
 def test_non_ascii_or_control_spacing_never_exposes_regex_imports(prefix, whitespace):
     assert _swift_platform_code("let regex = " + prefix + " /" + whitespace + "; import AppKit/;") is None
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        '"/ // "',
+        "/* */",
+        "/* outer /* nested */ tail */",
+        '#"/"#',
+        '##"/"##',
+        '"""/ // """',
+        "#/body/#",
+        '"' + "a" * 700 + '/"',
+        '"' + "a" * 700 + '"',
+        "/* " + "a" * 700 + " */",
+    ],
+)
+@pytest.mark.parametrize("prefix", ["", 'let pad = "이름"; ', "/* import/export */ "])
+def test_code_import_keeps_raw_closing_slash_or_clipped_tail_uncertainty(prefix, tail):
+    # Conservative lexical properties; compiler validity is intentionally not claimed.
+    assert _swift_platform_code("let r = ctx/a; " + prefix + "import AppKit " + tail) is None
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "// import/export",
+        "/* outer /* import/export */ tail */",
+        'let text = "import/module"',
+        'let text = #"import/module"#',
+    ],
+)
+def test_only_masked_import_words_do_not_activate_raw_slash_guard(tail):
+    code = "let aspect = width/height; " + tail + "\nimport UIKit\n"
+    masked = _swift_platform_code(code)
+    assert masked is not None and "import UIKit" in masked
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        'let r = futureContext/foo; let s = "' + "a" * 600 + '"; import AppKit/;',
+        "let r = futureContext/" + "a" * 505 + '"1234567890"; import AppKit/;',
+        "let r = ctx/a; /* " + "a" * 600 + " */; import AppKit/;",
+        'let r = ctx/a; let s = #"' + "a" * 600 + '"#; import AppKit/;',
+        "let r = ctx/a; let s = #/" + "a" * 600 + "/#; import AppKit/;",
+    ],
+)
+def test_delimited_projection_cut_cannot_hide_import_beyond_window(code):
+    assert _swift_platform_code(code) is None
+
+
+@pytest.mark.parametrize(
+    "tail", ["/* " + "a" * 700 + "import/export */", 'let text = "' + "a" * 700 + 'import/module"']
+)
+def test_clear_spaced_division_still_supports_long_delimited_tails(tail):
+    code = "let aspect = width / height; " + tail + "\nimport UIKit\n"
+    masked = _swift_platform_code(code)
+    assert masked is not None and "import UIKit" in masked
+
+
+def test_line_comment_projection_cut_can_mask_the_rest_of_its_physical_line():
+    code = "let aspect = width/height; // " + "a" * 700 + "import/export\nimport UIKit\n"
+    masked = _swift_platform_code(code)
+    assert masked is not None and "import UIKit" in masked and "import/export" not in masked

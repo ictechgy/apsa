@@ -141,6 +141,22 @@ def test_privacy_manifest_declarations_and_comments(store, project):
     }
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"])
+@pytest.mark.parametrize("suffix", [".swift", ".m", ".mm"])
+@pytest.mark.parametrize("comment", ["// mach_absolute_time()", "/* mach_absolute_time() */"])
+def test_privacy_comments_preserve_following_api_location(newline, suffix, comment):
+    from mobile_audit.platform_checks import _privacy_manifest
+
+    source = newline.join(["import UIKit", comment, "", "UserDefaults.standard", ""])
+    findings, coverage = _privacy_manifest({"platforms": ["ios"]}, [("Main" + suffix, source)])
+    assert len(findings) == 1
+    evidence = findings[0]["evidence"][0]
+    assert evidence["category"] == "NSPrivacyAccessedAPICategoryUserDefaults"
+    assert evidence["path"] == "Main" + suffix
+    assert evidence["line"] == 4 and evidence["offset"] == source.index("UserDefaults")
+    assert coverage[0]["state"] == "checked"
+
+
 def test_hardcoded_secrets_are_masked_everywhere(store, project):
     report = scan(store, project)
     secrets = by_rule(report, "SOURCE-HARDCODED-SECRET")

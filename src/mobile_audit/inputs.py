@@ -588,7 +588,7 @@ def _outer_app_index(parts: tuple[str, ...]) -> int | None:
 
 
 def _swift_platform_code(
-    text: str, *, _projection: bool = False, _truncation: list[bool] | None = None
+    text: str, *, _projection: bool = False, _truncation: list[str] | None = None
 ) -> str | None:
     """Mask Swift literals/comments, including raw strings and nested comments.
 
@@ -626,7 +626,7 @@ def _swift_platform_code(
             boundary = line_break.search(text, cursor)
             cursor = boundary.start() if boundary else len(text)
             if boundary is None and _projection and _truncation is not None:
-                _truncation.append(True)
+                _truncation.append("line-comment")
         elif match[0] == "/*":
             depth = 1
             while depth:
@@ -635,7 +635,7 @@ def _swift_platform_code(
                     if _projection:
                         cursor = len(text)
                         if _truncation is not None:
-                            _truncation.append(True)
+                            _truncation.append("delimited")
                         break
                     return None
                 cursor = boundary.end()
@@ -676,11 +676,11 @@ def _swift_platform_code(
                     # An unfamiliar contextual word may still prefix a regex.
                     # Never expose a possible literal's import-like contents.
                     end = min(len(text), cursor + 512)
-                    truncated: list[bool] = []
+                    truncated: list[str] = []
                     projected = _swift_platform_code(
                         text[cursor:end], _projection=True, _truncation=truncated
                     )
-                    if projected is None:
+                    if projected is None or "delimited" in truncated:
                         return None
                     newline = line_break.search(projected)
                     if newline is None and end < len(text) and not truncated:
@@ -688,7 +688,11 @@ def _swift_platform_code(
                     bound = newline.start() if newline else len(projected)
                     semicolon = projected.find(";", 0, bound)
                     imported = import_word.search(projected, semicolon, bound) if semicolon >= 0 else None
-                    if imported and projected.find("/", imported.end(), bound) >= 0:
+                    # Projection selects code imports; aligned raw offsets retain
+                    # possible closing slashes hidden inside projected regions.
+                    if imported and (
+                        truncated or text.find("/", cursor + imported.end(), cursor + bound) >= 0
+                    ):
                         return None
                 end = cursor + (cursor < len(text) and text[cursor] == "=")
                 left_space = text[start - 1] in " \t\r\n"
@@ -743,7 +747,7 @@ def _swift_platform_code(
                     if _projection:
                         cursor = len(text)
                         if _truncation is not None:
-                            _truncation.append(True)
+                            _truncation.append("delimited")
                         break
                     return None
                 if quote != "/":
