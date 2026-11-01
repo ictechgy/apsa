@@ -192,9 +192,9 @@ states what it reads.
   1536 bits; and `SOURCE-INSECURE-RANDOM` on Swift and Objective-C. Key and IV material counts as
   constant when it is a literal, a literal array, a `BuildConfig` field, an
   immutable literal-initialized constant of the same file, or a conversion or
-  decoder of those. A local passed to another call, written element by element,
-  or named inside a closure that is not followed is treated as filled at
-  runtime, and zero-filled fields are never constants.
+  decoder of those. A local passed to another call or written element by
+  element, also inside a closure, is treated as filled at runtime, and
+  zero-filled fields are never constants.
 - **Local authentication.** `BiometricPrompt` and `FingerprintManager` calls
   without a CryptoObject (by argument count), `LAContext.evaluatePolicy` in a
   file without a Keychain access control, device-credential fallback, and keys
@@ -232,9 +232,12 @@ states what it reads.
 - **Analyzer model.** Kotlin `let`, `also`, `use`, `apply`, `run` and `with`
   lambdas are followed as blocks; a `?.` call or a lambda with `return@` merges
   like a branch that may not run. Other closures, in parentheses or trailing, are
-  followed once as blocks that may not run; their parameters shadow outer names and
-  carry no value except elements of known collection functions. Locals created with an imported class's constructor carry that type.
-  Guards are recognized by text in the same function, not by dominance.
+  followed once where they are written, as blocks that may not run, and read
+  captured locals there. Their parameters shadow outer names and carry no value
+  except elements of known collection functions and a fold's initial value;
+  what a closure writes into the parameters its callee supplies is part of the
+  call's value. Locals created with an imported class's constructor carry that
+  type. Guards are recognized by text in the same function, not by dominance.
   Per-function and per-file budgets bound the cost; a check that reaches its
   match budget reports partial coverage.
 - **Evaluation.** [OWASP MASTG demos](../benchmarks/MASTG_RESULTS.md) (a
@@ -358,8 +361,8 @@ OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 
 - **암호.** DES·3DES·RC4·RC2·Blowfish를 고르거나 provider 기본값이 ECB인 `"AES"`만 쓴 `Cipher.getInstance`,
   CommonCrypto의 깨진 알고리즘과 ECB 옵션, CryptoKit `Insecure.MD5`·`Insecure.SHA1`, 512·768·1024·1536비트
   리터럴 RSA·DSA·DH 키 크기를 보며, `SOURCE-INSECURE-RANDOM`은 Swift·Objective-C에서도 실행됩니다. 키와 IV 재료는 리터럴, 리터럴 배열, `BuildConfig` 필드, 같은 파일의 불변 리터럴 상수, 또는 그
-  변환·디코딩일 때 상수로 봅니다. 다른 호출에 넘기거나 원소를 쓰거나 따라가지 않는 클로저에서 이름이 나온
-  지역 값은 런타임에 채운 것으로 보며, 0으로 채운 필드는 상수가 아닙니다.
+  변환·디코딩일 때 상수로 봅니다. 클로저 안을 포함해 다른 호출에 넘기거나 원소를 쓴 지역 값은 런타임에
+  채운 것으로 보며, 0으로 채운 필드는 상수가 아닙니다.
 - **로컬 인증.** CryptoObject 없는 `BiometricPrompt`·`FingerprintManager` 호출(인자 개수 기준), Keychain
   access control이 없는 파일의 `LAContext.evaluatePolicy`, 기기 비밀번호 대체 허용, 새 생체 등록 뒤에도
   유지되는 키·access control을 봅니다. 인증을 요구하는 시간 제한 Keystore 키가 있는 파일은 결합된 것으로
@@ -385,9 +388,11 @@ OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 
   preference나 앱 디렉터리 전체에 대한 `loadFileURL` 읽기 권한으로 허용한 WKWebView 파일 URL 접근을 봅니다.
 - **분석 모델.** Kotlin `let`·`also`·`use`·`apply`·`run`·`with` 람다를 블록으로 따라가며, `?.` 호출이나
   `return@`이 있는 람다는 실행되지 않을 수도 있는 분기처럼 병합합니다. 괄호 안이나 trailing으로 넘긴
-  다른 클로저도 실행되지 않을 수도 있는 블록으로 한 번 따라가며, 파라미터는 바깥 이름을 가리고 알려진 컬렉션
-  함수의 원소 외에는 값을 갖지 않습니다. import한 클래스의 생성자로 만든 지역 값은 그 타입을 가집니다. 가드는 같은 함수의
-  텍스트로 인식하며 지배 관계는 보지 않습니다. 함수·파일 단위 예산이 비용을 제한하고, 일치 예산에 걸린
+  다른 클로저도 작성된 자리에서 실행되지 않을 수도 있는 블록으로 한 번 따라가며, 캡처한 지역 값은 그
+  자리의 값으로 읽습니다. 파라미터는 바깥 이름을 가리고 알려진 컬렉션 함수의 원소와 fold의 초깃값 외에는
+  값을 갖지 않으며, callee가 넘긴 파라미터에 클로저가 쓴 값은 그 호출의 값에 포함됩니다. import한 클래스의
+  생성자로 만든 지역 값은 그 타입을 가집니다. 가드는 같은 함수의 텍스트로 인식하며 지배 관계는 보지
+  않습니다. 함수·파일 단위 예산이 비용을 제한하고, 일치 예산에 걸린
   검사는 partial입니다.
 - **평가.** [OWASP MASTG 데모](../benchmarks/MASTG_RESULTS.ko.md)(개발 재실행: 평가 대상 실패 데모 78개 중
   52개, FP 1개)와 [blind MASWE 라벨 쌍](../benchmarks/BLIND_PAIRS_RESULTS.ko.md)(첫 실행: 채점한 평가 대상 21쌍 중

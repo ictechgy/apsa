@@ -330,11 +330,31 @@ CONTEXT = (
     "return_values",
     "closure_depth",
     "closure_returns",
+    "visited_values",
+    "reuse_visited",
+    "evaluated_inputs",
+    "closure_effects",
     "guarded_paths",
     "unguarded_paths",
     "finding_start",
     "pending_paths",
     "active_guards",
+)
+# Standard APIs that store their closure's result into the receiver, for a later read.
+RESULT_STORING_CALLS = frozenset(
+    {
+        "compute",
+        "computeIfAbsent",
+        "computeIfPresent",
+        "merge",
+        "replaceAll",
+        "updateAndGet",
+        "getAndUpdate",
+        "accumulateAndGet",
+        "getAndAccumulate",
+        "getOrPut",
+        "update",
+    }
 )
 
 
@@ -1118,9 +1138,15 @@ class NativeFlow:
     def affected_objects(
         self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
     ) -> set[str]:
-        """Track only the receiver and source-bound object arguments/captured fields."""
+        """Track only the receiver and source-bound object arguments/captured fields.
+
+        A closure argument's result is no object the callee can reach: it is returned
+        to the callee only if the callee runs the closure.
+        """
         affected = {self.receiver_identity(analyzer, call.receiver, frame, receiver)}
         for node, argument in zip(call.args, args, strict=True):
+            if analyzer.closure_argument(node) is not None:
+                continue
             if argument.identity:
                 affected.add(argument.identity)
             else:
@@ -1145,7 +1171,11 @@ class NativeFlow:
         scalar slots are not caller writeback. Nominal evidence belongs to the
         storage ID, so an Object/Any alias cannot erase reachable storage.
         """
-        objects = [*zip(call.args, args, strict=True)]
+        objects = [
+            (node, value)
+            for node, value in zip(call.args, args, strict=True)
+            if analyzer.closure_argument(node) is None
+        ]
         if call.receiver is not None:
             objects.append((call.receiver, receiver))
         pending = []
@@ -1260,14 +1290,18 @@ class NativeFlow:
         return affected
 
     @staticmethod
-    def data_arguments(analyzer: Analyzer, call: Call, args: list[Value]) -> list[Value]:
+    def data_arguments(
+        analyzer: Analyzer, call: Call, args: list[Value], stored: bool = False
+    ) -> list[Value]:
         """Argument values without closure literals.
 
         A closure is a callable, not data: an unresolved callee is not assumed to
         store its result into the objects it can reach. The call's own result
-        still carries the closure result (unavailable_result).
+        still carries the closure result (unavailable_result). With ``stored``
+        (the values a write may store), the standard APIs that store their
+        closure's result into the receiver (computeIfAbsent, getOrPut, ...) keep it.
         """
-        if len(args) != len(call.args):
+        if len(args) != len(call.args) or stored and call.name.rsplit(".", 1)[-1] in RESULT_STORING_CALLS:
             return args
         return [
             Value() if analyzer.closure_argument(node) is not None else value
@@ -1284,7 +1318,7 @@ class NativeFlow:
         *,
         affected: set[str] | None = None,
     ) -> None:
-        args = self.data_arguments(analyzer, call, args)
+        args = self.data_arguments(analyzer, call, args, stored=True)
         value = self.unavailable_result(analyzer, call, receiver, args, frame)
         if not value.traces:
             return
@@ -2915,13 +2949,34 @@ class NativeFlow:
             value.identity,
         )
 
+    @staticmethod
+    def scope_modelled(analyzer: Analyzer, call: Call, frame: Frame) -> bool:
+        """An unshadowed stdlib scope call that the visitor binds inline as a block.
+
+        Only a lambda literal is bound so; a function reference (`also(::fill)`) is
+        not. `use` also closes its receiver, an effect the visitor does not model.
+        """
+        scope = analyzer.scope_function(call)
+        return (
+            scope is not None
+            and scope[0] != "use"
+            and analyzer.kotlin_scope_identity_known(scope[0], frame)
+            and any(
+                (argument := analyzer.closure_argument(node)) is not None
+                and argument.type == "lambda_literal"
+                for node in call.args
+            )
+        )
+
     def call(
         self, analyzer: Analyzer, call: Call, frame: Frame, receiver: Value, args: list[Value]
     ) -> Value | None:
-        # A cut trace keeps its original kind through later calls.
+        # A cut trace keeps its original kind through later calls. A closure's result is
+        # not consumed by the call: it keeps its cut in the call's value (call_inputs), for
+        # whichever later read consumes it.
         cuts = {
             kind
-            for value in [receiver, *args]
+            for value in [receiver, *self.data_arguments(analyzer, call, args)]
             for trace in value.traces
             for kind in trace_cuts(trace.description)
         }
@@ -2929,9 +2984,8 @@ class NativeFlow:
             self.partial("source trace budget", analyzer, call=call)
         if "precision" in cuts:
             self.partial("source trace abstention", analyzer, call=call)
-        scope = analyzer.scope_function(call)
-        if scope is not None and analyzer.kotlin_scope_identity_known(scope[0], frame):
-            # An unshadowed stdlib scope function is modeled inline by the visitor.
+        if self.scope_modelled(analyzer, call, frame):
+            # An unshadowed stdlib scope function with a block literal is modeled inline by the visitor.
             return None
         syntactic_inout = [argument for argument in call.args if self.syntactic_inout(analyzer, argument)]
         binding = self.value_binding(analyzer, call, frame)
@@ -3088,7 +3142,7 @@ class NativeFlow:
         )
         affected = self.affected_objects(analyzer, call, receiver, args, frame)
         prior_objects = {key: fields.copy() for key, fields in frame.object_fields.items()}
-        uncertain_values = [receiver, *self.data_arguments(analyzer, call, args)]
+        uncertain_values = [receiver, *self.data_arguments(analyzer, call, args, stored=True)]
         if local_receiver:
             uncertain_values.extend(frame.values.get(name, Value()) for name in analyzer.field_types)
         for object_identity in affected:

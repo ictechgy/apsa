@@ -522,7 +522,7 @@
     "references": [
       "https://developer.android.com/privacy-and-security/risks/hardcoded-cryptographic-secrets"
     ],
-    "scope": "SecretKeySpec, DESKeySpec, DESedeKeySpec, PBEKeySpec, CryptoKit SymmetricKey(data:) and P256/P384/P521/Curve25519 private keys, and SecKeyCreateWithData for private keys, when the material is a literal, a literal array, a BuildConfig field, an immutable literal-initialized constant of the same file, or a byte conversion or decoder of those. A local value passed to another call, written element by element, or named inside a closure that is not followed is treated as filled at runtime; zero-filled fields are never constants."
+    "scope": "SecretKeySpec, DESKeySpec, DESedeKeySpec, PBEKeySpec, CryptoKit SymmetricKey(data:) and P256/P384/P521/Curve25519 private keys, and SecKeyCreateWithData for private keys, when the material is a literal, a literal array, a BuildConfig field, an immutable literal-initialized constant of the same file, or a byte conversion or decoder of those. A local value passed to another call or written element by element, also inside a closure, is treated as filled at runtime; zero-filled fields are never constants."
   },
   {
     "id": "AST-CRYPTO-STATIC-IV",
@@ -541,7 +541,7 @@
     "references": [
       "https://developer.android.com/privacy-and-security/cryptography"
     ],
-    "scope": "IvParameterSpec, GCMParameterSpec and CryptoKit AES.GCM/ChaChaPoly nonces built from literal material, or from a local zero-filled array that no call, element write or unfollowed closure has filled in the same function."
+    "scope": "IvParameterSpec, GCMParameterSpec and CryptoKit AES.GCM/ChaChaPoly nonces built from literal material, or from a local zero-filled array that no call or element write, also inside a closure, has filled in the same function."
   },
   {
     "id": "AST-INTENT-REDIRECTION",

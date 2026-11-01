@@ -183,8 +183,9 @@ MASWE 약점으로 라벨을 붙인 공개 취약/수정 쌍 24개의 blind hold
   실행되어 iOS 전용 트리의 커버리지가 not-applicable에서 checked로 바뀝니다.
 - AST 엔진이 Kotlin `let`·`also`·`use`·`apply`·`run`·`with` 람다를 따라가므로, 모든 구조 규칙이 그 안의
   코드를 보고할 수 있습니다. `?.let` 람다나 `return@`이 있는 람다는 실행되지 않을 수도 있는 분기처럼
-  병합하며, 항상 실행되는 람다 안의 재할당은 1.4의 발견을 없앨 수도 있습니다. 다른 람다와 Swift 클로저는
-  1.7.1부터 실행되지 않을 수도 있는 블록으로 따라갑니다.
+  병합하며, 항상 실행되는 람다 안의 재할당은 1.4의 발견을 없앨 수도 있습니다. 1.7.1 전에는 괄호 안의 다른
+  클로저를 guard 없이 살펴보고 trailing lambda는 분석하지 않았으며, 1.7.1부터는 둘 다 실행되지 않을 수도
+  있는 블록으로 따라갑니다.
 - `ANDROID-CLEARTEXT`는 참조된 네트워크 보안 설정에서도 나옵니다(configuration-confirmed이므로 code
   scanning이 심각도를 매깁니다). 그 설정을 해석했고 minSdk가 24 이상이며, 설정이
   `cleartextTrafficPermitted`를 명시했거나 targetSdk가 28 이상이면 매니페스트 `usesCleartextTraffic`
