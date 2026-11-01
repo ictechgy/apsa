@@ -388,7 +388,7 @@ def test_quaygate_manifest_cleartext_applies_below_min_sdk_24(tmp_path):
     app = {**NSC_REF, "usesCleartextTraffic": "true"}
     with temp_apk(app_over=app, sdk_over={"minSdkVersion": "21"}, nsc=NSC_BLOCKING) as path:
         assert ("warn", MEDIUM) in checks(audit_apk(Apk(path))[1], "app-cleartext")
-        report = quaygate_analysis.analyze(Path(path))
+        report = quaygate_analysis.analyze(Path(path).resolve())
     assert [f["severity"] for f in report["findings"] if f["rule_id"] == "QG-APP-CLEARTEXT"] == ["medium"]
     with temp_apk(app_over=app, sdk_over={"minSdkVersion": "24"}, nsc=NSC_BLOCKING) as path:
         assert checks(audit_apk(Apk(path))[1], "app-cleartext") == [("pass", None)]
@@ -404,7 +404,7 @@ def test_quaygate_unresolved_manifest_cleartext_below_min_sdk_24_is_partial():
     app = {**NSC_REF, "usesCleartextTraffic": "@2130837504"}
     with temp_apk(app_over=app, sdk_over={"minSdkVersion": "21"}, nsc=NSC_BLOCKING) as path:
         assert checks(audit_apk(Apk(path))[1], "app-cleartext") == [("pass", None), ("na", None)]
-        report = quaygate_analysis.analyze(Path(path))
+        report = quaygate_analysis.analyze(Path(path).resolve())
     assert coverage(report, "QG-APP-CLEARTEXT")["state"] == "partial"
 
 

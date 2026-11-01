@@ -280,6 +280,9 @@ jobs:
         env:
           OUTCOME: ${{ steps.partial.outcome }}
           CODE: ${{ steps.partial.outputs.exit-code }}
+          INCOMPLETE: ${{ steps.partial.outputs.incomplete }}
         run: |
-          test "$CODE" = 3
+          # The threshold failure (4) takes precedence; the audit is still reported incomplete.
+          test "$CODE" = 4
+          test "$INCOMPLETE" = true
           test "$OUTCOME" = failure

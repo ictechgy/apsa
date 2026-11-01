@@ -59,6 +59,9 @@ outputs:
   exit-code:
     description: APSA exit code (0 complete for the stated scope, possibly with limited coverage; 3 incomplete; 4 policy or threshold failure, which takes precedence over 3).
     value: ${{ steps.scan.outputs.exit-code }}
+  incomplete:
+    description: "true when the report records an incomplete audit (an execution gap; with strict-coverage, limited coverage too), otherwise false."
+    value: ${{ steps.scan.outputs.incomplete }}
 
 runs:
   using: composite
