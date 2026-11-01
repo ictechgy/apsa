@@ -139,15 +139,17 @@ device or credential service was contacted.
   statements; a receiverless `openDatabase`/`openOrCreateDatabase` is the
   framework opener unless a Java or Kotlin source callable of that name could
   take its arguments and is visible at the call (another class's private
-  member is not), a property or value binding of that name exists, or a
-  non-framework import of that name reaches it. Otherwise it is followed as
-  project code where the flow can resolve it, and which callee runs is treated
-  as certain only when the flow's resolution covers every such source
-  callable, no property of that name exists and no framework static import (of
-  that name, or `SQLiteDatabase.*`) could supply the name, and then only when
-  every target declares a `SQLiteDatabase` return (directly, through a
-  typealias or a bounded type parameter), or every target states its return
-  type (a Kotlin block body returns `Unit`) and the call's arity cannot fit
+  member is not), a property (including a constructor property) or value
+  binding of that name exists, or a non-framework import of that name reaches
+  it. Otherwise it is followed as project code where the flow can resolve it,
+  and which callee runs is treated as certain only when the flow's resolution
+  covers every such source callable, no property of that name exists and no
+  framework static import (of that name, or `SQLiteDatabase.*`) could supply
+  the name, and then only when every target declares a `SQLiteDatabase` return
+  (directly, through a typealias or alias chain, or as a type parameter
+  bounded in its declaration, a `where` clause or the enclosing class), or
+  every target's return type is provably not a database (`Unit`, a common
+  non-database type or a source class) and the call's arity cannot fit
   `Context.openOrCreateDatabase(name, mode, factory[, handler])` or the name
   is `openDatabase` (which Context does not declare). When every target
   declares a `SQLiteDatabase` return the result keeps that type either way. In

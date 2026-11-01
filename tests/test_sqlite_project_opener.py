@@ -1502,3 +1502,80 @@ def test_a_declared_database_opener_keeps_its_sink_when_the_callee_is_uncertain(
     report = analyze_sources([("app/Dao.kt", CACHED_DAO.replace("IMPORT", "")), flags])
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
     assert "opener receiver identity unresolved" in report["metadata"]["native_flow"]["reasons"]
+
+
+# Round-11 review shapes: typealiases with modifiers or chains, where-clause and class
+# bounds, constructor properties and comments between a parameter and its default.
+R11_ALIASED = """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+ALIAS
+class Repo<D : SQLiteDatabase>(private val db: SQLiteDatabase, private val d: D) {
+    DECL
+    fun go(intent: Intent) {
+        openDatabase("x").rawQuery("SELECT * FROM t WHERE id = " + intent.getStringExtra("q"), null)
+    }
+}
+"""
+
+
+def r11_aliased(alias, decl):
+    return [("app/Repo.kt", R11_ALIASED.replace("ALIAS", alias).replace("DECL", decl))]
+
+
+R11_CASES = {
+    "1-private-typealias": r11_aliased(
+        "private typealias DB = SQLiteDatabase",
+        "fun openDatabase(name: String): DB = if (name.isNotEmpty()) db else db",
+    ),
+    "3a-where-bound": r11_aliased(
+        "",
+        '@Suppress("UNCHECKED_CAST") fun <T> openDatabase(name: String): T where T : SQLiteDatabase = db as T',
+    ),
+    "3b-alias-chain": r11_aliased(
+        "typealias A = SQLiteDatabase\ntypealias DB = A",
+        "fun openDatabase(name: String): DB = if (name.isNotEmpty()) db else db",
+    ),
+    "3c-class-bound": r11_aliased("", "fun openDatabase(name: String): D = d"),
+    "2-constructor-property": [
+        (
+            "app/O.kt",
+            """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class Outer(private val db: SQLiteDatabase,
+            val openDatabase: (String) -> Unit = { n -> db.execSQL("ATTACH '" + n + "'") }) {
+    inner class In { fun go(intent: Intent) { openDatabase(intent.getStringExtra("q") ?: "") } }
+}
+""",
+        )
+    ],
+    "4-commented-default": [
+        (
+            "app/R.kt",
+            """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class R2(private val db: SQLiteDatabase) {
+    fun openDatabase(name: String, readOnly: Boolean /* rw */ = false) { db.execSQL("ATTACH DATABASE '" + name + "' AS extra") }
+    fun q(intent: Intent) { openDatabase(intent.dataString ?: "") }
+}
+""",
+        )
+    ],
+}
+
+
+@pytest.mark.parametrize("name", sorted(R11_CASES))
+def test_round_eleven_opener_shapes_never_claim_checked_without_a_finding(name):
+    report = analyze_sources(R11_CASES[name])
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
+
+
+@pytest.mark.parametrize(
+    "name", ["1-private-typealias", "3a-where-bound", "3b-alias-chain", "3c-class-bound"]
+)
+def test_database_returns_through_aliases_and_bounds_keep_the_sink(name):
+    report = analyze_sources(R11_CASES[name])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}

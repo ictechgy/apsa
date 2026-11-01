@@ -614,6 +614,40 @@ SQLITE_DATABASE = "android.database.sqlite.SQLiteDatabase"
 SQLITE_ACCESSORS = {"writableDatabase", "readableDatabase"}
 SQLITE_GETTERS = {"getWritableDatabase", "getReadableDatabase"}
 SQLITE_OPENERS = {"openOrCreateDatabase", "openDatabase"}
+# Return types that cannot be a SQLiteDatabase.
+NON_DATABASE_RETURNS = {
+    "Unit",
+    "void",
+    "Nothing",
+    "String",
+    "CharSequence",
+    "Int",
+    "int",
+    "Integer",
+    "Long",
+    "long",
+    "Boolean",
+    "boolean",
+    "Double",
+    "double",
+    "Float",
+    "float",
+    "File",
+    "Cursor",
+    "SQLiteStatement",
+    "SQLiteQueryBuilder",
+    "ContentValues",
+    "Uri",
+    "Intent",
+    "Bundle",
+    "List",
+    "MutableList",
+    "Map",
+    "MutableMap",
+    "Set",
+    "MutableSet",
+    "Array",
+}
 # Framework accessors and properties that return a Context.
 CONTEXT_ACCESSORS = {
     "requireContext",
@@ -1121,7 +1155,7 @@ class Analyzer:
         if (
             complete
             and (call.name == "openDatabase" or arity not in {3, 4})
-            and all(self.return_known(target) for target in targets)
+            and all(self.not_database_return(target) for target in targets)
         ):
             # Context declares no openDatabase, and its openOrCreateDatabase takes three or
             # four arguments; every other candidate is a resolved target.
@@ -1150,6 +1184,10 @@ class Analyzer:
                             for child in node.named_children
                             if child.type == "variable_declaration" and child.named_children
                         ]
+                    elif node.type == "class_parameter" and any(
+                        child.type in {"val", "var"} for child in node.children
+                    ):
+                        names = [child for child in node.named_children if child.type in IDENTIFIERS][:1]
                     elif node.type == "field_declaration":
                         names = [
                             child.named_children[0]
@@ -1220,7 +1258,7 @@ class Analyzer:
             return True
         # A receiver parameter (`Foo this`) takes no argument; a parameter followed by `=`
         # has a default; a vararg (Kotlin modifier or Java `...`) takes any number.
-        children = parameters.children
+        children = [child for child in parameters.children if child.type not in COMMENTS]
         required = maximum = 0
         unbounded = False
         for index, child in enumerate(children):
@@ -1424,14 +1462,44 @@ class Analyzer:
             return False
         if name == "SQLiteDatabase":
             return True
-        bounds = next(
-            (child for child in target.node.named_children if child.type == "type_parameters"), None
-        )
-        if bounds is not None and re.search(
-            rf"\b{re.escape(name)}\s*(?::|extends)\s*[\w.]*SQLiteDatabase\b", target.analyzer.text(bounds)
-        ):
-            return True
+        # Type parameters of the function or its enclosing classes, bounded in their
+        # declaration or in a `where` clause.
+        scopes = [target.node]
+        current = target.node.parent
+        while current is not None:
+            if current.type in {"class_declaration", "interface_declaration", "object_declaration"}:
+                scopes.append(current)
+            current = current.parent
+        pattern = rf"\b{re.escape(name)}\s*(?::|extends)\s*[\w.]*SQLiteDatabase\b"
+        for scope in scopes:
+            for child in scope.named_children:
+                if child.type in {"type_parameters", "type_constraints"} and re.search(
+                    pattern, target.analyzer.text(child)
+                ):
+                    return True
         return name in self.database_aliases()
+
+    def not_database_return(self, target: Any) -> bool:
+        """Whether a function's return type is provably not SQLiteDatabase: Unit/void, a
+        Kotlin block body without a declared type, a common non-database type, or a source
+        class (SQLiteDatabase is final). Aliases, type parameters and unknown library types
+        are not provable, so such a call stays a recorded guess."""
+        if not self.return_known(target):
+            return False
+        declared = self.declared_return(target)
+        if not declared:
+            return True  # a Kotlin block body returns Unit
+        name = re.sub(r"<.*|\s+|\?$", "", declared).rsplit(".", 1)[-1]
+        if name in NON_DATABASE_RETURNS:
+            return True
+        if name == "SQLiteDatabase" or name in self.database_aliases():
+            return False
+        flow = self.native_flow
+        return flow is not None and any(
+            source.language == target.analyzer.language and node.type != "type_alias"
+            for owner in flow.classes.get(name, set())
+            for source, node in flow.class_definitions.get(owner, [])
+        )
 
     def return_known(self, target: Any) -> bool:
         """Whether a function's return type is stated: declared, or Unit for a Kotlin block
@@ -1442,26 +1510,33 @@ class Analyzer:
         return body is not None and target.analyzer.text(body).lstrip().startswith("{")
 
     def database_aliases(self) -> set[str]:
-        """Kotlin typealiases whose target is SQLiteDatabase, across the sources."""
+        """Kotlin typealiases that name SQLiteDatabase, directly or through other aliases."""
         flow = self.native_flow
         if flow is None:
             return set()
         aliases: set[str] | None = flow.__dict__.get("opener_database_aliases")
         if aliases is None:
-            aliases = set()
+            edges: list[tuple[str, str]] = []
             for analyzer, root, _nodes in flow.files:
                 if analyzer.language != "kotlin":
                     continue
                 for node in _walk(root):
                     if node.type != "type_alias":
                         continue
-                    named = node.named_children
-                    if (
-                        len(named) >= 2
-                        and re.sub(r"\?$", "", analyzer.text(named[-1])).rsplit(".", 1)[-1]
-                        == "SQLiteDatabase"
-                    ):
-                        aliases.add(analyzer.text(named[0]))
+                    named = [child for child in node.named_children if child.type != "modifiers"]
+                    alias = next((child for child in named if child.type in IDENTIFIERS), None)
+                    if alias is None or len(named) < 2:
+                        continue
+                    target = re.sub(r"<.*|\?$|\s+", "", analyzer.text(named[-1])).rsplit(".", 1)[-1]
+                    edges.append((analyzer.text(alias), target))
+            aliases = set()
+            changed = True
+            while changed:
+                changed = False
+                for alias_name, target in edges:
+                    if alias_name not in aliases and (target == "SQLiteDatabase" or target in aliases):
+                        aliases.add(alias_name)
+                        changed = True
             flow.__dict__["opener_database_aliases"] = aliases
         return aliases
 
