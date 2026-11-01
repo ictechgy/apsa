@@ -613,6 +613,39 @@ SQLITE_DATABASE = "android.database.sqlite.SQLiteDatabase"
 SQLITE_ACCESSORS = {"writableDatabase", "readableDatabase"}
 SQLITE_GETTERS = {"getWritableDatabase", "getReadableDatabase"}
 SQLITE_OPENERS = {"openOrCreateDatabase", "openDatabase"}
+# Common receiver types that declare no openOrCreateDatabase member.
+NON_CONTEXT_TYPES = {
+    "Any",
+    "Object",
+    "String",
+    "CharSequence",
+    "Int",
+    "Integer",
+    "Long",
+    "Boolean",
+    "Double",
+    "Float",
+    "Unit",
+    "List",
+    "MutableList",
+    "Map",
+    "MutableMap",
+    "Set",
+    "MutableSet",
+    "Array",
+    "Runnable",
+    "Closeable",
+    "AutoCloseable",
+    "Comparable",
+    "Serializable",
+    "Parcelable",
+    "Cloneable",
+    "Intent",
+    "Uri",
+    "Bundle",
+    "File",
+    "SQLiteDatabase",
+}
 # SQL syntax argument per framework method (receiver type, method) -> argument index.
 SQL_SINKS = {
     ("android.database.sqlite.SQLiteDatabase", "rawQuery"): (0,),
@@ -686,6 +719,8 @@ class Analyzer:
         self.intent_checks = 0
         # Kotlin lambda parameters bound to the receiver of let/also/use, for Intent text lookups.
         self.aliases: dict[str, Any] = {}
+        # A framework-typed opener whose project target is also followed (receiver unknown).
+        self.opener_follow = False
         self.package_name = _package_name(text)
         parts = self.package_name.split(".") if self.package_name else []
         # Actions an app defines share its package namespace; other prefixes belong to other apps.
@@ -956,6 +991,7 @@ class Analyzer:
 
     def sqlite_database_call(self, call: Call, receiver: Value, frame: Frame) -> bool:
         """SDK calls that return a SQLiteDatabase: helper getters and Context/SQLiteDatabase openers."""
+        self.opener_follow = False
         if self.language not in {"java", "kotlin"}:
             return False
         if call.name in SQLITE_GETTERS:
@@ -1001,7 +1037,10 @@ class Analyzer:
             # ahead of a project function of another class or a top-level function.
             owner = flow.owner(self, self.function) if self.function is not None else ""
             own = all(target.owner and target.owner == owner for target in targets)
-            return not self.inherited_receiver(call.node, classes=not own)
+            kind = self.receiver_context(call.node, frame, classes=not own)
+            if kind == "maybe":
+                self.opener_follow = True
+            return kind == "no"
         return True
 
     @staticmethod
@@ -1055,39 +1094,60 @@ class Analyzer:
             return True
         return callee.type == "navigation_expression" and name.group(1) in {"run", "apply"}
 
-    def inherited_receiver(self, node: Any, *, classes: bool) -> bool:
-        """Whether an implicit receiver in scope at `node` may inherit Context members.
+    def receiver_context(self, node: Any, frame: Frame, *, classes: bool) -> str:
+        """Whether an implicit receiver in scope at `node` is a Context: "yes", "no" or "maybe".
 
-        Walking outward from the call, a Kotlin scope-function receiver or an extension
-        receiver (`fun Activity.f()`, `val Context.p get()`) may be a Context. With
-        `classes`, the enclosing class-like scopes count too: supertypes, readable or
-        not, may supply the member; an anonymous class always has one. A nested class,
-        object or companion without supertypes (a Java static or implicitly static
-        type) has no outer receiver, while inner and local classes, Kotlin anonymous
-        objects, lambdas and local functions defer to the enclosing scope. Without
-        `classes` (the target is a method of the enclosing class), the walk stops at
-        the first class-like scope.
+        Walking outward from the call: a Kotlin scope-function receiver, an extension
+        receiver (`fun Activity.f()`, `val Context.p get()`, an anonymous function with a
+        receiver) and the block of `x.run`, `x.apply` or `with(x)` are receivers. With
+        `classes`, the enclosing class-like scopes are too, as far as they reach: a nested
+        class, object or companion (a Java static or implicitly static type) has no outer
+        receiver, while inner and local classes, Kotlin anonymous objects, lambdas and
+        local functions defer outward. Without `classes` (the target is a method of the
+        enclosing class) the walk stops at the first class-like scope. Any receiver that
+        is a Context wins; an unknown one leaves the answer open.
         """
-        from .native_flow import NativeFlow
-
         kotlin = self.language == "kotlin"
+        answers: set[str] = set()
         if kotlin and "this" in self.aliases:
-            return True
+            bound = self.value(self.aliases["this"], frame)
+            answers.add(
+                "no"
+                if bound.category in {"text", "url", "intent", "request", "host", "scheme"}
+                else self.context_type(bound.type_name, node)
+                if bound.type_name
+                else "maybe"
+            )
         current = node.parent
-        while current is not None:
+        while current is not None and "yes" not in answers:
             if (
                 kotlin
                 and current.type in {"function_declaration", "anonymous_function", "property_declaration"}
                 and any(child.type == "." for child in current.children)
             ):
-                return True
-            if kotlin and current.type == "lambda_literal" and self.receiver_scope_lambda(current):
-                return True
-            if not kotlin and current.type == "object_creation_expression":
+                receiver_type = next(
+                    (
+                        child
+                        for child in current.named_children
+                        if child.type in {"user_type", "nullable_type"}
+                        and child.end_byte
+                        <= next(part.start_byte for part in current.children if part.type == ".")
+                    ),
+                    None,
+                )
+                answers.add(
+                    self.context_type(self.text(receiver_type), node)
+                    if receiver_type is not None
+                    else "maybe"
+                )
+            elif kotlin and current.type == "lambda_literal" and self.receiver_scope_lambda(current):
+                answers.add("maybe")
+            elif not kotlin and current.type == "object_creation_expression":
                 if any(child.type == "class_body" for child in current.children):
                     if not classes:
-                        return False
-                    return True
+                        break
+                    kind = next((child for child in current.named_children if "type" in child.type), None)
+                    answers.add(self.context_type(self.text(kind), node) if kind is not None else "maybe")
             elif current.type in {
                 "class_declaration",
                 "object_declaration",
@@ -1098,9 +1158,8 @@ class Analyzer:
                 "interface_declaration",
             }:
                 if not classes:
-                    return False
-                if NativeFlow.supertype_references(self, current) != []:
-                    return True
+                    break
+                answers.add(self.class_context(current))
                 modifiers = " ".join(
                     self.text(child) for child in current.named_children if child.type == "modifiers"
                 )
@@ -1127,9 +1186,42 @@ class Analyzer:
                         and current.parent.type != "program"
                     )
                 if not defers:
-                    return False
+                    break
             current = current.parent
-        return False
+        return "yes" if "yes" in answers else "maybe" if "maybe" in answers else "no"
+
+    def class_context(self, nominal: Any, depth: int = 0) -> str:
+        """Whether a class-like declaration is a Context through its supertypes."""
+        from .native_flow import NativeFlow
+
+        references = NativeFlow.supertype_references(self, nominal)
+        if references is None or depth >= 8:
+            return "maybe"
+        answers = {self.context_type(reference, nominal, depth + 1) for reference in references}
+        return "yes" if "yes" in answers else "maybe" if "maybe" in answers else "no"
+
+    def context_type(self, spelling: str, node: Any, depth: int = 0) -> str:
+        """Whether a type spelling names a Context: a source class by its ancestry, a
+        framework Context type by name, a few common non-Context types, else unknown."""
+        name = re.sub(r"<.*|\?$|\s+", "", spelling or "").rsplit(".", 1)[-1]
+        if not name:
+            return "maybe"
+        flow = self.native_flow
+        if flow is not None:
+            owners = flow.class_owners(self, name, node)
+            if len(owners) == 1:
+                definitions = flow.class_definitions.get(next(iter(owners)), [])
+                if len(definitions) == 1:
+                    source, base = definitions[0]
+                    return source.class_context(base, depth) if source is self else "maybe"
+        if re.fullmatch(
+            r"Context|ContextWrapper|ContextThemeWrapper|\w*Activity|\w*Service|\w*Application",
+            name,
+        ):
+            return "yes"
+        if name in NON_CONTEXT_TYPES:
+            return "no"
+        return "maybe"
 
     def identifier_value(self, name: str, frame: Frame, node: Any) -> Value:
         if (
@@ -1537,6 +1629,10 @@ class Analyzer:
             receiver = self.value(call.receiver, frame)
             args = [self.value(arg, frame) for arg in call.args]
             if self.sqlite_database_call(call, receiver, frame):
+                if self.opener_follow and self.native_flow is not None:
+                    # The implicit receiver may or may not be a Context: follow the
+                    # project function too, so either reading keeps its sinks.
+                    self.native_flow.call(self, call, frame, receiver, args)
                 return Value(type_name=SQLITE_DATABASE)
             if self.native_flow is not None:
                 result = self.native_flow.call(self, call, frame, receiver, args)

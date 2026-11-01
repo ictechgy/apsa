@@ -452,3 +452,49 @@ def test_receiver_typing_does_not_depend_on_a_top_level_opener(path, caller):
     both = analyze_sources([(path, caller), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)])
     assert [item["rule_id"] for item in both["findings"]] == [item["rule_id"] for item in alone["findings"]]
     assert both["metadata"]["native_flow"]["reasons"] == alone["metadata"]["native_flow"]["reasons"]
+
+
+# Only a receiver that is a Context supplies the inherited member: a known non-Context
+# receiver follows the project function, and an unknown one follows it as well while
+# the result keeps the framework type, so neither reading hides a finding silently.
+SINKING_HELPER = """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): SQLiteDatabase {
+    val db = SQLiteDatabase.openOrCreateDatabase(":memory:", null)
+    db.execSQL("ATTACH DATABASE '" + name + "' AS extra")
+    return db
+}
+"""
+STRING_SCOPE_RECEIVER = """package com.example.app
+import android.content.Intent
+class Handler {
+    fun go(intent: Intent) {
+        intent.getStringExtra("q")?.apply { openOrCreateDatabase(this, 0, null) }
+    }
+}
+"""
+UNKNOWN_SUPERTYPE = """package com.example.app
+import android.content.Intent
+import android.view.View
+class Handler : View.OnClickListener {
+    override fun onClick(v: View?) {}
+    fun go(intent: Intent) {
+        openOrCreateDatabase(intent.getStringExtra("q") ?: "", 0, null)
+    }
+}
+"""
+
+
+def test_a_non_context_scope_receiver_follows_the_project_opener():
+    report = analyze_sources([("app/Db.kt", SINKING_HELPER), ("app/Handler.kt", STRING_SCOPE_RECEIVER)])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+def test_an_unknown_receiver_follows_the_project_opener_without_claiming_checked():
+    report = analyze_sources([("app/Db.kt", SINKING_HELPER), ("app/Handler.kt", UNKNOWN_SUPERTYPE)])
+    flow = report["metadata"]["native_flow"]
+    # The project opener was followed: either it reports, or the flow records why not.
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or (
+        "inherited overload signature unresolved" in flow["reasons"]
+    )
+    assert flow["state"] != "checked"

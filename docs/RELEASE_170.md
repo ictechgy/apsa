@@ -138,12 +138,14 @@ device or credential service was contacted.
   their enclosing function; early exits in Java constructors guard later
   statements; a receiverless `openDatabase`/`openOrCreateDatabase` is analyzed
   as project code only when the native flow's own call resolution finds a
-  non-override project target for it, and a target shaped like
-  `Context.openOrCreateDatabase(String, int, factory[, handler])` is followed
-  only when no enclosing class, object, extension or scope-function receiver
-  that may inherit that member is in scope (in Java, when no enclosing class
-  with a supertype is); otherwise it keeps the framework `SQLiteDatabase`
-  identity;
+  non-override project target for it. A target shaped like
+  `Context.openOrCreateDatabase(String, int, factory[, handler])` yields to the
+  inherited member (the framework `SQLiteDatabase` type) when an implicit
+  receiver in scope is a Context (an enclosing class, extension or
+  scope-function receiver; a method of the enclosing class itself is followed
+  unless an extension or scope-function receiver comes between); when a
+  receiver's type is unknown, the project function is followed as well and
+  the result keeps the framework type;
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies
