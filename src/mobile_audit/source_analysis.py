@@ -1058,16 +1058,16 @@ class Analyzer:
     def opener_database_type(self, call: Call, receiver: Value, frame: Frame) -> bool:
         """Whether a receiverless opener's result is typed as the framework SQLiteDatabase.
 
-        Without a reachable project callable of that name the call is the framework opener.
-        A project target the flow's own resolution finds is always followed
-        (`opener_follow`), so its sinks and returned taint stay in the analysis. Which
-        callee runs is treated as certain only when it is provable from the call alone:
-        every target declares a SQLiteDatabase return (both readings agree), or the call's
-        arity cannot fit Context.openOrCreateDatabase(name, mode, factory[, handler]), or
-        the name is `openDatabase`, which Context does not declare, and no extension or
-        scope receiver may supply another member. Every other case is a guess between the
-        project function and an inherited framework member: the receiver walk only picks
-        the more likely result type, and the guess is recorded (`limited`).
+        Candidates are the Java and Kotlin source callables of that name that could take the
+        call's arguments and are visible at the call, plus properties of that name. Without
+        any candidate, binding or reachable callable the call is the framework opener. A
+        resolved project target is always followed (`opener_follow`). The callee is certain
+        only when resolution returned every candidate, no property or framework static
+        import shares the name, and then either every target declares a SQLiteDatabase
+        return (directly, through a typealias or a bounded type parameter), or the name is
+        `openDatabase` or the arity cannot fit Context.openOrCreateDatabase while every
+        target states its return type. Every other case is a guess: the receiver and the
+        arguments only pick the result type, and the guess is recorded (`limited`).
         """
         flow = self.native_flow
         if flow is None:
@@ -1114,7 +1114,11 @@ class Analyzer:
         if complete and all(self.declares_database(target) for target in targets):
             self.opener_certain = True
             return True
-        if complete and (call.name == "openDatabase" or arity not in {3, 4}):
+        if (
+            complete
+            and (call.name == "openDatabase" or arity not in {3, 4})
+            and all(self.return_known(target) for target in targets)
+        ):
             # Context declares no openDatabase, and its openOrCreateDatabase takes three or
             # four arguments; every other candidate is a resolved target.
             self.opener_certain = True
@@ -1245,7 +1249,11 @@ class Analyzer:
         arity = self.call_arity(call)
         for target in flow.by_name.get(call.name, []):
             source = target.analyzer
-            if source.language != self.language or not self.accepts_arity(target, arity):
+            if (
+                source.language != self.language
+                or not self.accepts_arity(target, arity)
+                or not self.visible_member(target, call.node)
+            ):
                 continue
             if source.path == self.path or (
                 not target.owner and namespace and flow.namespaces[id(source)] == namespace
@@ -1404,23 +1412,54 @@ class Analyzer:
                     break
         return target.analyzer.text(declared) if declared is not None else ""
 
-    @staticmethod
-    def declares_database(target: Any) -> bool:
-        """Whether a project function's declared return type is SQLiteDatabase."""
-        node = target.node
-        declared = node.child_by_field_name("type") if target.analyzer.language == "java" else None
-        if declared is None:
-            after = False
-            for child in node.children:
-                if child.type in {"function_value_parameters", "formal_parameters"}:
-                    after = True
-                elif after and child.type in {"user_type", "nullable_type"}:
-                    declared = child
-                    break
-                elif after and child.type in {"function_body", "block", "="}:
-                    break
-        text = target.analyzer.text(declared) if declared is not None else ""
-        return re.sub(r"\s+|\?$", "", text).rsplit(".", 1)[-1] == "SQLiteDatabase"
+    def declares_database(self, target: Any) -> bool:
+        """Whether a project function's declared return type is SQLiteDatabase: by name,
+        through a Kotlin typealias of it, or as a type parameter bounded by it."""
+        name = re.sub(r"<.*|\s+|\?$", "", self.declared_return(target)).rsplit(".", 1)[-1]
+        if not name:
+            return False
+        if name == "SQLiteDatabase":
+            return True
+        bounds = next(
+            (child for child in target.node.named_children if child.type == "type_parameters"), None
+        )
+        if bounds is not None and re.search(
+            rf"\b{re.escape(name)}\s*(?::|extends)\s*[\w.]*SQLiteDatabase\b", target.analyzer.text(bounds)
+        ):
+            return True
+        return name in self.database_aliases()
+
+    def return_known(self, target: Any) -> bool:
+        """Whether a function's return type is stated: declared, or Unit for a Kotlin block
+        body. An expression body infers its type, which the flow may not know."""
+        if self.declared_return(target) or target.analyzer.language == "java":
+            return True
+        body = next((child for child in target.node.named_children if child.type == "function_body"), None)
+        return body is not None and target.analyzer.text(body).lstrip().startswith("{")
+
+    def database_aliases(self) -> set[str]:
+        """Kotlin typealiases whose target is SQLiteDatabase, across the sources."""
+        flow = self.native_flow
+        if flow is None:
+            return set()
+        aliases: set[str] | None = flow.__dict__.get("opener_database_aliases")
+        if aliases is None:
+            aliases = set()
+            for analyzer, root, _nodes in flow.files:
+                if analyzer.language != "kotlin":
+                    continue
+                for node in _walk(root):
+                    if node.type != "type_alias":
+                        continue
+                    named = node.named_children
+                    if (
+                        len(named) >= 2
+                        and re.sub(r"\?$", "", analyzer.text(named[-1])).rsplit(".", 1)[-1]
+                        == "SQLiteDatabase"
+                    ):
+                        aliases.add(analyzer.text(named[0]))
+            flow.__dict__["opener_database_aliases"] = aliases
+        return aliases
 
     def receiver_scope_lambda(self, node: Any) -> bool:
         """Whether a Kotlin lambda is the block of `x.run`, `x.apply` or `with(x)`."""

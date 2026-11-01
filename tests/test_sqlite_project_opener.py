@@ -1441,3 +1441,30 @@ def test_round_ten_opener_shapes_never_claim_checked_without_a_finding(name):
     report = analyze_sources(R10_CASES[name])
     sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
+
+
+ALIASED_RETURN = """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+typealias DB = SQLiteDatabase
+class Repo(private val db: SQLiteDatabase) {
+    DECL
+    fun go(intent: Intent) {
+        openDatabase("x").rawQuery("SELECT * FROM t WHERE id = " + intent.getStringExtra("q"), null)
+    }
+}
+"""
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "fun openDatabase(name: String): DB = if (name.isNotEmpty()) db else db",
+        '@Suppress("UNCHECKED_CAST") fun <T : SQLiteDatabase> openDatabase(name: String): T = db as T',
+        "fun openDatabase(name: String) = if (name.isNotEmpty()) db else db",
+    ],
+    ids=["typealias", "bounded-type-parameter", "inferred-expression-body"],
+)
+def test_a_database_returned_under_another_spelling_keeps_the_sink(declaration):
+    report = analyze_sources([("app/Repo.kt", ALIASED_RETURN.replace("DECL", declaration))])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
