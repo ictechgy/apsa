@@ -38,9 +38,12 @@ credential service was contacted.
 - A call's receiver and data arguments are bound before its closures run: a
   callback that assigns an argument variable (`evaluateJavascript(js) { js = ... }`,
   `val r = attach(name) { name = ... }`) does not change that call's argument,
-  in parentheses or trailing, as a statement or in a declaration, assignment or
-  return. Those right-hand sides now reuse the values their visit computed
-  instead of evaluating their calls a second time.
+  in parentheses or trailing, wherever the call is written. A call's value,
+  and a declaration's, assignment's or return's, reuses the values its
+  argument and receiver calls were visited with instead of evaluating them a
+  second time. When the callback writes the assigned name itself
+  (`u = wrap(u) { u = ... }`), the assigned value keeps that write, since the
+  callback may run later.
 - Declared closure parameters are locals that shadow outer names; they carry no
   value. This removes false findings where a parameter had the name of a
   tainted local or of `intent`, also for closures in parentheses. A lambda that
@@ -53,20 +56,26 @@ credential service was contacted.
   elements. For other callees an implicit `it` still refers to an enclosing
   `it`. Declared parameter types are recorded (`entry: ZipEntry`). A Kotlin
   `when (val u = ...)` subject and Swift `case let` / `case .some(let u)`
-  patterns bind their names to the value they match, also outside closures.
+  patterns bind their names to the value they match (its sources and
+  category; an associated value has no type or object identity of the enum),
+  for their entries only (shadowing an outer name), also outside closures. A
+  label (`url:` in `case let .open(url: dest)`) binds nothing.
 - A closure's value is its result: the last expression (Kotlin, Java expression
   bodies, single-expression Swift closures) and returns that leave the closure
   (`return@label`, Swift and Java `return`). An `if` without `else`, a
   statement and a body that always exits leave no last value; an
   `if`/`when`/`switch`/`try` leaves its branches' values, not its condition.
   Each branch value is read where the branch ends, so names the branch
-  declares or binds (`{ val t = ...; t }`, Swift `if let`) keep their values;
-  comments between `when` entries and Swift's `try` operator do not hide it.
+  declares or binds (`{ val t = ...; t }`, Swift `if let`) keep their values,
+  also in an unbraced inner `if`/`when`; comments between `when` entries and
+  Swift's `try` operator do not hide it.
   The calls of the last expression are evaluated once, where the closure is
   followed, so an unresolved call's effects are not applied twice. When an
   unresolved call's value includes a closure's result, a trace-budget cut in
-  that result is recorded as a precision limit there (`source trace
-  abstention`, `limited`): the callee may never return it.
+  that result, also one the closure only passes on, is recorded as a
+  precision limit there (`source trace abstention`, `limited`): the callee
+  may never return it. A `let`, `run`, `with` or `use` block's result is its
+  call's result, and keeps its cut.
   `withContext { }`, `runCatching { }` and other results now carry their
   provenance. A predicate, comparator or per-element action (`filter`,
   `first`, `find`, `count`, `any`, `sortedBy`, `takeIf`, `forEach`, and the
@@ -80,13 +89,19 @@ credential service was contacted.
   callee supplies is part of that value: the closure's parameters
   (`Html.build { b -> b.append(q) }`, Java `render(m -> { m.put("q", q); })`,
   Swift `render({ b in b.add(q) })`) and, for a Kotlin lambda without
-  parameters, what it writes into a possible implicit receiver: receiverless
-  builder writes (`append`, `add`, `put`, `set`, `emit`, `send`, ...) that name
-  no project function, and assignments to names that are no local or field
-  (`buildString { append(q) }`, `request { url = q }`). Another receiverless
-  call (`println(q)`, `require(...)`) is no write. Writes through a local
-  alias (`val c = b`), a scope block (`b.let { it.append(q) }`), a helper
-  handed the object (`fill(b, q)`), an index (`b.items[0].text = q`) or a
+  parameters, what it writes into a possible implicit receiver: a
+  receiverless call that is no standard top-level function (`println`,
+  `require`, `listOf`, ...) and, outside a known builder (`buildString`,
+  `buildList`, `flow`, `sequence`, ...), no project function this call can
+  bind to (`buildString { append(q) }`, `div { text(q) }`, `div { +q }`,
+  `request { parameter("q", q) }`), a nested DSL call (`p { +q }`), and an
+  assignment to a name that is no local or field (`request { url = q }`).
+  Inside a known builder its receiver's members come first. What a call
+  writes is its data, whichever callee runs. Writes through a local alias
+  (`val c = b`), a `let`/`also`/`use` block on it (`b.let { it.append(q) }`),
+  an unresolved helper handed the object itself (`fill(b, q)`; a value read
+  from it, `b.length`, and a reading member such as `b.contains(q)` write
+  nothing), an index (`b.items[0].text = q`, Swift `m["q"] = q`) or a
   nested builder on it (`b.group { g -> g.append(q) }`) count too, and so does
   the builder call that is the single expression of a Swift function or
   getter. This restores 1.7.0 findings for builder lambdas in parentheses and
@@ -149,10 +164,12 @@ merged as if they could run before the following statements, and they read
 captured locals as they are where they are written. A loop variable inside a
 builder closure (`for (p in parts) b.append(p)`) carries no value, as in
 direct code, a project helper that writes into a supplied object (`put(b, q)`)
-is not tracked, and `groupBy` keys taint the grouped elements. An exit inside
-a scope block (`run { return@outer }`) does not end the enclosing statement
-list, so dead statements after it are still visited. Closures in Kotlin class
-property initializers (`val listener = View.OnClickListener { }`,
+and an `apply`/`run`/`with` block on a declared supplied parameter are not
+tracked (the latter is `limited`), a helper handed a supplied object itself is
+assumed to write into it, and `groupBy` keys taint the grouped elements. An
+exit inside a scope block (`run { return@outer }`) does not end the enclosing
+statement list, so dead statements after it are still visited. Closures in
+Kotlin class property initializers (`val listener = View.OnClickListener { }`,
 `by lazy { }`) are not analyzed, as in 1.7.0. A value derived from a
 collection element (a `forEach` parameter, `first()`, `[0]`) does not keep the
 URL category, so a scheme/host check on it is not credited; `filter`
@@ -161,4 +178,6 @@ results are not sources, and `require`/`check`/`takeIf` predicates are not
 guards. Kotlin `suspend { }` lambdas still make tree-sitter-kotlin reject the
 enclosing class. The evaluation budget is shared across the analysis: projects
 with many followed calls can reach `recursion or call evaluation budget`
-(`partial`) sooner, at the same cost per followed call as direct calls.
+(`partial`) sooner, at the same cost per followed call as direct calls. Deeply
+nested Swift closures (dozens of levels) cost superlinear time in type
+lookups.
