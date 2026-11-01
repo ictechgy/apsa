@@ -232,7 +232,8 @@ and [analysis scope and limits](https://github.com/ictechgy/apsa/blob/main/docs/
   `with` lambdas, so every structural rule can report code inside them. A
   `?.let` lambda, or one with `return@`, merges like a branch that may not run;
   a reassignment inside a lambda that always runs can now also remove a 1.4
-  finding. Other lambdas and Swift closures are still not analyzed.
+  finding. Other lambdas and Swift closures were not analyzed until 1.7.1, which
+  follows them as blocks that may not run.
 - `ANDROID-CLEARTEXT` also comes from the referenced network security
   configuration (configuration-confirmed, so code scanning rates it). The
   manifest's `usesCleartextTraffic` candidate is dropped when that

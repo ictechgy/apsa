@@ -10,6 +10,7 @@ from typing import Any
 from .source_analysis import (
     ACCESSORS,
     ARCHIVE_ENTRY,
+    COMMENTS,
     ENTRY_ITERATORS,
     FILE_SINKS,
     FUNCTIONS,
@@ -328,6 +329,7 @@ CONTEXT = (
     "target_names",
     "return_values",
     "closure_depth",
+    "closure_returns",
     "guarded_paths",
     "unguarded_paths",
     "finding_start",
@@ -1111,7 +1113,7 @@ class NativeFlow:
         for owner in self.class_owners(analyzer, declared, call.node):
             stored.extend(frame.object_fields.get((StorageKey.STATIC_FIELDS, owner), {}).values())
         stored.extend(frame.object_fields.get(StorageKey.UNRESOLVED_FIELDS, {}).values())
-        return analyzer.changed(call.node, _union([receiver, *args, *stored]))
+        return analyzer.changed(call.node, _union([*analyzer.call_inputs(call, receiver, args), *stored]))
 
     def affected_objects(
         self, analyzer: Analyzer, call: Call, receiver: Value, args: list[Value], frame: Frame
@@ -1257,6 +1259,21 @@ class NativeFlow:
                     pending.append((value.identity, depth + 1, ancestors | {identity}))
         return affected
 
+    @staticmethod
+    def data_arguments(analyzer: Analyzer, call: Call, args: list[Value]) -> list[Value]:
+        """Argument values without closure literals.
+
+        A closure is a callable, not data: an unresolved callee is not assumed to
+        store its result into the objects it can reach. The call's own result
+        still carries the closure result (unavailable_result).
+        """
+        if len(args) != len(call.args):
+            return args
+        return [
+            Value() if analyzer.closure_argument(node) is not None else value
+            for node, value in zip(call.args, args, strict=True)
+        ]
+
     def unavailable_write(
         self,
         analyzer: Analyzer,
@@ -1267,6 +1284,7 @@ class NativeFlow:
         *,
         affected: set[str] | None = None,
     ) -> None:
+        args = self.data_arguments(analyzer, call, args)
         value = self.unavailable_result(analyzer, call, receiver, args, frame)
         if not value.traces:
             return
@@ -2228,6 +2246,14 @@ class NativeFlow:
 
     def value_binding(self, analyzer: Analyzer, call: Call, frame: Frame) -> Value | None:
         """A current lexical value binds an unqualified callee before a member/type name."""
+        if analyzer.language == "kotlin" and call.name == "invoke" and call.receiver is not None:
+            # done.invoke(x), done?.invoke(x): calling a value declared with a function type.
+            key = analyzer.key(call.receiver)
+            declared = (
+                frame.types.get(key) or analyzer.parameter_types.get(key) or analyzer.field_types.get(key, "")
+            )
+            if "->" in declared:
+                return frame.values.get(key, Value(type_name=declared))
         if (
             analyzer.language not in {"kotlin", "swift"}
             or call.receiver is not None
@@ -2443,6 +2469,18 @@ class NativeFlow:
     def signature_visible(analyzer: Analyzer, target: Callable, call: Call) -> bool:
         if len(target.parameters) != len(call.args):
             return False
+        if target.analyzer.language == "kotlin":
+            for (name, _type, _parameter), argument in zip(target.parameters, call.args, strict=True):
+                row = argument.parent
+                if (
+                    row is not None
+                    and row.type == "value_argument"
+                    and row.named_children
+                    and any(child.type == "=" for child in row.children)
+                    and analyzer.symbol_name(analyzer.text(row.named_children[0])) != name
+                ):
+                    # A named argument binds to the parameter it names, not to its position.
+                    return False
         if target.analyzer.language == "swift":
             for (name, _type, parameter), argument in zip(target.parameters, call.args, strict=True):
                 if NativeFlow.syntactic_inout(analyzer, argument) != bool(
@@ -2451,10 +2489,88 @@ class NativeFlow:
                     return False
                 external = _field(parameter, "external_name")
                 label = target.analyzer.text(external) if external is not None else name
-                actual = _field(argument.parent, "name") if argument.parent is not None else None
-                actual_label = analyzer.text(actual) if actual is not None else ""
+                parent = argument.parent
+                if parent is not None and parent.type == "call_suffix":
+                    # Trailing closures: the first drops its argument label (SE-0279);
+                    # each further one is written after its label (SE-0286).
+                    separator = argument.prev_sibling
+                    if separator is None or separator.type != ":" or separator.prev_sibling is None:
+                        continue
+                    actual_label = analyzer.text(separator.prev_sibling)
+                else:
+                    actual = _field(parent, "name") if parent is not None else None
+                    actual_label = analyzer.text(actual) if actual is not None else ""
                 if ("" if label == "_" else label) != actual_label:
                     return False
+        return True
+
+    @staticmethod
+    def declares_result(analyzer: Analyzer, node: Any) -> bool:
+        """Whether a Swift/Kotlin callable declares a result other than Void/Unit.
+
+        Read from the declaration's own children, so a function-typed parameter
+        (`done: () -> Void`) is never taken for the result type. A Kotlin
+        expression body supplies its value through the body instead.
+        """
+        children = [child for child in node.children if child.type not in COMMENTS]
+        if analyzer.language == "swift":
+            for index, child in enumerate(children):
+                if child.type == "->":
+                    following = next((part for part in children[index + 1 :] if part.is_named), None)
+                    return following is not None and analyzer.text(following).strip() not in {"Void", "()"}
+                if child.type == "function_body":
+                    break
+            return False
+        after = False
+        for index, child in enumerate(children):
+            if child.type in {"function_value_parameters", ")"}:
+                after = True
+            elif after and child.type == ":":
+                following = next((part for part in children[index + 1 :] if part.is_named), None)
+                body = next((part for part in children[index + 1 :] if part.type == "function_body"), None)
+                expression = body is not None and any(part.type == "=" for part in body.children)
+                return following is not None and analyzer.text(following).strip() != "Unit" and not expression
+            elif after and child.type in {"function_body", "block", "="}:
+                return False
+        return False
+
+    @staticmethod
+    def function_arity(analyzer: Analyzer, parameter: Any) -> int | None:
+        """Parameter count of a parameter's declared function type (through ?, parentheses)."""
+        pending = list(parameter.named_children)
+        while pending:
+            node = pending.pop(0)
+            if node.type == "function_type":
+                parameters = next(
+                    (
+                        part
+                        for part in node.named_children
+                        if part.type in {"function_type_parameters", "tuple_type"}
+                    ),
+                    None,
+                )
+                if parameters is None:
+                    return 0
+                return sum(
+                    1
+                    for part in parameters.named_children
+                    if part.type not in COMMENTS
+                    and (parameters.type != "tuple_type" or part.type == "tuple_type_item")
+                )
+            if node.type in {"nullable_type", "optional_type", "parenthesized_type"} or (
+                node.type in {"tuple_type", "tuple_type_item"} and len(node.named_children) == 1
+            ):
+                pending.extend(node.named_children)
+        return None
+
+    @staticmethod
+    def closure_accepts(analyzer: Analyzer, closure: Any, arity: int) -> bool:
+        """Whether a closure literal can be passed for a function type taking `arity` parameters."""
+        declared = analyzer.closure_arity(closure)
+        if declared is not None:
+            return declared == arity
+        if analyzer.language == "kotlin":
+            return arity <= 1  # `it` or no parameter
         return True
 
     def signature_type(self, analyzer: Analyzer, declared: str, use: Any) -> tuple | None:
@@ -2533,6 +2649,12 @@ class NativeFlow:
         for (_name, expected_type, parameter), argument, value in zip(
             target.parameters, call.args, args, strict=True
         ):
+            closure = analyzer.closure_argument(argument)
+            if closure is not None:
+                arity = self.function_arity(target.analyzer, parameter)
+                if arity is not None and self.closure_accepts(analyzer, closure, arity):
+                    # A closure literal of this arity matches the declared function type.
+                    continue
             actual = self.argument_signature_type(analyzer, argument, value, frame)
             expected = self.signature_type(target.analyzer, expected_type, parameter)
             if (inherited or lexical) and (actual is None or expected is None or actual != expected):
@@ -2807,6 +2929,10 @@ class NativeFlow:
             self.partial("source trace budget", analyzer, call=call)
         if "precision" in cuts:
             self.partial("source trace abstention", analyzer, call=call)
+        scope = analyzer.scope_function(call)
+        if scope is not None and analyzer.kotlin_scope_identity_known(scope[0], frame):
+            # An unshadowed stdlib scope function is modeled inline by the visitor.
+            return None
         syntactic_inout = [argument for argument in call.args if self.syntactic_inout(analyzer, argument)]
         binding = self.value_binding(analyzer, call, frame)
         if binding is not None:
@@ -2874,7 +3000,8 @@ class NativeFlow:
             if effects is not None:
                 return effects
             if (
-                any(argument.traces for argument in args)
+                # A closure argument was followed where it is written; only data counts here.
+                any(argument.traces for argument in self.data_arguments(analyzer, call, args))
                 and call.receiver is None
                 and call.name[:1].islower()
                 and not (
@@ -2961,7 +3088,7 @@ class NativeFlow:
         )
         affected = self.affected_objects(analyzer, call, receiver, args, frame)
         prior_objects = {key: fields.copy() for key, fields in frame.object_fields.items()}
-        uncertain_values = [receiver, *args]
+        uncertain_values = [receiver, *self.data_arguments(analyzer, call, args)]
         if local_receiver:
             uncertain_values.extend(frame.values.get(name, Value()) for name in analyzer.field_types)
         for object_identity in affected:
@@ -3105,11 +3232,8 @@ class NativeFlow:
                     elif (
                         callee.language == "java"
                         and not re.search(r"\bvoid\b", callee.text(target.node).split("{", 1)[0])
-                        or callee.language == "swift"
-                        and re.search(r"->\s*(?!Void\b)", callee.text(target.node).split("{", 1)[0])
-                        or callee.language == "kotlin"
-                        and not re.search(r"\)\s*(?::[^=\n]+)?=", callee.text(target.node))
-                        and re.search(r"\)\s*:\s*(?!Unit\b)", callee.text(target.node).split("{", 1)[0])
+                        or callee.language in {"swift", "kotlin"}
+                        and self.declares_result(callee, target.node)
                     ):
                         self.partial("return flow unavailable", analyzer, call=call)
                         returned = analyzer.changed(call.node, _union([receiver, *args]))

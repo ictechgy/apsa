@@ -303,13 +303,33 @@ struct MyApp: App {
 
 
 CONSTRUCTOR_REASON = "constructor field mapping unavailable"
+SOURCE_VIEWS = {"ContentView", "DetailView"}
 
 
-def test_ordinary_swiftui_views_are_analyzed_without_native_flow_reasons():
+def framework_constructions(report):
+    """Constructions recorded as unmodeled that are not the app's own views (SwiftUI credit)."""
+    return {
+        detail["call"]
+        for detail in report["metadata"]["native_flow"]["partial_details"]
+        if detail["reason"] == CONSTRUCTOR_REASON and detail["call"] not in SOURCE_VIEWS
+    }
+
+
+def test_ordinary_swiftui_views_credit_framework_views_and_keep_source_view_limits():
+    # View-builder closures are followed (1.7.1). SwiftUI's own views are credited;
+    # the app's memberwise view initializers, the dismiss environment action, a
+    # computed property read and a @State write in a closure remain precision limits.
     report = scan(*SWIFTUI_APP.items())
     assert report["metadata"]["functions"]["analyzed"] == 6, report
-    assert report["metadata"]["native_flow"]["state"] == "checked", report
-    assert report["metadata"]["native_flow"]["reasons"] == [], report
+    assert not report["findings"], report
+    assert report["metadata"]["native_flow"]["budget_reasons"] == [], report
+    assert report["metadata"]["native_flow"]["reasons"] == [
+        "callable value binding unresolved",
+        CONSTRUCTOR_REASON,
+        "object storage alias unavailable",
+        "receiver field inventory unavailable",
+    ], report
+    assert not framework_constructions(report), report
 
 
 @pytest.mark.parametrize(
@@ -328,7 +348,7 @@ def test_swiftui_credit_needs_an_apple_only_import_set(imports):
         "import SwiftUI\nimport WebKit", imports
     )
     report = scan(*files.items())
-    assert CONSTRUCTOR_REASON in report["metadata"]["native_flow"]["reasons"], report
+    assert "VStack" in framework_constructions(report), report
 
 
 @pytest.mark.parametrize(
@@ -344,13 +364,14 @@ def test_swiftui_credit_needs_an_apple_only_import_set(imports):
 )
 def test_source_swiftui_names_or_member_adding_extensions_withdraw_the_credit(shadow):
     report = scan(*SWIFTUI_APP.items(), ("App/Shadow.swift", "import SwiftUI\n" + shadow + "\n"))
-    assert CONSTRUCTOR_REASON in report["metadata"]["native_flow"]["reasons"], report
+    assert framework_constructions(report), report
 
 
 def test_extension_adding_only_members_keeps_the_credit():
     extension = "import SwiftUI\nextension View {\n    var framed: some View { border(Color.gray) }\n}\n"
     report = scan(*SWIFTUI_APP.items(), ("App/Style.swift", extension))
-    assert report["metadata"]["native_flow"]["reasons"] == [], report
+    assert not framework_constructions(report), report
+    assert report["metadata"]["native_flow"]["budget_reasons"] == [], report
 
 
 def test_swift_shadows_leave_android_framework_credit_unchanged():

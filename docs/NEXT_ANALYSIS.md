@@ -231,8 +231,9 @@ states what it reads.
   preferences or `loadFileURL` read access to a whole app directory.
 - **Analyzer model.** Kotlin `let`, `also`, `use`, `apply`, `run` and `with`
   lambdas are followed as blocks; a `?.` call or a lambda with `return@` merges
-  like a branch that may not run. Other lambdas and Swift closures are still not
-  analyzed. Locals created with an imported class's constructor carry that type.
+  like a branch that may not run. Other closures, in parentheses or trailing, are
+  followed once as blocks that may not run; their parameters shadow outer names and
+  carry no value except elements of known collection functions. Locals created with an imported class's constructor carry that type.
   Guards are recognized by text in the same function, not by dominance.
   Per-function and per-file budgets bound the cost; a check that reaches its
   match budget reports partial coverage.
@@ -383,8 +384,9 @@ OWASP 인증을 증명하지 않습니다. VLC 검색의 plist 부재 주장은 
 - **WebView.** 코드나 매니페스트 meta-data(소스 트리만)에서 끈 Safe Browsing, UIWebView, private
   preference나 앱 디렉터리 전체에 대한 `loadFileURL` 읽기 권한으로 허용한 WKWebView 파일 URL 접근을 봅니다.
 - **분석 모델.** Kotlin `let`·`also`·`use`·`apply`·`run`·`with` 람다를 블록으로 따라가며, `?.` 호출이나
-  `return@`이 있는 람다는 실행되지 않을 수도 있는 분기처럼 병합합니다. 다른 람다와 Swift 클로저는 여전히
-  분석하지 않습니다. import한 클래스의 생성자로 만든 지역 값은 그 타입을 가집니다. 가드는 같은 함수의
+  `return@`이 있는 람다는 실행되지 않을 수도 있는 분기처럼 병합합니다. 괄호 안이나 trailing으로 넘긴
+  다른 클로저도 실행되지 않을 수도 있는 블록으로 한 번 따라가며, 파라미터는 바깥 이름을 가리고 알려진 컬렉션
+  함수의 원소 외에는 값을 갖지 않습니다. import한 클래스의 생성자로 만든 지역 값은 그 타입을 가집니다. 가드는 같은 함수의
   텍스트로 인식하며 지배 관계는 보지 않습니다. 함수·파일 단위 예산이 비용을 제한하고, 일치 예산에 걸린
   검사는 partial입니다.
 - **평가.** [OWASP MASTG 데모](../benchmarks/MASTG_RESULTS.ko.md)(개발 재실행: 평가 대상 실패 데모 78개 중
