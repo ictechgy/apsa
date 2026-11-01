@@ -1087,8 +1087,9 @@ class Analyzer:
         framework_import = any(
             symbol.startswith(("android.", "androidx.")) for symbol in flow.imported_symbols(self, call.name)
         ) or any(
-            declaration.removeprefix("static ").strip().startswith(("android.", "androidx."))
-            and declaration.strip().endswith(".*")
+            # Only SQLiteDatabase declares static openers; a package wildcard
+            # (`import android.os.*`) imports classes, not its members.
+            re.fullmatch(r"(?:static\s+)?android\.database\.sqlite\.SQLiteDatabase\.\*", declaration.strip())
             and (self.language == "kotlin" or declaration.strip().startswith("static "))
             for declaration in self.imports
         )
@@ -1111,8 +1112,11 @@ class Analyzer:
         complete = (
             not framework_import and not bound and all(id(target.node) in resolved for target in candidates)
         )
-        if complete and all(self.declares_database(target) for target in targets):
-            self.opener_certain = True
+        if all(self.declares_database(target) for target in targets):
+            # Every reading returns a SQLiteDatabase, so the type is kept either way; an
+            # incomplete resolution still records which callee runs as a guess.
+            self.opener_certain = complete
+            self.opener_prefers_framework = True
             return True
         if (
             complete

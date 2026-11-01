@@ -1468,3 +1468,37 @@ class Repo(private val db: SQLiteDatabase) {
 def test_a_database_returned_under_another_spelling_keeps_the_sink(declaration):
     report = analyze_sources([("app/Repo.kt", ALIASED_RETURN.replace("DECL", declaration))])
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+CACHED_DAO = """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
+IMPORT
+class Dao(private val helper: SQLiteOpenHelper) {
+    private var cached: SQLiteDatabase? = null
+    private fun openDatabase(): SQLiteDatabase {
+        return cached ?: helper.writableDatabase.also { cached = it }
+    }
+    fun find(intent: Intent) { openDatabase().rawQuery("SELECT * FROM t WHERE id = " + intent.dataString, null) }
+}
+"""
+
+
+@pytest.mark.parametrize(
+    ("extra", "state"),
+    [("", "checked"), ("import android.os.*", "checked"), ("import android.database.sqlite.*", "checked")],
+    ids=["plain", "package-wildcard", "sqlite-package-wildcard"],
+)
+def test_a_declared_database_opener_keeps_its_sink_under_package_wildcards(extra, state):
+    report = analyze_sources([("app/Dao.kt", CACHED_DAO.replace("IMPORT", extra))])
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+    assert sql["state"] == state
+
+
+def test_a_declared_database_opener_keeps_its_sink_when_the_callee_is_uncertain():
+    flags = ("app/Flags.kt", "package com.example.app\nobject Flags { var openDatabase = false }\n")
+    report = analyze_sources([("app/Dao.kt", CACHED_DAO.replace("IMPORT", "")), flags])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+    assert "opener receiver identity unresolved" in report["metadata"]["native_flow"]["reasons"]
