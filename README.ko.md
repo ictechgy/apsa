@@ -359,7 +359,8 @@ Coverage는 실행 공백과 정밀도 한계를 구분합니다. `partial`은 �
 실행의 부분 실패가 여기에 해당하며, 감사를 불완전(종료 코드 `3`)하게 만듭니다. `limited`는 범위 안의
 입력을 모두 검사했지만 제한된 정적 모델이 일부 경로에서 판단을 유보했다는 뜻입니다. 예를 들어 native
 flow의 호출 대상 미해결, 축소 모델로만 보는 Objective-C(`OBJC-*` 규칙. `AST-*` 규칙은 Objective-C를
-검사하지 않으므로 다른 언어와 함께 있으면 `partial`), 토큰 수준의 JS/TS/Dart 흐름이 그렇습니다.
+검사하지 않으므로 다른 언어와 함께 있으면 `partial`), Kotlin·Java와 함께 있는 Swift에 대해 Swift 모델이 없는 규칙,
+토큰 수준의 JS/TS/Dart 흐름이 그렇습니다.
 `limited` 감사는 명시된 범위에서 완료된 것으로 보며, 보고서(`summary.limited`, SARIF 알림, MASWE 표,
 체크리스트)에 한계를 표시합니다. 여러 항목을 합칠 때는 `partial`이 `limited`보다, `limited`가
 `checked`보다 우선합니다. `scan --strict-coverage`, `policy evaluate --strict-coverage`, 정책의

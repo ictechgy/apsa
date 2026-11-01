@@ -47,6 +47,12 @@ device or credential service was contacted.
   before analysis leaves the `OBJC-*` rules `partial`, so a `.mm`-only project
   now exits 3. Functions hidden by unexpanded macros remain a precision limit
   (`limited`, `function_inventory_complete: false`).
+- **Kotlin or Java with Swift.** `AST-CRYPTO-ECB`, `AST-CRYPTO-WEAK-CIPHER` and
+  `AST-SQL-CONCAT` have no Swift model. In projects that mix Kotlin or Java
+  with Swift (Kotlin Multiplatform, or Android and iOS apps in one repository)
+  they are now `limited` with a note instead of `checked`: exit 0 by default, 3
+  under strict coverage. Swift-only projects keep `not-run`, and any execution
+  gap keeps them `partial`.
 - **Dropped sources.** When every recognized source file is dropped before
   parsing (byte or node budget, unavailable grammar, parser failure), the
   `AST-*` rules are `partial` (exit 3) instead of `not-run`. A `skipped` source
@@ -119,9 +125,18 @@ device or credential service was contacted.
   bound value, chained, typed, shorthand and `case` bindings and sinks in
   `guard` else bodies are followed, a shadowing `if let` no longer credits the
   outer variable, and `AST-WEBVIEW-HOST-ALLOWLIST` reads every clause of a
-  navigation-policy condition; early exits in Java constructors guard later
-  statements; a project method named `openDatabase`/`openOrCreateDatabase` is
-  analyzed as project code rather than as the framework opener;
+  navigation-policy condition; a Swift `guard` always guards the statements
+  after it (including else bodies ending in `fatalError()`,
+  `preconditionFailure()`, `continue` or `break`), and field and object stores
+  in a `guard` else body are kept as possible effects for other methods;
+  Kotlin `init` blocks and secondary constructors and Swift `init`/`deinit`
+  bodies are analyzed and counted as functions (they were skipped without a
+  coverage gap), while initializers of local or anonymous classes stay part of
+  their enclosing function; early exits in Java constructors guard later
+  statements; a receiverless `openDatabase`/`openOrCreateDatabase` is analyzed
+  as project code only when it resolves from the call site to a non-override
+  method of the enclosing class or a visible Kotlin top-level function, and
+  otherwise keeps the framework `SQLiteDatabase` identity;
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies
@@ -137,9 +152,11 @@ device or credential service was contacted.
 - Source rules: Timber, `Log.wtf`, more `console.*`, `debugPrint` and `os_log`
   logging; `UserDefaults.setValue`, multi-line chains and Objective-C
   `NSUserDefaults` token storage; dot-anchored host suffix checks are no longer
-  reported unless the suffix is a shared-hosting public suffix (`.github.io`,
-  `.web.app`, `.herokuapp.com`, `*.amazonaws.com` and similar), which the AST
-  engine also no longer accepts as a host allowlist; new
+  reported unless the suffix is a bare top-level domain, a common country
+  second-level suffix (such as `.co.uk`) or a shared-hosting suffix
+  (`.github.io`, `.web.app`, `.herokuapp.com`, `*.amazonaws.com`, Google Cloud
+  and Firebase Storage, Azure static web and Front Door, Cloudflare R2 and
+  similar), which the AST engine also no longer accepts as a host allowlist; new
   `SOURCE-WORLD-ACCESSIBLE-FILE`; lambda hostname verifiers and
   `X509ExtendedTrustManager`; Kotlin `*Activity` subclasses and SQLite
   accessors; Objective-C `@import`; React Navigation route params and sqflite
@@ -151,10 +168,12 @@ device or credential service was contacted.
   and privacy declarations without reasons are reported. Multi-domain ATS
   evidence is kept under the 1.6.4 finding ID (one per Info.plist) and
   non-string TLS versions no longer crash. QuayGate `app-cleartext`
-  (`QG-APP-CLEARTEXT`): with minSdk below 24 and a network security
-  configuration, an app that does not declare `usesCleartextTraffic` is
-  reported as medium whatever its targetSdk, because devices on API 23 and
-  lower ignore the configuration and permit cleartext by default.
+  (`QG-APP-CLEARTEXT`) with a network security configuration reports
+  cleartext for older devices as medium whatever the targetSdk: below minSdk
+  24 when `usesCleartextTraffic` is not declared (API 23 and lower ignore the
+  configuration), and below minSdk 23 even when it is `false` (API 21-22
+  ignore the attribute as well), with the remediation to raise minSdk to 23
+  or 24.
 - Intelligence: rejected display aliases no longer drop OSV advisories; KEV is
   matched by alias and stored in full; VEX covers GO-/MAL-/PYSEC- origins;
   several versions at one dependency path merge into one finding's
@@ -169,28 +188,35 @@ bzip2/LZMA ZIP members, plist shared-reference expansion, malformed manifests,
 SARIF ingest regular expressions, UTF-16 DTDs in legacy XML paths and very
 large ZIP central directories (up to 20,000 entries / 8 MiB, including binary
 analysis) now produce bounded partial results instead of stopping the audit.
+Non-ASCII paths work under macOS parser isolation.
+
 APK, AAB, IPA, ZIP and APK-set inputs, including each selected APK of an
 `.apks`, are refused before ZIP entries are allocated when the central
 directory exceeds the entry or byte budget, or when no end record lies within
 the last 64 KiB + 22 bytes (the widest window a supported CPython searches).
+
 SARIF ingest redacts credential-like assignments in linear time, with unchanged
 output. `STORAGE-TOKEN-PREFS` scans in linear time: a `UserDefaults` chain is
 followed for up to four continuation lines of up to 200 characters, and the
-credential word must appear within 200 characters after the setter. Non-ASCII paths work under macOS parser isolation.
+credential word must appear within 200 characters after the setter.
 
 ## Remaining limits
 
 Analysis remains bounded and partial. Swift memberwise initializers are not
 modelled, so SwiftUI views that construct other source views usually report
 `limited`. Android framework member-type lists come from the public SDK
-surface and were not checked against `android.jar`. In Kotlin Multiplatform
-projects, rules not implemented for Swift still report the Kotlin result.
-SARIF `executionSuccessful` stays `true` for `limited` coverage; the limitation
+surface and were not checked against `android.jar`. SARIF `executionSuccessful` stays `true` for `limited` coverage; the limitation
 is reported as a notification. Some URL sources (`URLContexts.first`), Swift
 `&&` conditions (the comma form is credited) and negated early-return host
 checks are not credited as guards, so guarded code there can still be
-reported. The shared-hosting suffix list is curated rather than the full public
-suffix list. Hermes bytecode is not
+reported. The shared-hosting and second-level suffix lists are curated rather
+than the full public suffix list. Constructor calls such as `Foo(x)` do not
+pass their arguments into Kotlin or Swift initializer bodies, and Kotlin
+class-level property initializers are not analyzed. Native field summaries can accumulate duplicate traces of one
+source with re-derived origins, so whether non-convergence is reported as
+`limited` (`field summary fixed point unresolved`) or as a `partial` budget gap
+can depend on the round cap; a trace or round cap that is hit is always
+reported as a budget gap. Hermes bytecode is not
 decoded, and the hybrid engine is not a complete JavaScript/TypeScript/Dart
 grammar. Static candidates do not establish runtime reachability or
 exploitability. This release does not include a GUI installer.

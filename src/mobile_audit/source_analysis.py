@@ -40,6 +40,9 @@ ACCESSORS = {
     "getter",
     "setter",
 }
+# Kotlin init blocks and secondary constructors and Swift init/deinit bodies are analyzed
+# like methods. They have no name of their own, so they are never call targets by name.
+INITIALIZERS = {"anonymous_initializer", "secondary_constructor", "init_declaration", "deinit_declaration"}
 FUNCTIONS = {
     "method_declaration",
     "constructor_declaration",
@@ -47,6 +50,7 @@ FUNCTIONS = {
     "method_definition",
     "function_definition",
     *ACCESSORS,
+    *INITIALIZERS,
 }
 COMMENTS = {"comment", "line_comment", "block_comment", "multiline_comment"}
 STRINGS = {"string_literal", "line_string_literal", "multi_line_string_literal", "character_literal"}
@@ -54,8 +58,9 @@ IDENTIFIERS = {"identifier", "simple_identifier"}
 # Statement lists; Java constructors have their own body type, Kotlin/Swift reuse block/function_body.
 BLOCKS = {"block", "statements", "function_body", "constructor_body"}
 URI_REFERENCE = "https://developer.android.com/privacy-and-security/risks/unsafe-uri-loading"
-# Shared-hosting public suffixes: anyone can register a subdomain, so a dot-anchored suffix
-# check against one is no allowlist. WEBVIEW-HOST-MATCH in data/rules.json uses the same list.
+# Public suffixes anyone can register a subdomain under: shared hosting and common country
+# second-level domains. A dot-anchored suffix check against one, or against a bare TLD,
+# is no allowlist. WEBVIEW-HOST-MATCH in data/rules.json uses the same list.
 SHARED_HOSTING_SUFFIXES = (
     r"(?:[\w-]+\.)*amazonaws\.com|github\.io|githubusercontent\.com|gitlab\.io"
     r"|firebaseapp\.com|firebaseio\.com|web\.app|herokuapp\.com|appspot\.com|run\.app"
@@ -63,7 +68,12 @@ SHARED_HOSTING_SUFFIXES = (
     r"|azurestaticapps\.net|azureedge\.net|cloudapp\.net|blob\.core\.windows\.net"
     r"|trafficmanager\.net|netlify\.app|vercel\.app|now\.sh|pages\.dev|workers\.dev"
     r"|blogspot\.com|wordpress\.com|wixsite\.com|glitch\.me|onrender\.com|fly\.dev|surge\.sh"
-    r"|ngrok\.io|ngrok-free\.app"
+    r"|ngrok\.io|ngrok-free\.app|storage\.googleapis\.com|firebasestorage\.app"
+    r"|(?:[\w-]+\.)?web\.core\.windows\.net|(?:[\w-]+\.)?digitaloceanspaces\.com"
+    r"|ondigitalocean\.app|r2\.dev|up\.railway\.app|deno\.dev|pythonanywhere\.com|repl\.co"
+    r"|(?:[\w-]+\.)?azurefd\.net"
+    r"|(?:co|org|ac|gov|me)\.uk|(?:com|net|org)\.au|(?:co|ne|or)\.jp|co\.kr"
+    r"|com\.(?:br|cn|hk|sg|tw|mx|tr|ar)|co\.(?:in|nz|za|id)"
 )
 SHARED_HOSTING = re.compile(SHARED_HOSTING_SUFFIXES, re.I)
 # Framework flag values a PendingIntent flags expression may contain. Intent activity flags
@@ -386,9 +396,25 @@ def _walk(node: Any, *, descend_functions: bool = True):
     while stack:
         current = stack.pop()
         yield current
-        if current.type in COMMENTS or (not descend_functions and current.type in FUNCTIONS):
+        if current.type in COMMENTS or (
+            not descend_functions and current.type in FUNCTIONS and not _nested_initializer(current)
+        ):
             continue
         stack.extend(reversed(current.named_children))
+
+
+def _nested_initializer(node: Any) -> bool:
+    """An init of a local or anonymous class runs in its enclosing function's scope.
+
+    Such an initializer is analyzed inline with that function, which supplies the
+    locals it captures; it is not an analysis unit of its own.
+    """
+    if node.type not in INITIALIZERS:
+        return False
+    parent = node.parent
+    while parent is not None and parent.type not in FUNCTIONS:
+        parent = parent.parent
+    return parent is not None
 
 
 def _field(node: Any, name: str) -> Any:
@@ -411,7 +437,11 @@ def _function_body(function: Any) -> Any:
         (
             node
             for node in function.named_children
-            if node.type == "function_body" or node.type == "statements" and function.type in ACCESSORS
+            if node.type == "function_body"
+            or node.type == "statements"
+            and function.type in ACCESSORS
+            or node.type == "block"
+            and function.type in INITIALIZERS
         ),
         None,
     )
@@ -419,6 +449,8 @@ def _function_body(function: Any) -> Any:
 
 def _analysis_unit(node: Any) -> bool:
     """A counted, analyzed callable. An accessor needs a property and a body of its own."""
+    if node.type in INITIALIZERS:
+        return not _nested_initializer(node)
     if node.type not in ACCESSORS:
         return node.type in FUNCTIONS
     return _accessor_property(node) is not None and _function_body(node) is not None
@@ -929,7 +961,7 @@ class Analyzer:
             return False
         if call.receiver is None:
             # A project method of the same name is analyzed like any other call.
-            return not self.project_callable(call.name, call.node)
+            return not self.project_callable(call)
         key = self.key(call.receiver)
         return (
             key in {"SQLiteDatabase", SQLITE_DATABASE}
@@ -937,19 +969,46 @@ class Analyzer:
             or bool(re.fullmatch(r"(?i)(?:\w*context|ctx)(?:\(\))?", key or ""))
         )
 
-    def project_callable(self, name: str, node: Any) -> bool:
-        """Whether the analyzed sources of this language declare a function or method `name`."""
-        if self.native_flow is not None:
-            return any(
-                target.analyzer.language == self.language for target in self.native_flow.by_name.get(name, [])
+    def project_callable(self, call: Call) -> bool:
+        """Whether a receiverless call resolves from its call site to project code, not the SDK.
+
+        Only a signature-matching method of the enclosing class or a top-level function of
+        the same file, Kotlin package or an import qualifies: the calls the bounded flow
+        can follow. An override returns the framework type and a same-named method of an
+        unrelated class or an inherited base is not followed, so those keep the SDK identity.
+        """
+        flow = self.native_flow
+        if flow is None or self.function is None:
+            return False
+        owner = flow.owner(self, self.function)
+        namespace = flow.namespaces[id(self)]
+        for target in flow.by_name.get(call.name, []):
+            source = target.analyzer
+            if source.language != self.language or not flow.signature_visible(self, target, call):
+                continue
+            modifiers = next(
+                (child for child in target.node.named_children if child.type == "modifiers"), None
             )
-        root = node
-        while root.parent is not None:
-            root = root.parent
-        return any(
-            part.type in FUNCTIONS and self.symbol_name(self.text(_field(part, "name"))) == name
-            for part in _walk(root)
-        )
+            if "override" in flow.declaration_tokens(target.node) or re.search(
+                r"@Override\b", source.text(modifiers)
+            ):
+                continue
+            if target.owner:
+                if target.owner == owner and source.path == self.path:
+                    return True
+                continue
+            package = flow.namespaces[id(source)]
+            if not flow.lexical_function(target.node) and (
+                source.path == self.path
+                or self.language == "kotlin"
+                and (
+                    package == namespace
+                    or f"{package}.{call.name}" in self.imports
+                    or f"{package}.*" in self.imports
+                )
+            ):
+                return True
+        return False
 
     def identifier_value(self, name: str, frame: Frame, node: Any) -> Value:
         if (
@@ -1706,8 +1765,8 @@ class Analyzer:
 
     @classmethod
     def owned_suffix(cls, value: str) -> bool:
-        """A host suffix only its owner can extend: not a shared-hosting public suffix."""
-        return cls.hostname(value) and not SHARED_HOSTING.fullmatch(value)
+        """A host suffix only its owner can extend: a registrable domain, not a TLD or public suffix."""
+        return cls.hostname(value) and "." in value and not SHARED_HOSTING.fullmatch(value)
 
     def comparison(self, expression: Any, literal_node: Any, frame: Frame) -> dict[GuardKey, set[str]]:
         value = self.value(expression, frame)
@@ -2419,7 +2478,7 @@ class Analyzer:
 
     def visit(self, node: Any, frame: Frame, guards: dict[GuardKey, set[str]], conditions: list[Any]) -> None:
         self.active_guards = guards
-        if node.type in COMMENTS or node.type in FUNCTIONS:
+        if node.type in COMMENTS or node.type in FUNCTIONS and not _nested_initializer(node):
             return
         if node.type in {"lambda_expression", "lambda_literal"}:
             self.visit_scope_lambda(node, frame, guards, conditions, "", None, optional=True)
@@ -2686,11 +2745,9 @@ class Analyzer:
             }
             return
         if node.type == "guard_statement" and self.language == "swift":
-            # The continuation is guarded only when the else body exits the function.
+            # Swift rejects a guard-else body that can fall through (return, throw, break,
+            # continue or a Never call such as fatalError), so the continuation is guarded.
             clauses, _, body = self.swift_clauses(node)
-            from .native_guards import exits as definitely_exits
-
-            exits = bool(body is not None and definitely_exits(self, body))
             entry = frame.copy()
             entry_guards = {origin: checks.copy() for origin, checks in guards.items()}
             entry_conditions = conditions.copy()
@@ -2704,23 +2761,47 @@ class Analyzer:
                     self.bind_swift_clause(clause, frame)
                     continue
                 self.visit(clause.condition, frame, guards, conditions)
-                if exits:
-                    for origin, checks in self.constraints(clause.condition, frame).items():
-                        guards.setdefault(origin, set()).update(checks)
-                        if (
-                            "path-contained" in checks
-                            and not conditions
-                            and not self.closure_depth
-                            and isinstance(origin, tuple)
-                        ):
-                            self.guarded_paths.add(origin)
-                    conditions.append(clause.condition)
+                for origin, checks in self.constraints(clause.condition, frame).items():
+                    guards.setdefault(origin, set()).update(checks)
+                    if (
+                        "path-contained" in checks
+                        and not conditions
+                        and not self.closure_depth
+                        and isinstance(origin, tuple)
+                    ):
+                        self.guarded_paths.add(origin)
+                conditions.append(clause.condition)
             if body is not None:
                 # The else body runs when a clause fails, from the state before the guard: no
                 # condition or binding of the guard holds there, and it never falls through.
                 markers = [clause.node for clause in clauses if clause.node is not None]
-                self.visit(body, entry, entry_guards, [*entry_conditions, *markers])
+                alternative = entry.copy()
+                self.visit(body, alternative, entry_guards, [*entry_conditions, *markers])
                 self.active_guards = guards
+                # Its stores to fields and objects outlive the exit: keep them as may-effects for
+                # the continuation and the field summaries, as an `if` arm's are. Locals end here.
+                for key, previous in entry.values.items():
+                    value = alternative.values.get(key, previous)
+                    if value is previous or key in entry.local_names:
+                        continue
+                    current = frame.values.get(key, previous)
+                    frame.values[key] = _union(
+                        [current, value],
+                        current.category if current.category == value.category else "unknown",
+                        type_name=previous.type_name,
+                    )
+                for identity, fields in alternative.object_fields.items():
+                    stored = entry.object_fields.get(identity, {})
+                    merged = frame.object_fields.setdefault(identity, {})
+                    for key, value in fields.items():
+                        if stored.get(key) is value:
+                            continue
+                        current = merged.get(key, Value())
+                        merged[key] = _union(
+                            [current, value],
+                            current.category if current.category == value.category else "unknown",
+                            current.type_name or value.type_name,
+                        )
             return
         if node.type in BLOCKS:
             local = frame.copy()
@@ -3199,6 +3280,21 @@ class Analyzer:
         parameters = _field(function, "parameters") or next(
             (node for node in function.named_children if node.type == "function_value_parameters"), None
         )
+        if function.type == "anonymous_initializer":
+            # A Kotlin init block sees the primary constructor's parameters.
+            owner = function.parent.parent if function.parent is not None else None
+            primary = (
+                next((node for node in owner.named_children if node.type == "primary_constructor"), None)
+                if owner is not None
+                else None
+            )
+            parameters = (
+                next((node for node in primary.named_children if node.type == "class_parameters"), None)
+                if primary is not None
+                else None
+            )
+            if parameters is None:
+                return []
         nodes = (
             parameters.named_children
             if parameters
@@ -3376,6 +3472,8 @@ class Analyzer:
         if function.type in ACCESSORS:
             # Accessor findings name their property.
             self.scope = (self.declaration(_accessor_property(function)) or ("",))[0]
+        elif function.type in INITIALIZERS:
+            self.scope = "deinit" if function.type == "deinit_declaration" else "init"
         self.function = function
         self.function_source = self.text(function)
         self.path_guarded = self.action_hint = None
@@ -3589,7 +3687,7 @@ class Analyzer:
                     and not node.has_error
                 ):
                     self.safe_local_types.add(name)
-            if node.type in FUNCTIONS and node.type not in ACCESSORS:
+            if node.type in FUNCTIONS and node.type not in ACCESSORS | INITIALIZERS:
                 self.defined_functions.add(self.symbol_name(self.text(_field(node, "name"))))
             if node.type == "object_declaration":
                 name = next(
@@ -3940,16 +4038,23 @@ def analyze_sources(
         if objc_only:
             return "not-run"
         objc_gap = objc_family and not android_only
-        if rule == "AST-SQL-CONCAT" and ast_languages == {"swift"} and declared_sql:
+        swift = "swift" in ast_languages
+        if rule == "AST-SQL-CONCAT" and swift and declared_sql:
+            # Swift files are examined for the exact declared sinks only: a precision limit.
             examined = state == "checked" and rule not in truncated_rules and not objc_gap
             return "limited" if examined else "partial"
-        if rule in SWIFT_UNIMPLEMENTED and ast_languages == {"swift"} and not other_unsupported:
+        # The built-in check is not implemented for Swift. Swift alone leaves it
+        # not-run; beside another AST language the Swift files are still parsed and
+        # examined by the AST engine, so the missing Swift model is a precision
+        # limit: it turns checked into limited and never hides a partial state.
+        swift_unmodelled = rule in SWIFT_UNIMPLEMENTED and swift
+        if swift_unmodelled and ast_languages == {"swift"} and not other_unsupported:
             return "not-run"
         if objc_gap:
             return "partial"
         if rule in truncated_rules and state == "checked":
             return "partial"
-        if rule in limited_rules and state == "checked":
+        if (rule in limited_rules or swift_unmodelled) and state == "checked":
             return "limited"
         return state
 
@@ -3986,7 +4091,7 @@ def analyze_sources(
             )
             + (
                 " The built-in check is not implemented for Swift; project-declared SQL sinks cover only their exact specifications."
-                if rule in SWIFT_UNIMPLEMENTED and ast_languages == {"swift"}
+                if rule in SWIFT_UNIMPLEMENTED and "swift" in ast_languages
                 else ""
             )
             + (

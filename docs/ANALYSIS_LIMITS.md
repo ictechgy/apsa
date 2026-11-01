@@ -33,8 +33,12 @@ sink) records `source trace budget` and stays `partial`.
 Field summaries whose sources and contents stopped changing while derived trace
 identities still change record the precision reason
 `field summary fixed point unresolved`; contents still changing at the round cap
-record the budget reason `field summary fixed-point budget`. An unaffected
-file's empty diagnostic list does not make its rules globally complete.
+record the budget reason `field summary fixed-point budget`. Unknown calls
+re-derive trace origins each round, so a field can accumulate duplicate traces
+of the same source; whether those reach the trace cap before the round cap
+decides the kind, so the classification can depend on the round cap. A trace or
+round cap that is hit is always a budget gap. An unaffected file's empty
+diagnostic list does not make its rules globally complete.
 
 Objective-C `.m` files are examined only by the `OBJC-*` rules, through a
 reduced model: they are `limited` when every observed function was analyzed and
@@ -47,6 +51,14 @@ stays false. `AST-*` rules never examine Objective-C or Objective-C++: beside
 Java, Kotlin or Swift sources they are `partial`, and for an
 Objective-C-family-only source set they are `not-run` (Android-only rules are
 `not-applicable` for iOS-only sources).
+
+`AST-CRYPTO-ECB`, `AST-CRYPTO-WEAK-CIPHER` and `AST-SQL-CONCAT` are not
+implemented for Swift. Swift alone leaves them `not-run`. Beside Java or Kotlin
+sources the Swift files are still parsed and examined by the AST engine, so the
+missing Swift model is a precision limit: these rules are `limited` (with a note)
+where they would otherwise be `checked`, and stay `partial` for any execution
+gap. Project-declared SQL sinks examine Swift for their exact specifications
+only, which likewise leaves `AST-SQL-CONCAT` `limited`.
 
 A recognized source file dropped before parsing (byte or node budget, an
 unavailable grammar, a parser failure) is an execution gap even when no other

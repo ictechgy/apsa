@@ -1,7 +1,7 @@
 """New pure extension-conformance regressions; no SDK/compiler/network/process.
 
-Unknown conformance fences every root; qualified Foundation is therefore partial
-for the affected Handler. Unrelated owners retain the SDK positive. Private
+Unknown conformance fences every root; qualified Foundation is therefore an
+abstention (limited) for the affected Handler. Unrelated owners retain the SDK positive. Private
 aliases are interpreted from extension context, not caller visibility.
 """
 
@@ -50,9 +50,16 @@ LAYOUTS = [
 ]
 
 
-def gap_state(report):
-    """Precision abstentions leave coverage limited; a budget reason keeps it partial."""
-    return "partial" if report["metadata"]["native_flow"]["budget_reasons"] else "limited"
+# Unknown conformance makes the URL constructor identity an abstention of the
+# bounded model on fully examined code: a precision limit, never a budget.
+ABSTENTION = ["constructor field mapping unavailable", "source trace abstention"]
+
+
+def assert_abstention_is_limited(report, states):
+    flow = report["metadata"]["native_flow"]
+    assert flow["state"] == "partial", report
+    assert flow["budget_reasons"] == [] and flow["precision_reasons"] == ABSTENTION, report
+    assert states == {"limited"}, report
 
 
 def checked_inputs(report):
@@ -86,8 +93,7 @@ def test_extension_conformance_is_lookup_uncertainty(kind, layout, reverse, cont
         assert matches and all(item["status"] == "candidate" for item in matches), report
     else:
         # Unknown protocol membership can supply any root, including Foundation.
-        assert report["metadata"]["native_flow"]["state"] == "partial", report
-        assert states == {gap_state(report)}, report
+        assert_abstention_is_limited(report, states)
         if control == "affected" and kind != "empty":
             assert matches and all(item["status"] == "candidate" for item in matches), report
 
@@ -114,7 +120,7 @@ def test_private_alias_in_extension_file_still_affects_other_caller_file(kind, l
     report = analyze_sources(inputs)
     matches, states = checked_inputs(report)
     assert matches and all(item["status"] == "candidate" for item in matches), report
-    assert states == {gap_state(report)} and report["metadata"]["native_flow"]["state"] == "partial", report
+    assert_abstention_is_limited(report, states)
 
 
 @pytest.mark.parametrize("limit", [0, 1])

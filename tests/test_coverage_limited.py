@@ -199,6 +199,91 @@ def test_objc_with_java_leaves_ast_rules_partial_except_android_only_rules():
     assert report_incomplete(as_report(analysis))
 
 
+SWIFT_UNIMPLEMENTED_RULES = {"AST-CRYPTO-ECB", "AST-CRYPTO-WEAK-CIPHER", "AST-SQL-CONCAT"}
+KOTLIN = 'package n\n\nclass Greeter {\n    fun greet(): String {\n        return "hi"\n    }\n}\n'
+
+
+@pytest.mark.parametrize(
+    "other", [("Greeter.kt", KOTLIN), ("Greeter.java", "class Greeter { void idle() {} }")]
+)
+def test_swift_unimplemented_rules_are_limited_beside_another_ast_language(other):
+    mixed = analyze_sources([other, ("Fixed.swift", SWIFT)])
+    # The Swift files are examined, but these rules have no Swift model: a precision limit.
+    assert states(mixed, SWIFT_UNIMPLEMENTED_RULES) == {"limited"}
+    assert states(mixed, set(RULES) - SWIFT_UNIMPLEMENTED_RULES) == {"checked"}
+    assert all(
+        "not implemented for Swift" in row["note"]
+        for row in mixed["coverage"]
+        if row["rule_id"] in SWIFT_UNIMPLEMENTED_RULES
+    )
+    assert not report_incomplete(as_report(mixed)) and report_incomplete(as_report(mixed), strict=True)
+    assert states(analyze_sources([("Fixed.swift", SWIFT)]), SWIFT_UNIMPLEMENTED_RULES) == {"not-run"}
+    assert states(analyze_sources([other]), SWIFT_UNIMPLEMENTED_RULES) == {"checked"}
+
+
+def test_swift_unimplemented_limit_never_hides_an_execution_gap(monkeypatch):
+    with_objc = analyze_sources([("Greeter.kt", KOTLIN), ("Fixed.swift", SWIFT), ("Handler.m", OBJC)])
+    assert states(with_objc, SWIFT_UNIMPLEMENTED_RULES) == {"partial"}
+    broken = analyze_sources(
+        [("Greeter.kt", KOTLIN), ("Fixed.swift", SWIFT), ("Broken.java", "class B { void f( {")]
+    )
+    assert states(broken, SWIFT_UNIMPLEMENTED_RULES) == {"partial"}
+    import mobile_audit.native_flow as module
+
+    monkeypatch.setattr(module, "MAX_CALL_EVALUATIONS", 0)
+    budget = analyze_sources(
+        [
+            ("Fixed.swift", SWIFT),
+            (
+                "Handler.java",
+                'class Handler { void entry(Intent input) { write(input.getStringExtra("n")); }'
+                " void write(String name) { new FileOutputStream(name); } }",
+            ),
+        ]
+    )
+    assert budget["metadata"]["native_flow"]["budget_reasons"]
+    assert states(budget, SWIFT_UNIMPLEMENTED_RULES) == {"partial"}
+
+
+def test_cli_kotlin_and_swift_project_is_limited_and_strict_exits_3(tmp_path, capsys):
+    root = tmp_path.resolve() / "new-kmp-source"
+    android = root / "androidApp/src/main"
+    (android / "java/n").mkdir(parents=True)
+    (android / "java/n/Greeter.kt").write_text(KOTLIN)
+    (android / "AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="new.synthetic">'
+        '<application android:allowBackup="false"/></manifest>'
+    )
+    (root / "iosApp").mkdir()
+    (root / "iosApp/Fixed.swift").write_text(SWIFT)
+    (root / "iosApp/Info.plist").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>'
+        "<key>CFBundleIdentifier</key><string>new.synthetic.ios</string></dict></plist>"
+    )
+    code, envelope = _scan(root, capsys)
+    report = envelope["data"]
+    assert code == 0 and report["summary"]["incomplete"] is False and report["summary"]["limited"] is True
+    # Nothing else in the fixture is limited or partial: these rules alone carry the limit.
+    limited = {row["rule_id"] for row in report["coverage"] if row["state"] in {"limited", "partial"}}
+    assert limited == SWIFT_UNIMPLEMENTED_RULES
+    assert states(report, SWIFT_UNIMPLEMENTED_RULES) == {"limited"}
+    # Strict coverage counts the precision limit (the stored summary stays non-strict).
+    assert _scan(root, capsys, "--strict-coverage")[0] == 3
+
+
+def test_swift_declared_sql_spec_beside_kotlin_stays_limited():
+    specs = {
+        "sha256": "synthetic",
+        "source": [{"id": "input", "method": "incoming", "returns": "text"}],
+        "sink": [{"id": "query", "method": "query", "kind": "sql", "argument": 0}],
+    }
+    mixed = analyze_sources(
+        [("Greeter.kt", KOTLIN), ("Handler.swift", "func f() { query(incoming()) }")], specs=specs
+    )
+    # Swift is examined for the exact declared sinks: a precision limit, as for Swift alone.
+    assert states(mixed, SWIFT_UNIMPLEMENTED_RULES) == {"limited"}
+
+
 def test_swift_declared_sql_spec_only_is_limited():
     specs = {
         "sha256": "synthetic",

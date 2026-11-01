@@ -426,7 +426,8 @@ incomplete (exit `3`). `limited` means every input in scope was examined, but th
 bounded static model abstained on some paths, for example unresolved native-flow
 call targets, Objective-C seen only through its reduced model (`OBJC-*` rules;
 `AST-*` rules never examine Objective-C, so beside other languages they are
-`partial`), or token-level JS/TS/Dart flow. A `limited` audit stays complete for the stated scope; reports
+`partial`), rules without a Swift model beside Kotlin or Java sources, or
+token-level JS/TS/Dart flow. A `limited` audit stays complete for the stated scope; reports
 show the limitation (`summary.limited`, SARIF notifications, the MASWE matrix and
 checklists). Across entries, `partial` outranks `limited`, which outranks
 `checked`. `scan --strict-coverage`, `policy evaluate --strict-coverage` or

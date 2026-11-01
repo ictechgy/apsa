@@ -65,3 +65,76 @@ def test_project_opener_flows_into_its_sql_sink(path, template, name):
 @pytest.mark.parametrize("name", ["openDatabase", "openOrCreateDatabase"])
 def test_framework_opener_still_returns_a_database(name):
     assert "AST-SQL-CONCAT" in rules("app/Main.kt", FRAMEWORK.replace("NAME", name))[0]
+
+
+ACTIVITY = """package com.example.app
+import android.app.Activity
+import android.content.Context
+class MainActivity : BASE {
+    fun query() {
+        val db = openOrCreateDatabase("app.db", Context.MODE_PRIVATE, null)
+        db.rawQuery("SELECT * FROM t WHERE id = " + intent.data.toString(), null)
+    }
+}
+"""
+CONTEXT_WRAPPER = """package com.example.app
+import android.content.Context
+import android.content.ContextWrapper
+import android.database.sqlite.SQLiteDatabase
+class AppContext(base: Context) : ContextWrapper(base) {
+    override fun openOrCreateDatabase(name: String, mode: Int, factory: SQLiteDatabase.CursorFactory?): SQLiteDatabase {
+        return super.openOrCreateDatabase(name, mode, factory)
+    }
+}
+"""
+BASE_ACTIVITY = CONTEXT_WRAPPER.replace(
+    "import android.content.ContextWrapper", "import android.app.Activity"
+).replace("class AppContext(base: Context) : ContextWrapper(base)", "open class BaseActivity : Activity()")
+UNRELATED_KOTLIN = """package com.example.app
+import java.io.File
+class Archive {
+    fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): File = File(name)
+}
+"""
+UNRELATED_JAVA = """package com.example.app;
+class Legacy { Object openOrCreateDatabase(String n, int mode, Object f) { return null; } }
+"""
+SAME_CLASS_OVERRIDE = ACTIVITY.replace(
+    "    fun query() {",
+    "    override fun openOrCreateDatabase(name: String, mode: Int, factory: android.database.sqlite.SQLiteDatabase"
+    ".CursorFactory?) = super.openOrCreateDatabase(name, mode, factory)\n    fun query() {",
+)
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        [
+            ("app/MainActivity.kt", ACTIVITY.replace("BASE", "Activity()")),
+            ("app/AppContext.kt", CONTEXT_WRAPPER),
+        ],
+        [
+            ("app/MainActivity.kt", ACTIVITY.replace("BASE", "Activity()")),
+            ("app/Archive.kt", UNRELATED_KOTLIN),
+        ],
+        [
+            ("app/MainActivity.kt", ACTIVITY.replace("BASE", "Activity()")),
+            ("app/Legacy.java", UNRELATED_JAVA),
+        ],
+        [
+            ("app/MainActivity.kt", ACTIVITY.replace("BASE", "BaseActivity()")),
+            ("app/BaseActivity.kt", BASE_ACTIVITY),
+        ],
+        [("app/MainActivity.kt", SAME_CLASS_OVERRIDE.replace("BASE", "Activity()"))],
+    ],
+    ids=[
+        "context-wrapper-override",
+        "unrelated-kotlin-method",
+        "unrelated-java-method",
+        "base-override",
+        "own-override",
+    ],
+)
+def test_framework_opener_keeps_sdk_identity_when_call_site_cannot_reach_project_code(files):
+    report = analyze_sources(files)
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}

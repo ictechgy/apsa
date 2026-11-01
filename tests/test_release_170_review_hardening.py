@@ -132,32 +132,91 @@ def cleartext_checks(path: Path) -> list[tuple[str, str | None]]:
     return [(item.status, item.severity) for item in findings if item.check_id == "app-cleartext"]
 
 
+def legacy_warnings(path: Path) -> list:
+    findings = audit_apk(Apk(str(path)))[1]
+    return [item for item in findings if item.check_id == "app-cleartext" and item.status == "warn"]
+
+
+def cleartext_severities(path: Path) -> list[str]:
+    report = quaygate_analysis.analyze(path)
+    return [item["severity"] for item in report["findings"] if item["rule_id"] == "QG-APP-CLEARTEXT"]
+
+
+@pytest.mark.parametrize("min_sdk", ["21", "23"])
 @pytest.mark.parametrize("target_sdk", ["28", "34"])
-def test_undeclared_cleartext_is_reported_for_devices_below_api_24_whatever_the_target(target_sdk):
-    sdk = {"minSdkVersion": "21", "targetSdkVersion": target_sdk}
+def test_undeclared_cleartext_is_reported_for_devices_below_api_24_whatever_the_target(min_sdk, target_sdk):
+    sdk = {"minSdkVersion": min_sdk, "targetSdkVersion": target_sdk}
     with temp_apk(app_over=UNDECLARED, sdk_over=sdk, nsc=NSC_BLOCKING) as path:
         resolved = Path(path).resolve()
         # API 24+ follows the blocking configuration; API 21-23 ignore it and allow cleartext.
         assert cleartext_checks(resolved) == [("pass", None), ("warn", MEDIUM)]
-        [legacy] = [
-            item
-            for item in audit_apk(Apk(str(resolved)))[1]
-            if item.check_id == "app-cleartext" and item.status == "warn"
-        ]
-        assert "API 23" in legacy.detail and f"targetSdk {target_sdk}" in legacy.detail
-        report = quaygate_analysis.analyze(resolved)
-    assert [f["severity"] for f in report["findings"] if f["rule_id"] == "QG-APP-CLEARTEXT"] == ["medium"]
+        [legacy] = legacy_warnings(resolved)
+        if min_sdk == "23":
+            assert "API 23" in legacy.detail and f"targetSdk {target_sdk}" in legacy.detail
+        else:
+            assert "API 22 이하" in legacy.detail and "선언 없음" in legacy.detail
+        assert cleartext_severities(resolved) == ["medium"]
 
 
 def test_cleartext_below_api_24_keeps_explicit_and_modern_outcomes():
     with temp_apk(app_over=UNDECLARED, sdk_over={"minSdkVersion": "24"}, nsc=NSC_BLOCKING) as path:
         assert cleartext_checks(Path(path).resolve()) == [("pass", None)]
+    # API 23 devices honor an explicit false; minSdk 23 excludes API 21-22 devices.
     blocked = {**NSC_REF, "usesCleartextTraffic": "false"}
-    with temp_apk(app_over=blocked, sdk_over={"minSdkVersion": "21"}, nsc=NSC_BLOCKING) as path:
+    with temp_apk(app_over=blocked, sdk_over={"minSdkVersion": "23"}, nsc=NSC_BLOCKING) as path:
         assert cleartext_checks(Path(path).resolve()) == [("pass", None)]
     allowed = {**NSC_REF, "usesCleartextTraffic": "true"}
-    with temp_apk(app_over=allowed, sdk_over={"minSdkVersion": "21"}, nsc=NSC_BLOCKING) as path:
-        assert cleartext_checks(Path(path).resolve()) == [("pass", None), ("warn", MEDIUM)]
+    for min_sdk in ("21", "23"):
+        with temp_apk(app_over=allowed, sdk_over={"minSdkVersion": min_sdk}, nsc=NSC_BLOCKING) as path:
+            assert cleartext_checks(Path(path).resolve()) == [("pass", None), ("warn", MEDIUM)]
+
+
+# usesCleartextTraffic exists from API 23 and networkSecurityConfig from API 24, so API 21-22
+# devices permit cleartext whatever either says.
+BLOCKED = {**NSC_REF, "usesCleartextTraffic": "false"}
+
+
+@pytest.mark.parametrize(
+    "sdk",
+    [
+        {"minSdkVersion": "21"},
+        {"minSdkVersion": "22", "targetSdkVersion": "28"},
+        # Without minSdkVersion, Android's default minimum is 1.
+        {"minSdkVersion": None},
+    ],
+    ids=["min21", "min22", "undeclared-min"],
+)
+def test_explicit_false_still_allows_cleartext_on_api_21_and_22_devices(sdk):
+    with temp_apk(app_over=BLOCKED, sdk_over=sdk, nsc=NSC_BLOCKING) as path:
+        resolved = Path(path).resolve()
+        assert cleartext_checks(resolved) == [("pass", None), ("warn", MEDIUM)]
+        [legacy] = legacy_warnings(resolved)
+        assert "API 22 이하" in legacy.detail and "선언값(false)" in legacy.detail
+        # Setting false cannot fix it: only a higher minSdk does.
+        assert "minSdk를 23 이상" in legacy.recommendation and "24 이상" in legacy.recommendation
+        assert cleartext_severities(resolved) == ["medium"]
+
+
+def test_unresolved_cleartext_below_api_23_warns_and_keeps_the_api_23_gap():
+    unresolved = {**NSC_REF, "usesCleartextTraffic": "@2130837504"}
+    with temp_apk(app_over=unresolved, sdk_over={"minSdkVersion": "21"}, nsc=NSC_BLOCKING) as path:
+        resolved = Path(path).resolve()
+        assert cleartext_checks(resolved) == [("pass", None), ("warn", MEDIUM), ("na", None)]
+        report = quaygate_analysis.analyze(resolved)
+    assert [f["severity"] for f in report["findings"] if f["rule_id"] == "QG-APP-CLEARTEXT"] == ["medium"]
+    [state] = [item["state"] for item in report["coverage"] if item["rule_id"] == "QG-APP-CLEARTEXT"]
+    assert state == "partial"
+
+
+def test_a_non_integer_min_sdk_adds_no_api_21_22_warning():
+    # A compiled minSdkVersion that is not an integer is a preview codename, above API 22.
+    with temp_apk(app_over=BLOCKED, sdk_over={"minSdkVersion": "S"}, nsc=NSC_BLOCKING) as path:
+        assert cleartext_checks(Path(path).resolve()) == [("pass", None)]
+    # The existing conservative check below API 24 still reports an undeclared value.
+    with temp_apk(app_over=UNDECLARED, sdk_over={"minSdkVersion": "S"}, nsc=NSC_BLOCKING) as path:
+        resolved = Path(path).resolve()
+        assert cleartext_checks(resolved) == [("pass", None), ("warn", MEDIUM)]
+        assert "API 22 이하" not in legacy_warnings(resolved)[0].detail
 
 
 # --- SARIF credential redaction stays linear ----------------------------------------------

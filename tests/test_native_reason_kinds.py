@@ -198,11 +198,37 @@ class NewSyntheticActivity : Activity() {
 
 
 def test_kotlin_field_summary_non_convergence_is_a_precision_limit():
+    # Pinned at the default cap: each round re-derives origins for the same
+    # content (1, 3, 5, 7 duplicate traces), staying under the eight-trace cap.
+    assert native_flow.MAX_FIELD_ROUNDS == 4
     analysis, states = flow("NewSyntheticActivity.kt", NON_CONVERGENT_KOTLIN)
     native = analysis["metadata"]["native_flow"]
     assert native["budget_reasons"] == []
     assert "field summary fixed point unresolved" in native["precision_reasons"]
     assert states == {"limited"}
+
+
+def test_one_more_field_round_turns_the_same_non_convergence_into_a_budget(monkeypatch):
+    # Classification depends on the round cap: a fifth round passes the trace cap,
+    # so the content changes and the cap hit is a budget gap.
+    monkeypatch.setattr(native_flow, "MAX_FIELD_ROUNDS", 5)
+    analysis, states = flow("NewSyntheticActivity.kt", NON_CONVERGENT_KOTLIN)
+    native = analysis["metadata"]["native_flow"]
+    assert native["budget_reasons"] == ["field summary fixed-point budget"]
+    assert "field summary fixed point unresolved" not in native["precision_reasons"]
+    assert states == {"partial"}
+
+
+def test_a_field_written_from_two_churning_call_sites_is_a_budget_at_the_default_cap():
+    assert native_flow.MAX_FIELD_ROUNDS == 4
+    two_sites = NON_CONVERGENT_KOTLIN.replace(
+        "    fun handle()",
+        '    fun again() { setTarget(intent.getStringExtra("v") ?: "") }\n    fun handle()',
+    )
+    analysis, states = flow("NewSyntheticActivity.kt", two_sites)
+    native = analysis["metadata"]["native_flow"]
+    assert native["budget_reasons"] == ["field summary fixed-point budget", "source trace budget"]
+    assert states == {"partial"}
 
 
 def test_field_content_still_growing_at_the_round_cap_stays_a_budget():

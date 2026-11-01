@@ -203,3 +203,54 @@ def test_navigation_policy_reads_every_boolean_clause(condition, expected, decis
     rules, state = analyze(NAVIGATION, f"{condition} {{ decisionHandler({decision}); return }}")
     assert rules == (expected if decision == ".allow" else set())
     assert state == "checked"
+
+
+@pytest.mark.parametrize(
+    "exit_body",
+    ["return", 'fatalError("rejected link")', "preconditionFailure()", 'print("rejected")\n    fatalError()'],
+    ids=["return", "fatalError", "preconditionFailure", "log-then-fatalError"],
+)
+def test_guard_else_always_leaves_its_scope(exit_body):
+    checked = f"let url = {LINK}!\nguard {CHECKS} else {{\n    {exit_body}\n}}\n{LOAD}"
+    unchecked = f"let url = {LINK}!\nguard ok else {{\n    {exit_body}\n}}\n{LOAD}"
+    assert analyze(ACTIVITY, checked) == (set(), "checked")
+    assert analyze(ACTIVITY, unchecked) == (UNTRUSTED, "checked")
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (
+            f"let url = {LINK}!\nfor _ in 0..<2 {{\n    guard {CHECKS} else {{ continue }}\n    {LOAD}\n}}",
+            set(),
+        ),
+        (f"let url = {LINK}!\nwhile ok {{\n    guard {CHECKS} else {{ break }}\n    {LOAD}\n}}", set()),
+        (
+            f"let url = {LINK}!\nfor _ in 0..<2 {{\n    guard {CHECKS} else {{ continue }}\n}}\n{LOAD}",
+            UNTRUSTED,
+        ),
+    ],
+    ids=["continue", "break", "load-after-loop"],
+)
+def test_guard_else_in_loop_guards_the_rest_of_the_iteration(body, expected):
+    assert analyze(ACTIVITY, body) == (expected, "checked")
+
+
+FIELDS = ACTIVITY.replace("    var ok = false\n", "    var ok = false\n    var pending: URL?\n").replace(
+    "    func scene(", "    func later() { webView.load(URLRequest(url: pending!)) }\n    func scene("
+)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        f'guard let url = {LINK}, url.host == "example.com" else {{\n    pending = {LINK}\n    return\n}}\nok = url.isFileURL',
+        f'let url = {LINK}!\nif url.host != "example.com" {{\n    pending = {LINK}\n    return\n}}',
+    ],
+    ids=["guard-else", "if-return"],
+)
+def test_field_store_before_an_exit_reaches_other_methods(body):
+    report = analyze_sources([("App/Links.swift", FIELDS.replace("BODY", body.replace("\n", "\n        ")))])
+    assert [(item["rule_id"], item["evidence"][0]["function"]) for item in report["findings"]] == [
+        ("AST-WEBVIEW-UNTRUSTED-URL", "later")
+    ]

@@ -395,14 +395,16 @@ def test_quaygate_manifest_cleartext_applies_below_min_sdk_24(tmp_path):
 
 
 def test_quaygate_blocked_manifest_and_config_below_min_sdk_24_pass():
+    # minSdk 23: API 21-22 devices, which ignore usesCleartextTraffic, cannot install it.
     app = {**NSC_REF, "usesCleartextTraffic": "false"}
-    with temp_apk(app_over=app, sdk_over={"minSdkVersion": "21"}, nsc=NSC_BLOCKING) as path:
+    with temp_apk(app_over=app, sdk_over={"minSdkVersion": "23"}, nsc=NSC_BLOCKING) as path:
         assert checks(audit_apk(Apk(path))[1], "app-cleartext") == [("pass", None)]
 
 
 def test_quaygate_unresolved_manifest_cleartext_below_min_sdk_24_is_partial():
+    # minSdk 23 isolates the unresolved value; below 23 the API 21-22 warning is added.
     app = {**NSC_REF, "usesCleartextTraffic": "@2130837504"}
-    with temp_apk(app_over=app, sdk_over={"minSdkVersion": "21"}, nsc=NSC_BLOCKING) as path:
+    with temp_apk(app_over=app, sdk_over={"minSdkVersion": "23"}, nsc=NSC_BLOCKING) as path:
         assert checks(audit_apk(Apk(path))[1], "app-cleartext") == [("pass", None), ("na", None)]
         report = quaygate_analysis.analyze(Path(path).resolve())
     assert coverage(report, "QG-APP-CLEARTEXT")["state"] == "partial"

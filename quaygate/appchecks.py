@@ -257,6 +257,30 @@ def _manifest_cleartext(cleartext, target, note: str = "", *, legacy_platform: b
     return Finding("app-cleartext", "평문 트래픽 허용", "na", None, "targetSdk 확인 불가." + note)
 
 
+def _unsupported_attribute_cleartext(cleartext, min_sdk: int) -> Finding:
+    """minSdk 22 이하: API 22 이하 기기는 usesCleartextTraffic(API 23 도입)도
+    networkSecurityConfig(API 24 도입)도 적용하지 않아, 선언값과 무관하게 평문을 허용한다."""
+    if cleartext is True:
+        declared, api23 = "true", " API 23 기기도 usesCleartextTraffic=true로 평문을 허용합니다."
+    elif cleartext is False:
+        declared, api23 = "false", " API 23 기기는 명시적 false로 차단됩니다."
+    elif cleartext is UNKNOWN:
+        declared, api23 = "참조값", " API 23 기기에 적용될 값은 해석하지 못했습니다."
+    else:
+        declared, api23 = "선언 없음", " API 23 기기도 기본값으로 평문을 허용합니다."
+    return Finding(
+        "app-cleartext",
+        "평문 트래픽 허용",
+        "warn",
+        MEDIUM,
+        f"minSdk {min_sdk}: API 22 이하 기기는 usesCleartextTraffic(API 23부터 적용)과 "
+        f"networkSecurityConfig(API 24부터 적용)를 모두 무시하므로 선언값({declared})과 무관하게 "
+        "평문을 허용합니다." + api23,
+        "minSdk를 23 이상으로 올려야 usesCleartextTraffic이, 24 이상으로 올려야 "
+        "networkSecurityConfig가 지원하는 모든 기기에 적용됩니다.",
+    )
+
+
 def load_manifest(apk: Apk) -> Manifest:
     if "AndroidManifest.xml" not in apk.entry_names():
         raise ApkError("AndroidManifest.xml 없음 — APK가 아니거나 손상되었습니다")
@@ -445,6 +469,7 @@ def audit_apk(apk: Apk, cert_runner=None) -> tuple:
             )
     else:
         findings.append(_manifest_cleartext(cleartext, target))
+    # 선언이 없으면 Android 기본값 1. 정수가 아닌 값(프리뷰 코드명 등)은 None이다.
     min_sdk = _int_or_none(m.sdk.get("minSdkVersion", 1))
     if nsc_ref and (min_sdk is None or min_sdk < 24):
         # API 23 이하 기기는 networkSecurityConfig를 무시하고 매니페스트 설정(또는 기본값)을 적용한다.
@@ -455,7 +480,12 @@ def audit_apk(apk: Apk, cert_runner=None) -> tuple:
             "networkSecurityConfig를 무시하고 매니페스트 설정을 적용합니다.",
             legacy_platform=True,
         )
-        if legacy.status != "pass":
+        if min_sdk is not None and min_sdk < 23:
+            # API 22 이하 기기에는 매니페스트 속성도 없다. 해석 못 한 값은 API 23 범위 공백으로 남긴다.
+            findings.append(_unsupported_attribute_cleartext(cleartext, min_sdk))
+            if cleartext is UNKNOWN:
+                findings.append(legacy)
+        elif legacy.status != "pass":
             findings.append(legacy)
 
     if nsc is not None:

@@ -14,6 +14,7 @@ from .source_analysis import (
     FILE_SINKS,
     FUNCTIONS,
     IDENTIFIERS,
+    INITIALIZERS,
     INTENT_LAUNCHERS,
     NESTED_INTENT_GETTERS,
     RULES,
@@ -519,8 +520,8 @@ class NativeFlow:
                         owner = self.owner(analyzer, name)
                         self.classes.setdefault(analyzer.text(name), set()).add(owner)
                         self.class_definitions.setdefault(owner, []).append((analyzer, node))
-                # Accessor bodies are analysis units, never call targets by name.
-                if node.type not in FUNCTIONS or node.type in ACCESSORS or node.has_error:
+                # Accessor and initializer bodies are analysis units, never call targets by name.
+                if node.type not in FUNCTIONS or node.type in ACCESSORS | INITIALIZERS or node.has_error:
                     continue
                 unavailable = self.unavailable_scope(node)
                 if unavailable is not None:

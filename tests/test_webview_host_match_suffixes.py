@@ -66,7 +66,8 @@ def test_suffix_without_dot_boundary_is_still_reported(check):
 
 
 def test_rule_and_engine_share_one_suffix_list():
-    assert "(?!(?:" + source_analysis.SHARED_HOSTING_SUFFIXES + ')\\"))' in RULE["pattern"]
+    exemption = "(?!(?:" + source_analysis.SHARED_HOSTING_SUFFIXES + ')\\")[\\w-]+(?:\\.[\\w-]+)+\\")'
+    assert exemption in RULE["pattern"]
 
 
 KOTLIN = """package a
@@ -110,3 +111,42 @@ def test_engine_credits_dot_anchored_suffix_only_for_owned_domains(path, templat
     report = analyze_sources([(path, template.replace("SUFFIX", suffix))])
     assert {item["rule_id"] for item in report["findings"]} & REPORTED == expected
     assert report["metadata"]["native_flow"]["state"] == "checked"
+
+
+ADDED_SHARED = [
+    ".storage.googleapis.com",
+    ".firebasestorage.app",
+    ".z13.web.core.windows.net",
+    ".nyc3.digitaloceanspaces.com",
+    ".ondigitalocean.app",
+    ".r2.dev",
+    ".up.railway.app",
+    ".deno.dev",
+    ".pythonanywhere.com",
+    ".repl.co",
+    ".azurefd.net",
+]
+PUBLIC = [".com", ".app", ".io", ".co.uk", ".org.uk", ".com.au", ".co.jp", ".co.kr", ".com.br", ".co.in"]
+
+
+@pytest.mark.parametrize("suffix", ADDED_SHARED + PUBLIC)
+def test_bare_or_public_dot_suffix_is_reported_by_the_rule(suffix):
+    assert PATTERN.search(f'uri.host?.endsWith("{suffix}") == true')
+
+
+@pytest.mark.parametrize("suffix", [".example.co.uk", ".example.com.au", ".shop.example.app", ".example.io"])
+def test_registrable_dot_suffix_under_a_public_one_is_spared(suffix):
+    assert not PATTERN.search(f'uri.host?.endsWith("{suffix}") == true')
+
+
+@pytest.mark.parametrize(
+    ("path", "template"), [("app/Loader.kt", KOTLIN), ("App/Links.swift", SWIFT)], ids=["kotlin", "swift"]
+)
+@pytest.mark.parametrize(
+    ("suffix", "expected"),
+    [(".com", REPORTED), (".co.uk", REPORTED), (".r2.dev", REPORTED), (".example.co.uk", set())],
+    ids=["tld", "country-second-level", "added-shared-host", "registrable"],
+)
+def test_engine_does_not_credit_a_public_suffix(path, template, suffix, expected):
+    report = analyze_sources([(path, template.replace("SUFFIX", suffix))])
+    assert {item["rule_id"] for item in report["findings"]} & REPORTED == expected
