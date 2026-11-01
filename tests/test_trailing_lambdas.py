@@ -1118,3 +1118,361 @@ def test_scope_call_ending_a_closure_carries_its_block_result(expression: str) -
     )
     assert _hit(report, SQL)
     assert _state(report, SQL) == "checked"
+
+
+@pytest.mark.parametrize(
+    "expression, sink, rule",
+    [
+        ('buildString { println(q); append("safe") }', 'db.execSQL("SELECT " + s)', SQL),
+        ('withContext(Dispatchers.IO) { println(q); "safe" }', 'db.execSQL("SELECT " + s)', SQL),
+        ('runBlocking { println(q); "safe" }', 'db.execSQL("SELECT " + s)', SQL),
+        (
+            'withContext(Dispatchers.IO) { require(q.isNotEmpty()); "https://docs.example.test/static" }',
+            "web.loadUrl(s)",
+            URL,
+        ),
+    ],
+)
+def test_receiverless_calls_that_write_no_builder_are_not_the_closure_value(
+    expression: str, sink: str, rule: str
+) -> None:
+    report = _kotlin(
+        f"""class R(private val db: SQLiteDatabase, private val web: WebView) {{
+    suspend fun q(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+        val s = {expression}
+        {sink}
+    }}
+}}
+"""
+    )
+    assert not _hit(report, rule)
+
+
+EXPLICIT = """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+import android.app.Activity
+import android.webkit.WebView
+import android.view.View
+import android.os.Handler
+"""
+
+
+def _explicit(body: str) -> dict:
+    """A Kotlin file without wildcard imports: stdlib scope functions are provably unshadowed."""
+    return analyze_sources([("app/E.kt", EXPLICIT + body)])
+
+
+CONSUMER = """class ReaderActivity : Activity() {{
+    private var lastKey = ""
+    private lateinit var root: View
+    private fun remember(key: String) {{ lastKey = key }}
+    fun open(i: Intent) {{
+        val key = i.getStringExtra("key") ?: return
+        {body}
+    }}
+}}
+"""
+
+
+@pytest.mark.parametrize(
+    "body, twin",
+    [
+        ("Thread { remember(key) }.start()", "remember(key); Thread { }.start()"),
+        (
+            "val r = Runnable { remember(key) }; root.postDelayed(r, 500)",
+            "remember(key); root.postDelayed(Runnable { }, 500)",
+        ),
+        (
+            "runCatching { remember(key) }.onFailure { println(it) }",
+            "remember(key); runCatching { }.onFailure { println(it) }",
+        ),
+        ("Thread { remember(key); println(1) }.start()", "remember(key); Thread { }.start()"),
+    ],
+)
+def test_consumed_closure_value_adds_no_budget_reason(body: str, twin: str) -> None:
+    closure, direct = _explicit(CONSUMER.format(body=body)), _explicit(CONSUMER.format(body=twin))
+    assert _budget(closure) == [] == _budget(direct)
+    assert _state(closure, SQL) == _state(direct, SQL)
+
+
+@pytest.mark.parametrize(
+    "body, twin",
+    [
+        (
+            'alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in self.remember(key) })',
+            'self.remember(key); alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in })',
+        ),
+        (
+            "let item = DispatchWorkItem { self.remember(key) }; DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: item)",
+            "self.remember(key); DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: DispatchWorkItem { })",
+        ),
+    ],
+)
+def test_swift_consumed_closure_value_adds_no_budget_reason(body: str, twin: str) -> None:
+    source = """import UIKit
+import WebKit
+final class Browser: UIViewController, WKNavigationDelegate {{
+    var lastKey = ""
+    let alert = UIAlertController(title: "t", message: nil, preferredStyle: .alert)
+    func remember(_ key: String) {{ lastKey = key }}
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {{
+        let key = navigationAction.request.url?.absoluteString ?? ""
+        {body}
+        decisionHandler(.allow)
+    }}
+}}
+"""
+    closure, direct = _swift(source.format(body=body)), _swift(source.format(body=twin))
+    assert _budget(closure) == [] == _budget(direct)
+    assert _state(closure, URL) == _state(direct, URL)
+
+
+BRANCH = """class W(private val web: WebView) {{
+    fun q(intent: Intent, flag: Boolean) {{
+        val s = {expression}
+        web.loadUrl(s)
+    }}
+}}
+"""
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        'run { try { val raw = intent.getStringExtra("url")!!; raw } catch (e: Exception) { "https://h/" } }',
+        'run { when (val u = intent.getStringExtra("url")) { null -> "https://h/"; else -> u } }',
+        'run { if (flag) { val t = intent.getStringExtra("url")!!; t } else { "https://h/" } }',
+        'run({ when (intent.action) { "open" -> { val u = intent.getStringExtra("url")!!; "https://h/" + u }; else -> "https://h/" } })',
+        'run { when (intent.action) { "open" -> intent.getStringExtra("url")!! // deep link\n else -> "https://h/" } }',
+        'run { when (intent.action) { "open" -> intent.getStringExtra("url")!!\n // fallback\n else -> "https://h/" } }',
+    ],
+)
+def test_branch_values_are_read_where_each_branch_ends(expression: str) -> None:
+    report = _kotlin(BRANCH.format(expression=expression))
+    assert _hit(report, URL)
+
+
+def test_branch_condition_is_not_the_closure_value() -> None:
+    report = _kotlin(
+        BRANCH.format(
+            expression='Ext.pick { if (intent.getStringExtra("url") != null) "https://h/a" else "https://h/b" }'
+        )
+    )
+    assert not _hit(report, URL)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "let u = try? queue.sync { try resolve(incoming) }\n        browser.load(URLRequest(url: u!))",
+        'let u = queue.sync { if let v = maybe { v } else { URL(string: "https://h/")! } }\n        browser.load(URLRequest(url: u))',
+        'let u = queue.sync { switch maybe { case .some(let v): v\n case .none: URL(string: "https://h/")! } }\n        browser.load(URLRequest(url: u))',
+    ],
+)
+def test_swift_closure_results_keep_try_and_bound_branch_values(body: str) -> None:
+    report = _swift(
+        f"""import UIKit
+import WebKit
+final class LinkHandler {{
+    let browser = WKWebView()
+    let queue = DispatchQueue(label: "q")
+    func resolve(_ u: URL) throws -> URL {{ return u }}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) {{
+        let maybe: URL? = incoming
+        {body}
+    }}
+}}
+"""
+    )
+    assert _hit(report, URL)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        'val r = attach(name) { name = intent.getStringExtra("q")!! }',
+        'r = attach(name) { name = intent.getStringExtra("q")!! }',
+    ],
+)
+def test_callback_write_does_not_reach_a_followed_callee_in_a_value_position(call: str) -> None:
+    clean = _kotlin(
+        f"""class R(private val db: SQLiteDatabase) {{
+    private var r = ""
+    fun attach(n: String, done: () -> Unit): String {{ db.execSQL("DELETE FROM t WHERE id = " + n); return n }}
+    fun q(intent: Intent) {{
+        var name = "const"
+        {call}
+    }}
+}}
+"""
+    )
+    flow = _kotlin(
+        """class R(private val db: SQLiteDatabase) {
+    fun attach(n: String, done: () -> Unit): String { db.execSQL("DELETE FROM t WHERE id = " + n); return n }
+    fun q(intent: Intent) {
+        var name = "const"
+        name = intent.getStringExtra("q")!!
+        val r = attach(name) { }
+    }
+}
+"""
+    )
+    assert not _hit(clean, SQL)
+    assert _hit(flow, SQL)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        "Markup.render({ sb -> val b = sb; b.append(q); println(0) })",
+        "Markup.render { sb -> sb.let { it.append(q) }; println(0) }",
+        "Markup.render({ sb -> fill(sb, q); println(0) })",
+        "Markup.render({ b -> b.items[0].text = q; println(0) })",
+        "Markup.render({ w -> w.group({ g -> g.append(q) }); println(0) })",
+    ],
+)
+def test_writes_through_aliases_helpers_and_nested_builders_reach_the_call_value(build: str) -> None:
+    assert _hit(_kotlin(KOTLIN_BUILDER.format(build=build)), SQL)
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        'func page(_ q: String) -> String { Markup.render { b in b.add("<p>"); b.add(q) } }',
+        'func page(_ q: String) -> String { Markup.render({ b in let c = b; c.add("<p>"); c.add(q) }) }',
+    ],
+)
+def test_swift_single_expression_bodies_return_builder_values(declaration: str) -> None:
+    report = _swift(
+        f"""import UIKit
+import WebKit
+final class LinkHandler {{
+    let browser = WKWebView()
+    {declaration}
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) {{
+        browser.load(URLRequest(url: URL(string: page(incoming.absoluteString))!))
+    }}
+}}
+"""
+    )
+    assert _hit(report, URL)
+
+
+@pytest.mark.parametrize(
+    "pick",
+    [
+        'pages.sortedWith(compareBy { !it.endsWith("/" + wanted) }).first()',
+        'pages.sortedWith(compareByDescending { it.endsWith("/" + wanted) }).first()',
+        "pages.sortedWith(Comparator { a, b -> if (a.endsWith(wanted)) -1 else 1 }).first()",
+    ],
+)
+def test_comparator_closures_are_not_the_selected_value(pick: str) -> None:
+    report = _kotlin(
+        f"""class W(private val web: WebView) {{
+    private val pages = listOf("https://docs.example.test/a", "https://docs.example.test/b")
+    fun q(intent: Intent) {{
+        val wanted = intent.getStringExtra("page") ?: return
+        web.loadUrl({pick})
+    }}
+}}
+"""
+    )
+    assert not _hit(report, URL)
+
+
+def test_nested_builders_stay_within_the_trace_budget() -> None:
+    report = _kotlin(
+        """class R(private val web: WebView) {
+    fun q(intent: Intent) {
+        val a = intent.getStringExtra("a") ?: ""
+        val b = intent.getStringExtra("b") ?: ""
+        val c = intent.getStringExtra("c") ?: ""
+        val html = Html.node { n1 -> n1.text(a); n1.text(b); n1.text(c); n1.child(Html.node { n2 -> n2.text(a); n2.text(b); n2.text(c); n2.child(Html.node { n3 -> n3.text(a); n3.text(b); n3.text(c); n3.child(Html.node { n4 -> n4.text(a); n4.text(b); n4.text(c) }) }) }) }
+        web.loadUrl(html)
+    }
+}
+"""
+    )
+    assert _hit(report, URL)
+    assert _budget(report) == []
+
+
+def test_use_without_wildcard_imports_keeps_its_close_effect() -> None:
+    report = _explicit(
+        """class Res : java.io.Closeable {
+    var src = ""
+    var q = ""
+    override fun close() { q = src }
+}
+class R(private val db: SQLiteDatabase) {
+    fun go(intent: Intent) {
+        val r = Res()
+        r.src = intent.getStringExtra("q")!!
+        r.use { }
+        db.execSQL("DELETE FROM t WHERE id = " + r.q)
+    }
+}
+"""
+    )
+    assert _hit(report, SQL)
+
+
+def test_project_callee_argument_reassigned_by_its_callback_is_bound_before() -> None:
+    report = _kotlin(
+        """class R(private val db: SQLiteDatabase) {
+    fun attach(n: String, done: () -> Unit) { db.execSQL("DELETE FROM t WHERE id = " + n) }
+    fun q(intent: Intent) {
+        var name = "const"
+        attach(name) { name = intent.getStringExtra("q")!! }
+    }
+}
+"""
+    )
+    assert not _hit(report, SQL)
+
+
+def test_state_flow_update_stores_its_closure_result() -> None:
+    report = _kotlin(
+        """import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+class R(private val db: SQLiteDatabase) {
+    fun q(intent: Intent) {
+        val q = intent.getStringExtra("q") ?: ""
+        val st = MutableStateFlow("")
+        st.update { q }
+        db.execSQL("SELECT " + st.value)
+    }
+}
+"""
+    )
+    assert _hit(report, SQL)
+
+
+def test_swift_dictionary_filter_binds_the_value_parameter() -> None:
+    report = _swift(
+        """import UIKit
+import WebKit
+final class LinkHandler {
+    let browser = WKWebView()
+    func application(_ app: UIApplication, open incoming: URL, options: [String: Any]) {
+        let routes = ["a": incoming]
+        _ = routes.filter { key, value in self.browser.load(URLRequest(url: value)); return true }
+    }
+}
+"""
+    )
+    assert _hit(report, URL)
+
+
+def test_arity_mismatched_closure_with_an_intent_parameter_stays_limited() -> None:
+    report = _kotlin(
+        """class C(private val db: SQLiteDatabase) : Activity() {
+    fun attach(name: String, done: (Int, Int) -> Unit) { db.execSQL("DELETE FROM t WHERE id = " + name) }
+    fun q(intent: Intent) { attach(intent.getStringExtra("q")!!) { a -> } }
+}
+"""
+    )
+    assert _state(report, SQL) == "limited"
+    assert not _hit(report, SQL)

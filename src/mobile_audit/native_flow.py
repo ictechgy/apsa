@@ -3005,7 +3005,9 @@ class NativeFlow:
                 return self.inout_effects(analyzer, call, receiver, args, syntactic_inout, frame)
             self.partial("callable value binding unresolved", analyzer, call=call)
             effects = self.unresolved_reference_effects(analyzer, call, receiver, args, frame)
-            return analyzer.changed(call.node, _union([binding, *args, effects or Value()]))
+            return analyzer.changed(
+                call.node, _union([binding, *analyzer.call_inputs(call, Value(), args), effects or Value()])
+            )
         targets, relevant = self.resolve(analyzer, call, receiver, frame)
         admitted = []
         for target in targets:
@@ -3033,7 +3035,9 @@ class NativeFlow:
                 self.allocation(analyzer, call, constructor_type, identity)
                 if args:
                     self.partial("constructor field mapping unavailable", analyzer, call=call)
-                    unknown = self.incomplete(analyzer.changed(call.node, _union(args)))
+                    unknown = self.incomplete(
+                        analyzer.changed(call.node, _union(analyzer.call_inputs(call, Value(), args)))
+                    )
                     frame.object_fields[identity] = {StorageKey.UNKNOWN_FIELDS: unknown}
                     return Value(unknown.traces, type_name=constructor_type, identity=identity)
                 return Value(type_name=constructor_type, identity=identity)
@@ -3047,7 +3051,9 @@ class NativeFlow:
                 # unknown field provenance independent of unrelated classes.
                 self.partial("constructor field mapping unavailable", analyzer, call=call)
                 identity = self.binding_identity(analyzer, call.node, "allocation")
-                unknown = self.incomplete(analyzer.changed(call.node, _union(args)))
+                unknown = self.incomplete(
+                    analyzer.changed(call.node, _union(analyzer.call_inputs(call, Value(), args)))
+                )
                 frame.object_fields[identity] = {StorageKey.UNKNOWN_FIELDS: unknown}
                 return Value(unknown.traces, type_name=constructor_type or call.name, identity=identity)
             effects = self.unresolved_reference_effects(analyzer, call, receiver, args, frame)
@@ -3100,7 +3106,9 @@ class NativeFlow:
                 self.partial("constructor field mapping unavailable", analyzer, call=call)
                 identity = self.binding_identity(analyzer, call.node, "allocation")
                 self.allocation(analyzer, call, constructor_type, identity)
-                unknown = self.incomplete(analyzer.changed(call.node, _union([receiver, *args])))
+                unknown = self.incomplete(
+                    analyzer.changed(call.node, _union(analyzer.call_inputs(call, receiver, args)))
+                )
                 frame.object_fields[identity] = {StorageKey.UNKNOWN_FIELDS: unknown}
                 return Value(unknown.traces, type_name=constructor_type, identity=identity)
             self.partial("unresolved callable identity or argument signature", analyzer, call=call)
@@ -3272,7 +3280,7 @@ class NativeFlow:
                     and target.analyzer.language == "kotlin"
                     and re.search(r"\)\s*(?::[^=\n]+)?=", callee.text(target.node))
                 ):
-                    returned = callee.value(target.body.named_children[-1], local)
+                    returned = callee.reused(target.body.named_children[-1], local)
                 if not callee.return_values and not constructor:
                     statements = target.body.named_children
                     if len(statements) == 1 and statements[0].type in {"block", "statements"}:
@@ -3282,7 +3290,7 @@ class NativeFlow:
                         and len(statements) == 1
                         and statements[0].type == "call_expression"
                     ):
-                        returned = callee.value(statements[0], local)
+                        returned = callee.reused(statements[0], local)
                     elif (
                         callee.language == "java"
                         and not re.search(r"\bvoid\b", callee.text(target.node).split("{", 1)[0])
@@ -3290,7 +3298,9 @@ class NativeFlow:
                         and self.declares_result(callee, target.node)
                     ):
                         self.partial("return flow unavailable", analyzer, call=call)
-                        returned = analyzer.changed(call.node, _union([receiver, *args]))
+                        returned = analyzer.changed(
+                            call.node, _union(analyzer.call_inputs(call, receiver, args))
+                        )
                 results.append(returned.bind(analyzer.point(call.node)))
                 if returned.category in {"path", "canonical-path"} and len(targets) == 1 and not dynamic:
                     returned_origins = {(trace.origin, trace.path_route) for trace in returned.traces}
@@ -3357,7 +3367,7 @@ class NativeFlow:
             frame.object_fields.update(object_writes[0])
         if len(targets) > 8:
             self.partial("ambiguous target budget", analyzer, call=call)
-            results.append(analyzer.changed(call.node, _union([receiver, *args])))
+            results.append(analyzer.changed(call.node, _union(analyzer.call_inputs(call, receiver, args))))
         merged = {
             name: self.merge([write.get(name, Value()) for write in writes])
             for name in set().union(*(write.keys() for write in writes))
