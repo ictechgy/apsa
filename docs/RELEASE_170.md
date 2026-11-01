@@ -237,7 +237,9 @@ host) are reported conservatively. Trailing lambdas of calls other than Kotlin
 scope functions (click listeners, coroutine builders, `runOnUiThread`, Swift
 trailing closures) are not analyzed unless they contain a non-local `return` (or
 are a SwiftUI `.onOpenURL` handler), as in 1.6.x, and coverage does not mark
-them. A same-named project override elsewhere (for example an `Application`
+them. A Kotlin call written with parentheses and a trailing lambda (`f(x) { }`)
+is also not followed into the callee, so its arguments do not reach sinks in
+the callee's body. A same-named project override elsewhere (for example an `Application`
 overriding `openOrCreateDatabase`) makes receiverless opener calls in unrelated
 classes `limited`, with their findings kept. Calls to Kotlin extension functions
 on a value (`x.go()` with `fun String.go()`) are not followed. Constructor calls
