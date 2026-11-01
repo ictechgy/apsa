@@ -582,10 +582,9 @@ public final class Db {
             "app/Main.java",
             """package com.example;
 import static com.example.Db.openOrCreateDatabase;
-import android.app.Activity;
 import android.content.Intent;
 import android.database.sqlite.SQLiteDatabase;
-public class Main extends Activity {
+public class Main {
     static void purge(Intent intent, int mode, SQLiteDatabase.CursorFactory factory) {
         openOrCreateDatabase(intent.getStringExtra("q"), mode, factory);
     }
@@ -735,3 +734,156 @@ def test_keeping_a_project_return_type_for_an_unknown_receiver_is_recorded():
     sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
     assert "opener receiver identity unresolved" in report["metadata"]["native_flow"]["reasons"]
+
+
+# Round-6 review shapes: calls the flow resolves only partly are still followed, a
+# Context-shaped overload must fit Context's own parameters, a static method has no
+# instance receiver, and named or wrapped scope receivers keep their identity.
+R6_FILE_OPENER = """package com.example.app
+import java.io.File
+fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): File = File(name)
+"""
+R6_CASES = {
+    "1a-default-param-member": [
+        (
+            "app/S.kt",
+            """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class Store(private val db: SQLiteDatabase) {
+    fun openDatabase(name: String, mode: Int = 0) { db.execSQL("ATTACH DATABASE '" + name + "' AS extra") }
+    fun go(intent: Intent) { openDatabase(intent.getStringExtra("q") ?: "") }
+}
+""",
+        )
+    ],
+    "1b-callable-param": [
+        (
+            "app/S.kt",
+            """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class Store(private val db: SQLiteDatabase) {
+    fun go(intent: Intent, openDatabase: (String) -> String) {
+        val sql = openDatabase(intent.getStringExtra("q") ?: "")
+        db.execSQL(sql)
+    }
+}
+""",
+        )
+    ],
+    "2a-query-builder-third-string": [
+        (
+            "app/A.kt",
+            """package com.example.app
+import android.app.Activity
+import android.content.Intent
+import android.database.sqlite.SQLiteQueryBuilder
+fun openOrCreateDatabase(name: String, mode: Int, table: String): SQLiteQueryBuilder = SQLiteQueryBuilder()
+fun Activity.handle(intent: Intent) {
+    val qb = openOrCreateDatabase("app.db", 0, "users")
+    qb.appendWhere("id = " + intent.getStringExtra("q"))
+}
+""",
+        )
+    ],
+    "3a-named-with-receiver": [
+        ("app/Db.kt", R6_FILE_OPENER),
+        (
+            "app/H.kt",
+            """package com.example.app
+import android.app.Activity
+import android.content.Intent
+fun handle(activity: Activity, intent: Intent) {
+    with(receiver = activity) {
+        fun runSql() {
+            val db = openOrCreateDatabase("app.db", 0, null)
+            db.execSQL("DELETE FROM t WHERE id = " + (intent.getStringExtra("q") ?: ""))
+        }
+        runSql()
+    }
+}
+""",
+        ),
+    ],
+    "3b-bang-receiver": [
+        ("app/Db.kt", R6_FILE_OPENER),
+        (
+            "app/H.kt",
+            """package com.example.app
+import android.app.Activity
+import android.content.Intent
+fun handle(activity: Activity?, intent: Intent) {
+    with(activity!!) {
+        fun runSql() {
+            val db = openOrCreateDatabase("app.db", 0, null)
+            db.execSQL("DELETE FROM t WHERE id = " + (intent.getStringExtra("q") ?: ""))
+        }
+        runSql()
+    }
+}
+""",
+        ),
+    ],
+    "4-nested-sync-activity": [
+        (
+            "app/O.kt",
+            """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteQueryBuilder
+fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): SQLiteQueryBuilder = SQLiteQueryBuilder()
+class Outer {
+    class SyncActivity
+    fun SyncActivity.run(intent: Intent) {
+        val qb = openOrCreateDatabase("app.db", 0, null)
+        qb.appendWhere("id = " + intent.getStringExtra("q"))
+    }
+}
+""",
+        )
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "1b-callable-param",
+        "2a-query-builder-third-string",
+        "3a-named-with-receiver",
+        "3b-bang-receiver",
+        "4-nested-sync-activity",
+    ],
+)
+def test_round_six_opener_shapes_keep_their_findings(name):
+    report = analyze_sources(R6_CASES[name])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+@pytest.mark.parametrize("name", sorted(R6_CASES))
+def test_round_six_opener_shapes_never_claim_checked_without_a_finding(name):
+    report = analyze_sources(R6_CASES[name])
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
+
+
+@pytest.mark.parametrize(
+    "receiver",
+    [
+        "with(requireContext())",
+        "getApplicationContext().run",
+        "getBaseContext().apply",
+        "with(applicationContext)",
+    ],
+)
+def test_context_accessor_scope_receivers_keep_the_framework_member(receiver):
+    # A scope block whose receiver is a Context accessor supplies Context's member,
+    # which Kotlin picks over a same-package top-level function.
+    caller = (
+        "package com.example.app\nimport android.content.Intent\nclass H {\n    fun go(intent: Intent) { "
+        + receiver
+        + ' { openOrCreateDatabase("app.db", 0, null).execSQL("DELETE FROM t WHERE id = " + '
+        + '(intent.getStringExtra("q") ?: "")) } }\n}\n'
+    )
+    report = analyze_sources([("app/H.kt", caller), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
