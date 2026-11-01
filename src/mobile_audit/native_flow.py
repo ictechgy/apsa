@@ -18,6 +18,7 @@ from .source_analysis import (
     INITIALIZERS,
     INTENT_LAUNCHERS,
     NESTED_INTENT_GETTERS,
+    RESULT_STORING_CALLS,
     RULES,
     SQL_SINKS,
     STRINGS,
@@ -334,27 +335,12 @@ CONTEXT = (
     "reuse_visited",
     "evaluated_inputs",
     "closure_effects",
+    "closure_writes",
     "guarded_paths",
     "unguarded_paths",
     "finding_start",
     "pending_paths",
     "active_guards",
-)
-# Standard APIs that store their closure's result into the receiver, for a later read.
-RESULT_STORING_CALLS = frozenset(
-    {
-        "compute",
-        "computeIfAbsent",
-        "computeIfPresent",
-        "merge",
-        "replaceAll",
-        "updateAndGet",
-        "getAndUpdate",
-        "accumulateAndGet",
-        "getAndAccumulate",
-        "getOrPut",
-        "update",
-    }
 )
 
 
@@ -410,6 +396,7 @@ class NativeFlow:
         self.type_parameter_cache: dict[tuple[int, int], dict[str, Any]] = {}
         self.empty_base_cache: dict[tuple[int, int, str], bool] = {}
         self.known_base_cache: dict[tuple[int, int, str], bool] = {}
+        self.ancestry_cache: dict[str, set[str]] = {}
         self.member_type_cache: dict[tuple[int, int], set[str]] = {}
         self.swiftui_shadow: bool | None = None
         self.module_values: dict[str, list[tuple[Analyzer, Any]]] = {}
@@ -1789,6 +1776,45 @@ class NativeFlow:
                 return False
             current = base
         return False
+
+    def top_level_visible(self, analyzer: Analyzer, target: Callable, name: str) -> bool:
+        """A top-level function a receiverless call in this file can name: one of this file,
+        of its Kotlin package, of a star-imported package or imported by name."""
+        if self.lexical_function(target.node) or target.analyzer.path == analyzer.path:
+            return True
+        namespace = self.namespaces[id(target.analyzer)]
+        if analyzer.language == "kotlin" and namespace:
+            if namespace == self.namespaces[id(analyzer)] or namespace + ".*" in analyzer.imports:
+                return True
+        return f"{namespace}.{target.name}" in self.imported_symbols(analyzer, name)
+
+    def project_ancestry(self, owner: str) -> set[str]:
+        """A class and the source classes it extends, through readable supertype spellings."""
+        if owner in self.ancestry_cache:
+            return self.ancestry_cache[owner]
+        found = self.ancestry_cache[owner] = {owner}
+        pending = [owner]
+        while pending and len(found) < MAX_EMPTY_BASE_DEPTH * 4:
+            for analyzer, nominal in self.class_definitions.get(pending.pop(), []):
+                for reference in self.supertype_references(analyzer, nominal) or []:
+                    bases = self.class_owners(analyzer, reference, nominal)
+                    if not bases and analyzer.language == "kotlin":
+                        # A Kotlin class can extend a Java class of its package or an import.
+                        namespace = self.namespaces[id(analyzer)]
+                        names = {reference, f"{namespace}.{reference}" if namespace else reference}
+                        names |= self.imported_symbols(analyzer, reference.partition(".")[0], classes=True)
+                        bases = {
+                            name
+                            for name in names
+                            if any(
+                                source.language == "java"
+                                for source, _ in self.class_definitions.get(name, [])
+                            )
+                        }
+                    for base in bases - found:
+                        found.add(base)
+                        pending.append(base)
+        return found
 
     @staticmethod
     def supertype_references(analyzer: Analyzer, nominal: Any) -> list[str] | None:

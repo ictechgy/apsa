@@ -29,7 +29,11 @@ its cut through later calls and sinks: a value the model abstained on (for
 example `constructor field mapping unavailable`) records
 `source trace abstention` when passed to a call and stays `limited`, while a
 trace cut by the trace cap (origins dropped when values merge, including at a
-sink) records `source trace budget` and stays `partial`.
+sink) records `source trace budget` and stays `partial`, except in a followed
+closure's result that a call's value includes (an unresolved callee's closure,
+or a `let`/`run`/`with`/`use` block), where the cut records
+`source trace abstention`: the callee may never return that result, and an own
+call's field-round duplicates would otherwise make the idiom `partial`.
 Field summaries whose sources and contents stopped changing while derived trace
 identities still change record the precision reason
 `field summary fixed point unresolved`; contents still changing at the round cap
@@ -37,7 +41,7 @@ record the budget reason `field summary fixed-point budget`. Unknown calls
 re-derive trace origins each round, so a field can accumulate duplicate traces
 of the same source; whether those reach the trace cap before the round cap
 decides the kind, so the classification can depend on the round cap. A trace
-cap that is hit is always a budget gap; a round cap that is hit is a budget gap
+cap that is hit is a budget gap outside such a closure result; a round cap that is hit is a budget gap
 unless the field contents stopped changing in the last round. An unaffected file's empty
 diagnostic list does not make its rules globally complete.
 
