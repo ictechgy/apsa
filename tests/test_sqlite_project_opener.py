@@ -317,3 +317,138 @@ def test_local_class_sees_the_enclosing_activity_member_before_a_top_level_opene
     both = analyze_sources([("app/Main.kt", LOCAL_CLASS_IN_ACTIVITY), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)])
     assert [item["rule_id"] for item in both["findings"]] == [item["rule_id"] for item in alone["findings"]]
     assert both["metadata"]["native_flow"]["reasons"] == alone["metadata"]["native_flow"]["reasons"]
+
+
+EXTENSION_RECEIVER = """package com.example.app
+import android.app.Activity
+import android.content.Intent
+fun Activity.purge(i: Intent) {
+    val q = i.getStringExtra("q") ?: ""
+    openOrCreateDatabase("app.db", 0, null).execSQL("DELETE FROM t WHERE id = " + q)
+}
+"""
+MEMBER_EXTENSION_RECEIVER = """package com.example.app
+import android.app.Activity
+import android.content.Intent
+class Purger {
+    fun Activity.purge(i: Intent) {
+        val q = i.getStringExtra("q") ?: ""
+        openOrCreateDatabase("app.db", 0, null).execSQL("DELETE FROM t WHERE id = " + q)
+    }
+}
+"""
+
+
+@pytest.mark.parametrize(
+    "caller", [EXTENSION_RECEIVER, MEMBER_EXTENSION_RECEIVER], ids=["top-level", "member"]
+)
+def test_extension_receiver_keeps_the_inherited_member_ahead_of_a_top_level_opener(caller):
+    # Kotlin resolves the call to the extension receiver's inherited Context member.
+    report = analyze_sources([("app/Purge.kt", caller), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+# Round-4 external review scenarios: Kotlin and Java pick an implicit receiver's
+# inherited Context member only when Context's openOrCreateDatabase can apply.
+EXTENSION_PROPERTY = """package com.example.app
+import android.content.Context
+import android.content.Intent
+val Context.purgeDb get() = openOrCreateDatabase("app.db", 0, null)
+fun Context.purge(intent: Intent) {
+    purgeDb.execSQL("DELETE FROM t WHERE id = " + intent.getStringExtra("q"))
+}
+"""
+OWN_MEMBER_WITH_CONTEXT = """package com.example.app
+import android.content.Context
+import android.content.Intent
+import java.io.File
+class Repo(private val ctx: Context) {
+    fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): File = File(name)
+    fun go(intent: Intent) {
+        with(ctx) {
+            openOrCreateDatabase("app.db", 0, null).execSQL("DELETE FROM t WHERE id = " + intent.getStringExtra("q"))
+        }
+    }
+}
+"""
+JAVA_STATIC_IMPORT = {
+    "app/Db.java": """package com.example;
+import android.database.sqlite.SQLiteDatabase;
+import java.io.File;
+public final class Db {
+    public static File openOrCreateDatabase(String name, int mode, SQLiteDatabase.CursorFactory factory) {
+        return new File(name);
+    }
+}
+""",
+    "app/Main.java": """package com.example;
+import static com.example.Db.openOrCreateDatabase;
+import android.app.Activity;
+import android.database.sqlite.SQLiteDatabase;
+public class Main extends Activity {
+    void purge(String name, int mode, SQLiteDatabase.CursorFactory factory) {
+        String q = getIntent().getStringExtra("q");
+        openOrCreateDatabase(name, mode, factory).execSQL("DELETE FROM t WHERE id = " + q);
+    }
+}
+""",
+}
+NON_CONTEXT_SHAPED_HELPER = {
+    "app/Db.kt": """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+fun openOrCreateDatabase(db: SQLiteDatabase, name: String, extra: String) {
+    db.execSQL("ATTACH DATABASE '" + name + "' AS " + extra)
+}
+""",
+    "app/Main.kt": """package com.example.app
+import android.app.Activity
+import android.database.sqlite.SQLiteDatabase
+class Main(private val db: SQLiteDatabase) : Activity() {
+    fun run() {
+        val q: String = intent.getStringExtra("q") ?: ""
+        openOrCreateDatabase(db, "aux", q)
+    }
+}
+""",
+}
+SCOPE_LAMBDA_LOCAL_FUNCTION = """package com.example.app
+import android.app.Activity
+import android.content.Intent
+fun handle(activity: Activity, intent: Intent) {
+    activity.run {
+        fun runSql() {
+            val db = openOrCreateDatabase("app.db", 0, null)
+            db.execSQL("DELETE FROM t WHERE id = " + (intent.getStringExtra("q") ?: ""))
+        }
+        runSql()
+    }
+}
+"""
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        [("app/Repo.kt", OWN_MEMBER_WITH_CONTEXT)],
+        list(JAVA_STATIC_IMPORT.items()),
+        list(NON_CONTEXT_SHAPED_HELPER.items()),
+    ],
+    ids=["own-member-in-with", "java-static-import", "non-context-shaped-helper"],
+)
+def test_receiver_precedence_follows_kotlin_and_java_resolution(files):
+    report = analyze_sources(files)
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+@pytest.mark.parametrize(
+    ("path", "caller"),
+    [("app/Handle.kt", SCOPE_LAMBDA_LOCAL_FUNCTION), ("app/Purge.kt", EXTENSION_PROPERTY)],
+    ids=["scope-lambda-local-function", "extension-property"],
+)
+def test_receiver_typing_does_not_depend_on_a_top_level_opener(path, caller):
+    # A local function inside `activity.run { }` and an extension property getter see
+    # a Context receiver, so a same-package top-level opener must not change the typing.
+    alone = analyze_sources([(path, caller)])
+    both = analyze_sources([(path, caller), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)])
+    assert [item["rule_id"] for item in both["findings"]] == [item["rule_id"] for item in alone["findings"]]
+    assert both["metadata"]["native_flow"]["reasons"] == alone["metadata"]["native_flow"]["reasons"]

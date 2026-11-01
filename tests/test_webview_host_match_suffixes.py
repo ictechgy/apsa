@@ -231,3 +231,14 @@ def test_suffix_exemption_stays_linear(text):
     started = time.perf_counter()
     PATTERN.findall(text)
     assert time.perf_counter() - started < 1.0
+
+
+def test_host_match_is_linear_on_whitespace_between_receiver_and_method():
+    # Three adjacent optional whitespace runs used to split a long run cubically.
+    rule = next(item for item in rules() if item["id"] == "WEBVIEW-HOST-MATCH")
+    pattern = re.compile(rule["pattern"], 0 if rule.get("case_sensitive") else re.I)
+    for receiver in ("host", "url", "hostname?."):
+        text = receiver + " \n" * 1500 + "x"
+        started = time.perf_counter()
+        assert list(pattern.finditer(text)) == []
+        assert time.perf_counter() - started < 0.5, receiver

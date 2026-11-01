@@ -993,53 +993,140 @@ class Analyzer:
                 r"@Override\b", target.analyzer.text(modifiers)
             ):
                 return False
-        if (
-            self.language == "kotlin"
-            and call.name == "openOrCreateDatabase"
-            and len(call.args) in {3, 4}
-            and all(not target.owner and not flow.lexical_function(target.node) for target in targets)
+        if call.name == "openOrCreateDatabase" and any(
+            self.context_opener_shape(target) for target in targets
         ):
-            return not self.kotlin_inherited_receiver(call.node)
+            # Arguments that fit Context's own openOrCreateDatabase(String, int, factory[,
+            # handler]) also fit the inherited member, which an implicit receiver supplies
+            # ahead of a project function of another class or a top-level function.
+            owner = flow.owner(self, self.function) if self.function is not None else ""
+            own = all(target.owner and target.owner == owner for target in targets)
+            return not self.inherited_receiver(call.node, classes=not own)
         return True
 
-    def kotlin_inherited_receiver(self, node: Any) -> bool:
+    @staticmethod
+    def context_opener_shape(target: Any) -> bool:
+        """Whether a project function has Context.openOrCreateDatabase's parameter shape."""
+        parameters = next(
+            (
+                child
+                for child in target.node.named_children
+                if child.type in {"function_value_parameters", "formal_parameters"}
+            ),
+            None,
+        )
+        if parameters is None:
+            return False
+        types = []
+        for parameter in parameters.named_children:
+            if parameter.type not in {"parameter", "formal_parameter", "spread_parameter"}:
+                continue
+            kind = next(
+                (
+                    part
+                    for part in parameter.named_children
+                    if part.type
+                    in {
+                        "user_type",
+                        "nullable_type",
+                        "type_identifier",
+                        "integral_type",
+                        "generic_type",
+                        "scoped_type_identifier",
+                    }
+                ),
+                None,
+            )
+            text = target.analyzer.text(kind) if kind is not None else ""
+            types.append(re.sub(r"\s+|\?$", "", text).rsplit(".", 1)[-1])
+        return len(types) in {3, 4} and types[0] == "String" and types[1] in {"Int", "int"}
+
+    def receiver_scope_lambda(self, node: Any) -> bool:
+        """Whether a Kotlin lambda is the block of `x.run`, `x.apply` or `with(x)`."""
+        holder = node.parent
+        call = holder.parent if holder is not None and holder.type == "annotated_lambda" else None
+        if call is None or call.type != "call_expression" or not call.named_children:
+            return False
+        callee = call.named_children[0]
+        name = re.search(r"(\w+)\s*$", self.text(callee))
+        if name is None:
+            return False
+        if name.group(1) == "with":
+            return True
+        return callee.type == "navigation_expression" and name.group(1) in {"run", "apply"}
+
+    def inherited_receiver(self, node: Any, *, classes: bool) -> bool:
         """Whether an implicit receiver in scope at `node` may inherit Context members.
 
-        The innermost class-like scope decides: supertypes, readable or not, may supply
-        the member. A nested class, object or companion without supertypes has no outer
-        receiver; an inner or local class, a plain anonymous object, lambdas and local
-        functions defer to the enclosing scope. A scope function's bound receiver may be
-        a Context.
+        Walking outward from the call, a Kotlin scope-function receiver or an extension
+        receiver (`fun Activity.f()`, `val Context.p get()`) may be a Context. With
+        `classes`, the enclosing class-like scopes count too: supertypes, readable or
+        not, may supply the member; an anonymous class always has one. A nested class,
+        object or companion without supertypes (a Java static or implicitly static
+        type) has no outer receiver, while inner and local classes, Kotlin anonymous
+        objects, lambdas and local functions defer to the enclosing scope. Without
+        `classes` (the target is a method of the enclosing class), the walk stops at
+        the first class-like scope.
         """
         from .native_flow import NativeFlow
 
-        if "this" in self.aliases:
+        kotlin = self.language == "kotlin"
+        if kotlin and "this" in self.aliases:
             return True
         current = node.parent
         while current is not None:
-            if current.type in {
+            if (
+                kotlin
+                and current.type in {"function_declaration", "anonymous_function", "property_declaration"}
+                and any(child.type == "." for child in current.children)
+            ):
+                return True
+            if kotlin and current.type == "lambda_literal" and self.receiver_scope_lambda(current):
+                return True
+            if not kotlin and current.type == "object_creation_expression":
+                if any(child.type == "class_body" for child in current.children):
+                    if not classes:
+                        return False
+                    return True
+            elif current.type in {
                 "class_declaration",
                 "object_declaration",
                 "companion_object",
                 "object_literal",
+                "enum_declaration",
+                "record_declaration",
+                "interface_declaration",
             }:
+                if not classes:
+                    return False
                 if NativeFlow.supertype_references(self, current) != []:
                     return True
+                modifiers = " ".join(
+                    self.text(child) for child in current.named_children if child.type == "modifiers"
+                )
                 # A local class (declared in a function body) sees the enclosing
                 # class's members, like an inner class.
                 local = current.parent is not None and current.parent.type not in {
                     "source_file",
+                    "program",
                     "class_body",
                     "enum_class_body",
+                    "enum_body_declarations",
+                    "interface_body",
                 }
-                inner = current.type == "class_declaration" and (
-                    local
-                    or any(
-                        child.type == "modifiers" and re.search(r"\binner\b", self.text(child))
-                        for child in current.named_children
+                if kotlin:
+                    defers = current.type == "object_literal" or (
+                        current.type == "class_declaration"
+                        and (local or bool(re.search(r"\binner\b", modifiers)))
                     )
-                )
-                if not inner and current.type != "object_literal":
+                else:
+                    defers = (
+                        current.type == "class_declaration"
+                        and (local or not re.search(r"\bstatic\b", modifiers))
+                        and current.parent is not None
+                        and current.parent.type != "program"
+                    )
+                if not defers:
                     return False
             current = current.parent
         return False
