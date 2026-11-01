@@ -137,10 +137,11 @@ device or credential service was contacted.
   coverage gap), while initializers of local or anonymous classes stay part of
   their enclosing function; early exits in Java constructors guard later
   statements; a receiverless `openDatabase`/`openOrCreateDatabase` is analyzed
-  as project code only when it resolves from the call site to a non-override
-  method of the enclosing class, or, from top-level code or a class without
-  supertypes, to a visible Kotlin top-level function, and otherwise keeps the
-  framework `SQLiteDatabase` identity;
+  as project code only when the native flow's own call resolution finds a
+  non-override project target for it and, for Kotlin
+  `openOrCreateDatabase(name, mode, factory[, handler])`, no implicit receiver
+  that may inherit `Context.openOrCreateDatabase` is in scope; otherwise it
+  keeps the framework `SQLiteDatabase` identity;
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies

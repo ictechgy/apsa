@@ -954,7 +954,7 @@ class Analyzer:
             frame.constants.pop(name, None)
             frame.values[name] = Value(bound.traces, bound.category, bound.type_name, bound.identity)
 
-    def sqlite_database_call(self, call: Call, receiver: Value) -> bool:
+    def sqlite_database_call(self, call: Call, receiver: Value, frame: Frame) -> bool:
         """SDK calls that return a SQLiteDatabase: helper getters and Context/SQLiteDatabase openers."""
         if self.language not in {"java", "kotlin"}:
             return False
@@ -963,8 +963,8 @@ class Analyzer:
         if call.name not in SQLITE_OPENERS:
             return False
         if call.receiver is None:
-            # A project method of the same name is analyzed like any other call.
-            return not self.project_callable(call)
+            # A project function the call resolves to is analyzed like any other call.
+            return not self.project_callable(call, receiver, frame)
         key = self.key(call.receiver)
         return (
             key in {"SQLiteDatabase", SQLITE_DATABASE}
@@ -972,56 +972,76 @@ class Analyzer:
             or bool(re.fullmatch(r"(?i)(?:\w*context|ctx)(?:\(\))?", key or ""))
         )
 
-    def project_callable(self, call: Call) -> bool:
-        """Whether a receiverless call resolves from its call site to project code, not the SDK.
+    def project_callable(self, call: Call, receiver: Value, frame: Frame) -> bool:
+        """Whether a receiverless opener resolves to project code rather than the SDK.
 
-        Only a signature-matching method of the enclosing class or a top-level function of
-        the same file, Kotlin package or an import qualifies: the calls the bounded flow
-        can follow. An override returns the framework type and a same-named method of an
-        unrelated class or an inherited base is not followed, so those keep the SDK identity.
-        Kotlin resolves an unqualified call to inherited members before top-level functions,
-        so inside a class with any supertype only the class's own method qualifies.
+        The bounded flow's own call resolution decides. An override returns the framework
+        type, and in Kotlin an inherited `Context.openOrCreateDatabase` of an implicit
+        receiver wins over a top-level function, so those keep the SDK identity.
         """
         flow = self.native_flow
-        if flow is None or self.function is None:
+        if flow is None:
             return False
-        owner = flow.owner(self, self.function)
-        namespace = flow.namespaces[id(self)]
-        top_level = True
-        scope = flow.enclosing_scope(self.function)
-        while scope is not None and top_level:
-            top_level = scope.kind == "callable" or flow.supertype_references(self, scope.node) == []
-            scope = flow.enclosing_scope(scope.node)
-        for target in flow.by_name.get(call.name, []):
-            source = target.analyzer
-            if source.language != self.language or not flow.signature_visible(self, target, call):
-                continue
+        targets, _ = flow.resolve(self, call, receiver, frame)
+        if not targets:
+            return False
+        for target in targets:
             modifiers = next(
                 (child for child in target.node.named_children if child.type == "modifiers"), None
             )
             if "override" in flow.declaration_tokens(target.node) or re.search(
-                r"@Override\b", source.text(modifiers)
+                r"@Override\b", target.analyzer.text(modifiers)
             ):
-                continue
-            if target.owner:
-                if target.owner == owner and source.path == self.path:
+                return False
+        if (
+            self.language == "kotlin"
+            and call.name == "openOrCreateDatabase"
+            and len(call.args) in {3, 4}
+            and all(not target.owner and not flow.lexical_function(target.node) for target in targets)
+        ):
+            return not self.kotlin_inherited_receiver(call.node)
+        return True
+
+    def kotlin_inherited_receiver(self, node: Any) -> bool:
+        """Whether an implicit receiver in scope at `node` may inherit Context members.
+
+        The innermost class-like scope decides: supertypes, readable or not, may supply
+        the member. A nested class, object or companion without supertypes has no outer
+        receiver; an inner or local class, a plain anonymous object, lambdas and local
+        functions defer to the enclosing scope. A scope function's bound receiver may be
+        a Context.
+        """
+        from .native_flow import NativeFlow
+
+        if "this" in self.aliases:
+            return True
+        current = node.parent
+        while current is not None:
+            if current.type in {
+                "class_declaration",
+                "object_declaration",
+                "companion_object",
+                "object_literal",
+            }:
+                if NativeFlow.supertype_references(self, current) != []:
                     return True
-                continue
-            package = flow.namespaces[id(source)]
-            if (
-                top_level
-                and not flow.lexical_function(target.node)
-                and (
-                    source.path == self.path
-                    or self.language == "kotlin"
-                    and (
-                        package == namespace
-                        or f"{package}.{call.name}" in self.imports
-                        or f"{package}.*" in self.imports
+                # A local class (declared in a function body) sees the enclosing
+                # class's members, like an inner class.
+                local = current.parent is not None and current.parent.type not in {
+                    "source_file",
+                    "class_body",
+                    "enum_class_body",
+                }
+                inner = current.type == "class_declaration" and (
+                    local
+                    or any(
+                        child.type == "modifiers" and re.search(r"\binner\b", self.text(child))
+                        for child in current.named_children
                     )
                 )
-            ):
-                return True
+                if not inner and current.type != "object_literal":
+                    return False
+            current = current.parent
         return False
 
     def identifier_value(self, name: str, frame: Frame, node: Any) -> Value:
@@ -1429,7 +1449,7 @@ class Analyzer:
         if call:
             receiver = self.value(call.receiver, frame)
             args = [self.value(arg, frame) for arg in call.args]
-            if self.sqlite_database_call(call, receiver):
+            if self.sqlite_database_call(call, receiver, frame):
                 return Value(type_name=SQLITE_DATABASE)
             if self.native_flow is not None:
                 result = self.native_flow.call(self, call, frame, receiver, args)
