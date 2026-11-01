@@ -1064,10 +1064,11 @@ class Analyzer:
             return True
         targets, relevant = flow.resolve(self, call, receiver, frame)
         if not targets:
-            # A same-named project callable, binding or import the flow cannot resolve
-            # here is still followed, so the flow records why; the result keeps the
-            # framework type.
-            self.opener_follow = relevant
+            # A same-named project callable the call could reach (a value binding, a
+            # callable of this file or package, a project import) that the flow cannot
+            # resolve here is still followed, so the flow records why; the result keeps
+            # the framework type. Framework imports and other classes' methods are not.
+            self.opener_follow = relevant and self.opener_reachable(call, frame)
             return True
         self.opener_follow = True
         self.opener_returns = all(self.declared_return(target) for target in targets)
@@ -1083,13 +1084,57 @@ class Analyzer:
         if all(self.declares_database(target) for target in targets):
             self.opener_certain = True
             return True
-        if call.name != "openOrCreateDatabase" or not any(
-            self.context_opener_shape(target) for target in targets
-        ):
+        if call.name != "openOrCreateDatabase" or not self.context_arguments(call, frame):
             return False
         kind = self.receiver_context(call.node, frame, classes=True)
         self.opener_certain = kind == "yes"
         return kind != "no"
+
+    def opener_reachable(self, call: Call, frame: Frame) -> bool:
+        """Whether an unresolved receiverless opener may still reach project code."""
+        flow = self.native_flow
+        if flow is None:
+            return False
+        if flow.value_binding(self, call, frame) is not None or flow.module_value_present(
+            self, call.name, aliases=True
+        ):
+            return True
+        namespace = flow.namespaces[id(self)]
+        for target in flow.by_name.get(call.name, []):
+            source = target.analyzer
+            if source.language != self.language:
+                continue
+            if source.path == self.path or (
+                not target.owner and namespace and flow.namespaces[id(source)] == namespace
+            ):
+                return True
+        return any(
+            not symbol.startswith(("android.", "androidx."))
+            for symbol in flow.imported_symbols(self, call.name)
+        )
+
+    def context_arguments(self, call: Call, frame: Frame) -> bool:
+        """Whether Context.openOrCreateDatabase(String, int, CursorFactory[, handler]) can
+        take this call's arguments, so an implicit Context receiver's member would apply."""
+        if len(call.args) not in {3, 4}:
+            return False
+        for index, argument in enumerate(call.args):
+            text = self.text(argument).strip()
+            value = frame.values.get(self.symbol_name(text)) if argument.type in IDENTIFIERS else None
+            kind = value.type_name.rsplit(".", 1)[-1] if value is not None and value.type_name else ""
+            if index == 0 and (
+                argument.type in {"integer_literal", "decimal_integer_literal"} or kind in {"Int", "int"}
+            ):
+                return False
+            if index == 1 and (argument.type in STRINGS or kind in {"String"}):
+                return False
+            if index >= 2 and (
+                argument.type in STRINGS
+                or argument.type in {"integer_literal", "decimal_integer_literal", "boolean_literal"}
+                or (kind and kind not in {"CursorFactory", "DatabaseErrorHandler", "Any", "Object"})
+            ):
+                return False
+        return True
 
     @staticmethod
     def declared_return(target: Any) -> str:
@@ -1125,52 +1170,6 @@ class Analyzer:
                     break
         text = target.analyzer.text(declared) if declared is not None else ""
         return re.sub(r"\s+|\?$", "", text).rsplit(".", 1)[-1] == "SQLiteDatabase"
-
-    @staticmethod
-    def context_opener_shape(target: Any) -> bool:
-        """Whether a project function has Context.openOrCreateDatabase's parameter shape."""
-        parameters = next(
-            (
-                child
-                for child in target.node.named_children
-                if child.type in {"function_value_parameters", "formal_parameters"}
-            ),
-            None,
-        )
-        if parameters is None:
-            return False
-        types = []
-        for parameter in parameters.named_children:
-            if parameter.type not in {"parameter", "formal_parameter", "spread_parameter"}:
-                continue
-            kind = next(
-                (
-                    part
-                    for part in parameter.named_children
-                    if part.type
-                    in {
-                        "user_type",
-                        "nullable_type",
-                        "type_identifier",
-                        "integral_type",
-                        "generic_type",
-                        "scoped_type_identifier",
-                    }
-                ),
-                None,
-            )
-            text = target.analyzer.text(kind) if kind is not None else ""
-            types.append(re.sub(r"\s+|\?$", "", text).rsplit(".", 1)[-1])
-        # Context.openOrCreateDatabase(String, int, CursorFactory[, DatabaseErrorHandler]):
-        # a project parameter that cannot hold those arguments is a different overload.
-        factory = {"CursorFactory", "Any", "Object", ""}
-        return (
-            len(types) in {3, 4}
-            and types[0] == "String"
-            and types[1] in {"Int", "int"}
-            and types[2] in factory
-            and (len(types) == 3 or types[3] in {"DatabaseErrorHandler", "Any", "Object", ""})
-        )
 
     def receiver_scope_lambda(self, node: Any) -> bool:
         """Whether a Kotlin lambda is the block of `x.run`, `x.apply` or `with(x)`."""

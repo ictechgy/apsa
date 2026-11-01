@@ -887,3 +887,37 @@ def test_context_accessor_scope_receivers_keep_the_framework_member(receiver):
     )
     report = analyze_sources([("app/H.kt", caller), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)])
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+FILE_PARAMETER_OPENER = """package com.example.app
+import java.io.File
+fun openOrCreateDatabase(name: String, mode: Int, f: File?): File = File(name)
+"""
+ACTIVITY_EXTENSION_NULL_FACTORY = """package com.example.app
+import android.app.Activity
+import android.content.Intent
+fun Activity.go(i: Intent) {
+    val q = i.getStringExtra("q") ?: ""
+    val db = openOrCreateDatabase("app.db", 0, null)
+    db.execSQL("DELETE FROM t WHERE id = " + q)
+}
+"""
+UNRELATED_HELPER_METHOD = """package com.example.app
+class DbHelper { fun openOrCreateDatabase(): Int = 0 }
+"""
+
+
+def test_a_null_factory_argument_lets_the_context_receiver_decide():
+    # Context's member takes a null CursorFactory, so it applies and wins over a
+    # top-level function whose third parameter is a File.
+    report = analyze_sources(
+        [("app/Go.kt", ACTIVITY_EXTENSION_NULL_FACTORY), ("app/Db.kt", FILE_PARAMETER_OPENER)]
+    )
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+def test_an_unrelated_class_method_does_not_make_framework_openers_limited():
+    report = analyze_sources([("app/Main.kt", SDK_ACTIVITY), ("app/DbHelper.kt", UNRELATED_HELPER_METHOD)])
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+    assert sql["state"] == "checked"
