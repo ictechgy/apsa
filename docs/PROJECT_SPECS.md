@@ -68,7 +68,7 @@ CWE identifier, or an APSA rule, and uses the latest report for the target unles
 | `corroborated` | An APSA finding for a related check is at the claimed location (±3 lines). |
 | `same-file-other-location` | Related APSA findings exist in the file, but not at the claimed line. |
 | `not-observed` | Related checks ran without a finding there. This is not proof of absence. |
-| `partial` | Related checks, or the file's parsing, were incomplete. |
+| `partial` | Related checks, or the file's parsing, were incomplete, or they were `limited` (the bounded model abstained on some paths). |
 | `not-run` | Related checks did not run for this target. |
 | `not-assessed` | APSA has no related check for that weakness. |
 
@@ -91,4 +91,4 @@ APSA의 소스 규칙은 한 함수 안의 데이터 흐름만 따라갑니다. 
 
 `apsa verify`(MCP `verify_finding`)는 다른 도구나 AI 리뷰어가 주장한 발견을 같은 대상의 APSA
 증거와 대조합니다. 결과는 `corroborated`, `same-file-other-location`, `not-observed`(부재의
-증거 아님), `partial`, `not-run`, `not-assessed`이며, APSA는 주장을 반박하지 않습니다.
+증거 아님), `partial`(제한된 모델이 판단을 유보한 `limited` 검사 포함), `not-run`, `not-assessed`이며, APSA는 주장을 반박하지 않습니다.

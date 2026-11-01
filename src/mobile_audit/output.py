@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import quote
 
 from . import __version__
-from .core import report_incomplete, severity_rank
+from .core import advisory_ids, report_incomplete, report_limited, severity_rank
 
 MODEL_CONTEXT_INSTRUCTIONS = (
     "Explain in the user's language and cite finding IDs and sources. "
@@ -31,31 +31,75 @@ def assistant_finding(item: dict) -> dict:
     return metadata(item)
 
 
+# Line breaks (including Unicode separators), other control characters and bidi
+# overrides would let report text start new Markdown blocks or disguise itself.
+_MARKDOWN_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+
+
+def _md_text(value: object) -> str:
+    """Report text (paths, advisory titles, warnings) as inert inline Markdown on one line."""
+    text = _MARKDOWN_CONTROL.sub(" ", str(value)).strip()
+    # Entities rather than backslashes for HTML: not every renderer honors \<.
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = re.sub(r"([\\`*_\[\]~])", r"\\\1", text)
+    # Heading and list markers only matter where the text starts a line.
+    text = re.sub(r"^([#+-])", r"\\\1", text)
+    return re.sub(r"^(\d+)([.)])(?=\s|$)", r"\1\\\2", text)
+
+
+def _md_code(value: object) -> str:
+    """Report text as one inline code span, fenced longer than any backtick run inside it."""
+    text = _MARKDOWN_CONTROL.sub(" ", str(value))
+    fence = "`" * (max(map(len, re.findall(r"`+", text)), default=0) + 1)
+    pad = " " if not text or text[0] in "` " or text[-1] in "` " else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
+def _md_reference(url: object) -> str:
+    """A plain http(s) URL as written; other URLs as literal autolinks; anything else as text."""
+    text = str(url)
+    if _MARKDOWN_CONTROL.search(text) or not re.fullmatch(r"https?://[^\s<>]+", text):
+        return _md_text(text)
+    return text if re.fullmatch(r"[\w\-.~:/?#@!$&'()+,;=%]+", text, re.ASCII) else f"<{text}>"
+
+
 def markdown(report: dict) -> str:
     inventory = report["inventory"]
     lines = [
         "# APSA (앱사)",
-        f"\nReport: `{report['id']}` · {report['created']}",
-        f"\nTarget: `{report['target']}`",
-        f"\nInput SHA-256: `{inventory['fingerprint']}`",
-        f"\nRule version: `{report['rule_version']}`",
+        f"\nReport: {_md_code(report['id'])} · {_md_text(report['created'])}",
+        f"\nTarget: {_md_code(report['target'])}",
+        f"\nInput SHA-256: {_md_code(inventory['fingerprint'])}",
+        f"\nRule version: {_md_code(report['rule_version'])}",
         "\nAudit execution: **"
         + ("incomplete" if report_incomplete(report) else "complete for the stated scope")
-        + "**",
+        + "**"
+        + (
+            " (some coverage is limited: every input was examined, but the bounded static model "
+            "abstained on some paths)"
+            if report_limited(report) and not report_incomplete(report)
+            else ""
+        ),
         "\nSummary: " + json.dumps(report["summary"], ensure_ascii=False),
-        f"\n{report['scope']}",
+        f"\n{_md_text(report['scope'])}",
         "\n## Findings",
     ]
     if not report["findings"]:
         lines.append("\nNo findings observed by the executed checks. Review coverage below.")
     for item in report["findings"]:
         lines += [
-            f"\n### {item['title']}",
-            f"\n`{item['id']}` · {item['severity']} · {item['status']} · {item['masvs']}",
-            f"\n{item['remediation']}",
+            f"\n### {_md_text(item['title'])}",
+            f"\n{_md_code(item['id'])} · "
+            + " · ".join(_md_text(item[key]) for key in ("severity", "status", "masvs")),
+            *(
+                ["\nAdvisory IDs: " + ", ".join(_md_code(value) for value in equivalent)]
+                if (equivalent := advisory_ids(item))
+                else []
+            ),
+            f"\n{_md_text(item['remediation'])}",
             "\n```json\n" + json.dumps(item["evidence"], ensure_ascii=False, indent=2) + "\n```",
         ]
-        lines += [f"\n- {url}" for url in item["references"]]
+        lines += [f"\n- {_md_reference(url)}" for url in item["references"]]
     lines += [
         "\n## OS/environment advisories",
         "\n```json\n"
@@ -69,7 +113,7 @@ def markdown(report: dict) -> str:
         "\n```json\n" + json.dumps(report["intel_snapshot"], ensure_ascii=False, indent=2) + "\n```",
         "\n## Limitations",
     ]
-    lines += [f"\n- {w}" for w in report.get("warnings", [])]
+    lines += [f"\n- {_md_text(w)}" for w in report.get("warnings", [])]
     return "\n".join(lines) + "\n"
 
 
@@ -216,6 +260,7 @@ def sarif(report: dict, root: str | None = None) -> dict:
                     "findingId": item["id"],
                     "apsaRuleId": item["rule_id"],
                     **{key: item[key] for key in ("reachability", "known_exploited") if key in item},
+                    **({"advisoryIds": equivalent} if (equivalent := advisory_ids(item)) else {}),
                 },
             }
         )
@@ -258,7 +303,7 @@ def sarif(report: dict, root: str | None = None) -> dict:
         descriptors.append(descriptor)
     grouped: dict[tuple[str, str], list[dict]] = {}
     for item in report["coverage"]:
-        if isinstance(item, dict) and item.get("state") in {"partial", "not-run"}:
+        if isinstance(item, dict) and item.get("state") in {"partial", "limited", "not-run"}:
             grouped.setdefault((str(item.get("rule_id") or "unknown"), item["state"]), []).append(item)
     notifications = []
     snapshot = report.get("inventory", {}).get("input_snapshot") or {}
@@ -285,7 +330,7 @@ def sarif(report: dict, root: str | None = None) -> dict:
                 "message": {
                     "text": f"{text}. {note}".strip()
                     if note
-                    else f"{text}. Not-run and partial never mean safe."
+                    else f"{text}. Not-run, partial and limited never mean safe."
                 },
                 "associatedRule": {"id": rule_id},
             }
@@ -295,7 +340,7 @@ def sarif(report: dict, root: str | None = None) -> dict:
             {
                 "level": "warning",
                 "message": {
-                    "text": f"{len(grouped) - SARIF_NOTIFICATION_LIMIT} more partial or not-run coverage groups "
+                    "text": f"{len(grouped) - SARIF_NOTIFICATION_LIMIT} more partial, limited or not-run coverage groups "
                     "are listed in run.properties.coverage."
                 },
             }
@@ -324,6 +369,7 @@ def sarif(report: dict, root: str | None = None) -> dict:
                     "reportId": report["id"],
                     "ruleVersion": report.get("rule_version"),
                     "auditIncomplete": report_incomplete(report),
+                    "auditLimited": report_limited(report),
                     "maswe": maswe_summary(report),
                     "coverage": report["coverage"],
                     "inputSnapshot": snapshot,
@@ -395,6 +441,7 @@ def assistant_context(report: dict) -> dict:
                     "source",
                     "sink",
                     "dependency",
+                    "dependency_matches",
                     "assertion",
                 )
                 if k in e
@@ -411,6 +458,7 @@ def assistant_context(report: dict) -> dict:
             "engines",
             "supporting_checks",
             "severity_basis",
+            "advisory_ids",
         ):
             if key in item:
                 copy[key] = item[key]

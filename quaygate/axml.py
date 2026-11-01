@@ -14,12 +14,16 @@ def _plain_xml(data: bytes) -> list:
     import io
     import xml.etree.ElementTree as ET
 
+    from defusedxml import DefusedXmlException
+    from defusedxml.ElementTree import iterparse
+
     if len(data) > 8 * 1024 * 1024 or b"<!DOCTYPE" in data or b"<!ENTITY" in data:
         raise AxmlError("Text XML exceeds limits or contains a DTD/entity declaration")
     events = []
     depth = 0
     try:
-        for event, element in ET.iterparse(io.BytesIO(data), events=("start", "end")):
+        # The byte check misses UTF-16 and other encodings; the parser enforces it.
+        for event, element in iterparse(io.BytesIO(data), events=("start", "end"), forbid_dtd=True):
             name = element.tag.rsplit("}", 1)[-1]
             if event == "start":
                 depth += 1
@@ -42,6 +46,8 @@ def _plain_xml(data: bytes) -> list:
                 element.clear()
     except ET.ParseError as error:
         raise AxmlError("Invalid text XML") from error
+    except DefusedXmlException as error:
+        raise AxmlError("Text XML exceeds limits or contains a DTD/entity declaration") from error
     return events
 
 

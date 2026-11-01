@@ -29,7 +29,7 @@ agent to execute. CLI exit 0 means the result was produced, not that a fix passe
 | Observation | Meaning |
 | --- | --- |
 | `exact-id-observed` | The later report contains the same finding ID, rule, origin and scope. |
-| `possible-continuation` | A compatible finding has the same file and corresponding structural anchors, possibly at another line. Identity is not proved. |
+| `possible-continuation` | A compatible finding has the same file and corresponding structural anchors, possibly at another line. Identity is not proved. A dependency advisory renamed to another display ID at the same dependency location appears here with match basis `advisory-alias`. |
 | `same-rule-elsewhere` | The same rule is observed elsewhere without established correspondence. |
 | `no-compatible-observation` | No compatible observation was found. This does not explain whether code changed, a file moved, or analysis missed something. |
 

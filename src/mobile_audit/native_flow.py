@@ -8,6 +8,9 @@ from enum import Enum
 from typing import Any
 
 from .source_analysis import (
+    ACCESSORS,
+    ARCHIVE_ENTRY,
+    ENTRY_ITERATORS,
     FILE_SINKS,
     FUNCTIONS,
     IDENTIFIERS,
@@ -24,6 +27,8 @@ from .source_analysis import (
     Value,
     _field,
     _union,
+    _walk,
+    budget_reason,
 )
 
 MAX_CALL_DEPTH = 8
@@ -80,6 +85,75 @@ INHERITED_TYPE_SCOPES = {
     "extends_interfaces",
     "delegation_specifiers",
     "inheritance_specifier",
+}
+# Public SDK member types each framework base declares or inherits (Context, Activity, ...).
+# Only these simple names can be shadowed by such a base. A spelling must resolve to the exact
+# identity (single-type import, qualified name, or a sole matching on-demand import).
+_CONTEXT_MEMBER_TYPES = frozenset({"BindServiceFlags"})
+_ACTIVITY_MEMBER_TYPES = _CONTEXT_MEMBER_TYPES | {"ScreenCaptureCallback"}
+# androidx.core.app.ComponentActivity.ExtraData plus the androidx.activity internals.
+_COMPONENT_ACTIVITY_MEMBER_TYPES = _ACTIVITY_MEMBER_TYPES | {
+    "ExtraData",
+    "NonConfigurationInstances",
+    "ReportFullyDrawnExecutor",
+    "ReportFullyDrawnExecutorImpl",
+    "Companion",
+}
+_FRAGMENT_ACTIVITY_MEMBER_TYPES = _COMPONENT_ACTIVITY_MEMBER_TYPES | {"HostCallbacks"}
+FRAMEWORK_BASE_MEMBER_TYPES = {
+    "android.app.Activity": _ACTIVITY_MEMBER_TYPES,
+    "android.app.Service": _CONTEXT_MEMBER_TYPES,
+    "android.app.IntentService": _CONTEXT_MEMBER_TYPES,
+    "android.app.Application": _CONTEXT_MEMBER_TYPES
+    | {"ActivityLifecycleCallbacks", "OnProvideAssistDataListener"},
+    "android.app.Fragment": frozenset({"InstantiationException", "SavedState"}),
+    "android.content.BroadcastReceiver": frozenset({"PendingResult"}),
+    "android.content.ContentProvider": frozenset({"CallingIdentity", "PipeDataWriter"}),
+    "androidx.core.app.ComponentActivity": _ACTIVITY_MEMBER_TYPES | {"ExtraData"},
+    "androidx.activity.ComponentActivity": _COMPONENT_ACTIVITY_MEMBER_TYPES,
+    "androidx.fragment.app.FragmentActivity": _FRAGMENT_ACTIVITY_MEMBER_TYPES,
+    "androidx.appcompat.app.AppCompatActivity": _FRAGMENT_ACTIVITY_MEMBER_TYPES,
+    "androidx.fragment.app.Fragment": frozenset(
+        {"InstantiationException", "SavedState", "AnimationInfo", "OnPreAttachedListener", "Api19Impl"}
+    ),
+    "android.webkit.WebViewClient": frozenset(),
+    "android.webkit.WebChromeClient": frozenset({"CustomViewCallback", "FileChooserParams"}),
+    # SwiftUI protocols supply only their associated types.
+    "SwiftUI.View": frozenset({"Body"}),
+    "SwiftUI.App": frozenset({"Body"}),
+    "SwiftUI.Scene": frozenset({"Body"}),
+    "SwiftUI.PreviewProvider": frozenset({"Previews"}),
+}
+# Swift imports whole modules, so SwiftUI credit needs every import in the file to come
+# from these Apple modules. Checked against Xcode's iOS and macOS SDK .swiftinterface files
+# and headers: none declares View/App/Scene/PreviewProvider or extends them with a member
+# type (only SwiftUI/SwiftUICore do; RealityKit's RealityFoundation exports Scene).
+SWIFTUI_COMPANION_MODULES = {
+    "SwiftUI",
+    "Foundation",
+    "Combine",
+    "Observation",
+    "UIKit",
+    "AppKit",
+    "WebKit",
+    "SafariServices",
+    "AuthenticationServices",
+    "LocalAuthentication",
+    "CryptoKit",
+    "Security",
+    "OSLog",
+    "os",
+    "SwiftData",
+    "CoreData",
+    "MapKit",
+    "CoreLocation",
+    "Charts",
+    "PhotosUI",
+    "AVKit",
+    "AVFoundation",
+    "StoreKit",
+    "UserNotifications",
+    "Network",
 }
 # These exact platform identities already have value/sink models in Analyzer.
 # An import is evidence for deferring to those models, not for inferring a body.
@@ -255,6 +329,9 @@ class NativeFlow:
         self.type_scope_cache: dict[tuple[int, int], list[tuple[str, Any]]] = {}
         self.type_parameter_cache: dict[tuple[int, int], dict[str, Any]] = {}
         self.empty_base_cache: dict[tuple[int, int, str], bool] = {}
+        self.known_base_cache: dict[tuple[int, int, str], bool] = {}
+        self.member_type_cache: dict[tuple[int, int], set[str]] = {}
+        self.swiftui_shadow: bool | None = None
         self.module_values: dict[str, list[tuple[Analyzer, Any]]] = {}
         self.import_indexes: dict[tuple[int, bool], dict[str, set[str]]] = {}
         self.module_type_aliases: dict[str, list[tuple[Analyzer, Any]]] = {}
@@ -386,7 +463,8 @@ class NativeFlow:
                         owner = self.owner(analyzer, name)
                         self.classes.setdefault(analyzer.text(name), set()).add(owner)
                         self.class_definitions.setdefault(owner, []).append((analyzer, node))
-                if node.type not in FUNCTIONS or node.has_error:
+                # Accessor bodies are analysis units, never call targets by name.
+                if node.type not in FUNCTIONS or node.type in ACCESSORS or node.has_error:
                     continue
                 unavailable = self.unavailable_scope(node)
                 if unavailable is not None:
@@ -445,11 +523,18 @@ class NativeFlow:
         node: Any = None,
         call: Call | None = None,
     ) -> None:
-        """Record diagnostic scope without narrowing conservative rule coverage."""
+        """Record diagnostic scope without narrowing conservative rule coverage.
+
+        A budget reason is an execution gap (rule coverage stays partial); any
+        other reason is a precision limit of the bounded model (coverage limited).
+        """
         self.partial_events += 1
         self.reasons.add(reason)
         if analyzer is not None:
-            analyzer.truncated_rules.update(RULES)
+            if budget_reason(reason):
+                analyzer.truncated_rules.update(RULES)
+            else:
+                analyzer.limited_rules.update(RULES)
         node = call.node if call is not None else node
         if node is None and analyzer is not None:
             node = analyzer.function
@@ -462,11 +547,13 @@ class NativeFlow:
             if "inventory" in reason
             else "unavailable-flow"
         )
+        # Original-source coordinates: compatibility re-parses keep byte offsets, not rows.
+        position = analyzer.location(node) if analyzer is not None and node is not None else None
         detail = (
             reason,
             analyzer.path if analyzer is not None else "",
-            node.start_point[0] + 1 if node is not None else 0,
-            node.start_point[1] + 1 if node is not None else 0,
+            position["line"] if position else node.start_point[0] + 1 if node is not None else 0,
+            position["column"] if position else node.start_point[1] + 1 if node is not None else 0,
             call.name if call is not None else "",
             category,
         )
@@ -1283,6 +1370,14 @@ class NativeFlow:
             identity = self.field_identity(analyzer, member, frame)
         else:
             static = self.static_owner(analyzer, base, member, frame, value)
+            if (
+                static is None
+                and member in ENTRY_ITERATORS
+                and not self.class_owners(analyzer, value.type_name or analyzer.key(base), base)
+            ):
+                # An external archive stream's storage holds no entry; keep
+                # Analyzer's archive-entry model for its next entry.
+                return None
             if static is None:
                 bucket = self.binding_identity(analyzer, analyzer.function, "unavailable-storage")
                 if not value.identity and (
@@ -1583,6 +1678,178 @@ class NativeFlow:
             current = base
         return False
 
+    @staticmethod
+    def supertype_references(analyzer: Analyzer, nominal: Any) -> list[str] | None:
+        """Supertype spellings without type arguments; None if any is unreadable."""
+        references = []
+        for inherited in nominal.named_children:
+            if inherited.type not in INHERITED_TYPE_SCOPES:
+                continue
+            if analyzer.language == "java":
+                parts = inherited.named_children
+                if len(parts) == 1 and parts[0].type == "type_list":
+                    parts = parts[0].named_children
+            elif analyzer.language == "swift" and inherited.type == "inheritance_specifier":
+                parts = [_field(inherited, "inherits_from")]
+                if parts[0] is None or parts[0].type != "user_type":
+                    return None
+            elif analyzer.language == "kotlin" and inherited.type == "delegation_specifiers":
+                parts = []
+                for specifier in inherited.named_children:
+                    target = specifier.named_children[0] if specifier.named_children else None
+                    if target is not None and target.type in {
+                        "constructor_invocation",
+                        "explicit_delegation",
+                    }:
+                        target = target.named_children[0] if target.named_children else None
+                    if target is None or target.type != "user_type":
+                        return None
+                    parts.append(target)
+            else:
+                return None
+            for part in parts:
+                text = re.sub(r"\s+", "", analyzer.text(part))
+                while (bare := re.sub(r"<[^<>]*>", "", text)) != text:
+                    text = bare
+                if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", text):
+                    return None
+                references.append(text)
+        return references
+
+    def member_type_names(self, analyzer: Analyzer, nominal: Any) -> set[str]:
+        """Every type declared anywhere in a source class body, nested or local."""
+        key = (id(analyzer), nominal.id)
+        if key not in self.member_type_cache:
+            names = set()
+            for body in nominal.named_children:
+                if body.type not in NOMINAL_BODIES:
+                    continue
+                for node in _walk(body):
+                    if node.type not in NOMINAL_DECLARATIONS | UNAVAILABLE_NOMINAL_DECLARATIONS | {
+                        "type_alias",
+                        "typealias_declaration",
+                    }:
+                        continue
+                    name = (
+                        _field(node, "name")
+                        or (_field(node, "type") if node.type == "type_alias" else None)
+                        or next(
+                            (
+                                child
+                                for child in node.named_children
+                                if child.type in {"identifier", "simple_identifier", "type_identifier"}
+                            ),
+                            None,
+                        )
+                    )
+                    names.add(analyzer.text(name) if name is not None else "Companion")
+            self.member_type_cache[key] = names
+        return self.member_type_cache[key]
+
+    def swiftui_shadowed(self) -> bool:
+        """A source View/App/Scene type or alias, or an extension of one that declares a
+        member type, may shadow SwiftUI's names; it withdraws the SwiftUI credit."""
+        if self.swiftui_shadow is None:
+            names = {key[8:] for key in FRAMEWORK_BASE_MEMBER_TYPES if key.startswith("SwiftUI.")}
+            declarations = NOMINAL_DECLARATIONS | {"typealias_declaration", "associatedtype_declaration"}
+            self.swiftui_shadow = self.swift_extension_types_exhausted
+            for analyzer, _root, nodes in self.files:
+                for node in nodes if analyzer.language == "swift" else []:
+                    name = _field(node, "name") if node.type in declarations else None
+                    if (
+                        name is None
+                        or re.sub(r"<.*", "", analyzer.text(name)).rsplit(".", 1)[-1] not in names
+                    ):
+                        continue
+                    body = _field(node, "body")
+                    if not any(child.type == "extension" for child in node.children) or any(
+                        child.type in declarations for child in (body.named_children if body else [])
+                    ):
+                        self.swiftui_shadow = True
+        return self.swiftui_shadow
+
+    def known_ancestry(self, analyzer: Analyzer, nominal: Any, root: str, depth: int = 0) -> bool:
+        """Every supertype is a curated framework base or a source class, neither declaring `root`.
+
+        Member types are the inherited bindings that can shadow a lexical or
+        imported spelling. Any unknown, ambiguous or non-imported link keeps the
+        fence. This supplies no constructor, dispatch or SDK body proof.
+        """
+        key = (id(analyzer), nominal.id, root)
+        if key in self.known_base_cache:
+            return self.known_base_cache[key]
+        self.known_base_cache[key] = False
+        if depth >= MAX_EMPTY_BASE_DEPTH or nominal.has_error or nominal.parent is None:
+            return False
+        references = self.supertype_references(analyzer, nominal)
+        if references is None:
+            return False
+        for reference in references:
+            head, _, rest = reference.partition(".")
+            if any(
+                source.language == analyzer.language for source, _ in self.module_type_aliases.get(head, [])
+            ):
+                return False
+            if analyzer.language == "swift":
+                # Module scope spans files and imports whole modules: only an all-Apple
+                # import set with no source View/App/Scene shadow names SwiftUI's
+                # protocol. Source Swift bases keep the empty-ancestry rule.
+                modules = [
+                    re.fullmatch(
+                        r"(?:(?:func|class|struct|enum|protocol|typealias|var|let)\s+)?(\w+)(?:\.[\w.]+)?",
+                        declaration,
+                    )
+                    for declaration in analyzer.imports
+                ]
+                apple_only = all(
+                    module is not None and module[1] in SWIFTUI_COMPANION_MODULES for module in modules
+                )
+                imported = self.imported_symbols(analyzer, head, classes=True)
+                if (
+                    not apple_only
+                    or self.swiftui_shadowed()
+                    or not (imported or "SwiftUI" in analyzer.imports)
+                    or self.class_name_present(analyzer, head)
+                    or self.lexical_type(analyzer, reference, nominal.parent) is not None
+                ):
+                    return False
+                if imported:
+                    identity = imported.pop() + ("." + rest if rest else "") if len(imported) == 1 else ""
+                else:
+                    identity = reference if rest else "SwiftUI." + reference
+                members = FRAMEWORK_BASE_MEMBER_TYPES.get(identity)
+                if members is None or root in members:
+                    return False
+                continue
+            owners = self.class_owners(analyzer, reference, nominal.parent)
+            if owners:
+                definitions = self.class_definitions[next(iter(owners))]
+                if len(owners) != 1 or len(definitions) != 1:
+                    return False
+                source, base = definitions[0]
+                if root in self.member_type_names(source, base) or not self.known_ancestry(
+                    source, base, root, depth + 1
+                ):
+                    return False
+                continue
+            if self.lexical_type(analyzer, reference, nominal.parent) is not None:
+                return False
+            imported = self.imported_symbols(analyzer, head, classes=True)
+            on_demand = [declaration for declaration in analyzer.imports if declaration.endswith(".*")]
+            if imported:
+                identities = {symbol + ("." + rest if rest else "") for symbol in imported}
+                identity = identities.pop() if len(identities) == 1 else ""
+            elif rest:
+                identity = reference
+            else:
+                # Only a sole on-demand import of the base's own package names it.
+                identity = on_demand[0][:-1] + reference if len(on_demand) == 1 else ""
+            members = FRAMEWORK_BASE_MEMBER_TYPES.get(identity)
+            if members is None or root in members:
+                return False
+        self.known_base_cache[key] = True
+        return True
+
     def swift_extension_target_represented(self, target: str, extension_source: Analyzer | None) -> bool:
         """Only represented bindings in the extension file rule out an external target."""
         if extension_source is None or extension_source.path in self.swift_conditional_files:
@@ -1691,7 +1958,10 @@ class NativeFlow:
                 inherited = next(
                     (child for child in scope.named_children if child.type in INHERITED_TYPE_SCOPES), None
                 )
-                if inherited is not None and not self.empty_source_ancestry(analyzer, scope, root):
+                if inherited is not None and not (
+                    self.empty_source_ancestry(analyzer, scope, root)
+                    or self.known_ancestry(analyzer, scope, root)
+                ):
                     # Unknown or nonempty ancestry may supply a member before
                     # an enclosing/package/import binding.
                     return inherited
@@ -2544,6 +2814,9 @@ class NativeFlow:
                 and call.name in {"getQueryParameter", "getQueryParameters"}
                 or receiver.category in {"request", "navigation"}
                 and call.name in {"getUrl", "getURL"}
+                or call.name in ENTRY_ITERATORS
+                or call.name == "getName"
+                and ARCHIVE_ENTRY.fullmatch(receiver.type_name.strip())
             ):
                 # Unavailable type identity must not erase Analyzer's existing
                 # conservative platform input provenance. These models add or
@@ -2898,9 +3171,13 @@ class NativeFlow:
             "max_effect_objects": MAX_EFFECT_OBJECTS,
             "state": "partial" if self.reasons else "checked",
             "reasons": sorted(self.reasons),
+            # Budget reasons are execution gaps; precision reasons are bounded-model abstentions.
+            "budget_reasons": sorted(reason for reason in self.reasons if budget_reason(reason)),
+            "precision_reasons": sorted(reason for reason in self.reasons if not budget_reason(reason)),
             "partial_details": [
                 {
                     "reason": reason,
+                    "kind": "budget" if budget_reason(reason) else "precision",
                     "path": path or None,
                     "line": line or None,
                     "column": column or None,

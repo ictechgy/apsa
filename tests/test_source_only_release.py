@@ -25,15 +25,22 @@ def test_release_source_smoke_keeps_candidate_and_checked_rule():
     )
 
 
-def test_original_inherited_release_smoke_retains_partial_uncertainty():
+@pytest.mark.parametrize(
+    ("base", "state"),
+    # The imported framework Activity declares no member type that shadows the smoke's
+    # names; an unknown base still may, so its uncertainty stays visible.
+    [("android.app.Activity", "checked"), ("com.vendor.VendorActivity", "partial")],
+)
+def test_original_inherited_release_smoke_retains_partial_uncertainty(base, state):
     from mobile_audit.source_analysis import analyze_sources
 
     original = (
-        "import android.app.Activity; import android.webkit.WebView;\n"
-        "class Main extends Activity { void open(WebView web) { web.loadUrl(getIntent().getDataString()); } }\n"
+        f"import {base}; import android.webkit.WebView;\n"
+        f"class Main extends {base.rsplit('.', 1)[-1]} "
+        "{ void open(WebView web) { web.loadUrl(getIntent().getDataString()); } }\n"
     )
     result = analyze_sources([("Main.java", original)])
-    assert result["metadata"]["native_flow"]["state"] == "partial"
+    assert result["metadata"]["native_flow"]["state"] == state
     assert any(
         item["rule_id"] == "AST-WEBVIEW-UNTRUSTED-URL" and item["status"] == "candidate"
         for item in result["findings"]

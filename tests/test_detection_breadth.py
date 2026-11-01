@@ -1074,16 +1074,18 @@ def test_budget_truncation_marks_coverage_partial():
     assert states["AST-PATH-TRAVERSAL"] == "checked"
 
 
-def test_budget_fixture_with_unknown_ancestor_keeps_type_uncertainty_partial():
+def test_budget_fixture_with_unknown_ancestor_keeps_type_uncertainty_limited():
     launches = "\n".join(f'        startActivity(Intent("com.example.breadth.A{i}"))' for i in range(250))
     kotlin = (
         "package com.example.breadth\nclass D : Activity() {\n    fun f() {\n" + launches + "\n    }\n}\n"
     )
     result = analyze_sources([("D.kt", kotlin)])
     states = {c["rule_id"]: c["state"] for c in result["coverage"]}
+    # The intent budget stays an execution gap; ancestor type uncertainty is a precision limit.
     assert states["AST-IMPLICIT-INTENT"] == "partial"
-    assert states["AST-PATH-TRAVERSAL"] == "partial"
+    assert states["AST-PATH-TRAVERSAL"] == "limited"
     assert result["metadata"]["native_flow"]["state"] == "partial"
+    assert result["metadata"]["native_flow"]["budget_reasons"] == []
 
 
 def test_long_lines_and_repeated_declarations_stay_fast():

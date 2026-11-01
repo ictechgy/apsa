@@ -66,7 +66,14 @@ def test_mixed_tree_privacy_observation_comes_from_mobile_source(tmp_path):
 
 
 PRIVACY = plistlib.dumps(
-    {"NSPrivacyAccessedAPITypes": [{"NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults"}]}
+    {
+        "NSPrivacyAccessedAPITypes": [
+            {
+                "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+                "NSPrivacyAccessedAPITypeReasons": ["CA92.1"],
+            }
+        ]
+    }
 )
 
 

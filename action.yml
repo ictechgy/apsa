@@ -11,7 +11,7 @@ inputs:
     default: "."
   version:
     description: APSA version installed from PyPI. Keep it equal to this action's release.
-    default: "1.6.4"
+    default: "1.7.0"
   package:
     description: Advanced. A pip requirement or local path installed instead of apsa==version (for testing).
     default: ""
@@ -28,8 +28,11 @@ inputs:
     description: Without a policy, fail on non-candidate findings at or above this severity (low, medium, high, critical).
     default: ""
   fail-on-incomplete:
-    description: Fail when APSA reports a partial or incomplete audit (exit code 3).
+    description: Fail when the report records an incomplete audit (exit code 3, or a policy with fail_on_partial = false). Limited coverage counts only with strict-coverage.
     default: "true"
+  strict-coverage:
+    description: Also treat limited coverage (every input examined, but the bounded static model abstained on some paths) as incomplete; passes --strict-coverage.
+    default: "false"
   intel-sync:
     description: Fetch public Apple/Android/CVE/KEV advisories before scanning (network).
     default: "false"
@@ -54,7 +57,7 @@ outputs:
     description: APSA report ID.
     value: ${{ steps.scan.outputs.report-id }}
   exit-code:
-    description: APSA exit code (0 complete, 3 partial or incomplete, 4 policy or threshold failure).
+    description: APSA exit code (0 complete for the stated scope, possibly with limited coverage; 3 incomplete; 4 policy or threshold failure, which takes precedence over 3).
     value: ${{ steps.scan.outputs.exit-code }}
 
 runs:
@@ -76,7 +79,7 @@ runs:
         elif [[ "$APSA_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
           spec="apsa==${APSA_VERSION}"
         else
-          echo "::error::version must be an exact release such as 1.6.4" >&2
+          echo "::error::version must be an exact release such as 1.7.0" >&2
           exit 2
         fi
         own=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$GITHUB_ACTION_PATH/pyproject.toml" | head -n 1)
@@ -113,11 +116,16 @@ runs:
         APSA_BASELINE_SHA256: ${{ inputs.baseline-sha256 }}
         APSA_FAIL_ON: ${{ inputs.fail-on }}
         APSA_ONLINE: ${{ inputs.online }}
+        APSA_STRICT_COVERAGE: ${{ inputs.strict-coverage }}
         APSA_SARIF: ${{ inputs.sarif-file }}
       run: |
         set +e
         python="$RUNNER_TEMP/apsa-venv/bin/python"
         helper="$GITHUB_ACTION_PATH/scripts/action_summary.py"
+        if [ "$APSA_STRICT_COVERAGE" != "true" ] && [ "$APSA_STRICT_COVERAGE" != "false" ]; then
+          echo "::error::strict-coverage must be true or false" >&2
+          exit 2
+        fi
         root=$("$python" -I "$helper" --sarif-root "$APSA_TARGET" "$GITHUB_WORKSPACE") || exit 2
         # Never upload results left by an earlier run.
         rm -f "$APSA_SARIF"
@@ -133,6 +141,9 @@ runs:
         if [ "$APSA_ONLINE" = "true" ]; then
           args+=(--online)
         fi
+        if [ "$APSA_STRICT_COVERAGE" = "true" ]; then
+          args+=(--strict-coverage)
+        fi
         apsa "${args[@]}" > "$RUNNER_TEMP/apsa-result.json"
         code=$?
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
@@ -141,7 +152,8 @@ runs:
         fi
         "$python" -I "$helper" --report-id "$RUNNER_TEMP/apsa-result.json" >> "$GITHUB_OUTPUT"
         "$python" -I "$helper" --threshold "$RUNNER_TEMP/apsa-result.json" "$APSA_FAIL_ON" >> "$GITHUB_OUTPUT"
-        "$python" -I "$helper" --summary "$RUNNER_TEMP/apsa-result.json" "$code" >> "$GITHUB_STEP_SUMMARY"
+        "$python" -I "$helper" --incomplete "$RUNNER_TEMP/apsa-result.json" "$APSA_STRICT_COVERAGE" >> "$GITHUB_OUTPUT"
+        "$python" -I "$helper" --summary "$RUNNER_TEMP/apsa-result.json" "$code" "$APSA_STRICT_COVERAGE" >> "$GITHUB_STEP_SUMMARY"
         exit 0
 
     - name: Upload SARIF to code scanning
@@ -162,6 +174,7 @@ runs:
         CODE: ${{ steps.scan.outputs.exit-code }}
         THRESHOLD: ${{ steps.scan.outputs.threshold-exceeded }}
         REASONS: ${{ steps.scan.outputs.gate-reasons }}
+        INCOMPLETE: ${{ steps.scan.outputs.incomplete }}
         FAIL_ON_INCOMPLETE: ${{ inputs.fail-on-incomplete }}
         SARIF: ${{ inputs.sarif-file }}
       run: |
@@ -169,7 +182,7 @@ runs:
           echo "::error::APSA did not write a SARIF file (exit code ${CODE:-unknown})." >&2
           exit 1
         fi
-        # An incomplete audit (exit 3) can also exceed the threshold; never let it mask that.
+        # Exit 4 takes precedence over 3; the report is also read so a threshold is never masked.
         if [ "$CODE" = 4 ] || [ "$THRESHOLD" = true ]; then
           if [ -n "$REASONS" ]; then
             echo "::error::APSA policy gate failed: $REASONS (see the job summary)." >&2
@@ -179,11 +192,14 @@ runs:
           exit 4
         fi
         case "$CODE" in
-          0) exit 0 ;;
-          3) if [ "$FAIL_ON_INCOMPLETE" = "true" ]; then
-               echo "::error::APSA reported a partial or incomplete audit. Review coverage before treating the result as complete." >&2
-               exit 3
-             fi
-             echo "::warning::APSA reported a partial or incomplete audit." ;;
+          0|3) ;;
           *) echo "::error::APSA failed with exit code ${CODE:-unknown}." >&2; exit 1 ;;
         esac
+        # The report decides completeness: a lenient policy (fail_on_partial = false) exits 0 for a partial audit.
+        if [ "$CODE" = 3 ] || [ "$INCOMPLETE" = true ]; then
+          if [ "$FAIL_ON_INCOMPLETE" = "true" ]; then
+            echo "::error::APSA reported a partial or incomplete audit. Review coverage before treating the result as complete." >&2
+            exit 3
+          fi
+          echo "::warning::APSA reported a partial or incomplete audit."
+        fi

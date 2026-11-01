@@ -10,7 +10,7 @@ import zipfile
 import zlib
 
 from . import indicators
-from .apk import bounded_zip
+from .apk import bounded_zip, unsafe_member
 from .checks import HIGH, INFO, LOW, MEDIUM, Finding
 
 BINARY_SCAN_LIMIT = 32 * 1024 * 1024  # 대형 바이너리 대비 상한
@@ -220,6 +220,9 @@ class Ipa:
         info = self.zipf.getinfo(name)
         if info.file_size > MAX_PLIST_BYTES:
             raise IpaError("IPA metadata byte budget exceeded")
+        reason = unsafe_member(info)
+        if reason:
+            raise IpaError(f"IPA metadata not decompressed ({reason}): {name}")
         with self.zipf.open(info) as handle:
             value = handle.read(MAX_PLIST_BYTES + 1)
         if len(value) > MAX_PLIST_BYTES or len(value) != info.file_size:
@@ -262,6 +265,9 @@ class Ipa:
             self._tail_strings, self._tail_canary, self._truncated = [], False, False
             self._binary, self._stream_partial = b"", False
             return self._binary
+        reason = unsafe_member(self.zipf.getinfo(best_name))
+        if reason:
+            raise IpaError(f"실행 파일 압축 해제 거부({best_name}): {reason}")
         try:
             with self.zipf.open(best_name) as fh:
                 head, tail_strings, tail_canary, truncated, partial = _read_streaming(fh, BINARY_SCAN_LIMIT)
@@ -372,6 +378,10 @@ def audit_ipa(ipa: Ipa) -> tuple:
             )
         )
     insecure_domains = []
+    # 소스 Info.plist의 IOS-ATS-EXCEPTION과 같은 기준 — TLS 1.2 미만·전방향 보안 해제·미디어 평문 허용.
+    weakened = []
+    if ats.get("NSAllowsArbitraryLoadsForMedia") is True:
+        weakened.append("(media) NSAllowsArbitraryLoadsForMedia")
     for domain, domain_cfg in exceptions.items():
         if not isinstance(domain_cfg, dict):
             ats_invalid = True
@@ -380,22 +390,43 @@ def audit_ipa(ipa: Ipa) -> tuple:
             "NSExceptionAllowsInsecureHTTPLoads",
             domain_cfg.get("NSTemporaryExceptionAllowsInsecureHTTPLoads"),
         )
-        if insecure:
+        # 앱이 제어하지 않는 도메인용 변형 키도 같은 평문 허용이다.
+        third_party = domain_cfg.get(
+            "NSThirdPartyExceptionAllowsInsecureHTTPLoads",
+            domain_cfg.get("NSTemporaryThirdPartyExceptionAllowsInsecureHTTPLoads"),
+        )
+        if insecure or third_party:
             insecure_domains.append(str(domain))
-    if insecure_domains:
+        reasons = []
+        for prefix in ("NSException", "NSThirdPartyException"):
+            version = domain_cfg.get(prefix + "MinimumTLSVersion")
+            if isinstance(version, str) and version in {"TLSv1.0", "TLSv1.1"}:
+                reasons.append(f"{prefix}MinimumTLSVersion={version}")
+            if domain_cfg.get(prefix + "RequiresForwardSecrecy") is False:
+                reasons.append(f"{prefix}RequiresForwardSecrecy=false")
+        if reasons:
+            weakened.append(f"{domain} {', '.join(reasons)}")
+    if insecure_domains or weakened:
+        details = []
+        if insecure_domains:
+            details.append(
+                f"평문 허용 예외 도메인 {len(insecure_domains)}개: {', '.join(insecure_domains[:8])}"
+            )
+        if weakened:
+            details.append(f"전송 보안 약화 예외 {len(weakened)}개: {'; '.join(weakened[:8])}")
         findings.append(
             Finding(
                 "ipa-ats-domains",
-                "ATS 도메인 평문 예외",
+                "ATS 도메인 예외",
                 "warn",
                 LOW,
-                f"평문 허용 예외 도메인 {len(insecure_domains)}개: {', '.join(insecure_domains[:8])}",
-                "해당 도메인의 TLS 예외가 여전히 필요한지 검토하세요.",
+                " · ".join(details),
+                "해당 도메인의 ATS 예외가 여전히 필요한지 검토하고 TLS 1.2+와 전방향 보안을 유지하세요.",
             )
         )
     else:
         findings.append(
-            Finding("ipa-ats-domains", "ATS 도메인 평문 예외", "pass", None, "평문 예외 도메인 없음.")
+            Finding("ipa-ats-domains", "ATS 도메인 예외", "pass", None, "평문·전송 보안 약화 예외 없음.")
         )
 
     if info.get("UIFileSharingEnabled"):

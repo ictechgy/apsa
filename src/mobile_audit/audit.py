@@ -11,11 +11,14 @@ from packaging.version import InvalidVersion, Version
 from . import __version__
 from .core import (
     RULE_VERSION,
+    bounded_advisory_ids,
     canonical_json,
     finding,
     finding_identity,
+    match_findings,
     now,
     report_incomplete,
+    report_limited,
     severity_rank,
     uid,
 )
@@ -117,6 +120,68 @@ def os_cve_coverage(environment: dict | None, advisories: list[dict], feeds: lis
     }
 
 
+CVE_ID = re.compile(r"CVE-\d{4}-\d{4,}")
+
+
+def _advisory_identities(record: dict) -> set[str]:
+    aliases = record.get("aliases")
+    aliases = aliases if isinstance(aliases, list) else []
+    return {
+        value
+        for value in (record.get("id"), record.get("osv_id"), *aliases)
+        if isinstance(value, str) and value
+    }
+
+
+def _malicious_package(record: dict) -> bool:
+    """An active OSV member reports known malicious code (MAL-), not a rated vulnerability."""
+    members = record.get("osv_records")
+    if not isinstance(members, list) or not members:
+        members = [record]
+    return any(
+        identity.startswith("MAL-")
+        for member in members
+        if isinstance(member, dict) and not member.get("withdrawn")
+        for identity in _advisory_identities(member)
+    )
+
+
+def _without_rejected_display_alias(record: dict, rejected: set[str]) -> dict | None:
+    """Re-key an OSV advisory whose display CVE alias was rejected.
+
+    Returns None only when the upstream OSV identifier itself is a rejected CVE.
+    """
+    osv_id = record["osv_id"]
+    if osv_id in rejected:
+        return None
+    remaining = sorted(
+        alias for alias in _advisory_identities(record) if CVE_ID.fullmatch(alias) and alias not in rejected
+    )
+    return {**record, "id": min(remaining) if remaining else osv_id}
+
+
+def _equivalent_advisory_ids(record: dict, rejected: set[str]) -> list[str]:
+    """Display ID, active OSV member IDs and aliases of one advisory record, minus rejected CVEs.
+
+    Policy waivers, baselines and comparisons use them to keep matching a
+    dependency finding whose display ID changes; the finding ID never does.
+    """
+    members = record.get("osv_records")
+    if not isinstance(members, list) or not members:
+        members = [record]
+    aliases = record.get("aliases")
+    identifiers = {
+        record["id"],
+        *(
+            member.get("osv_id")
+            for member in members
+            if isinstance(member, dict) and not member.get("withdrawn")
+        ),
+        *(aliases if isinstance(aliases, list) else []),
+    }
+    return bounded_advisory_ids(record["id"], identifiers - rejected)
+
+
 def correlate(
     inventory: dict, records: list[dict], environment: dict | None = None
 ) -> tuple[list[dict], list[dict]]:
@@ -125,10 +190,23 @@ def correlate(
     known = {r["id"] for r in records if r.get("known_exploited")}
     rejected = {r["id"] for r in records if r.get("state") == "REJECTED"}
     for record in records:
-        if record["id"] in rejected or record.get("withdrawn"):
+        if record.get("withdrawn"):
             continue
+        if record["id"] in rejected:
+            if not record.get("osv_id"):
+                continue
+            # An OSV advisory's display ID is only its lowest CVE alias. A rejected
+            # duplicate alias does not withdraw the advisory; OSV `withdrawn` does.
+            record = _without_rejected_display_alias(record, rejected)
+            if record is None:
+                continue
         dep = record.get("query_match")
         if dep:
+            exploited = bool(_advisory_identities(record) & known)
+            # Unrated advisories default to medium; known malicious code never does.
+            malicious = _malicious_package(record)
+            severity = "critical" if malicious else record.get("severity") or "medium"
+            severity_basis = "malicious-package" if malicious else record.get("severity_basis") or "unknown"
             for current in inventory["dependencies"]:
                 if current.get("version_source") == "catalog-declared-unresolved-usage" or superseded(
                     current
@@ -144,10 +222,7 @@ def correlate(
                     finding(
                         record["id"],
                         record["title"],
-                        max(
-                            (record.get("severity") or "medium", "high" if record["id"] in known else "info"),
-                            key=severity_rank,
-                        ),
+                        max((severity, "high" if exploited else "info"), key=severity_rank),
                         "version-affected" if current.get("confidence") == "exact" else "candidate",
                         [
                             {
@@ -161,11 +236,12 @@ def correlate(
                         "Upgrade to a vendor-fixed dependency release, then rescan the actual build and test the affected feature.",
                         "MASVS-CODE",
                         record.get("references", []),
-                        known_exploited=record["id"] in known,
+                        known_exploited=exploited,
                         reachability="unknown",
                         reproduced=False,
                         origin="intelligence",
-                        severity_basis=record.get("severity_basis", "unknown"),
+                        severity_basis=severity_basis,
+                        advisory_ids=_equivalent_advisory_ids(record, rejected),
                     )
                 )
         platform = record.get("platform")
@@ -334,6 +410,31 @@ def correlate(
             }
             previous["evidence"][0]["advisory_branches"] = [branches[key] for key in sorted(branches)]
             previous["references"] = sorted(set(previous["references"] + item["references"]))
+        elif previous:
+            # One advisory at one dependency location (name/ecosystem/path), e.g. two
+            # versions in one lockfile. The single identity row keeps finding IDs and
+            # baselines stable; every matched version is nested in it, never dropped.
+            rows = {
+                canonical_json(row): row
+                for match in (previous, item)
+                for row in match["evidence"][0].get("dependency_matches", [match["evidence"][0]])
+            }
+            matches = [rows[key] for key in sorted(rows)]
+            strongest = max(previous, item, key=lambda match: severity_rank(match["severity"]))
+            unique_findings[item["id"]] = {
+                **strongest,
+                "status": "version-affected"
+                if "version-affected" in {previous["status"], item["status"]}
+                else strongest["status"],
+                "known_exploited": bool(previous.get("known_exploited") or item.get("known_exploited")),
+                "advisory_ids": bounded_advisory_ids(
+                    item["rule_id"], [*previous.get("advisory_ids", []), *item.get("advisory_ids", [])]
+                ),
+                "references": list(dict.fromkeys(previous["references"] + item["references"])),
+                "evidence": [
+                    {**matches[0], "dependency_matches": matches} if len(matches) > 1 else matches[0]
+                ],
+            }
         else:
             unique_findings[item["id"]] = item
     return list(unique_findings.values()), list(unique.values())
@@ -351,7 +452,9 @@ def summarize(report: dict) -> dict:
         "environment_advisories": len(report.get("environment_advisories", [])),
         "warnings": len(report.get("warnings", [])),
         "partial": sum(c["state"] == "partial" for c in report["coverage"]),
+        # Execution gaps only; limited is a precision limit that strict coverage also counts.
         "incomplete": report_incomplete(report),
+        "limited": report_limited(report),
     }
 
 
@@ -625,30 +728,40 @@ def refresh_report(
 
 
 def compare(store: Store, before: str, after: str) -> dict:
+    """Pair findings by identity; a dependency advisory whose display ID changed stays one finding.
+
+    Such a pair is listed under ``changed`` (its ``rule_id`` differs) rather than as
+    one added and one no-longer-observed finding.
+    """
     a, b = store.report(before), store.report(after)
 
     def key(f):
         return finding_identity(f["rule_id"], f["evidence"], f.get("scope", "app"))
 
-    left, right = {key(f): f for f in a["findings"]}, {key(f): f for f in b["findings"]}
+    def state(f):
+        return f["rule_id"], f["status"], f["severity"]
+
+    left = list({key(f): f for f in a["findings"]}.values())
+    right = list({key(f): f for f in b["findings"]}.values())
+    matches = match_findings(right, left)
+    pairs = sorted(
+        ((left[index], right[position]) for position, found in enumerate(matches) for index in found),
+        key=lambda pair: (key(pair[1]), key(pair[0])),
+    )
+    paired = {index for found in matches for index in found}
     return {
         "before": a["id"],
         "after": b["id"],
-        "added": [right[k] for k in right.keys() - left.keys()],
-        "no_longer_observed": [left[k] for k in left.keys() - right.keys()],
-        "unchanged": sum(
-            (left[k]["status"], left[k]["severity"]) == (right[k]["status"], right[k]["severity"])
-            for k in left.keys() & right.keys()
-        ),
-        "changed": [
-            {"before": left[k], "after": right[k]}
-            for k in sorted(left.keys() & right.keys())
-            if (left[k]["status"], left[k]["severity"]) != (right[k]["status"], right[k]["severity"])
-        ],
+        "added": [item for item, found in zip(right, matches, strict=True) if not found],
+        "no_longer_observed": [item for index, item in enumerate(left) if index not in paired],
+        "unchanged": sum(state(old) == state(new) for old, new in pairs),
+        "changed": [{"before": old, "after": new} for old, new in pairs if state(old) != state(new)],
         "coverage_before": a["coverage"],
         "coverage_after": b["coverage"],
         "audit_incomplete_before": report_incomplete(a),
         "audit_incomplete_after": report_incomplete(b),
+        "audit_limited_before": report_limited(a),
+        "audit_limited_after": report_limited(b),
         "input_before": {
             key: a.get("inventory", {}).get(key)
             for key in ("fingerprint", "fingerprint_complete", "input_snapshot")

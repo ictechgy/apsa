@@ -168,7 +168,7 @@ def run(
         record["tools"]["apsa"] = {
             "state": "partial"
             if analyzed["warnings"]
-            or any(row["state"] in {"partial", "not-run"} for row in analyzed["coverage"])
+            or any(row["state"] in {"partial", "limited", "not-run"} for row in analyzed["coverage"])
             else "completed",
             "matched": bool(
                 {row["rule_id"] for row in analyzed["findings"]} & set(MAPPING[case["category"]]["apsa"])

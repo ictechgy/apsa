@@ -2,25 +2,38 @@
 
 APSA emits source candidates from bounded analysis. A checked file or an absent
 finding does not prove runtime safety, installed reachability, or exploitability.
-Unknown dispatch, incomplete traces, malformed input and exhausted budgets must
-remain visible as partial or unavailable coverage.
+Coverage separates two shortfalls. An execution gap (an exhausted budget,
+malformed input, a parse error or lossy adaptation, a skipped file, truncated
+input) leaves part of the scope unexamined and stays `partial`, which makes the
+audit incomplete. A precision limit (unknown dispatch, unresolved identity,
+incomplete traces, a reduced language model) means everything in scope was
+examined but the bounded model abstained on some paths; it is reported as
+`limited`. `limited` does not make the audit incomplete unless strict coverage
+(`scan --strict-coverage` or policy `strict_coverage = true`) is requested.
+Aggregation precedence is `partial` > `limited` > `checked`. Neither state is a
+safety claim.
 
 ## Native source flow
 
 Java, Kotlin and Swift use bounded direct-call and field summaries. Recursion,
 unknown receiver dispatch, ambiguous overloads, unavailable return/body flow and
 inventory/trace/route budgets remain unresolved. They do not supply sanitizer
-proof. Existing conservative coverage is retained: any unresolved native-flow
-reason keeps all native rule coverage partial. An unaffected file's empty
+proof. Existing conservative scope is retained: every unresolved native-flow
+reason applies to all native rules. A reason naming a budget (for example
+`source trace budget` or `native flow recursion budget`) is an execution gap and
+keeps that coverage `partial`; any other reason is a precision limit and makes
+coverage `limited` when nothing else left it partial. An unaffected file's empty
 diagnostic list does not make its rules globally complete.
 
 `source_analysis.native_flow.partial_details` records the reason, file, line,
-column, call name where available, uncertainty category, and conservative rule
-scope. Global uncertainty has an analysis scope and no invented file or call.
+column, call name where available, uncertainty category, `kind` (`budget` or
+`precision`), and conservative rule scope. `budget_reasons` and
+`precision_reasons` split `reasons`; the diagnostic `state` stays `partial`
+whenever any reason exists. Global uncertainty has an analysis scope and no invented file or call.
 Records are deduplicated, sorted and limited to 256; the lexicographically first
 records are retained when the limit is reached. `partial_details_truncated`
 means additional diagnostic locations are unknown. It never clears the reasons
-or changes partial coverage. File metrics include local/global reasons and a
+or changes partial or limited coverage. File metrics include local/global reasons and a
 diagnostic completeness flag; this is explanatory scope, not a claim that only
 those files or rules can be affected.
 
@@ -54,8 +67,11 @@ actual compiled format. No compiled artifact is admitted to text source flow.
 `hybrid_inputs` inventory records distinguish source available from skipped
 content and include representation, recognition basis and skipped reason.
 `hybrid_analysis.files` adds the actual `analysis_state` (`analyzed` or `skipped`).
-`analyzed` means content was admitted to bounded source flow; rule coverage stays
-partial and `flow_state` records whether modeling was incomplete. Framework
+`analyzed` means content was admitted to bounded source flow; such a file and the
+hybrid rule coverage are `limited`, and `flow_state` records whether modeling was
+incomplete. Hybrid coverage stays `partial` when any hybrid file was skipped, a
+hybrid flow budget was reached, or the input observations or inventory were
+truncated or incomplete. Framework
 summaries count observed files, analyzed text files, skipped files and observed
 representations. Presence of Hermes/AOT files never counts as analyzed text.
 
@@ -74,7 +90,8 @@ absence of a candidate.
 
 Known-format credential matching has a separate bounded text channel. Source
 and packaged text can be inspected without admitting credential-only
-`.properties`, `.strings`, `.pem` or `.key` files to general source flow. Eligible
+`.properties`, `.strings`, `.pem`, `.key` or `.xcconfig` files to general source flow.
+Private local environment files such as `.env` are not admitted. Eligible
 APK/IPA text resources, including admitted JavaScript bundles in those packages,
 use `PACKAGED-CREDENTIAL-TEXT`. Credential candidates from other admitted
 representations (source folders, source ZIPs, AABs and `.app` folders) use

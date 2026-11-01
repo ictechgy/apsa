@@ -63,7 +63,7 @@ The same artifact works in a fresh APSA store. Import requires a pinned byte has
 
 ## Exported policy decisions
 
-`scan --policy FILE --out audit.json` writes `audit.json.decision.json` alongside the requested report format. `--decision-out PATH` selects a different decision path. `policy evaluate` can export a decision with the same option. The artifact contains the report digest, normalized policy and its digest, baseline approval/hash provenance, gate state, reasons, and active/expired waivers. Store both report and decision before interpreting exit codes: 0 passes, 3 is incomplete and 4 exceeds policy thresholds. Exports are local artifacts; no approval or signature is fabricated.
+`scan --policy FILE --out audit.json` writes `audit.json.decision.json` alongside the requested report format. `--decision-out PATH` selects a different decision path. `policy evaluate` can export a decision with the same option. The artifact contains the report digest, normalized policy and its digest, baseline approval/hash provenance, gate state, reasons, non-blocking notices (`waiver-severity-escalated`, `waiver-severity-unrecorded`), and active/expired waivers, including any `escalated` waiver record. Store both report and decision before interpreting exit codes: 0 passes (coverage may still be `limited`), 3 is incomplete and 4 exceeds policy thresholds; 4 takes precedence when both apply, and the decision still lists every reason. The decision's policy records `strict_coverage`, which also treats `limited` coverage as incomplete. Exports are local artifacts; no approval or signature is fabricated.
 
 ## Explicit source configuration
 

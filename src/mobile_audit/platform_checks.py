@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+from collections.abc import Callable
 from itertools import islice
 from xml.sax.handler import ContentHandler
 
@@ -173,12 +174,58 @@ def _line(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + text.count("\r", 0, offset) - text.count("\r\n", 0, offset) + 1
 
 
+_TOKEN_STARTS = {False: re.compile(r"//|/\*"), True: re.compile(r'//|/\*|"')}
+_LINE_BREAKS = {"\n": re.compile(r"\n"), "\r\n": re.compile(r"[\r\n]")}
+_ONE_LINE_STRING = re.compile(r'"(?:\\.|[^"\\\n])*(?P<close>")?')
+
+
+def _sub_tokens(
+    text: str, replace: Callable[[str], str], *, strings: bool = False, breaks: str = "\n"
+) -> str:
+    r"""Replace ``//`` comments, closed ``/* */`` comments and, optionally, closed one-line strings.
+
+    The same tokens as ``re.sub(r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\\n])*"', ...)``, in
+    linear time. A start without its terminator stays text and is not rescanned from every
+    later start: once a ``/*`` has no later ``*/`` none after it has, and every ``"`` before
+    the point where an unterminated string stopped is unterminated too.
+    """
+    starts, line_break = _TOKEN_STARTS[strings], _LINE_BREAKS[breaks]
+    parts: list[str] = []
+    position = cursor = 0
+    blocks_close, open_until = True, -1
+    while match := starts.search(text, cursor):
+        start = match.start()
+        if match[0] == "//":
+            found = line_break.search(text, start)
+            end = found.start() if found else len(text)
+        elif match[0] == "/*":
+            close = text.find("*/", start + 2) if blocks_close else -1
+            if close < 0:
+                blocks_close, cursor = False, start + 1
+                continue
+            end = close + 2
+        else:
+            if start < open_until:
+                cursor = start + 1
+                continue
+            quoted = _ONE_LINE_STRING.match(text, start)
+            if quoted is None or quoted["close"] is None:
+                open_until, cursor = (quoted.end() if quoted else start), start + 1
+                continue
+            end = quoted.end()
+        parts += (text[position:start], replace(text[start:end]))
+        position = cursor = end
+    parts.append(text[position:])
+    return "".join(parts)
+
+
 def _exposed(component: dict, target_level: int | None) -> bool:
     exported = component.get("exported")
-    implicit = (
-        exported == "unspecified"
-        and component.get("intent_filters")
-        and (target_level is None or target_level < 31)
+    # Without android:exported, an intent filter exports a component below targetSdk 31, and
+    # a provider is exported by default up to targetSdk 16. An unknown target counts as both.
+    implicit = exported == "unspecified" and (
+        (component.get("intent_filters") and (target_level is None or target_level < 31))
+        or (component.get("type") == "provider" and (target_level is None or target_level < 17))
     )
     # A provider with only one of read/write permission stays open for the other direction.
     protected = bool(component.get("permission")) or bool(
@@ -197,10 +244,29 @@ def android_levels(inventory: dict) -> dict:
     return levels
 
 
-def exposed_providers(inventory: dict) -> set[str]:
+def _target_levels(
+    inventory: dict, sources: list[tuple[str, str]]
+) -> tuple[int | None, list[tuple[str, int | None, int]]]:
+    """Manifest uses-sdk targetSdk, else the lowest literal Gradle targetSdk, and every literal found."""
+    declared = inventory.get("android_sdk") or {}
+    target = str(declared.get("target") or "")
+    target_level = int(target) if target.isdigit() else None
+    targets: list[tuple[str, int | None, int]] = (
+        [(declared.get("path") or "AndroidManifest.xml", None, target_level)]
+        if target_level is not None
+        else []
+    )
+    for path, text in sources:
+        if path.endswith((".gradle", ".gradle.kts")):
+            targets += _gradle_targets(path, text)
+    if target_level is None and targets:
+        target_level = min(level for _, _, level in targets)
+    return target_level, targets
+
+
+def exposed_providers(inventory: dict, sources: list[tuple[str, str]] | None = None) -> set[str]:
     """Simple class names of declared providers that other apps can reach."""
-    target = str((inventory.get("android_sdk") or {}).get("target") or "")
-    level = int(target) if target.isdigit() else None
+    level = _target_levels(inventory, sources or [])[0]
     return {
         # A nested class is declared as Outer$Inner; its source declaration is named Inner.
         str(c.get("name", "")).rsplit(".", 1)[-1].rsplit("$", 1)[-1]
@@ -255,25 +321,14 @@ def _android(inventory: dict, sources: list[tuple[str, str]]) -> tuple[list[dict
             {"rule_id": rule, "state": "not-applicable", "method": "configuration"}
             for rule in ("ANDROID-EXPORTED-COMPONENT", "ANDROID-ALLOW-BACKUP", "ANDROID-TARGET-SDK")
         ]
-    declared = inventory.get("android_sdk") or {}
-    target = str(declared.get("target") or "")
-    target_level = int(target) if target.isdigit() else None
     # Manifest uses-sdk first, then literal targetSdk in Gradle build files.
-    targets: list[tuple[str, int | None, int]] = (
-        [(declared.get("path") or "AndroidManifest.xml", None, target_level)]
-        if target_level is not None
-        else []
-    )
-    for path, text in sources:
-        if path.endswith((".gradle", ".gradle.kts")):
-            targets += _gradle_targets(path, text)
-    if target_level is None and targets:
-        target_level = min(level for _, _, level in targets)
+    target_level, targets = _target_levels(inventory, sources)
     for component in inventory.get("components", []):
         if component.get("type") not in {"activity", "activity-alias", "service", "receiver", "provider"}:
             continue
         exported = component.get("exported")
-        implicit = exported == "unspecified" and bool(component.get("intent_filters"))
+        # An exposed component without android:exported is exported by a platform default.
+        implicit = exported == "unspecified"
         if _exposed(component, target_level) and not component.get("launcher"):
             severity = "low" if component["type"] in {"activity", "activity-alias"} else "medium"
             findings.append(
@@ -402,6 +457,7 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
         if config.get("bundle_role") != "embedded"
     }
     declared: set[str] = set()
+    reasonless: set[str] = set()
     manifests, unreadable = [], []
     for path, text in sources:
         if not path.endswith(".xcprivacy"):
@@ -436,15 +492,21 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
             unreadable.append(path)
             continue
         for item in types:
-            if isinstance(item, dict) and isinstance(item.get("NSPrivacyAccessedAPIType"), str):
+            if not isinstance(item, dict) or not isinstance(item.get("NSPrivacyAccessedAPIType"), str):
+                continue
+            reasons = item.get("NSPrivacyAccessedAPITypeReasons")
+            # A category counts as declared only with at least one approved reason code.
+            if isinstance(reasons, list) and reasons and all(isinstance(r, str) and r for r in reasons):
                 declared.add(item["NSPrivacyAccessedAPIType"])
+            else:
+                reasonless.add(item["NSPrivacyAccessedAPIType"])
     first_use: dict[str, tuple[str, int, int]] = {}
     scanned = 0
     for path, text in sources:
         if not path.endswith(APPLE_SOURCES) or path in desktop_files:
             continue
         scanned += 1
-        cleaned = re.sub(r"//[^\r\n]*|/\*[\s\S]*?\*/", lambda m: re.sub(r"[^\r\n]", " ", m[0]), text)
+        cleaned = _sub_tokens(text, lambda token: re.sub(r"[^\r\n]", " ", token), breaks="\r\n")
         for category, pattern in REQUIRED_REASON.items():
             if category in first_use or category in declared:
                 continue
@@ -465,6 +527,7 @@ def _privacy_manifest(inventory: dict, sources: list[tuple[str, str]]) -> tuple[
                     "category": category,
                     "manifests": manifests[:20],
                     "basis": "symbol name in app source; SDK manifests in the tree count as declarations",
+                    **({"declaration": "missing-reasons"} if category in reasonless else {}),
                 }
             ],
             "Declare the category with an approved reason in PrivacyInfo.xcprivacy, or remove the API use. "
@@ -520,20 +583,25 @@ def _ats_exceptions(inventory: dict) -> tuple[list[dict], list[dict]]:
             for prefix in ("NSException", "NSThirdPartyException"):
                 if settings.get(f"{prefix}AllowsInsecureHTTPLoads") is True:
                     reasons.append(f"{prefix}AllowsInsecureHTTPLoads permits HTTP")
-                if settings.get(f"{prefix}MinimumTLSVersion") in {"TLSv1.0", "TLSv1.1"}:
-                    reasons.append(f"{prefix}MinimumTLSVersion {settings[f'{prefix}MinimumTLSVersion']}")
+                version = settings.get(f"{prefix}MinimumTLSVersion")
+                if isinstance(version, str) and version in {"TLSv1.0", "TLSv1.1"}:
+                    reasons.append(f"{prefix}MinimumTLSVersion {version}")
                 if settings.get(f"{prefix}RequiresForwardSecrecy") is False:
                     reasons.append(f"{prefix}RequiresForwardSecrecy disabled")
             if reasons:
                 reasons_by_domain[str(domain)[:200]] = reasons
-        for domain, reasons in sorted(reasons_by_domain.items()):
+        # Domains are not part of a finding identity, so one finding lists every weakened domain.
+        if reasons_by_domain:
             findings.append(
                 finding(
                     "IOS-ATS-EXCEPTION",
                     "ATS exception weakens transport security",
                     "medium",
                     "configuration-confirmed",
-                    [{"path": config.get("path", ""), "domain": domain, "reasons": reasons}],
+                    [
+                        {"path": config.get("path", ""), "domain": domain, "reasons": reasons}
+                        for domain, reasons in sorted(reasons_by_domain.items())
+                    ],
                     "Remove the exception or limit it to the specific host and setting that needs it; keep TLS 1.2+ with forward secrecy.",
                     "MASVS-NETWORK",
                     [ATS_REFERENCE],
@@ -551,11 +619,7 @@ def _ats_exceptions(inventory: dict) -> tuple[list[dict], list[dict]]:
 
 def _swift_functions(text: str):
     """Yield (offset, body) for Swift functions, skipping comments and strings for brace matching."""
-    masked = re.sub(
-        r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\\n])*"',
-        lambda m: re.sub(r"[^\n]", " ", m[0]),
-        text,
-    )
+    masked = _sub_tokens(text, lambda token: re.sub(r"[^\n]", " ", token), strings=True)
     for match in re.finditer(r"\bfunc\b[^{;]*\{", masked):
         depth, index = 1, match.end()
         while index < len(masked) and depth:
@@ -880,10 +944,12 @@ TRUNCATED = {"truncated": True}
 
 def _masked_code(text: str) -> str:
     """Blank comments and string contents (quotes kept) so brackets inside them do not nest."""
-    return re.sub(
-        r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\\n])*"',
-        lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0].startswith("/") else '"' + " " * (len(m[0]) - 2) + '"',
+    return _sub_tokens(
         text,
+        lambda token: (
+            re.sub(r"[^\n]", " ", token) if token.startswith("/") else '"' + " " * (len(token) - 2) + '"'
+        ),
+        strings=True,
     )
 
 
@@ -1275,6 +1341,7 @@ class _NetworkConfig(ContentHandler):
         self.cleartext: list[dict] = []
         self.domain: list[str] | None = None
         self.base_explicit = False
+        self.base_anchors = False
 
     def setDocumentLocator(self, locator) -> None:  # noqa: N802 - SAX API
         self.locator = locator
@@ -1285,16 +1352,28 @@ class _NetworkConfig(ContentHandler):
         if not debug and name == "base-config" and attrs.get("cleartextTrafficPermitted") is not None:
             self.base_explicit = True
         if not debug and name in {"base-config", "domain-config"}:
+            declared = attrs.get("cleartextTrafficPermitted")
+            # A nested domain-config without the attribute inherits its parent domain-config's value.
+            nested = name == "domain-config" and self.configs and self.configs[-1]["tag"] == "domain-config"
             self.configs.append(
                 {
                     "tag": name,
                     "line": line,
-                    "cleartext": attrs.get("cleartextTrafficPermitted") == "true",
+                    "cleartext": self.configs[-1]["cleartext"]
+                    if nested and declared is None
+                    else declared == "true",
                     "domains": [],
                 }
             )
         elif not debug and name == "domain" and self.configs:
             self.domain = []
+        elif (
+            not debug
+            and name == "trust-anchors"
+            and self.configs
+            and self.configs[-1]["tag"] == "base-config"
+        ):
+            self.base_anchors = True
         elif (
             not debug
             and name == "certificates"
@@ -1361,6 +1440,8 @@ def _network_security_config(
     read, unreadable, compiled = 0, [], []
     read_references: set[tuple[str, str]] = set()
     parsed_for: set[str] = set()
+    # Manifests whose parsed configuration leaves base-config trust anchors at the platform default.
+    default_anchors: dict[str, str] = {}
     matched: list[tuple[str, str, list[tuple[str, str]]]] = []
     for path, text in sources:
         # Debug and test source sets do not ship in the release build.
@@ -1408,6 +1489,8 @@ def _network_security_config(
         target = android_levels(inventory).get("target")
         if handler.base_explicit or (isinstance(target, int) and target >= 28):
             parsed_for.update(owners)
+        if not handler.base_anchors:
+            default_anchors.update(dict.fromkeys(owners, path))
         for line, scope in handler.user:
             findings.append(
                 finding(
@@ -1449,6 +1532,37 @@ def _network_security_config(
                         }
                     ],
                     "Remove cleartextTrafficPermitted or limit it to hosts that cannot use TLS.",
+                    "MASVS-NETWORK",
+                    [NSC_REFERENCE],
+                )
+            )
+    # Without base-config trust anchors, targetSdk 23 and lower also trust user-installed CAs.
+    level = _target_levels(inventory, sources)[0]
+    if isinstance(level, int) and level <= 23:
+        for config in inventory.get("android_config", []):
+            manifest = str(config.get("path") or "")
+            # An unparsed reference leaves the anchors unknown; the coverage below says so.
+            if config.get("bundle_role") == "embedded" or (
+                config.get("network_security_config") and manifest not in default_anchors
+            ):
+                continue
+            findings.append(
+                finding(
+                    "ANDROID-NSC-USER-CA",
+                    "Platform default trusts user-installed CAs",
+                    "medium",
+                    "candidate",
+                    [
+                        {
+                            "path": default_anchors.get(manifest, manifest),
+                            "scope": "platform-default",
+                            "target_sdk": level,
+                            "basis": "targetSdk 23 or lower trusts user-installed CAs unless base-config "
+                            "declares trust-anchors",
+                        }
+                    ],
+                    "Raise targetSdk to 24 or later, or declare base-config trust-anchors with system "
+                    "certificates only in a network security configuration.",
                     "MASVS-NETWORK",
                     [NSC_REFERENCE],
                 )

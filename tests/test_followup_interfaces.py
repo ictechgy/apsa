@@ -12,6 +12,7 @@ from mobile_audit.audit import scan
 from mobile_audit.cli import main
 from mobile_audit.core import canonical_json, digest, finding
 from mobile_audit.followup import assess_finding_followup
+from mobile_audit.output import MODEL_CONTEXT_INSTRUCTIONS
 
 
 @pytest.fixture
@@ -154,7 +155,10 @@ async def test_actual_mcp_followup_schema_parity_and_both_report_roots(store, sa
             args = {"before": before["id"], "after": after["id"], "finding_id": identifier}
             result = await session.call_tool("reports_followup", args)
             assert not result.isError
-            assert result.structuredContent == assess_finding_followup(before, after, identifier)
+            assert result.structuredContent == {
+                **assess_finding_followup(before, after, identifier),
+                "instructions": MODEL_CONTEXT_INSTRUCTIONS,
+            }
             for side in ("before", "after"):
                 denied = await session.call_tool("reports_followup", {**args, side: outside["id"]})
                 assert denied.isError
@@ -166,11 +170,12 @@ def test_fresh_scans_track_line_movement_and_keep_partial_absence_visible(store,
     root = tmp_path / "fresh-app"
     root.mkdir()
     source = root / "Probe.java"
-    code = """import android.webkit.WebViewClient;
+    # An unknown base keeps native flow partial; framework WebViewClient no longer does.
+    code = """import com.vendor.VendorWebViewClient;
 import android.webkit.WebView;
 import android.webkit.SslErrorHandler;
 import android.net.http.SslError;
-class Probe extends WebViewClient {
+class Probe extends VendorWebViewClient {
     public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
         handler.proceed();
     }

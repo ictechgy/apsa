@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import itertools
 import json
 from datetime import datetime, timezone
 
@@ -20,9 +21,13 @@ def item(severity="high", status="configuration-confirmed", rule="TEST", line=2,
     return finding(rule, "Example", severity, status, [{"path": "App.java", "line": line, **metadata}], "Fix")
 
 
+_REPORT_IDS = itertools.count(1)
+
+
 def report(*items, **extra):
+    # Stored reports always have distinct IDs; a baseline is never the evaluated report.
     return {
-        "id": "audit_current",
+        "id": f"audit_{next(_REPORT_IDS)}",
         "schema_version": 2,
         "findings": list(items),
         "coverage": [
@@ -76,7 +81,7 @@ def test_severity_count_budget_allows_exact_limit_and_fails_above():
 
 
 @pytest.mark.parametrize(
-    "expires,expected", [("2026-10-03", "incomplete"), ("2026-10-04", "passed"), ("2026-10-05", "passed")]
+    "expires,expected", [("2026-10-03", "failed"), ("2026-10-04", "passed"), ("2026-10-05", "passed")]
 )
 def test_waiver_expiry_is_inclusive_and_never_silently_ignored(expires, expected):
     current = item()
@@ -84,8 +89,10 @@ def test_waiver_expiry_is_inclusive_and_never_silently_ignored(expires, expected
     before = copy.deepcopy((current, policy))
     result = evaluate(report(current), policy)
     assert result["state"] == expected
-    if expected == "incomplete":
-        assert result["exit_code"] == 3
+    if expected == "failed":
+        # The re-gated finding fails the threshold; exit 4 outranks the expired-waiver 3.
+        assert result["exit_code"] == 4
+        assert any(reason["code"] == "expired-waiver" for reason in result["reasons"])
         assert result["expired_waivers"][0]["matched"] is True
         assert result["counts"]["waived"] == 0
         assert current["id"] in result["gate_findings"]
@@ -109,7 +116,9 @@ def test_loaded_policy_rechecks_expiry_on_every_evaluation(tmp_path, monkeypatch
     policy = load_policy(path)
     assert evaluate(report(current), policy)["state"] == "passed"
     monkeypatch.setattr(policy_module, "_now", lambda: datetime(2026, 10, 5, 0, tzinfo=timezone.utc))
-    assert evaluate(report(current), policy)["state"] == "incomplete"
+    expired = evaluate(report(current), policy)
+    assert expired["state"] == "failed"
+    assert any(reason["code"] == "expired-waiver" for reason in expired["reasons"])
 
 
 def test_only_new_baseline_ignores_ids_timestamps_and_intelligence_snapshots():
@@ -126,7 +135,7 @@ def test_only_new_rejects_a_baseline_from_another_app():
     current = report(item(), inventory={"apps": [{"platform": "android", "package": "team.current"}]})
     unrelated = report(item(), inventory={"apps": [{"platform": "android", "package": "team.other"}]})
     gate = evaluate(current, config(only_new=True), unrelated)
-    assert gate["exit_code"] == 3
+    assert gate["exit_code"] == 4
     assert gate["counts"]["baseline_existing"] == 0
     assert any(reason["code"] == "baseline-target-mismatch" for reason in gate["reasons"])
 
@@ -181,7 +190,7 @@ def test_only_new_reopens_findings_when_dependency_build_scope_changes(key, valu
 
     gate = evaluate(after, config(only_new=True), before)
 
-    assert gate["state"] == "incomplete" and gate["exit_code"] == 3
+    assert gate["state"] == "failed" and gate["exit_code"] == 4
     assert gate["counts"]["baseline_existing"] == 0
     assert gate["gate_findings"] == [after["findings"][0]["id"]]
     assert any(reason["code"] == "baseline-target-mismatch" for reason in gate["reasons"])
@@ -201,14 +210,16 @@ def test_only_new_binds_selection_even_without_an_app_identity():
     after = selected_report({"configuration": "app/release/AndroidManifest.xml"})
     before["inventory"]["apps"] = after["inventory"]["apps"] = []
     gate = evaluate(after, config(only_new=True), before)
-    assert gate["state"] == "incomplete" and gate["counts"]["baseline_existing"] == 0
+    assert gate["state"] == "failed" and gate["counts"]["baseline_existing"] == 0
+    assert any(reason["code"] == "baseline-target-mismatch" for reason in gate["reasons"])
 
 
 def test_only_new_preserves_future_declared_selection_scope():
     before = selected_report({"future_variant": {"name": "demo"}})
     after = selected_report({"future_variant": {"name": "production"}})
     gate = evaluate(after, config(only_new=True), before)
-    assert gate["state"] == "incomplete" and gate["counts"]["baseline_existing"] == 0
+    assert gate["state"] == "failed" and gate["counts"]["baseline_existing"] == 0
+    assert any(reason["code"] == "baseline-target-mismatch" for reason in gate["reasons"])
 
 
 @pytest.mark.parametrize("side", ["before", "after", "both"])
@@ -235,7 +246,7 @@ def test_malformed_selection_never_suppresses_findings_or_raises(side, selection
 
     gate = evaluate(after, config(only_new=True), before)
 
-    assert gate["state"] == "incomplete" and gate["exit_code"] == 3
+    assert gate["state"] == "failed" and gate["exit_code"] == 4
     assert gate["counts"]["baseline_existing"] == 0
     assert gate["gate_findings"] == [after["findings"][0]["id"]]
     assert any(reason["code"] == "invalid-baseline-scope" for reason in gate["reasons"])
@@ -386,7 +397,10 @@ def test_invalid_report_and_coverage_do_not_look_like_a_clean_gate():
     assert evaluate({}, config())["state"] == "incomplete"
     assert evaluate(report({}, coverage=[{}]), config())["state"] == "incomplete"
     duplicate = item()
-    assert evaluate(report(duplicate, duplicate), config())["state"] == "incomplete"
+    gate = evaluate(report(duplicate, duplicate), config())
+    # The retained copy still fails the threshold; failure outranks the invalid report.
+    assert gate["state"] == "failed"
+    assert any(reason["code"] == "duplicate-finding-id" for reason in gate["reasons"])
 
 
 def test_gate_is_json_serializable_and_preserves_report_policy_and_baseline():
@@ -435,3 +449,22 @@ expires = 2026-10-04
     loaded = load_policy(path)
     assert loaded["waivers"][0]["expires"] == "2026-10-04"
     assert evaluate(report(current), loaded)["state"] == "passed"
+
+
+def test_only_new_refuses_the_evaluated_report_as_its_own_baseline():
+    current = report(item(), item(line=3))
+    gate = evaluate(current, config(only_new=True), copy.deepcopy(current))
+    assert gate["state"] == "failed" and gate["exit_code"] == 4
+    assert gate["counts"]["baseline_existing"] == 0
+    assert sorted(gate["gate_findings"]) == sorted(entry["id"] for entry in current["findings"])
+    assert any(reason["code"] == "baseline-is-report" for reason in gate["reasons"])
+
+
+def test_only_new_refuses_a_baseline_created_after_the_report():
+    current = report(item(), created="2026-10-04T10:00:00+00:00")
+    later = report(item(), created="2026-10-04T11:00:00+00:00")
+    gate = evaluate(current, config(only_new=True), later)
+    assert gate["exit_code"] == 4 and gate["counts"]["baseline_existing"] == 0
+    assert any(reason["code"] == "baseline-not-earlier" for reason in gate["reasons"])
+    earlier = report(item(), created="2026-10-04T09:00:00+00:00")
+    assert evaluate(current, config(only_new=True), earlier)["counts"]["baseline_existing"] == 1

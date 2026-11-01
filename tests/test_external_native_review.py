@@ -90,7 +90,8 @@ browser.loadUrl(holder.value);
     report = analyze_sources([("Handler.java", source)])
     assert matches(report, URL), report
     assert "ambiguous direct call" in report["metadata"]["native_flow"]["reasons"]
-    assert next(item for item in report["coverage"] if item["rule_id"] == URL)["state"] == "partial"
+    # Ambiguity is a precision reason, not a budget: coverage is limited.
+    assert next(item for item in report["coverage"] if item["rule_id"] == URL)["state"] == "limited"
 
 
 @pytest.mark.parametrize("unrelated_name", [None, "A.java", "Z.java"])
@@ -252,7 +253,7 @@ def test_unimplemented_swift_checks_are_not_reported_as_inapplicable():
     assert states["AST-WEBVIEW-SSL-BYPASS"] == "not-applicable"
 
 
-def test_swift_declared_sql_sink_retains_candidate_and_partial_coverage():
+def test_swift_declared_sql_sink_retains_candidate_and_limited_coverage():
     specs = {
         "sha256": "synthetic",
         "source": [{"id": "input", "method": "incoming", "returns": "text"}],
@@ -261,7 +262,7 @@ def test_swift_declared_sql_sink_retains_candidate_and_partial_coverage():
     report = analyze_sources([("Handler.swift", "func f() { query(incoming()) }")], specs=specs)
     assert matches(report, "AST-SQL-CONCAT"), report
     assert (
-        next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")["state"] == "partial"
+        next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")["state"] == "limited"
     )
 
 

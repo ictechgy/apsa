@@ -6,16 +6,23 @@ APSA's MCP server reads app source and builds that may be untrusted, on behalf o
 a model that may be steered by that content. This page states what the server
 does to limit that, mapped to the
 [OWASP MCP Top 10 (2025, beta)](https://owasp.org/www-project-mcp-top-10/), and
-what remains the client's or user's responsibility. It describes APSA 1.6.4;
+what remains the client's or user's responsibility. It describes APSA 1.7.0;
 publication is tracked separately in [release readiness](../RELEASE_READINESS.md).
 
 ## Fixed, inspectable tool surface
 
+- The unreleased review fixes make `reports_compare` return model context without source
+  excerpts, with fixed untrusted-evidence instructions and a `max_bytes` bound (4096–262144,
+  default 65536) that counts omitted entries. `reports_checklist` also lists the
+  `limited` status (checks that examined the whole input while the bounded static
+  model abstained on some paths). Its default hash is
+  `f3d2acec8abdffffd1d267a835ea2fd8a1aeba64d90531db766cdab8171e291a` and the runtime hash is
+  `0c66d7f8e1642d15dce60c9a90a6ef7c204a0ca15f0ee85409b35874caee8af8`.
 - APSA 1.6.3 additionally serves read-only `reports_followup`.
-  Its default hash is
-  `50d13aa27af77b75c26363b07f8419d5c22a43077ed8f896e24d98f708d9b53d` and the runtime hash is
+  Its default hash was
+  `50d13aa27af77b75c26363b07f8419d5c22a43077ed8f896e24d98f708d9b53d` and the runtime hash was
   `753ef690e9b7be50446cadf1ee37d795bac26f6b64f3f4f2c7f00f11228e6ee4`.
-  `tests/contracts/mcp_tool_manifest_pending.json` pins this surface; published
+  `tests/contracts/mcp_tool_manifest_pending.json` pins the current surface; published
   historical hashes below are retained. Follow-up authorizes both report roots,
   emits bounded metadata without source excerpts, and never starts a scan or
   device action. See [finding follow-up](FINDING_FOLLOWUP.md).
@@ -32,7 +39,7 @@ publication is tracked separately in [release readiness](../RELEASE_READINESS.md
   selection and digest-bound IPA chain policies. Its source contract is
   `60374d3e5418f366c2bd8e3833ea33bbae89610bfa81b699661f8a268a2f1382` by default
   and `a9d1a2eb461eb48e497ecfc78957eac4f43091145ae01a6c7d9b54a675bb8692` with
-  `--allow-runtime`. These are historical 1.6 source-contract hashes; the pending contract test instead recomputes the current 1.6.4 surface from the
+  `--allow-runtime`. These are historical 1.6 source-contract hashes; the pending contract test instead recomputes the current 1.7.0 surface from the
   `tools/list` response; any change to a tool's name, description, parameters or
   annotations must update them deliberately.
 - Published 1.5.1 retains default `fdb8e4a2fdcf13a35df71a9a7290336b50a2e7f7fad66eff782959b6b0ba9037`
@@ -62,7 +69,7 @@ publication is tracked separately in [release readiness](../RELEASE_READINESS.md
 | MCP01 Token mismanagement and secret exposure | No API key, token or model credential is needed or stored. Runtime scenarios use test canaries. Model context omits source excerpts, storage dumps and screenshot bytes. | Secrets inside scanned apps can appear in finding metadata such as file paths and rule IDs. |
 | MCP02 Privilege escalation via scope creep | `--root` is required and every target, report and job is checked against it; `--allow-any-root` must be explicit. Device execution tools exist only with `--allow-runtime` and preview unless `execute=true`. | Keep roots narrow; enable runtime tools only for authorized test devices. |
 | MCP03 Tool poisoning | Tool descriptions are static code, pinned by a published manifest hash; no dynamic tool registration. | Verify the package source (below) and compare the `tools/list` hash with the published values after upgrades. |
-| MCP04 Supply chain and dependency tampering | PyPI Trusted Publishing with attestations, repeated builds and release checksums; the MCP Registry entry is published from the tag workflow by OIDC. The GitHub Action pins every action by commit SHA and installs APSA's dependencies from the release's hash-locked `requirements-release.txt`. | `uvx apsa@1.6.4`, the plugin and the registry entry pin APSA itself but resolve its dependencies at install time without hashes. For locked dependencies install with `--constraints requirements-release.txt` (or `--require-hashes`) from the release, or use the Action pinned by commit SHA. |
+| MCP04 Supply chain and dependency tampering | PyPI Trusted Publishing with attestations, repeated builds and release checksums; the MCP Registry entry is published from the tag workflow by OIDC. The GitHub Action pins every action by commit SHA and installs APSA's dependencies from the release's hash-locked `requirements-release.txt`. | `uvx apsa@1.7.0`, the plugin and the registry entry pin APSA itself but resolve its dependencies at install time without hashes. For locked dependencies install with `--constraints requirements-release.txt` (or `--require-hashes`) from the release, or use the Action pinned by commit SHA. |
 | MCP05 Command injection and execution | Tools take structured arguments; subprocesses are argument lists, never a shell. Parsers run under resource limits and, where available, a Seatbelt/bubblewrap sandbox. Advisory and app text is never executed. | Clients that build shell commands from registry metadata must not use a shell. |
 | MCP06 Prompt injection via contextual payloads | App files and advisory text are labelled untrusted data in the server instructions and every report context. Context omits source excerpts and is bounded (20 records, 64 KiB per page by default). | The model can still be influenced by file paths, titles and advisory summaries; keep a human in the loop for actions. |
 | MCP07 Insufficient authentication and authorization | Local stdio only; authorization is the root check above. | The client process's OS user is the trust boundary. |

@@ -22,6 +22,7 @@ apsa reports export latest --format checklist --checklist masvs-v2 --out masvs.j
 | --- | --- |
 | `findings` | 관련 APSA 검사에서 발견 항목이 있음 |
 | `no-findings-in-checked-scope` | 관련 검사가 실행됐지만 발견이 없음. **통과가 아님** |
+| `limited` | 관련 검사가 입력 전체를 검사했고 발견은 없지만, 제한된 정적 모델이 일부 경로에서 판단을 유보함. **통과가 아님** |
 | `partial` | 관련 검사가 일부만 실행됨 |
 | `not-run` | 관련 검사가 실행되지 않음 |
 | `not-assessed` | APSA에 관련 검사가 없음. 다른 증거가 필요 |

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from . import __version__, jobs
 from .audit import compare, refresh_report, scan
@@ -30,6 +31,15 @@ from .tools import android_sdks, resolve_tool
 
 class UsageError(ValueError):
     pass
+
+
+# C0/C1 controls shown as escapes, so app-controlled text cannot drive the terminal.
+CONTROL_ESCAPES = {code: f"\\x{code:02x}" for code in (*range(0x20), *range(0x7F, 0xA0))}
+
+
+def plain(value: object) -> Text:
+    """App-controlled text for Rich/Textual: never parsed as markup, no raw control characters."""
+    return Text(str(value).translate(CONTROL_ESCAPES))
 
 
 class Parser(argparse.ArgumentParser):
@@ -65,12 +75,22 @@ def parser() -> Parser:
         "--device-info", type=Path, help="Observed environment JSON; no OS state inferred from targetSdk"
     )
     scan_parser.add_argument("--out", type=Path)
-    scan_parser.add_argument("--format", choices=["json", "markdown", "sarif", "maswe"], default="json")
+    scan_parser.add_argument(
+        "--format",
+        choices=["json", "markdown", "sarif", "maswe"],
+        help="Format of the --out file; inferred from a .sarif, .md or .json suffix, otherwise json",
+    )
     scan_parser.add_argument(
         "--sarif-root",
         help="Repository-relative path of the target, used for SARIF locations (code scanning upload)",
     )
     scan_parser.add_argument("--fail-on", choices=["low", "medium", "high", "critical"])
+    scan_parser.add_argument(
+        "--strict-coverage",
+        action="store_true",
+        help="Also exit 3 for limited coverage (fully examined, but the bounded static model abstained); "
+        "with --policy, acts as strict_coverage = true",
+    )
     scan_parser.add_argument("--policy", type=Path, help="Apply a project TOML/JSON CI policy")
     scan_parser.add_argument("--baseline", help="Baseline report ID for policy only_new")
     scan_parser.add_argument("--baseline-file", type=Path)
@@ -142,6 +162,7 @@ def parser() -> Parser:
     ).add_subparsers(dest="action", required=True)
     policy_init = policy_commands.add_parser("init")
     policy_init.add_argument("--out", type=Path, default=Path("apsa.toml"))
+    policy_init.add_argument("--force", action="store_true", help="Replace an existing policy file")
     policy_gate = policy_commands.add_parser("evaluate")
     policy_gate.add_argument("report", nargs="?", default="latest")
     policy_gate.add_argument("--policy", type=Path, required=True)
@@ -149,6 +170,11 @@ def parser() -> Parser:
     policy_gate.add_argument("--baseline-file", type=Path)
     policy_gate.add_argument("--baseline-sha256")
     policy_gate.add_argument("--decision-out", type=Path)
+    policy_gate.add_argument(
+        "--strict-coverage",
+        action="store_true",
+        help="Treat limited coverage as incomplete (as policy strict_coverage = true)",
+    )
     intel = commands.add_parser(
         "intel", help="Synchronize, search or monitor official vulnerability sources"
     ).add_subparsers(dest="action", required=True)
@@ -196,7 +222,7 @@ def parser() -> Parser:
     export.add_argument(
         "--format",
         choices=["json", "markdown", "sarif", "maswe", "cyclonedx", "checklist", "baseline"],
-        default="markdown",
+        help="Inferred from a .sarif, .md or .json --out suffix, otherwise markdown",
     )
     export.add_argument(
         "--sarif-root",
@@ -271,7 +297,8 @@ def parser() -> Parser:
     mcp.add_argument(
         "--allow-runtime",
         action="store_true",
-        help="Expose device-execution tool; default exposes planning only",
+        help="Also expose runtime_start/runtime_execute, which change device and app state. Without it, "
+        "runtime_plan and runtime_devices remain; runtime_devices runs host adb/xcrun to list devices",
     )
     mcp.add_argument(
         "--root", type=Path, action="append", help="Restrict MCP input paths; repeat for multiple roots"
@@ -423,6 +450,26 @@ def first_observed(store: Store, report: dict, limit: int = 1000) -> dict:
     return {"times": seen, "reports": min(len(history), limit), "complete": len(history) <= limit}
 
 
+# Formats each known --out suffix can hold; any other suffix keeps the command's default.
+SUFFIX_FORMATS = {
+    ".sarif": {"sarif"},
+    ".md": {"markdown", "checklist"},
+    ".json": {"json", "sarif", "maswe", "cyclonedx", "checklist", "baseline"},
+}
+
+
+def output_format(requested: str | None, out: Path, default: str) -> str:
+    """Explicit --format, else the one a known --out suffix names; a contradiction is a usage error."""
+    name = out.name.lower()
+    suffix = ".sarif" if name.endswith(".sarif.json") else Path(name).suffix
+    accepted = SUFFIX_FORMATS.get(suffix)
+    if requested is None:
+        return {".sarif": "sarif", ".md": "markdown", ".json": "json"}.get(suffix, default)
+    if accepted is not None and requested not in accepted:
+        raise UsageError(f"--format {requested} contradicts the {suffix} suffix of --out {out.name}")
+    return requested
+
+
 def checked_sarif_root(value: str | None) -> str | None:
     try:
         return sarif_root(value)
@@ -460,6 +507,11 @@ def policy_baseline(args, store: Store) -> dict | None:
     )
 
 
+def strict_policy(policy: dict, strict_coverage: bool) -> dict:
+    """--strict-coverage can only tighten a policy, never relax its strict_coverage."""
+    return {**policy, "strict_coverage": True} if strict_coverage else policy
+
+
 def decision_artifact(report: dict, gate: dict, baseline: dict | None, policy: dict) -> dict:
     return {
         "schema_version": 1,
@@ -488,7 +540,16 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
     if cmd == "policy":
         if args.action == "init":
             args.out.parent.mkdir(parents=True, exist_ok=True)
-            with args.out.open("x", encoding="utf-8") as output:
+            mode = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+            mode |= os.O_TRUNC if args.force else os.O_EXCL
+            try:
+                descriptor = os.open(args.out, mode, 0o644)
+            except FileExistsError:
+                raise FileExistsError(
+                    f"Policy file already exists: {args.out}. Edit it, choose another --out, "
+                    "or rerun with --force to replace it."
+                ) from None
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
                 output.write(template())
             return {
                 "path": str(args.out.resolve()),
@@ -496,7 +557,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             }, 0
         report = store.report(args.report)
         baseline = policy_baseline(args, store)
-        policy = load_policy(args.policy)
+        policy = strict_policy(load_policy(args.policy), args.strict_coverage)
         gate = evaluate(report, policy, baseline)
         if args.decision_out:
             write_json(args.decision_out, decision_artifact(report, gate, baseline, policy))
@@ -524,6 +585,14 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
         osv_policy = transmission_policy(
             args.osv_exclude_ecosystem, args.osv_exclude_name, args.osv_exclude_coordinate
         )
+        requested_format = args.format
+        if requested_format is not None and not args.out:
+            raise UsageError(
+                "--format selects the --out file format; add --out PATH "
+                "(without it the summary prints, or the JSON envelope with --json)"
+            )
+        if args.out:
+            args.format = output_format(requested_format, args.out, "json")
         if args.sarif_root is not None and (not args.out or args.format != "sarif"):
             raise UsageError("--sarif-root requires --out with --format sarif")
         args.sarif_root = checked_sarif_root(args.sarif_root)
@@ -536,7 +605,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 "Project policy defines evidence statuses and thresholds; remove --fail-on/--include-candidates"
             )
         if args.background:
-            if args.out or args.fail_on or args.policy:
+            if args.out or args.fail_on or args.policy or args.strict_coverage:
                 raise UsageError(
                     "Background scans return a job ID; export or evaluate the completed report afterward"
                 )
@@ -561,7 +630,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 },
             ), 0
         baseline = policy_baseline(args, store) if args.policy else None
-        policy = load_policy(args.policy) if args.policy else None
+        policy = strict_policy(load_policy(args.policy), args.strict_coverage) if args.policy else None
         target = select_source_module(args.target.resolve(), args.source_module)
         result = scan(
             store,
@@ -595,8 +664,9 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             and (args.include_candidates or f["status"] != "candidate")
             for f in result["findings"]
         )
-        incomplete = report_incomplete(result)
-        return result, 3 if incomplete else 4 if failing else 0
+        incomplete = report_incomplete(result, strict=args.strict_coverage)
+        # A threshold failure is never masked by an incomplete audit; summary/coverage keep the gap.
+        return result, 4 if failing else 3 if incomplete else 0
     if cmd == "specs":
         return {"valid": True, **load_specs(args.file)}, 0
     if cmd == "verify":
@@ -714,7 +784,10 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
             if args.finding:
                 item = next((f for f in report["findings"] if f["id"] == args.finding), None)
                 if item is None:
-                    raise ValueError("Finding not found in report")
+                    raise ValueError(
+                        f"Finding not found in report {report['id']}: {args.finding}. "
+                        f"List its finding IDs with: apsa reports get {report['id']}"
+                    )
                 return item, 0
             return report, 0
         if args.action == "compare":
@@ -759,6 +832,7 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 "external_input": result["external_inputs"][-1],
             }, 0
         if args.action == "export":
+            args.format = output_format(args.format, args.out, "markdown")
             args.sarif_root = checked_sarif_root(args.sarif_root)
             if args.format == "baseline":
                 if args.sarif_root is not None:
@@ -811,6 +885,11 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
                 write_json(args.out, result)
             return result, 0
         if args.action == "run":
+            if not args.scenario.is_file():
+                raise ValueError(
+                    f"Scenario file not found: {args.scenario}. "
+                    f"Generate one with: apsa runtime plan --out {args.scenario}"
+                )
             if args.dry_run:
                 result = validate_scenario(read_json(args.scenario))
                 return {
@@ -842,19 +921,22 @@ def emit(value, use_json: bool, code=0):
     if use_json:
         print(json.dumps({"ok": code in {0, 4}, "data": value, "exit_code": code}, ensure_ascii=False))
     elif isinstance(value, dict) and "findings" in value and "inventory" in value:
+        # Report text is app-controlled: never Rich markup, links or terminal controls.
         console = Console()
-        console.print(f"[bold cyan]APSA (앱사)[/]  {value['id']}")
-        console.print(str(value["target"]), markup=False)
+        console.print(Text.assemble(("APSA (앱사)", "bold cyan"), "  ", plain(value["id"])))
+        console.print(plain(value["target"]))
         table = Table("Severity", "Status", "Finding", "Location")
         for item in value["findings"]:
             evidence = item["evidence"][0] if item["evidence"] else {}
-            location = str(evidence.get("path", evidence.get("dependency", {}).get("name", "")))
-            table.add_row(item["severity"], item["status"], item["title"], location)
+            location = evidence.get("path", evidence.get("dependency", {}).get("name", ""))
+            table.add_row(
+                *(plain(cell) for cell in (item["severity"], item["status"], item["title"], location))
+            )
         console.print(table)
-        console.print(json.dumps(value["summary"], ensure_ascii=False), markup=False)
+        console.print(plain(json.dumps(value["summary"], ensure_ascii=False)))
         for warning in value["warnings"]:
-            console.print(f"Coverage: {warning}", markup=False)
-        console.print("Details: apsa reports get " + value["id"])
+            console.print(plain(f"Coverage: {warning}"))
+        console.print(plain("Details: apsa reports get " + value["id"]))
     else:
         print(json.dumps(value, ensure_ascii=False, indent=2))
 

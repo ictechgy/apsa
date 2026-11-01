@@ -6,7 +6,9 @@ import codecs
 from pathlib import Path
 
 # These formats are admitted only to credential matching, never general source analysis.
-CREDENTIAL_ONLY_SUFFIXES = {".properties", ".strings", ".pem", ".key"}
+# `.xcconfig` is committed build configuration (like local.properties). Private local
+# environment files such as `.env` are deliberately not admitted.
+CREDENTIAL_ONLY_SUFFIXES = {".properties", ".strings", ".pem", ".key", ".xcconfig"}
 CREDENTIAL_TEXT_SUFFIXES = CREDENTIAL_ONLY_SUFFIXES | {
     ".java",
     ".kt",

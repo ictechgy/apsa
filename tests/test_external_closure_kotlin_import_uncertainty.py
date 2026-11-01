@@ -62,7 +62,9 @@ def _candidate_partial(report: dict, *, uncertain_import: bool = True) -> None:
     reasons = report["metadata"]["native_flow"]["reasons"]
     assert NONLOCAL in reasons, report
     assert (UNAVAILABLE in reasons) == uncertain_import, report
-    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "partial"
+    # Precision reasons leave coverage limited; a budget reason keeps it partial.
+    expected = "partial" if report["metadata"]["native_flow"]["budget_reasons"] else "limited"
+    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == expected
     assert not any("AST syntax recovery" in warning for warning in report["warnings"]), report
 
 
@@ -147,7 +149,7 @@ fun safe(): String = "https://safe.example/"
     details = [row for row in flow["partial_details"] if row["reason"] == UNAVAILABLE]
     assert len(details) == 1, report
     assert details[0]["path"] == "fresh/Entry.kt" and details[0]["line"] == 2, report
-    assert all(row["state"] == "partial" for row in report["coverage"]), report
+    assert all(row["state"] == "limited" for row in report["coverage"]), report
 
 
 def test_comments_in_strings_cannot_withdraw_known_import_identity() -> None:

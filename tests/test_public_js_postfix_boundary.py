@@ -21,7 +21,8 @@ def test_update_expression_at_function_body_tail_retains_observed_flow(extension
     assert result["metadata"]["files"][0]["analysis_state"] == "analyzed"
     assert result["metadata"]["files"][0]["flow_state"] == "bounded-modeled"
     assert not result["warnings"]
-    assert all(item["state"] == "partial" for item in result["coverage"])
+    # Analyzed without skips or budgets: bounded token flow is a precision limit.
+    assert all(item["state"] == "limited" for item in result["coverage"])
 
 
 @pytest.mark.parametrize("extension", ["js", "ts", "jsx", "tsx", "dart"])
@@ -53,7 +54,7 @@ def test_empty_or_incomplete_update_boundaries_do_not_escape_as_index_error(sour
     result = analyze_hybrid([("boundary.ts", source)])
 
     assert not result["findings"]
-    assert all(item["state"] == "partial" for item in result["coverage"])
+    assert all(item["state"] == "limited" for item in result["coverage"])
     assert not result["metadata"]["complete"]
 
 

@@ -14,13 +14,14 @@ from pathlib import Path
 from typing import Any
 
 from .completeness import report_incomplete as report_incomplete
+from .completeness import report_limited as report_limited
 
 MAX_FILE = 8 * 1024 * 1024
 MAX_REPORT_BYTES = 32 * 1024 * 1024
 MAX_ARCHIVE_TOTAL = 512 * 1024 * 1024
 MAX_FILES = 12000
 MAX_SOURCE_TOTAL = 64 * 1024 * 1024
-RULE_VERSION = "2026.10.30.apsa.164"
+RULE_VERSION = "2026.11.01.apsa.170"
 
 
 def now() -> str:
@@ -192,6 +193,136 @@ def finding_identity(rule: str, evidence: list[dict], scope: str = "app") -> str
             }
         locations.append(location)
     return f"F-{digest(canonical_json([rule, scope, locations]).encode())[:20]}"
+
+
+# A dependency advisory finding records at most this many equivalent advisory
+# identifiers: its display ID plus the lexicographically first others. Real OSV
+# alias sets are far smaller; an omitted alias only means a renamed finding can
+# look new again (fail-safe), never that an unrelated one matches.
+MAX_ADVISORY_IDS = 32
+MAX_ADVISORY_ID_LENGTH = 200
+
+
+def _advisory_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= MAX_ADVISORY_ID_LENGTH
+        and not any(character.isspace() for character in value)
+    )
+
+
+def bounded_advisory_ids(display: str, identifiers: Any) -> list[str]:
+    """Sorted, deduplicated advisory IDs: the display ID first, then the first others up to the cap."""
+    others = sorted({value for value in identifiers if _advisory_id(value)} - {display})
+    selected = ([display] if _advisory_id(display) else []) + others
+    return sorted(selected[:MAX_ADVISORY_IDS])
+
+
+def dependency_advisory(item: dict) -> bool:
+    """Whether every evidence row locates a dependency (and the finding is not an OS advisory)."""
+    evidence = item.get("evidence")
+    return (
+        item.get("scope", "app") != "environment"
+        and isinstance(evidence, list)
+        and bool(evidence)
+        and all(isinstance(row, dict) and isinstance(row.get("dependency"), dict) for row in evidence)
+    )
+
+
+def advisory_ids(item: dict) -> list[str]:
+    """Validated ``advisory_ids`` of a dependency advisory finding; empty for every other finding.
+
+    Reports may come from files, older releases or other tools, so malformed
+    entries are dropped and the list is bounded rather than trusted.
+    """
+    values = item.get("advisory_ids")
+    if not isinstance(values, list) or not dependency_advisory(item):
+        return []
+    return sorted({value for value in values[: MAX_ADVISORY_IDS * 4] if _advisory_id(value)})[
+        :MAX_ADVISORY_IDS
+    ]
+
+
+def own_identities(item: dict) -> set[str]:
+    """The reported finding ID and the rule/location identity it was derived from."""
+    return {item["id"], finding_identity(item["rule_id"], item["evidence"], item.get("scope", "app"))}
+
+
+def finding_identities(item: dict) -> set[str]:
+    """Every identity under which a finding is the same finding across reports and policy.
+
+    Beyond its own identities, a dependency advisory finding is also identified
+    by each equivalent advisory ID at the same dependency location, so a display
+    ID change (a GHSA advisory gaining a CVE alias, or a lower CVE alias) still
+    matches baselines, waivers and comparisons written against the earlier ID.
+    Reports without ``advisory_ids`` (1.6.4 and earlier) keep their own identities.
+    """
+    identities = own_identities(item)
+    scope = item.get("scope", "app")
+    identities.update(finding_identity(alias, item["evidence"], scope) for alias in advisory_ids(item))
+    return identities
+
+
+def match_identities(
+    current: list[tuple[set[str], set[str]]], previous: list[tuple[set[str], set[str]]]
+) -> list[dict[int, str]]:
+    """Map each current entry to the previous entries it is the same finding as.
+
+    Entries are ``(own identities, every identity)`` pairs. A shared own identity
+    matches as it always has (``"identity"``). Any other shared identity is an
+    advisory alias match (``"advisory-alias"``), accepted only when that previous
+    entry corresponds to no other current entry: a shared alias never lets one
+    prior finding or waiver cover two current findings.
+    """
+    own_index: dict[str, list[int]] = {}
+    every_index: dict[str, list[int]] = {}
+    for index, (own, every) in enumerate(previous):
+        for identity in own:
+            own_index.setdefault(identity, []).append(index)
+        for identity in every | own:
+            every_index.setdefault(identity, []).append(index)
+    direct: list[set[int]] = []
+    aliased: list[set[int]] = []
+    reached: dict[int, set[int]] = {}
+    for position, (own, every) in enumerate(current):
+        exact = {index for identity in own for index in own_index.get(identity, ())}
+        alias = {index for identity in every | own for index in every_index.get(identity, ())} - exact
+        direct.append(exact)
+        aliased.append(alias)
+        for index in exact | alias:
+            reached.setdefault(index, set()).add(position)
+    return [
+        {
+            **{index: "advisory-alias" for index in sorted(alias) if len(reached[index]) == 1},
+            **{index: "identity" for index in sorted(exact)},
+        }
+        for exact, alias in zip(direct, aliased, strict=True)
+    ]
+
+
+def match_findings(current: list[dict], previous: list[dict]) -> list[dict[int, str]]:
+    """``match_identities`` for two finding lists; see ``finding_identities``."""
+    return match_identities(
+        [(own_identities(item), finding_identities(item)) for item in current],
+        [(own_identities(item), finding_identities(item)) for item in previous],
+    )
+
+
+def advisory_alias_pairs(current: list[dict], previous: list[dict]) -> list[tuple[int, int]]:
+    """``(current, previous)`` index pairs that are one dependency advisory under different display IDs.
+
+    Only dependency advisory findings take part, so other (possibly malformed)
+    findings are never hashed here.
+    """
+    after = [index for index, item in enumerate(current) if dependency_advisory(item)]
+    before = [index for index, item in enumerate(previous) if dependency_advisory(item)]
+    matches = match_findings([current[index] for index in after], [previous[index] for index in before])
+    return [
+        (after[position], before[index])
+        for position, found in enumerate(matches)
+        for index, basis in found.items()
+        if basis == "advisory-alias"
+    ]
 
 
 def write_json(path: Path, value: Any) -> None:

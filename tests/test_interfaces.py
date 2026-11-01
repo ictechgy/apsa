@@ -154,8 +154,12 @@ def test_cli_policy_exits_baseline_and_read_only_evaluation(store, demo, tmp_pat
     after = json.loads(capsys.readouterr().out)["data"]
     assert after["gate"]["counts"]["baseline_existing"] > 0
     before_count = len(store.reports())
-    assert main(args + ["policy", "evaluate", after["report"]["id"], "--policy", str(policy)]) == 3
-    assert json.loads(capsys.readouterr().out)["data"]["state"] == "incomplete"
+    # Without the baseline every candidate is new: the threshold failure (4) outranks
+    # the missing-baseline incompleteness (3), which remains among the reasons.
+    assert main(args + ["policy", "evaluate", after["report"]["id"], "--policy", str(policy)]) == 4
+    gate = json.loads(capsys.readouterr().out)["data"]
+    assert gate["state"] == "failed"
+    assert any(reason["code"] == "baseline-required" for reason in gate["reasons"])
     assert len(store.reports()) == before_count
 
 

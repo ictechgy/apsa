@@ -1,5 +1,19 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## 1.7.0 review corrections and CI semantics — 2026-11-01
+
+[Release scope and upgrade notes](docs/RELEASE_170.md) cover the `limited`
+coverage state and exit-code precedence, waiver severity, advisory identity
+matching, broader Kotlin/Swift/SwiftUI/archive/platform detection and bounded
+input handling. Review, supported hosted CI, immutable-tag publishing and
+public Linux/macOS installations are separate gates on the final commit.
+No publication is claimed by this candidate entry.
+
+The previous 1.6.4 publication completed at commit
+`cd1a53d0f8237e7aaaf21270ab9cfbd88249452c` via
+[the release workflow](https://github.com/ictechgy/apsa/actions/runs/41057201644),
+including PyPI, MCP Registry, GitHub assets and both public installation checks.
+
 ## 1.6.4 public-input corrections — 2026-10-30
 
 [Release scope](docs/RELEASE_164.md) covers terminal postfix parser safety,

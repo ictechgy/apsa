@@ -122,6 +122,24 @@ def _constructor_gaps(raw: bytes, stream: list[tuple[bytes, int, int]]) -> list[
     return gaps
 
 
+def _same_line_closing_braces(raw: bytes, stream: list[tuple[bytes, int, int]]) -> list[int]:
+    """Blank bytes directly before a `}` that shares a line with the preceding code token.
+
+    The pinned Kotlin grammar rejects a member declaration followed by `}` on the
+    same line (`class A { val x = 1 }`); a line break there is semantically neutral.
+    """
+    positions = []
+    for index in range(1, len(stream)):
+        value, start, _ = stream[index]
+        previous, _, previous_end = stream[index - 1]
+        if value != b"}" or previous == b"{":
+            continue
+        gap = raw[previous_end:start]
+        if gap and not gap.strip(b" \t"):
+            positions.append(start - 1)
+    return positions
+
+
 def _blank(output: bytearray, start: int, end: int, replacement: bytes = b"") -> None:
     """Overwrite a span with a same-length replacement, keeping line breaks."""
     span = bytearray(b" " * (end - start))
@@ -375,4 +393,13 @@ def adapted_source(raw: bytes, language: str, nodes: list[Any]) -> tuple[bytes, 
             output[start:end] = b" " * (end - start)
         if gaps:
             additional.append({"kind": "kotlin-primary-constructor-linebreak", "edits": len(gaps)})
+        closings = _same_line_closing_braces(raw, stream)
+        for position in closings:
+            output[position : position + 1] = b"\n"
+        if closings:
+            # Only a blank before `}` becomes a line break: Kotlin semantics and byte offsets
+            # are unchanged, so this edit alone does not make the analysis partial.
+            additional.append(
+                {"kind": "kotlin-same-line-closing-brace", "edits": len(closings), "lossless": True}
+            )
     return bytes(output), ([{"kind": kind, "edits": edits}] if edits else []) + additional

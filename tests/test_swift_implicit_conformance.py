@@ -71,7 +71,7 @@ def test_implicit_protocol_member_alias_cannot_supply_sdk_url_safety(kind, targe
     states = {item["state"] for item in report["coverage"] if item["rule_id"] == RULE}
     if control == "affected":
         assert matches and all(item["status"] == "candidate" for item in matches), report
-        assert states == {"partial"}, report
+        assert states == {"limited"}, report
         assert report["metadata"]["native_flow"]["state"] == "partial", report
     elif control == "unguarded":
         assert matches and all(item["status"] == "candidate" for item in matches), report
@@ -105,7 +105,7 @@ def assert_candidate_partial(report):
     matches = [item for item in report["findings"] if item["rule_id"] == RULE]
     states = {item["state"] for item in report["coverage"] if item["rule_id"] == RULE}
     assert matches and all(item["status"] == "candidate" for item in matches), report
-    assert states == {"partial"} and report["metadata"]["native_flow"]["state"] == "partial", report
+    assert states == {"limited"} and report["metadata"]["native_flow"]["state"] == "partial", report
 
 
 @pytest.mark.parametrize("kind,target", [("actor", "Actor"), ("enum", "Equatable"), ("enum", "Hashable")])

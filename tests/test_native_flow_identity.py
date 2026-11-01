@@ -41,7 +41,13 @@ def candidate_and_partial(report):
     assert all(item["status"] == "candidate" for item in findings(report, URL))
     assert report["metadata"]["native_flow"]["state"] == "partial", report
     assert report["metadata"]["native_flow"]["reasons"], report
-    assert next(item["state"] for item in report["coverage"] if item["rule_id"] == URL) == "partial", report
+    # Precision reasons leave coverage limited; a budget reason or a partially
+    # parsed/adapted file is an execution gap and keeps it partial.
+    gap = report["metadata"]["native_flow"]["budget_reasons"] or any(
+        item["state"] in {"partial", "skipped"} for item in report["metadata"]["files"]
+    )
+    expected = "partial" if gap else "limited"
+    assert next(item["state"] for item in report["coverage"] if item["rule_id"] == URL) == expected, report
 
 
 @pytest.mark.parametrize("reverse", [False, True])
@@ -1389,21 +1395,35 @@ ORIGINAL_INHERITED_SWIFT_URL_ALIAS = """
             """
 
 
+@pytest.mark.parametrize("framework", [False, True])
 @pytest.mark.parametrize(
-    "source,expected_original_lines",
-    [(ORIGINAL_INHERITED_PATHS_KT, {20, 23, 29}), (ORIGINAL_INHERITED_FINAL_KT, {21})],
+    "source,expected_original_lines,credited_lines",
+    [(ORIGINAL_INHERITED_PATHS_KT, {20, 23, 29}, {22, 36}), (ORIGINAL_INHERITED_FINAL_KT, {21}, set())],
 )
 def test_original_inherited_path_controls_keep_existing_candidates_and_declare_type_uncertainty(
-    source, expected_original_lines
+    source, expected_original_lines, credited_lines, framework
 ):
     from mobile_audit.source_analysis import analyze_sources
 
+    if not framework:
+        # An unknown base may supply File/ZipEntry member types: type uncertainty stays.
+        source = source.replace("import android.app.Activity", "import com.vendor.VendorActivity")
+        source = source.replace(" : Activity()", " : VendorActivity()")
     report = analyze_sources([("OriginalInherited.kt", source)])
     matches = findings(report)
-    assert expected_original_lines <= {item["evidence"][0]["line"] for item in matches}, report
+    lines = {item["evidence"][0]["line"] for item in matches}
+    assert expected_original_lines <= lines, report
     assert all(item["status"] == "candidate" for item in matches), report
-    assert report["metadata"]["native_flow"]["state"] == "partial", report
-    assert "constructor field mapping unavailable" in report["metadata"]["native_flow"]["reasons"], report
+    reasons = report["metadata"]["native_flow"]["reasons"]
+    if framework:
+        # The imported framework Activity declares none of those member types, so the
+        # basename and canonical containment controls are credited like any other class.
+        assert not lines & credited_lines, report
+        assert "constructor field mapping unavailable" not in reasons, report
+    else:
+        assert credited_lines <= lines, report
+        assert report["metadata"]["native_flow"]["state"] == "partial", report
+        assert "constructor field mapping unavailable" in reasons, report
 
 
 def test_original_inherited_swift_url_alias_keeps_platform_input_candidate_and_declares_uncertainty():

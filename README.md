@@ -1,10 +1,10 @@
 # APSA
 
-**APSA 1.6.4.** See the [release scope and upgrade notes](docs/RELEASE_164.md).
+**APSA 1.7.0.** See the [release scope and upgrade notes](docs/RELEASE_170.md).
 [Release readiness](RELEASE_READINESS.md) separates local validation from the
 hosted publication and public installation gates.
 
-**Public-app regression fixes in 1.6.4.** Terminal JavaScript/TypeScript postfix expressions no longer crash the bounded parser. Private-key candidates require a matching envelope with plausible body content. Apple source platform scope separates positive iOS evidence from macOS and ambiguous Swift sources. Repeated hybrid omissions are counted while retaining per-file reasons. See the release notes for remaining analysis limits.
+**CI semantics change in 1.7.0.** Coverage now separates execution gaps (`partial`, exit 3) from precision limits of the bounded static model (`limited`, exit 0 unless `--strict-coverage` or policy `strict_coverage` is set), and a threshold failure (exit 4) now takes precedence over an incomplete audit (exit 3). Waivers can record the approved severity, dependency advisory findings keep matching across advisory alias changes, and detection is broader for Kotlin, Swift/SwiftUI, archives and platform configuration. Review the upgrade notes before reusing 1.6.x CI conditions or baselines.
 
 **Evidence-first security audits for Android and iOS.**
 
@@ -302,12 +302,12 @@ OWASP mappings describe relevant checks; APSA does not certify MASVS compliance 
 
 Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; not every host/Python combination has been tested (see the [support matrix](https://github.com/ictechgy/apsa/blob/main/docs/SUPPORTED_MATRIX.md)). The examples select Python 3.12, which uv can download if needed. Initial installation can use the network; scans can then use local inputs and cached intelligence.
 
-After the 1.6.4 publication gates pass, install it from
+After the 1.7.0 publication gates pass, install it from
 [PyPI](https://pypi.org/project/apsa/). Check [release readiness](RELEASE_READINESS.md)
 for publication status:
 
 ```sh
-uv tool install --python 3.12 apsa==1.6.4
+uv tool install --python 3.12 apsa==1.7.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -407,24 +407,42 @@ and [competitive research and decisions](docs/COMPETITIVE_STRATEGY.md).
 apsa policy init --out apsa.toml
 apsa scan /path/to/owned/app --policy apsa.toml --out audit.json
 apsa scan /path/to/owned/app --fail-on high --include-candidates
+apsa scan /path/to/owned/app --strict-coverage
 apsa scan /path/to/owned/app --background --json
 apsa jobs status JOB_ID --json
 ```
 
-Severity gates exclude `candidate` findings by default. Opt in with `--include-candidates` or the policy's `allowed_statuses`. Required rules accept only `checked` or `not-applicable` coverage; partial execution and missing required checks do not pass. Waivers need a finding ID, a reason, and an expiry date. A background job being `completed` means it finished; check its `audit_incomplete` flag and report before treating the audit as complete.
+Severity gates exclude `candidate` findings by default. Opt in with `--include-candidates` or the policy's `allowed_statuses`. Required rules accept `checked`, `limited` or `not-applicable` coverage (`limited` only while `strict_coverage` is false); partial execution and missing required checks do not pass. Waivers need a finding ID, a reason, and an expiry date. A background job being `completed` means it finished; check its `audit_incomplete` flag and report before treating the audit as complete.
+
+A waiver can record the state that was approved with an optional `severity`, plus `known_exploited = true` when a known-exploited finding was approved. If the finding later rises above that severity or becomes known exploited, the waiver stops suppressing it: the finding goes through the thresholds again, the active waiver gets an `escalated` record, and the gate adds a `waiver-severity-escalated` notice. A waiver without `severity` keeps suppressing as before and adds a `waiver-severity-unrecorded` notice. Notices are in the gate's `notices` list, separate from `reasons`, and never change the gate state or exit code by themselves. Dependency advisory findings keep their finding IDs and list equivalent advisory IDs in `advisory_ids` (the display ID, grouped OSV IDs and aliases, at most 32). Waivers, `only_new` baselines and report comparisons written before a GHSA advisory gained a CVE alias, or before a lower CVE alias appeared, still match the renamed finding at the same dependency location, including reports from 1.6.4. A shared alias never lets one waiver or baseline finding cover two current findings.
 
 Unreadable source directories and files leave warnings and incomplete coverage; a source tree with no readable supported files fails explicitly. A source tree over the text staging budgets (64 MiB, 12,000 files) is audited partially rather than refused. Files are staged by kind in this order: app code and configuration (configuration first, then the app's code, then headers and vendored code such as `.build/` or `vendor/`), other shipped text (base resources, JSON, YAML), localized or qualified Android `res/values-*` files, then tests. `inventory.input_snapshot.omitted` counts the files and bytes left out by kind (`code_and_config`, `other_text`, `localized_values`, `tests`), including files over the 8 MiB file limit and files that could not be read or staged. Unreadable directories, and directories past the tree-wide budgets of 100,000 entries (read in name order) or 64 levels, are reported as warnings instead. When app code, configuration or other shipped text is left out, `app_scope_complete` is false and not-applicable coverage also becomes partial. For a complete audit, scan a narrower folder such as the app module. Storage capture failures remain `not-run` and cannot establish that a canary was deleted.
 
+Coverage separates execution gaps from precision limits. `partial` means part of
+the stated scope was not examined: a budget was reached, a file was skipped or had
+parse errors or a lossy adaptation, input was truncated, an online query failed,
+or the latest runtime run was partial. A `partial` entry makes the audit
+incomplete (exit `3`). `limited` means every input in scope was examined, but the
+bounded static model abstained on some paths, for example unresolved native-flow
+call targets, Objective-C seen only through its reduced model, or token-level
+JS/TS/Dart flow. A `limited` audit stays complete for the stated scope; reports
+show the limitation (`summary.limited`, SARIF notifications, the MASWE matrix and
+checklists). Across entries, `partial` outranks `limited`, which outranks
+`checked`. `scan --strict-coverage`, `policy evaluate --strict-coverage` or
+policy `strict_coverage = true` also treat `limited` as incomplete; without
+strict coverage, `limited` also satisfies policy `required_rules`. Neither
+`checked` nor `limited` means safe.
+
 | Exit code | Meaning for the unified CLI |
 | --- | --- |
-| `0` | Command completed or policy passed |
+| `0` | Command completed or policy passed; coverage may be `limited` |
 | `1` | Execution error |
 | `2` | Invalid arguments |
-| `3` | Incomplete audit or policy, failed report verification, or failed or partial intelligence synchronization |
-| `4` | Findings exceeded the configured CI threshold |
+| `3` | Incomplete audit or policy (with strict coverage, also `limited` coverage), failed report verification, or failed or partial intelligence synchronization |
+| `4` | Findings exceeded the configured CI threshold or policy; takes precedence over `3` |
 | `130` | Interrupted |
 
-`--json` emits an envelope containing `ok`, `data` or `error`, and `exit_code`; watch emits one JSON envelope per cycle (NDJSON). `ok` is `true` for codes `0` and `4`; code `4` means evaluation succeeded but the CI threshold was exceeded. CI must check `exit_code` and the policy result. Reports may still be produced for codes `3` and `4`.
+`--json` emits an envelope containing `ok`, `data` or `error`, and `exit_code`; watch emits one JSON envelope per cycle (NDJSON). `ok` is `true` for codes `0` and `4`; code `4` means evaluation succeeded but the CI threshold was exceeded. An audit that is both incomplete and over a threshold exits `4`; the report summary and policy reasons still record the incompleteness. CI must check `exit_code` and the policy result. Reports may still be produced for codes `3` and `4`.
 
 ### GitHub code scanning
 
@@ -437,7 +455,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.6.4; pin the full release commit SHA
+  - uses: ictechgy/apsa@<commit-sha> # v1.7.0; pin the full release commit SHA
     with:
       path: android            # source folder, or a built APK/AAB/IPA in the workspace
       fail-on-incomplete: "true"
@@ -447,12 +465,13 @@ The action installs `apsa` from PyPI at the matching version with the
 release's hash-locked dependencies, runs `scan` with `--format sarif
 --sarif-root`, writes a job summary, uploads the SARIF file to code scanning
 and then applies the result. A policy failure or a `fail-on` threshold fails
-the job even when the audit is also incomplete (exit code `3` can hide a
-threshold failure, so the action reads the report rather than the exit code
-alone). With a policy, every unmet policy condition (required rules, required
-intelligence, expired waivers, baseline checks) fails the job; only a partial
-audit is left to `fail-on-incomplete`, which fails on exit `3` unless set to
-`"false"`. Use
+the job even when the audit is also incomplete (APSA exits `4` then, and the
+action also reads the report rather than the exit code alone). With a policy,
+every unmet policy condition (required rules, required intelligence, expired
+waivers, baseline checks) fails the job; only a partial audit is left to
+`fail-on-incomplete`, which fails on exit `3` unless set to `"false"`. Limited
+coverage does not fail the job unless `strict-coverage: "true"`, which passes
+`--strict-coverage` and counts limited coverage as incomplete. Use
 `policy` (with `baseline-file` and `baseline-sha256`) for team gates, or
 `fail-on` for a severity threshold that excludes candidates.
 
@@ -569,7 +588,8 @@ Exact rule claims match that rule; MASWE claims may use related checks. Precise 
 corroboration currently supports CWE-22, CWE-89, CWE-295 and CWE-502 through explicit check
 mappings. Other CWE claims return `not-assessed`; broad MASWE overlap alone does
 not corroborate them. When both a rule and weakness are supplied, both must match.
-Mixed checked and unexecuted coverage remains `partial`.
+Mixed checked and unexecuted coverage remains `partial`; so does `limited`
+coverage, because a bounded-model abstention cannot support `not-observed`.
 
 `capabilities` reports `tool_manifest_sha256`, a hash of the APSA-owned tool
 surface (names, descriptions, annotation hints and parameter shapes); the tool

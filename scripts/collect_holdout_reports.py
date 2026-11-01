@@ -388,7 +388,7 @@ def successful_ids(results: dict, expected: dict[str, dict], truth_sha: str) -> 
                     or set(checks) != relevant_rule_ids(truth)
                     or any(
                         not isinstance(state, str)
-                        or state not in {"checked", "partial", "not-run", "not-applicable"}
+                        or state not in {"checked", "limited", "partial", "not-run", "not-applicable"}
                         for state in checks.values()
                     )
                 ):

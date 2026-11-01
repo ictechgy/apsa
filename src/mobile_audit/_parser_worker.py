@@ -90,7 +90,9 @@ def analyze(
     from .platform_checks import android_levels, exposed_providers
     from .source_analysis import analyze_sources
 
-    structural = analyze_sources(sources, specs, exposed_providers(inventory), android_levels(inventory))
+    structural = analyze_sources(
+        sources, specs, exposed_providers(inventory, sources), android_levels(inventory)
+    )
     from .hybrid_analysis import analyze_hybrid
     from .hybrid_observations import merge as merge_hybrid_observations
 
@@ -172,7 +174,7 @@ def analyze(
     if not inventory["fingerprint_complete"]:
         inventory["partial"] = True
         for check in coverage:
-            if check["state"] == "checked":
+            if check["state"] in {"checked", "limited"}:
                 check["state"] = "partial"
         inventory["warnings"].append(
             "Input coverage is incomplete; the fingerprint identifies inspected source files only."

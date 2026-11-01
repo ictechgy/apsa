@@ -143,6 +143,16 @@ class Fetcher:
             self.client.close()
 
 
+def mobile_kev(record: dict) -> bool:
+    """A KEV entry for a mobile OS or browser engine vendor.
+
+    Only these seed official CVE enrichment of OS advisories; every KEV entry,
+    including library and chipset vendors, is kept for exploitation correlation.
+    """
+    text = f"{record.get('vendor', '')} {record.get('product', '')}".lower()
+    return any(word in text for word in ("apple", "android", "chromium", "qualcomm", "pixel", "webkit"))
+
+
 def normalize_kev(value: dict) -> list[dict]:
     value = _object(value, "KEV document")
     records = []
@@ -165,11 +175,6 @@ def normalize_kev(value: dict) -> list[dict]:
             raise ValueError("Missing or invalid KEV CVE ID")
         if not item.get("vulnerabilityName"):
             raise ValueError("Missing KEV vulnerability name")
-        if not any(
-            word in (item.get("vendorProject", "") + " " + item.get("product", "")).lower()
-            for word in ("apple", "android", "chromium", "qualcomm", "pixel", "webkit")
-        ):
-            continue
         records.append(
             {
                 "id": item["cveID"],
@@ -553,7 +558,7 @@ def sync(store: Store, sources: list[str] | None = None, limit=8, client: httpx.
                     mobile_ids = [
                         (r["id"], r.get("modified", ""), 0)
                         for r in store.intelligence(limit=5000)
-                        if r["source"] in {"apple", "android", "kev"}
+                        if r["source"] in {"apple", "android"} or (r["source"] == "kev" and mobile_kev(r))
                     ]
                     store.enqueue_cves(mobile_ids + candidates)
                     store.set_cursor("cve-delta", newest)

@@ -14,7 +14,7 @@ from .audit import compare, refresh_report, scan
 from .baselines import baseline_artifact, load_baseline
 from .core import canonical_json, digest, open_directory, read_json
 from .intel import fetch_record, query_dependencies, source_health, sync
-from .model_context import SECTIONS
+from .model_context import SECTIONS, untrusted_context
 from .model_context import finding_context as assistant_finding
 from .model_context import report_context as assistant_context
 from .policy import evaluate, load_policy
@@ -170,11 +170,13 @@ def create_server(
                 "not-run",
                 "inconclusive",
                 "partial",
+                "limited",
             ],
             "limitations": [
                 "Targeted checks, not exhaustive MASVS verification",
                 "Undisclosed zero-days cannot be identified from public feeds",
-                "Android storage requires a debuggable owned test app",
+                "Android storage, launch, open_url, tap and input_text require a debuggable owned test build",
+                "Android scenarios need an explicit device serial unless exactly one emulator is attached",
                 "iOS runtime uses an installed simulator build, not arbitrary device IPA execution",
             ],
         }
@@ -234,12 +236,12 @@ def create_server(
 
     @server.tool(annotations=READ)
     def reports_checklist(report_id: str = "latest", checklist: str = "masvs-v2") -> dict[str, Any]:
-        """Map a report onto a checklist: masvs-v2 (built in) or a checklist TOML inside an MCP root that maps items to MASWE identifiers and APSA rules. Statuses are findings, partial, no-findings-in-checked-scope, not-run, not-applicable or not-assessed; none is a pass."""
+        """Map a report onto a checklist: masvs-v2 (built in) or a checklist TOML inside an MCP root that maps items to MASWE identifiers and APSA rules. Statuses are findings, partial, limited, no-findings-in-checked-scope, not-run, not-applicable or not-assessed; none is a pass."""
         from .checklists import checklist_view, load_checklist
 
         source = checklist if checklist == "masvs-v2" else str(authorize(checklist))
         with database() as store:
-            return checklist_view(load_report(store, report_id), load_checklist(source))
+            return untrusted_context(checklist_view(load_report(store, report_id), load_checklist(source)))
 
     @server.tool(annotations=READ)
     def reports_history(target: str) -> dict[str, Any]:
@@ -247,7 +249,7 @@ def create_server(
         from .checklists import timeline
 
         with database() as store:
-            return timeline(store, str(authorize(target)))
+            return untrusted_context(timeline(store, str(authorize(target))))
 
     @server.tool(annotations=READ)
     def specs_validate(path: str) -> dict[str, Any]:
@@ -279,7 +281,7 @@ def create_server(
                     report = scan(store, authorized_target, expected_target=authorized_target)
                 else:
                     report = store.report(saved[0]["id"])
-            return verify_claim(report, path=path, line=line, weakness=weakness, rule=rule)
+            return untrusted_context(verify_claim(report, path=path, line=line, weakness=weakness, rule=rule))
 
     @server.tool(annotations=NETWORK)
     def intelligence_sync(sources: list[str] | None = None, limit: int = 3) -> dict[str, Any]:
@@ -417,9 +419,15 @@ def create_server(
 
     @server.tool(annotations=READ)
     def reports_compare(
-        before: str, after: str, verification: bool = False, portable_inputs: bool = False
+        before: str,
+        after: str,
+        verification: bool = False,
+        portable_inputs: bool = False,
+        max_bytes: int = 65536,
     ) -> dict[str, Any]:
-        """Compare exact report IDs, retaining coverage differences and unproven remediation states. verification=true adds source traces and scope/build/assertion pairing; portable_inputs=true requires verification and only normalizes absolute targets for identical, complete canonical SHA256 source inputs with unchanged analysis scope. Binary and runtime bindings remain strict; disappearance never proves remediation."""
+        """Compare exact report IDs, retaining coverage differences and unproven remediation states. verification=true adds source traces and scope/build/assertion pairing; portable_inputs=true requires verification and only normalizes absolute targets for identical, complete canonical SHA256 source inputs with unchanged analysis scope. Binary and runtime bindings remain strict; disappearance never proves remediation. No source excerpts; bounded by max_bytes (4096-262144) with omitted counts."""
+        from .model_context import compare_context
+
         if portable_inputs and not verification:
             raise ValueError("portable_inputs requires verification=true")
         with database() as store:
@@ -429,7 +437,7 @@ def create_server(
                 from .verify import compare_reports
 
                 result["verification"] = compare_reports(a, b, portable_inputs=portable_inputs)
-            return result
+            return compare_context(result, max_bytes=max_bytes)
 
     @server.tool(annotations=READ)
     def reports_followup(
@@ -439,11 +447,13 @@ def create_server(
         from .followup import assess_finding_followup
 
         with database() as store:
-            return assess_finding_followup(
-                load_report(store, before),
-                load_report(store, after),
-                finding_id,
-                portable_inputs=portable_inputs,
+            return untrusted_context(
+                assess_finding_followup(
+                    load_report(store, before),
+                    load_report(store, after),
+                    finding_id,
+                    portable_inputs=portable_inputs,
+                )
             )
 
     @server.tool(annotations=LOCAL)
@@ -503,7 +513,7 @@ def create_server(
     ) -> dict[str, Any]:
         """Generate an editable test scenario. Does not run it or log out the app automatically."""
         with database() as store:
-            return plan(load_report(store, report_id), platform, package)
+            return untrusted_context(plan(load_report(store, report_id), platform, package))
 
     @server.tool(annotations=READ)
     def policy_evaluate(
@@ -520,14 +530,16 @@ def create_server(
         if bool(baseline_path) != bool(baseline_sha256):
             raise ValueError("baseline_path requires an externally approved baseline_sha256")
         with database() as store:
-            return evaluate(
-                load_report(store, report_id),
-                policy,
-                load_baseline(authorize(baseline_path), baseline_sha256 or "", authorized=True)
-                if baseline_path
-                else load_report(store, baseline_id)
-                if baseline_id
-                else None,
+            return untrusted_context(
+                evaluate(
+                    load_report(store, report_id),
+                    policy,
+                    load_baseline(authorize(baseline_path), baseline_sha256 or "", authorized=True)
+                    if baseline_path
+                    else load_report(store, baseline_id)
+                    if baseline_id
+                    else None,
+                )
             )
 
     @server.tool(annotations=LOCAL)

@@ -78,6 +78,20 @@ hashes can differ for relocated inputs while the explicitly normalized compariso
 hashes agree. `build_pairing` preserves original before/after fingerprints.
 No field is normalized if eligibility fails.
 
+## Dependency advisory display IDs
+
+A dependency advisory finding is identified by its display advisory ID: the
+lowest non-rejected CVE alias, otherwise the OSV ID. That ID can change when a
+GHSA advisory gains a CVE alias or a lower CVE alias appears. The finding ID
+stays derived from the display ID, and the finding records `advisory_ids` (the
+display ID, grouped OSV IDs and aliases, at most 32). `reports compare` pairs a
+renamed finding at the same dependency location with its earlier ID and lists
+the pair under `changed` (its `rule_id` differs), not as one added and one
+no-longer-observed finding. Verification lists it as `still-observed` under the
+new `finding_id`, with the earlier ID in `before_finding_id`. A report from
+1.6.4 without `advisory_ids` still pairs. A shared alias pairs nothing when it
+would make one earlier finding correspond to two later findings.
+
 ## Runtime and binary limits
 
 Binary target pairing stays exact for APK/AAB/APKS/IPA and compiled app bundles.

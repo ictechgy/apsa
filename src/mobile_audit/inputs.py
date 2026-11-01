@@ -6,6 +6,7 @@ import os
 import plistlib
 import re
 import stat
+import struct
 import tomllib
 import zipfile
 import zlib
@@ -13,6 +14,8 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from defusedxml import ElementTree as ET
+
+from quaygate.apk import MAX_ZIP_DIRECTORY_BYTES, MAX_ZIP_ENTRIES, unsafe_member
 
 from .core import (
     MAX_ARCHIVE_TOTAL,
@@ -273,10 +276,18 @@ def android_manifest(raw: bytes, origin: str, inventory: dict) -> None:
         logger.disable("androguard")
         from androguard.core.axml import AXMLPrinter
 
-        printer = AXMLPrinter(raw)
-        if not printer.is_valid():
+        try:
+            printer = AXMLPrinter(raw)
+            valid = printer.is_valid()
+            root = printer.get_xml_obj() if valid else None
+        except MemoryError:
+            raise
+        except Exception:
+            # Malformed chunks surface from androguard as struct.error, IndexError
+            # and others; one such file is invalid input, not a parser defect.
+            raise ValueError("Invalid binary AndroidManifest.xml") from None
+        if not valid:
             raise ValueError("Invalid binary AndroidManifest.xml")
-        root = printer.get_xml_obj()
         if root is None:
             raise ValueError("Unable to decode binary Android manifest")
     inventory["platforms"].append("android")
@@ -441,6 +452,35 @@ def feature_manifest(raw: bytes, origin: str, inventory: dict) -> None:
     )
 
 
+PLIST_LOGICAL_NODES = 50_000
+PLIST_LOGICAL_BYTES = 1024 * 1024
+
+
+def _plist_within_budget(value: object) -> None:
+    """Bound the reference-expanded size of plist values that are copied or expanded.
+
+    Binary plists may reference one object many times and plistlib keeps that
+    DAG, so a walk or JSON serialization grows exponentially with depth while the
+    file stays tiny. Every logical visit counts, including repeated references.
+    """
+    stack, nodes, size = [value], 1, 0
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            nodes += 2 * len(item)
+        elif isinstance(item, list):
+            nodes += len(item)
+        elif isinstance(item, (str, bytes)):
+            size += len(item)
+        if nodes > PLIST_LOGICAL_NODES or size > PLIST_LOGICAL_BYTES:
+            raise ValueError("Info.plist exceeds the logical size budget (shared or repeated values)")
+        if isinstance(item, dict):
+            stack.extend(item.keys())
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+
+
 def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True, source=False) -> None:
     value = load_plist(raw)
     if not isinstance(value, dict):
@@ -453,6 +493,8 @@ def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True, source=
     ats = value.get("NSAppTransportSecurity", {})
     if not isinstance(ats, dict):
         raise ValueError("Info.plist NSAppTransportSecurity must be a dictionary")
+    # ATS is stored in the report and URL types expand into deep links.
+    _plist_within_budget([ats, value.get("CFBundleURLTypes", [])])
     try:
         json.dumps(ats, allow_nan=False)
     except (TypeError, ValueError, RecursionError):
@@ -576,6 +618,40 @@ def ios_plist(raw: bytes, origin: str, inventory: dict, *, primary=True, source=
 
 class SourceBudgetExceeded(ValueError):
     pass
+
+
+def _zip_directory_within_budget(target: Path) -> None:
+    """Bound the central directory ZipFile will read before it allocates entries.
+
+    ZipFile builds an entry object for every directory record before any caller
+    check. Locate the end record as ZipFile does and bound every 32-bit or ZIP64
+    directory size and count it may use by the legacy reader's directory budget.
+    """
+    with target.open("rb") as handle:
+        size = handle.seek(0, 2)
+        region = max(0, size - 65557)
+        start = max(0, region - 76)
+        handle.seek(start)
+        tail = handle.read()
+        if len(tail) >= 22 and tail[-22:-18] == b"PK\x05\x06" and tail[-2:] == b"\0\0":
+            end = len(tail) - 22
+        else:
+            end = tail.rfind(b"PK\x05\x06", region - start)
+            if end < 0 or end + 22 > len(tail):
+                return  # No end record: ZipFile rejects the archive itself.
+        records = [struct.unpack_from("<HI", tail, end + 10)]
+        if end >= 20 and tail[end - 20 : end - 16] == b"PK\x06\x07":
+            (relative,) = struct.unpack_from("<Q", tail, end - 12)
+            for offset in {relative, start + end - 76}:
+                if 0 <= offset <= size - 56:
+                    handle.seek(offset)
+                    record = handle.read(56)
+                    if record[:4] == b"PK\x06\x06":
+                        records.append(struct.unpack_from("<QQ", record, 32))
+    if any(
+        entries > MAX_ZIP_ENTRIES or directory > MAX_ZIP_DIRECTORY_BYTES for entries, directory in records
+    ):
+        raise ValueError("Archive exceeds safe size/file-count limit")
 
 
 def _outer_app_index(parts: tuple[str, ...]) -> int | None:
@@ -1351,9 +1427,12 @@ def inspect_target(
                 break
     elif target.suffix.lower() in {".apk", ".ipa", ".zip", ".aab"}:
         inventory["fingerprint"] = file_digest(target)
+        # Entry objects stay within the directory budget; members are read on demand
+        # under the byte budgets, so large resource-heavy archives remain supported.
+        _zip_directory_within_budget(target)
         with zipfile.ZipFile(target) as archive:
             items = archive.infolist()
-            if len(items) > MAX_FILES or sum(i.file_size for i in items) > MAX_ARCHIVE_TOTAL:
+            if len(items) > MAX_ZIP_ENTRIES or sum(i.file_size for i in items) > MAX_ARCHIVE_TOTAL:
                 raise ValueError("Archive exceeds safe size/file-count limit")
             names = [item.filename for item in items]
             if len(set(names)) != len(names):
@@ -1379,6 +1458,13 @@ def inspect_target(
                             "AAB resource input budget exceeded; scalar resolution is partial"
                         )
                         break
+                    reason = unsafe_member(item)
+                    if reason:
+                        resource_partial = True
+                        inventory["warnings"].append(
+                            f"AAB resource member omitted without decompressing ({reason}): {item.filename}"
+                        )
+                        continue
                     try:
                         raw = archive.read(item)
                     except (
@@ -1516,9 +1602,14 @@ def inspect_target(
                         inventory["warnings"].append(f"Archive {kind} omitted without reading: {name}")
                         inventory["partial"] = True
                         continue
-                    if item.file_size > MAX_FILE:
+                    reason = None if item.file_size > MAX_FILE else unsafe_member(item)
+                    if item.file_size > MAX_FILE or reason:
                         credential_omitted(name)
-                        inventory["warnings"].append(f"Oversized archive member omitted: {name}")
+                        inventory["warnings"].append(
+                            f"Archive member omitted without decompressing ({reason}): {name}"
+                            if reason
+                            else f"Oversized archive member omitted: {name}"
+                        )
                         inventory["partial"] = True
                         if name.endswith((".gradle", ".gradle.kts")):
                             opaque_gradle.add(Path(name).as_posix())

@@ -151,9 +151,11 @@ def get(store: Store, job_id: str, private=False) -> dict:
     else:
         result["requested_target"] = json.loads(result["payload"]).get("requested_target", result["target"])
         if result.get("report_id"):
-            from .core import report_incomplete
+            from .core import report_incomplete, report_limited
 
-            result["audit_incomplete"] = report_incomplete(store.report(result["report_id"]))
+            report = store.report(result["report_id"])
+            result["audit_incomplete"] = report_incomplete(report)
+            result["audit_limited"] = report_limited(report)
         for key in ("payload", "pid", "process_started"):
             result.pop(key, None)
     return result

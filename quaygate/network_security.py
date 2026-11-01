@@ -88,7 +88,7 @@ def load(apk: Apk, app_attrs: dict):
 def analyze(events: list, apk=None) -> dict:
     """base-cleartext / 평문 허용 도메인 / 사용자 인증서 신뢰 / debug-overrides 추출.
 
-    상속 규칙 전체를 재현하지 않는다 — 명시적 선언만 보고한다(보수적 판정).
+    상속 규칙 전체를 재현하지 않는다 — 명시적 선언과 중첩 domain-config의 상위 값 상속만 보고한다.
     """
     result = {
         "base_cleartext": None,  # True/False/None(선언 없음)
@@ -126,7 +126,20 @@ def analyze(events: list, apk=None) -> dict:
                         else:
                             result["base_cleartext"] = resolved
             elif val == "domain-config":
-                node["cleartext"] = attrs.get("cleartextTrafficPermitted")
+                declared = attrs.get("cleartextTrafficPermitted")
+                if declared is None:
+                    # 미선언 값은 상위 domain-config의 실효값을 상속한다(최상위면 base-config — 별도 판정).
+                    parent = next((a for a in reversed(stack) if a["tag"] == "domain-config"), None)
+                    node["cleartext"] = parent.get("cleartext") if parent else None
+                else:
+                    resolved = (
+                        resolve_bool_attr(apk, declared)
+                        if apk is not None or not str(declared).startswith("@")
+                        else UNKNOWN
+                    )
+                    if resolved == UNKNOWN:
+                        result["domain_unknown"] = True
+                    node["cleartext"] = resolved is True
             elif val == "debug-overrides":
                 result["debug_overrides"] = True
             elif val == "certificates" and attrs.get("src") == "user":
@@ -141,17 +154,6 @@ def analyze(events: list, apk=None) -> dict:
                     if anc["tag"] == "domain-config":
                         anc.setdefault("domains", []).append(node["text"])
                         break
-            elif node["tag"] == "domain-config":
-                node_cleartext = node.get("cleartext")
-                if node_cleartext is not None:
-                    resolved = (
-                        resolve_bool_attr(apk, node_cleartext)
-                        if apk is not None or not str(node_cleartext).startswith("@")
-                        else UNKNOWN
-                    )
-                    if resolved == UNKNOWN:
-                        result["domain_unknown"] = True
-                    node_cleartext = "true" if resolved is True else "false"
-                if node_cleartext == "true":
-                    result["cleartext_domains"].extend(node.get("domains", []))
+            elif node["tag"] == "domain-config" and node.get("cleartext") is True:
+                result["cleartext_domains"].extend(node.get("domains", []))
     return result

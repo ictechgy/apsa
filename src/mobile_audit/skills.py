@@ -20,6 +20,7 @@ KNOWN_RELEASE_HASHES = {
         "afc9ae9c7ed89937bcf9a1d8d46d47b4557c1ecf20ca9c4ac14f9e6d0dc45819",
         "9bc6d3605d6cb303ab7ed462af4b0fcd1d3085fa74cdaffbd20bb7afec14b127",
         "a1c3e42bfa5e781281e4f894b09ca780ebbc07afb6f9bdbc49189f7d1a7106b8",
+        "4396714a4386dd255cc567213002d353c9db212a7ee537004550dd482815006d",
     },
     "quaygate": {
         "f9adc710be0248045fa9f430d3d4ae7acc6d57f30f507c455e87e73ac9e2192b",
@@ -34,6 +35,7 @@ KNOWN_RELEASE_HASHES = {
         "67c224315933d0e023c3fa345035cf7a737d462ec1b83d218f37ac56192583ed",
         "58af5c5c0c3f606fa00672ee5e15c052fc5f34075d7bfefca0c834e399acc966",
         "59195031bdf19784cc592011efc68e5261fcba2240df5b64862deeb450bd6353",
+        "23cae82c3927401f8e9c0bb15084d2795118aa1f148df5c6a1b8bff61ec16b8d",
     },
     "mobile-audit": {
         "57a4dc02ac35155f2600d6129dc77051738f1f81e17cd089952427fa5d26dc20",
@@ -48,6 +50,7 @@ KNOWN_RELEASE_HASHES = {
         "b839f8026c4d2c050c0710e40ac08f94991845da44a84f0ec6185a98929e7498",
         "69c38bfac093cec3c30a27905eeef83c5686d0c225d44ad12ebaf8288dfe1ec9",
         "0212fc6c7f14f29f0dc9880dbd63302d227a98f07e6e16a6da6e25470dc8742d",
+        "ef2b436b01c11d2065ef05752259e4c5988e000651963d48c03dbee24be3ceaa",
     },
 }
 
@@ -84,6 +87,13 @@ def install_skill(name: str, destination: Path | None = None, force=False) -> di
         return {"name": name, "path": str(path.resolve()), "status": "unchanged"}
     mode = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
     mode |= os.O_TRUNC if force or status == "outdated" else os.O_EXCL
-    with os.fdopen(os.open(path, mode, 0o644), "wb") as handle:
+    try:
+        descriptor = os.open(path, mode, 0o644)
+    except FileExistsError:
+        raise FileExistsError(
+            f"Installed skill differs from every APSA release (local changes?): {path}. "
+            "Keep it, or rerun with --force to replace it."
+        ) from None
+    with os.fdopen(descriptor, "wb") as handle:
         handle.write(raw)
     return {"name": name, "path": str(path.resolve()), "status": "installed"}

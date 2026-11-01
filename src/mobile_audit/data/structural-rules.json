@@ -341,7 +341,7 @@
     ],
     "severity": "high",
     "status": "candidate",
-    "masvs": "MASVS-NETWORK",
+    "masvs": "MASVS-PLATFORM",
     "mapping_scope": "partial",
     "scope": "CST and declared header/type identity, function-local straight-line flow only. Preprocessing, dispatch, swizzling, interprocedural flow, security purpose and runtime reachability remain unverified.",
     "remediation": "Validate navigation trust and redirects; review security use of MD5/SHA-1.",

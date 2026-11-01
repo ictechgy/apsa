@@ -41,6 +41,7 @@ RULE_WEAKNESSES: dict[str, tuple[str, ...]] = {
     "SOURCE-HOSTNAME-VERIFIER-ALL": ("MASWE-0027",),
     "SWIFT-SERVER-TRUST-ACCEPTED": ("MASWE-0027",),
     "SOURCE-EXTERNAL-STORAGE": ("MASWE-0002",),
+    "SOURCE-WORLD-ACCESSIBLE-FILE": ("MASWE-0002",),
     "SOURCE-JAVA-DESERIALIZATION": ("MASWE-0050",),
     "IOS-ATS-EXCEPTION": ("MASWE-0026",),
     # 1.5 detection breadth.
@@ -141,7 +142,9 @@ UNMAPPED: dict[str, str] = {
 
 # Correlated intelligence findings use advisory identifiers as rule IDs.
 ADVISORY_PREFIXES = ("CVE-", "GHSA-", "OSV-")
-STATE_ORDER = ("partial", "checked", "not-run", "not-applicable")
+STATE_ORDER = ("partial", "limited", "checked", "not-run", "not-applicable")
+# A limited check examined its whole scope; only the bounded model's precision was limited.
+EXAMINED = frozenset({"checked", "limited"})
 
 
 @cache
@@ -169,23 +172,31 @@ def finding_weaknesses(item: dict) -> tuple[str, ...]:
 
 
 def rule_state(states: set[str]) -> str:
-    """One rule's state across its coverage entries; not-applicable entries are neutral."""
+    """One rule's state across its coverage entries; not-applicable entries are neutral.
+
+    Precedence is partial > limited > checked; examined mixed with not-run is partial.
+    """
     effective = states - {"not-applicable"}
     if not effective:
         return "not-applicable" if states else "not-run"
-    if "partial" in effective or ("checked" in effective and effective != {"checked"}):
+    if "partial" in effective or (effective & EXAMINED and not effective <= EXAMINED):
         return "partial"
-    return "checked" if effective == {"checked"} else "not-run"
+    if effective == {"checked"}:
+        return "checked"
+    return "limited" if effective <= EXAMINED else "not-run"
 
 
 def aggregate_states(rule_states: list[str]) -> str:
-    """Across related rules: every ran fully -> checked; some ran -> partial."""
+    """Across related rules: every ran fully -> checked; every examined with some
+    precision limit -> limited; some ran -> partial."""
     effective = [s for s in rule_states if s != "not-applicable"]
     if not effective:
         return "not-applicable" if rule_states else "not-run"
     if all(s == "checked" for s in effective):
         return "checked"
-    if any(s in {"checked", "partial"} for s in effective):
+    if all(s in EXAMINED for s in effective):
+        return "limited"
+    if any(s in EXAMINED | {"partial"} for s in effective):
         return "partial"
     return "not-run"
 
@@ -252,8 +263,9 @@ def coverage_matrix(report: dict) -> dict:
         "license": index["license"],
         "note": "States describe APSA's related checks, which cover part of each weakness (scope partial), "
         "never every MASTG test. checked means every related check that applied to this input ran fully; "
+        "limited means they examined the whole input but the bounded static model abstained on some paths; "
         "a mix of run and not-run checks is partial. not-assessed means APSA has no related check; "
-        "not-run and partial never mean safe.",
+        "not-run, partial and limited never mean safe.",
         "summary": summary,
         "weaknesses": rows,
     }

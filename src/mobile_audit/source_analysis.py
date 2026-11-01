@@ -28,12 +28,25 @@ MAX_AST_FINDINGS = 500
 MAX_PATH_ROUTE_EVIDENCE = 32
 LANGUAGES = {".java": "java", ".kt": "kotlin", ".kts": "kotlin", ".swift": "swift", ".m": "objc"}
 UNSUPPORTED_SOURCE = {".mm", ".dart", ".js", ".jsx", ".ts", ".tsx", ".cs"}
+# Property accessor bodies (Swift computed get/set/modify and willSet/didSet, Kotlin
+# get()/set()) are analyzed like methods. Reading such a property elsewhere stays unmodelled.
+ACCESSORS = {
+    "computed_property",
+    "computed_getter",
+    "computed_setter",
+    "computed_modify",
+    "willset_clause",
+    "didset_clause",
+    "getter",
+    "setter",
+}
 FUNCTIONS = {
     "method_declaration",
     "constructor_declaration",
     "function_declaration",
     "method_definition",
     "function_definition",
+    *ACCESSORS,
 }
 COMMENTS = {"comment", "line_comment", "block_comment", "multiline_comment"}
 STRINGS = {"string_literal", "line_string_literal", "multi_line_string_literal", "character_literal"}
@@ -345,6 +358,11 @@ TRACE_PARTIAL = " [native-flow-partial]"
 GuardKey = int | tuple[int, str]
 
 
+def budget_reason(reason: str) -> bool:
+    """A native-flow reason naming a budget is an execution gap; any other is a precision limit."""
+    return "budget" in reason
+
+
 def _walk(node: Any, *, descend_functions: bool = True):
     stack = [node]
     while stack:
@@ -357,6 +375,35 @@ def _walk(node: Any, *, descend_functions: bool = True):
 
 def _field(node: Any, name: str) -> Any:
     return node.child_by_field_name(name)
+
+
+def _accessor_property(node: Any) -> Any:
+    """The property an accessor unit belongs to; None for subscripts and get/set containers."""
+    explicit = {"computed_getter", "computed_setter", "computed_modify"}
+    if node.type == "computed_property" and any(child.type in explicit for child in node.named_children):
+        return None
+    parent = node.parent
+    if node.type in explicit | {"willset_clause", "didset_clause"} and parent is not None:
+        parent = parent.parent
+    return parent if parent is not None and parent.type == "property_declaration" else None
+
+
+def _function_body(function: Any) -> Any:
+    return _field(function, "body") or next(
+        (
+            node
+            for node in function.named_children
+            if node.type == "function_body" or node.type == "statements" and function.type in ACCESSORS
+        ),
+        None,
+    )
+
+
+def _analysis_unit(node: Any) -> bool:
+    """A counted, analyzed callable. An accessor needs a property and a body of its own."""
+    if node.type not in ACCESSORS:
+        return node.type in FUNCTIONS
+    return _accessor_property(node) is not None and _function_body(node) is not None
 
 
 def _fields(node: Any, name: str) -> list[Any]:
@@ -482,6 +529,11 @@ class Frame:
         )
 
 
+SQLITE_DATABASE = "android.database.sqlite.SQLiteDatabase"
+# SDK accessors whose result is a SQLiteDatabase even when the helper type is a project class.
+SQLITE_ACCESSORS = {"writableDatabase", "readableDatabase"}
+SQLITE_GETTERS = {"getWritableDatabase", "getReadableDatabase"}
+SQLITE_OPENERS = {"openOrCreateDatabase", "openDatabase"}
 # SQL syntax argument per framework method (receiver type, method) -> argument index.
 SQL_SINKS = {
     ("android.database.sqlite.SQLiteDatabase", "rawQuery"): (0,),
@@ -565,6 +617,9 @@ class Analyzer:
         self.literal_table: tuple[dict[str, tuple[list[int], list[str]]], dict[str, list[int]]] | None = None
         # Rules whose checks stopped at a budget in this file; their coverage becomes partial.
         self.truncated_rules: set[str] = set()
+        # Rules whose checks examined the file but whose bounded model abstained
+        # on some paths (a precision limit, not an execution gap); coverage becomes limited.
+        self.limited_rules: set[str] = set()
         self.native_flow: Any = None
         self.return_values: list[Value] = []
         self.closure_depth = 0
@@ -720,12 +775,112 @@ class Analyzer:
             return text, UNKNOWN_INTENT
         return " ".join(parts), "no class, component or package where the Intent variable is built"
 
+    def kotlin_templates(self, node: Any) -> list[tuple[str, Any]]:
+        """Kotlin `$name` templates in a string literal, with the node holding the name.
+
+        The bundled grammar emits only `${...}` and raw-string templates as
+        interpolation nodes; a simple `"a=$id"` is a `$` part followed by plain
+        content, so it would otherwise read as constant text.
+        """
+        if self.language != "kotlin" or node is None or node.type not in STRINGS:
+            return []
+        parts = node.named_children
+        found = []
+        for current, following in zip(parts, parts[1:], strict=False):
+            if (
+                current.type == "string_content"
+                and self.text(current) == "$"
+                and following.type == "string_content"
+            ):
+                match = re.match(r"`[^`\r\n]+`|[A-Za-z_][A-Za-z0-9_]*", self.text(following))
+                if match:
+                    found.append((self.symbol_name(match.group(0)), following))
+        return found
+
+    def swift_condition_parts(self, node: Any) -> tuple[list[Any], list[tuple[str, Any, Any]], Any, Any]:
+        """Split a Swift if/guard into boolean conditions, `let`/`var` bindings, body and else arm.
+
+        Bindings are (name, initializer or None for `if let x`, bound identifier node).
+        """
+        parts: list[Any] = []
+        bindings: list[tuple[str, Any, Any]] = []
+        then_node = else_node = None
+        pending = None
+        seen_else = False
+        for index, child in enumerate(node.children):
+            field = node.field_name_for_child(index)
+            if field == "bound_identifier":
+                if pending is not None:
+                    bindings.append((pending[0], None, pending[1]))
+                pending = (self.symbol_name(self.text(child)), child)
+            elif field == "condition":
+                if not child.is_named or child.type == "value_binding_pattern":
+                    continue
+                if pending is not None:
+                    bindings.append((pending[0], child, pending[1]))
+                    pending = None
+                else:
+                    parts.append(child)
+            elif child.type == "else":
+                seen_else = True
+            elif child.type in {"statements", "if_statement"}:
+                if seen_else:
+                    else_node = child
+                elif then_node is None:
+                    then_node = child
+        if pending is not None:
+            bindings.append((pending[0], None, pending[1]))
+        return parts, bindings, then_node, else_node
+
+    def bind_swift_local(self, name: str, expression: Any, anchor: Any, source: Frame, target: Frame) -> None:
+        """Bind an optional-binding name like a local declaration initialized from `expression`."""
+        if expression is None:
+            # `if let x` / `guard let x` unwraps the existing binding under the same name.
+            return
+        value = self.value(expression, source).bind(self.point(anchor))
+        if self.native_flow is not None:
+            value = self.native_flow.local_value(self, anchor, "", value, target, initialized=True)
+        target.local_names.add(name)
+        target.constants.pop(name, None)
+        target.values[name] = Value(value.traces, value.category, value.type_name, value.identity)
+
+    def sqlite_database_call(self, call: Call, receiver: Value) -> bool:
+        """SDK calls that return a SQLiteDatabase: helper getters and Context/SQLiteDatabase openers."""
+        if self.language not in {"java", "kotlin"}:
+            return False
+        if call.name in SQLITE_GETTERS:
+            return not call.args
+        if call.name not in SQLITE_OPENERS:
+            return False
+        if call.receiver is None:
+            return True
+        key = self.key(call.receiver)
+        return (
+            key in {"SQLiteDatabase", SQLITE_DATABASE}
+            or bool(re.search(r"\b(?:Context|Activity|Application|Service)\b", receiver.type_name))
+            or bool(re.fullmatch(r"(?i)(?:\w*context|ctx)(?:\(\))?", key or ""))
+        )
+
+    def identifier_value(self, name: str, frame: Frame, node: Any) -> Value:
+        if (
+            name == "intent"
+            and name not in frame.values
+            and name not in self.field_types
+            and self.activity_scope
+        ):
+            return self.source(node, "Activity.intent property", "intent")
+        if self.native_flow is not None:
+            stored = self.native_flow.identifier(self, name, frame, node)
+            if stored is not None:
+                return stored
+        return frame.values.get(name, Value(type_name=frame.types.get(name, self.field_types.get(name, ""))))
+
     def literal(self, node: Any) -> str | None:
         if not node or node.type not in STRINGS:
             return None
         text = self.text(node)
         # Escapes and interpolation require runtime interpretation; never treat them as an allowlist.
-        if "\\" in text or "${" in text or text.startswith('"""'):
+        if "\\" in text or "${" in text or text.startswith('"""') or self.kotlin_templates(node):
             return None
         return text[1:-1] if text.startswith(('"', "'")) and text[-1:] == text[:1] else None
 
@@ -780,7 +935,7 @@ class Analyzer:
             return None
         kind = node.type
         if kind in STRINGS:
-            if any("interpolat" in part.type for part in _walk(node)):
+            if any("interpolat" in part.type for part in _walk(node)) or self.kotlin_templates(node):
                 return None
             return "string literal"
         if kind.endswith("_literal") and kind not in NON_SCALAR_LITERALS:
@@ -1044,27 +1199,15 @@ class Analyzer:
                 for part in _walk(node)
                 if part.type in {"interpolated_expression", "interpolation", "interpolated_string_expression"}
             ]
-            return self.changed(node, _union([self.value(part, frame) for part in interpolations], "text"))
+            values = [self.value(part, frame) for part in interpolations]
+            values += [self.identifier_value(name, frame, part) for name, part in self.kotlin_templates(node)]
+            return self.changed(node, _union(values, "text"))
         if node.type in {"binary_expression", "additive_expression"}:
             rooted = self.rooted_path(node, frame)
             if rooted is not None:
                 return rooted
         if node.type in IDENTIFIERS:
-            name = self.symbol_name(self.text(node))
-            if (
-                name == "intent"
-                and name not in frame.values
-                and name not in self.field_types
-                and self.activity_scope
-            ):
-                return self.source(node, "Activity.intent property", "intent")
-            if self.native_flow is not None:
-                stored = self.native_flow.identifier(self, name, frame, node)
-                if stored is not None:
-                    return stored
-            return frame.values.get(
-                name, Value(type_name=frame.types.get(name, self.field_types.get(name, "")))
-            )
+            return self.identifier_value(self.symbol_name(self.text(node)), frame, node)
         if node.type == "unary_expression" and self.text(node).rstrip().endswith("!!"):
             argument = _field(node, "argument")
             if argument is not None:
@@ -1078,6 +1221,8 @@ class Analyzer:
         if navigation:
             base, member = navigation
             value = self.value(base, frame)
+            if self.language == "kotlin" and member in SQLITE_ACCESSORS:
+                return Value(type_name=SQLITE_DATABASE)
             if self.native_flow is not None:
                 stored = self.native_flow.member(self, base, member, frame, value)
                 if stored is not None:
@@ -1106,6 +1251,8 @@ class Analyzer:
                 return self.source(node, "Intent data", "url" if member == "data" else "text", value)
             if value.category in {"request", "navigation", "url-context"} and member == "url":
                 return self.source(node, "Platform navigation URL", "url", value)
+            if value.category == "user-activity" and member == "webpageURL":
+                return self.source(node, "Universal link webpage URL", "url", value)
             if value.category == "navigation" and member == "request":
                 return Value(value.traces, "request")
             if value.category == "url" and member in {"host", "scheme"}:
@@ -1119,6 +1266,8 @@ class Analyzer:
         if call:
             receiver = self.value(call.receiver, frame)
             args = [self.value(arg, frame) for arg in call.args]
+            if self.sqlite_database_call(call, receiver):
+                return Value(type_name=SQLITE_DATABASE)
             if self.native_flow is not None:
                 result = self.native_flow.call(self, call, frame, receiver, args)
                 if result is not None:
@@ -1338,7 +1487,12 @@ class Analyzer:
         node = self.unwrap(node)
         if node is not None and node.type in IDENTIFIERS:
             name = self.symbol_name(self.text(node))
-            if name not in frame.values and name not in frame.types and name in self.constants:
+            # Class fields are pre-bound in every frame; an immutable field stays
+            # in frame.constants until a parameter, local or write shadows it.
+            unshadowed_field = name in frame.constants and name not in frame.local_names
+            if name in self.constants and (
+                unshadowed_field or (name not in frame.values and name not in frame.types)
+            ):
                 return self.constants[name][1]
         if node is not None and node.type in IDENTIFIERS and self.function is not None:
             # A local declared with a literal and not reassigned (=, +=) before this use.
@@ -1475,7 +1629,7 @@ class Analyzer:
             self.truncated_rules.add(rule)
             return
         if any(TRACE_PARTIAL in trace.description for trace in traces):
-            self.truncated_rules.add(rule)
+            self.limited_rules.add(rule)
         title, severity, remediation, reference = RULES[rule]
         row = self.location(node)["line"] - 1
         evidence = {
@@ -1487,9 +1641,13 @@ class Analyzer:
             **details,
         }
         if traces:
-            evidence["sources"] = [
-                {**self.location(trace.source), "kind": trace.description} for trace in traces
-            ]
+            # Distinct trace origins can share one source location and kind; report it once.
+            sources: list[dict] = []
+            for trace in traces:
+                entry = {**self.location(trace.source), "kind": trace.description}
+                if entry not in sources:
+                    sources.append(entry)
+            evidence["sources"] = sources
             evidence["flow"] = [{**self.location(step), "operation": step.type} for step in traces[0].steps]
         item = finding(
             rule,
@@ -1533,8 +1691,22 @@ class Analyzer:
                         existing["evidence"][-1].setdefault("modeled_routes", []).append(sentinel)
 
     def is_webview(self, node: Any, frame: Frame) -> bool:
-        value = self.value(node, frame)
+        if node is None and self.language == "kotlin" and "this" in self.aliases:
+            # Kotlin run/apply/with: an unqualified call targets the bound scope receiver.
+            value = frame.values.get("this", Value())
+        else:
+            value = self.value(node, frame)
         return bool(re.search(r"\b(?:WebView|WKWebView|UIWebView)\b", value.type_name))
+
+    def receiver_key(self, node: Any) -> str:
+        """Bridge/JavaScript correlation key; Kotlin run/apply/with bind implicit and `this` receivers."""
+        scope = self.aliases.get("this") if self.language == "kotlin" else None
+        if scope is None or node is not None and self.text(node).strip() != "this":
+            return self.key(node)
+        key = self.key(scope)
+        # Named receivers correlate by spelling like explicit calls; distinct
+        # allocations such as two WebView(context).apply {} blocks never do.
+        return key if re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", key) else f"{key}@{scope.start_byte}"
 
     def risky_checks(self, conditions: list[Any], traces: tuple[Trace, ...], frame: Frame) -> list[Call]:
         origins = {trace.origin for trace in traces}
@@ -1616,7 +1788,7 @@ class Analyzer:
     def check_call(
         self, call: Call, frame: Frame, guards: dict[GuardKey, set[str]], conditions: list[Any]
     ) -> None:
-        receiver_key = self.key(call.receiver)
+        receiver_key = self.receiver_key(call.receiver)
         self.check_security_call(call, frame)
         self.check_key_material(call, frame)
         self.check_intent_launch(call, frame)
@@ -1642,7 +1814,7 @@ class Analyzer:
         elif call.name == "setJavaScriptEnabled" and call.args:
             settings = self.call(call.receiver) if call.receiver else None
             if settings and settings.name == "getSettings" and self.is_webview(settings.receiver, frame):
-                frame.javascript[self.key(settings.receiver)] = self.text(call.args[0])
+                frame.javascript[self.receiver_key(settings.receiver)] = self.text(call.args[0])
         declared = self.spec_entry("sink", call, frame)
         if declared and len(call.args) > declared["argument"]:
             value = self.value(call.args[declared["argument"]], frame)
@@ -1969,6 +2141,19 @@ class Analyzer:
                 self.guarded_paths.update(
                     (trace.origin, trace.path_route) for trace in traces if trace.path_route
                 )
+            elif all(condition.type in {"lambda_expression", "lambda_literal"} for condition in conditions):
+                # Within closures only, this dominated operation covers a construction
+                # in the innermost closure; it never covers one from an enclosing scope.
+                closure = conditions[-1]
+                callers = self.native_flow.call_sites if self.native_flow is not None else []
+                site = "|".join([*callers, f"{self.path}:"])
+                self.guarded_paths.update(
+                    (trace.origin, trace.path_route)
+                    for trace in traces
+                    if trace.path_route.startswith(site)
+                    and trace.path_route[len(site) :].isdigit()
+                    and closure.start_byte <= int(trace.path_route[len(site) :]) < closure.end_byte
+                )
             return
         if not construction:
             self.unguarded_paths.update(
@@ -2175,7 +2360,7 @@ class Analyzer:
                             "Kotlin non-local return context unavailable", self, node=node
                         )
                     else:
-                        self.truncated_rules.update(RULES)
+                        self.limited_rules.update(RULES)
                 self.return_values.append(self.value(expressions[-1], frame).bind(self.point(node)))
             return
         declaration = self.declaration(node)
@@ -2259,28 +2444,55 @@ class Analyzer:
                     self.native_flow.assign_member(self, left, value, frame)
                 return
         if node.type in {"if_statement", "if_expression"}:
-            condition = _field(node, "condition")
-            if condition:
-                self.visit(condition, frame, guards, conditions)
-            children = [child for child in node.named_children if child != condition]
-            then_node = _field(node, "consequence") or (children[0] if children else None)
-            else_node = _field(node, "alternative") or (children[1] if len(children) > 1 else None)
+            bindings: list[tuple[str, Any, Any]] = []
+            if self.language == "swift":
+                # Swift lays out `if let a = b, c { ... } else { ... }` as flat children.
+                parts, bindings, then_node, else_node = self.swift_condition_parts(node)
+                for part in [*parts, *(expression for _, expression, _ in bindings if expression)]:
+                    self.visit(part, frame, guards, conditions)
+                condition = parts[0] if len(parts) == 1 and not bindings else None
+                constraint_nodes = parts
+                nested = [*conditions, *parts, *(expression for _, expression, _ in bindings if expression)]
+            else:
+                condition = _field(node, "condition")
+                if condition:
+                    self.visit(condition, frame, guards, conditions)
+                children = [child for child in node.named_children if child != condition]
+                then_node = _field(node, "consequence") or (children[0] if children else None)
+                else_node = _field(node, "alternative") or (children[1] if len(children) > 1 else None)
+                constraint_nodes = [condition] if condition else []
+                nested = [*conditions, condition] if condition else conditions
             self.navigation_policy(condition, then_node, frame)
             positive = {origin: checks.copy() for origin, checks in guards.items()}
-            for origin, checks in self.constraints(condition, frame).items():
-                positive.setdefault(origin, set()).update(checks)
+            for part in constraint_nodes:
+                for origin, checks in self.constraints(part, frame).items():
+                    positive.setdefault(origin, set()).update(checks)
             before = frame.copy()
             branch = frame.copy()
+            for name, expression, anchor in bindings:
+                self.bind_swift_local(name, expression, anchor, before, branch)
             if then_node:
-                self.visit(then_node, branch, positive, [*conditions, condition] if condition else conditions)
+                self.visit(then_node, branch, positive, nested)
             alternative = before.copy()
             if else_node:
-                self.visit(
-                    else_node, alternative, guards, [*conditions, condition] if condition else conditions
-                )
+                # The else branch runs only when the condition is false; a guard it
+                # establishes (for example an `else if ... return`) must not leak.
+                alternative_guards = {origin: checks.copy() for origin, checks in guards.items()}
+                self.visit(else_node, alternative, alternative_guards, nested)
             from .native_guards import exits, path_predicate
 
-            if exits(self, then_node) and not else_node:
+            # Continuation guards apply only to the statements that follow this `if`
+            # in the same block, not to a switch case, when entry, loop body or else arm.
+            statement = node.parent is not None and node.parent.type in BLOCKS
+            if not statement or not constraint_nodes:
+                pass
+            elif condition is None:
+                # A multi-clause Swift condition holds after the `if` only when its else exits.
+                if exits(self, else_node):
+                    for part in constraint_nodes:
+                        for origin, checks in self.constraints(part, before).items():
+                            guards.setdefault(origin, set()).update(checks)
+            elif exits(self, then_node) and not else_node:
                 continuation = path_predicate(self, condition, before, positive=False)
                 for origin, checks in continuation.items():
                     guards.setdefault(origin, set()).update(checks)
@@ -2333,11 +2545,16 @@ class Analyzer:
             return
         if node.type == "guard_statement" and self.language == "swift":
             # The continuation is guarded only when the else body exits the function.
-            bodies = [part for part in node.named_children if part.type == "statements"]
+            parts, bindings, _, body = self.swift_condition_parts(node)
             from .native_guards import exits as definitely_exits
 
-            exits = bool(bodies and definitely_exits(self, bodies[0]))
-            for condition in _fields(node, "condition"):
+            exits = bool(body is not None and definitely_exits(self, body))
+            # `guard let` names are bound in the enclosing scope after the statement.
+            for name, expression, anchor in bindings:
+                if expression is not None:
+                    self.visit(expression, frame, guards, conditions)
+                self.bind_swift_local(name, expression, anchor, frame, frame)
+            for condition in parts:
                 self.visit(condition, frame, guards, conditions)
                 if exits:
                     for origin, checks in self.constraints(condition, frame).items():
@@ -2400,7 +2617,7 @@ class Analyzer:
                 if self.native_flow is not None:
                     self.native_flow.partial("Kotlin non-local return context unavailable", self, node=node)
                 else:
-                    self.truncated_rules.update(RULES)
+                    self.limited_rules.update(RULES)
             if with_arguments is not None:
                 receiver_lambda = self.scope_lambda_argument(with_arguments["receiver"])
                 if receiver_lambda is not None and receiver_lambda.type == "lambda_literal":
@@ -2437,6 +2654,8 @@ class Analyzer:
                         lambda_node
                     )
                     self.visit_scope_lambda(lambda_node, frame, guards, conditions, *scope, optional)
+                elif self.language == "swift" and call.name == "onOpenURL":
+                    self.visit_open_url_callback(lambda_node, frame, guards, conditions)
                 else:
                     # An unfollowed closure may fill any array it names.
                     kotlin_return = False
@@ -2666,6 +2885,44 @@ class Analyzer:
         finally:
             self.return_values = returns
 
+    def visit_open_url_callback(
+        self, node: Any, frame: Frame, guards: dict[GuardKey, set[str]], conditions: list[Any]
+    ) -> None:
+        """SwiftUI `.onOpenURL { url in ... }`: the closure parameter is an external URL.
+
+        The callback runs later, so its body is analyzed in an isolated copy and
+        does not change the enclosing frame.
+        """
+        signature = next((part for part in node.named_children if part.type == "lambda_function_type"), None)
+        parameters = (
+            next(
+                (part for part in signature.named_children if part.type == "lambda_function_type_parameters"),
+                None,
+            )
+            if signature is not None
+            else None
+        )
+        names = (
+            [self.symbol_name(self.text(part)) for part in _walk(parameters) if part.type in IDENTIFIERS]
+            if parameters is not None
+            else []
+        )
+        name = names[0] if names else "$0"
+        local = frame.copy()
+        local.local_names.add(name)
+        local.constants.pop(name, None)
+        local.values[name] = self.source(
+            parameters if parameters is not None else node, "SwiftUI onOpenURL URL", "url"
+        )
+        local_guards = {origin: checks.copy() for origin, checks in guards.items()}
+        self.closure_depth += 1
+        try:
+            for child in node.named_children:
+                if child is not signature:
+                    self.visit(child, local, local_guards, [*conditions, node])
+        finally:
+            self.closure_depth -= 1
+
     def visit_scope_lambda(
         self,
         node: Any,
@@ -2701,6 +2958,8 @@ class Analyzer:
             # and a non-local return sees the scope value, not the class object.
             declared.add("this")
             local.values["this"] = self.value(receiver, frame)
+            # An unqualified member call in this lambda targets the scope receiver.
+            self.aliases["this"] = receiver
         local_guards = {origin: checks.copy() for origin, checks in guards.items()}
         self.closure_depth += 1
         try:
@@ -2928,7 +3187,9 @@ class Analyzer:
         self.unavailable_fields = set()
         fields = {}
         if boundary is not None and boundary.kind == "nominal":
-            modifiers = NativeFlow.declaration_tokens(function)
+            modifiers = NativeFlow.declaration_tokens(
+                _accessor_property(function) if function.type in ACCESSORS else function
+            )
             static_method = bool(modifiers & {"static", "class"})
             for name, expression, type_name, static in self.nominal_fields(boundary.node):
                 if static_method and not static:
@@ -2953,6 +3214,9 @@ class Analyzer:
         self.active_guards = {}
         name = _field(function, "name")
         self.scope = self.symbol_name(self.text(name))
+        if function.type in ACCESSORS:
+            # Accessor findings name their property.
+            self.scope = (self.declaration(_accessor_property(function)) or ("",))[0]
         self.function = function
         self.function_source = self.text(function)
         self.path_guarded = self.action_hint = None
@@ -2980,7 +3244,9 @@ class Analyzer:
         )
         self.activity_scope = any(
             re.search(
-                r"\b(?:Activity|AppCompatActivity|ComponentActivity|FragmentActivity)\b", self.text(base)
+                # Framework activities and project bases such as BaseActivity<VB>().
+                r"\b\w*Activity\b",
+                self.text(base),
             )
             for base in bases
         )
@@ -3026,6 +3292,12 @@ class Analyzer:
             elif "UIOpenURLContext" in type_name:
                 category, description = "url-context", "iOS scene URL context parameter"
             elif (
+                self.language == "swift"
+                and self.scope in {"application", "scene"}
+                and re.search(r"\bNSUserActivity\b", type_name)
+            ):
+                category, description = "user-activity", "iOS universal link user activity parameter"
+            elif (
                 provider_scope
                 and self.scope in PROVIDER_METHODS
                 and re.search(r"\b(?:String|Uri)\b", type_name)
@@ -3045,6 +3317,20 @@ class Analyzer:
                 frame.values[name] = Value(
                     value.traces, value.category, type_name, frame.values[name].identity
                 )
+        if function.type in ACCESSORS:
+            # set(value), willSet/didSet names and Kotlin's backing `field` are accessor
+            # locals holding what was stored in the property, not same-named class fields.
+            names = [self.text(node) for node in function.named_children if node.type in IDENTIFIERS]
+            implicit = {
+                "computed_setter": "newValue",
+                "willset_clause": "newValue",
+                "didset_clause": "oldValue",
+            }
+            if not names and function.type in implicit:
+                names = [implicit[function.type]]
+            for name in [*names, *(["field"] if self.language == "kotlin" else [])]:
+                frame.local_names.add(name)
+                frame.values[name] = frame.values.get(self.scope, Value())
         return frame
 
     def finish_paths(self) -> None:
@@ -3096,7 +3382,7 @@ class Analyzer:
                 # cannot establish that stdlib scope identities are unshadowed.
                 if self.kotlin_scope_import_unavailable is None:
                     self.kotlin_scope_import_unavailable = node
-                self.truncated_rules.update(RULES)
+                self.limited_rules.update(RULES)
             if node.type in {"import_declaration", "import_header", "import"}:
                 raw_import = re.sub(r"^import\s+|;\s*$", "", self.text(node)).strip()
                 imported = self.normalized_import_name(raw_import)
@@ -3121,7 +3407,7 @@ class Analyzer:
                         # stdlib scope identities rather than guessing a leaf.
                         if self.kotlin_scope_import_unavailable is None:
                             self.kotlin_scope_import_unavailable = node
-                        self.truncated_rules.update(RULES)
+                        self.limited_rules.update(RULES)
                         continue
                     parts = re.split(r"\s+as\s+", imported, maxsplit=1)
                     target = parts[0]
@@ -3144,7 +3430,7 @@ class Analyzer:
                     and not node.has_error
                 ):
                     self.safe_local_types.add(name)
-            if node.type in FUNCTIONS:
+            if node.type in FUNCTIONS and node.type not in ACCESSORS:
                 self.defined_functions.add(self.symbol_name(self.text(_field(node, "name"))))
             if node.type == "object_declaration":
                 name = next(
@@ -3169,7 +3455,7 @@ class Analyzer:
             )
             self.kotlin_scope_import_reported = True
         for function in nodes:
-            if function.type not in FUNCTIONS:
+            if not _analysis_unit(function):
                 continue
             self.function_counts["observed"] += 1
             parent = function.parent
@@ -3181,9 +3467,7 @@ class Analyzer:
                 self.function_counts["skipped"] += 1
                 continue
             frame = self.start_function(function)
-            body = _field(function, "body") or next(
-                (node for node in function.named_children if node.type == "function_body"), None
-            )
+            body = _function_body(function)
             if body:
                 self.function_counts["analyzed"] += 1
                 # Primitive selection needs no closure dataflow model. Inspect
@@ -3254,7 +3538,10 @@ def analyze_sources(
     unsupported: set[str] = set()
     pattern_exclusions: dict[str, dict[str, list[dict[str, int]]]] = {}
     file_metrics = []
+    # Execution gaps (budgets) make a rule partial; precision limits make it limited.
     truncated_rules: set[str] = set()
+    limited_rules: set[str] = set()
+    findings_truncated = False
     function_totals = {"observed": 0, "analyzed": 0, "skipped": 0, "without_body": 0}
     native_files: list[tuple[Analyzer, Any, list[Any]]] = []
     native_metrics: list[tuple[Analyzer, dict]] = []
@@ -3319,8 +3606,8 @@ def analyze_sources(
                     raise ValueError("AST node budget exceeded")
                 nodes.append(_node)
             metric["native_functions"] = {
-                "observed": sum(n.type in FUNCTIONS for n in nodes),
-                "with_errors": sum(n.type in FUNCTIONS and n.has_error for n in nodes),
+                "observed": sum(_analysis_unit(n) for n in nodes),
+                "with_errors": sum(_analysis_unit(n) and n.has_error for n in nodes),
             }
             metric["native_parse_errors"] = tree.root_node.has_error
             adaptations = []
@@ -3343,32 +3630,40 @@ def analyze_sources(
                             raise ValueError("compatibility AST node budget exceeded")
                         nodes.append(_node)
                     normalized_files += 1
-                    warnings.append(
-                        f"AST parser compatibility in {path}: {adaptations}; source remains partial."
-                    )
+                    if any(not adaptation.get("lossless") for adaptation in adaptations):
+                        warnings.append(
+                            f"AST parser compatibility in {path}: {adaptations}; source remains partial."
+                        )
             metric["adaptations"] = adaptations
+            # Offset- and semantics-preserving whitespace edits do not reduce coverage.
+            lossy = [adaptation for adaptation in adaptations if not adaptation.get("lossless")]
             metric["parse_errors"] = tree.root_node.has_error
             if tree.root_node.has_error:
                 warnings.append(
                     f"AST syntax recovery in {path}: functions containing parse errors were skipped."
                 )
                 skipped += 1
-            elif adaptations:
+            elif lossy:
                 skipped += 1
             if language == "objc":
                 from .objc_analysis import ObjCAnalyzer
 
                 analyzer = ObjCAnalyzer(path, text, uncertain_spans=dropped)
-                skipped += 1  # Preprocessing, dynamic dispatch and unsupported flows remain partial.
-                metric["state"] = "partial"
                 analyzer.analyze(tree.root_node)
             else:
                 analyzer = Analyzer(path, text, language, specs, exposed_providers, android_levels)
                 native_files.append((analyzer, tree.root_node, nodes))
                 native_metrics.append((analyzer, metric))
-            metric["state"] = "partial" if tree.root_node.has_error or adaptations else "checked"
-            if language == "objc":
-                metric["state"] = "partial"
+            # Every parsed ObjC function is examined, but only through the reduced
+            # model (no preprocessing, dispatch or interprocedural flow): a
+            # precision limit. Parse errors and lossy adaptations stay partial.
+            metric["state"] = (
+                "partial"
+                if tree.root_node.has_error or lossy
+                else "limited"
+                if language == "objc"
+                else "checked"
+            )
             metric["functions"] = analyzer.function_counts
             if language == "objc":
                 for name, value in analyzer.function_counts.items():
@@ -3377,6 +3672,7 @@ def analyze_sources(
             parsed += 1
             if len(findings) >= MAX_AST_FINDINGS:
                 findings = findings[:MAX_AST_FINDINGS]
+                findings_truncated = True
                 warnings.append("AST finding budget reached; remaining source functions were not checked.")
                 skipped += 1
                 remaining_records = len(sources) - source_index - 1
@@ -3386,7 +3682,7 @@ def analyze_sources(
             warnings.append(f"AST analysis skipped {path}: {error}.")
             metric["reason"] = str(error)
             skipped += 1
-    flow_metadata = {"state": "not-run", "reasons": []}
+    flow_metadata = {"state": "not-run", "reasons": [], "budget_reasons": [], "precision_reasons": []}
     if native_files:
         from .native_flow import NativeFlow
 
@@ -3412,16 +3708,27 @@ def analyze_sources(
                     evidence.pop("modeled_routes", None)
             findings.extend(analyzer.findings)
             truncated_rules |= analyzer.truncated_rules
+            limited_rules |= analyzer.limited_rules
             if metric["state"] == "checked":
                 pattern_exclusions[analyzer.path] = {
                     rule: [{"start": start, "end": end} for start, end in sorted(offsets)]
                     for rule, offsets in analyzer.pattern_exclusions.items()
                 }
-        if flow.reasons:
+        # Diagnostics stay conservative for every native rule: a budget reason
+        # leaves them partial; abstention alone (precision) leaves them limited.
+        if flow_metadata["budget_reasons"]:
             truncated_rules.update(RULES)
-            warnings.append("Native flow remains partial: " + "; ".join(sorted(flow.reasons)) + ".")
+            warnings.append(
+                "Native flow remains partial: " + "; ".join(flow_metadata["budget_reasons"]) + "."
+            )
+        if flow_metadata["precision_reasons"]:
+            limited_rules.update(RULES)
+            warnings.append(
+                "Native flow remains limited: " + "; ".join(flow_metadata["precision_reasons"]) + "."
+            )
     if len(findings) >= MAX_AST_FINDINGS:
         findings = findings[:MAX_AST_FINDINGS]
+        findings_truncated = True
         truncated_rules.update(RULES)
         warnings.append("AST finding budget reached; remaining candidates were truncated.")
     for language, reason in unavailable.items():
@@ -3433,15 +3740,23 @@ def analyze_sources(
             f"AST mobile checks do not support these source languages: {', '.join(sorted(unsupported))}."
         )
     state = "partial" if parsed and skipped else "checked" if parsed else "not-run"
+    objc_files = [metric for metric in file_metrics if metric["language"] == "objc"]
+    if objc_files:
+        # AST rules see ObjC only through the reduced ObjC model.
+        limited_rules.update(RULES)
     inventory_complete = (
-        bool(parsed) and not skipped and "native flow recursion budget" not in flow_metadata["reasons"]
+        bool(parsed)
+        and not skipped
+        and "native flow recursion budget" not in flow_metadata["reasons"]
+        # Unexpanded ObjC macros can declare functions the CST does not show.
+        and not any(metric["functions"] is not None for metric in objc_files)
     )
     coverage = [
         {
             "rule_id": rule,
             "state": "not-applicable"
             if rule.endswith(ANDROID_ONLY) and seen_languages == {"swift"} and not unsupported
-            else "partial"
+            else ("limited" if state == "checked" and rule not in truncated_rules else "partial")
             if rule == "AST-SQL-CONCAT"
             and seen_languages == {"swift"}
             and any(item.get("kind") == "sql" for item in (specs or {}).get("sink", []))
@@ -3449,6 +3764,8 @@ def analyze_sources(
             if rule in SWIFT_UNIMPLEMENTED and seen_languages == {"swift"} and not unsupported
             else "partial"
             if rule in truncated_rules and state == "checked"
+            else "limited"
+            if rule in limited_rules and state == "checked"
             else state,
             "method": "source-ast-local-flow",
             "mapping_scope": "partial",
@@ -3479,12 +3796,18 @@ def analyze_sources(
     if "objc" in seen_languages:
         from .objc_analysis import RULES as OBJC_RULES
 
+        objc_analyzed = any(metric["functions"] is not None for metric in objc_files)
+        # Analyzed ObjC is limited by the reduced model; a skipped or partially
+        # parsed ObjC file, or a truncated AST pass, is an execution gap.
+        objc_gap = (
+            any(metric["state"] != "limited" for metric in objc_files)
+            or findings_truncated
+            or remaining_records > 0
+        )
         coverage.extend(
             {
                 "rule_id": rule,
-                "state": "partial"
-                if any(f["language"] == "objc" and f["functions"] is not None for f in file_metrics)
-                else "not-run",
+                "state": ("partial" if objc_gap else "limited") if objc_analyzed else "not-run",
                 "method": "objc-cst-local-flow",
                 "mapping_scope": "partial",
                 "note": "Known WebKit declared types and straight-line request flow; CommonCrypto direct calls. No preprocessing, ObjC++/dispatch/swizzling, interprocedural flow, guard or runtime proof.",
@@ -3502,6 +3825,6 @@ def analyze_sources(
             "functions": function_totals,
             "function_inventory_complete": inventory_complete,
             "remaining_source_records": remaining_records,
-            "note": "Counts cover recognized AST function declarations only; errors, unsupported languages and budgets can hide additional functions. Adaptations retain original evidence offsets and remain partial. Closures and initializers are not a complete callable inventory.",
+            "note": "Counts cover recognized AST function declarations and property accessor bodies only; errors, unsupported languages and budgets can hide additional functions. Adaptations retain original evidence offsets; lossy adaptations remain partial. Closures and initializers are not a complete callable inventory.",
         },
     }

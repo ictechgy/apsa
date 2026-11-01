@@ -71,7 +71,9 @@ def _candidate_partial(report: dict, count: int = 1) -> None:
     assert len(matches) == count, report
     assert all(row["status"] == "candidate" for row in matches), report
     assert UNAVAILABLE in report["metadata"]["native_flow"]["reasons"], report
-    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "partial"
+    # Precision reasons leave coverage limited; a budget reason keeps it partial.
+    expected = "partial" if report["metadata"]["native_flow"]["budget_reasons"] else "limited"
+    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == expected
     assert not any("AST syntax recovery" in warning for warning in report["warnings"]), report
 
 

@@ -13,7 +13,8 @@ from bisect import bisect_left
 from dataclasses import dataclass
 
 CALL = re.compile(
-    r"(?<![\w$])(?:Log\.[divew]|println|print|NSLog|console\.log|logger\.\w+)\s*\(",
+    r"(?<![\w$])(?:Log\.(?:[divew]|wtf)|Timber(?:\.tag\([^()\n]*\))?\.(?:[divew]|wtf|log)|println|print"
+    r"|debugPrint|NSLog|os_log|console\.(?:log|info|warn|error|debug|trace)|logger\.\w+)\s*\(",
     re.I,
 )
 SENSITIVE = re.compile(r"token|password|secret|email|session", re.I)

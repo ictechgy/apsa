@@ -87,7 +87,7 @@ def test_extension_member_type_cannot_supply_sdk_url_safety(kind, layout, revers
         assert matches, report
         assert all(item["status"] == "candidate" for item in matches)
         assert report["metadata"]["native_flow"]["state"] == "partial", report
-        assert set(states) == {"partial"}, report
+        assert set(states) == {"limited"}, report
     else:
         assert not matches, report
         assert report["metadata"]["native_flow"]["state"] == "checked", report
@@ -142,7 +142,7 @@ def test_extension_target_alias_cannot_hide_member_type_uncertainty(kind, target
     matches = [item for item in report["findings"] if item["rule_id"] == RULE]
     assert matches and all(item["status"] == "candidate" for item in matches), report
     assert report["metadata"]["native_flow"]["state"] == "partial", report
-    assert {item["state"] for item in report["coverage"] if item["rule_id"] == RULE} == {"partial"}, report
+    assert {item["state"] for item in report["coverage"] if item["rule_id"] == RULE} == {"limited"}, report
 
 
 @pytest.mark.parametrize("kind", ["nominal", "alias"])

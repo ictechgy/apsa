@@ -1,10 +1,10 @@
 # APSA (앱사)
 
-**APSA 1.6.4.** [변경 범위와 업그레이드 안내](docs/RELEASE_164.md)를 확인하세요.
+**APSA 1.7.0.** [변경 범위와 업그레이드 안내](docs/RELEASE_170.md)를 확인하세요.
 [릴리스 검증 기록](RELEASE_READINESS.md)은 로컬 검증과 호스팅된 배포·공개 설치 검증을
 구분합니다.
 
-**1.6.4의 공개 앱 회귀 수정.** JavaScript/TypeScript 후위 증감식의 파서 충돌을 수정했습니다. 개인 키 후보는 대응하는 시작·끝 표식과 본문을 요구합니다. Apple 소스는 iOS 근거, macOS 근거, 불명확한 Swift를 구분합니다. 반복 누락 경고는 개수로 묶으며 파일별 사유는 보존합니다. 남은 분석 한계는 릴리스 안내에 기록했습니다.
+**1.7.0의 CI 의미 변경.** coverage는 실행 누락(`partial`, exit 3)과 제한된 정적 모델의 정밀도 한계(`limited`, `--strict-coverage`나 정책 `strict_coverage`가 없으면 exit 0)를 구분하며, 임계값 초과(exit 4)가 불완전 감사(exit 3)보다 우선합니다. 예외는 승인한 심각도를 기록할 수 있고, 의존성 공지 발견은 공지 별칭이 바뀌어도 계속 일치하며, Kotlin·Swift/SwiftUI·압축 파일·플랫폼 설정 탐지가 넓어졌습니다. 1.6.x의 CI 조건이나 기준선을 그대로 쓰기 전에 업그레이드 안내를 확인하세요.
 
 **근거 중심의 Android·iOS 보안 감사 도구.**
 
@@ -239,11 +239,11 @@ OWASP 매핑은 관련 검사를 설명합니다. APSA는 MASVS 준수를 인증
 
 **macOS 또는 Linux**에서 **uv**를 설치합니다. APSA의 지원 대상은 **CPython 3.11과 3.12**이며, 모든 호스트·Python 조합을 테스트한 것은 아닙니다([지원 표](https://github.com/ictechgy/apsa/blob/main/docs/SUPPORTED_MATRIX.md) 참고). 예제는 Python 3.12를 선택하고 필요하면 uv가 내려받습니다. 최초 설치는 네트워크를 사용할 수 있으며, 이후 검사는 로컬 입력과 캐시를 사용할 수 있습니다.
 
-1.6.4의 배포 검증을 통과한 뒤 [PyPI](https://pypi.org/project/apsa/)에서 설치합니다.
+1.7.0의 배포 검증을 통과한 뒤 [PyPI](https://pypi.org/project/apsa/)에서 설치합니다.
 배포 상태는 [릴리스 검증 기록](RELEASE_READINESS.md)에서 확인하세요.
 
 ```sh
-uv tool install --python 3.12 apsa==1.6.4
+uv tool install --python 3.12 apsa==1.7.0
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -343,24 +343,38 @@ apsa reports verify
 apsa policy init --out apsa.toml
 apsa scan /path/to/owned/app --policy apsa.toml --out audit.json
 apsa scan /path/to/owned/app --fail-on high --include-candidates
+apsa scan /path/to/owned/app --strict-coverage
 apsa scan /path/to/owned/app --background --json
 apsa jobs status JOB_ID --json
 ```
 
-심각도 기준 CI 판정은 기본적으로 `candidate`를 제외합니다. 포함하려면 `--include-candidates`나 정책의 `allowed_statuses`를 사용하세요. 필수 규칙은 `checked` 또는 `not-applicable` coverage만 인정하며, 부분 실행이나 필수 검사 누락은 통과시키지 않습니다. 예외에는 발견 ID, 이유, 만료일이 필요합니다. 백그라운드 작업의 `completed`는 작업이 끝났다는 뜻입니다. 감사가 완전한지 판단하려면 `audit_incomplete`와 보고서를 확인하세요.
+심각도 기준 CI 판정은 기본적으로 `candidate`를 제외합니다. 포함하려면 `--include-candidates`나 정책의 `allowed_statuses`를 사용하세요. 필수 규칙은 `checked`, `limited`, `not-applicable` coverage를 인정하며(`limited`는 `strict_coverage`가 false일 때만), 부분 실행이나 필수 검사 누락은 통과시키지 않습니다. 예외에는 발견 ID, 이유, 만료일이 필요합니다. 백그라운드 작업의 `completed`는 작업이 끝났다는 뜻입니다. 감사가 완전한지 판단하려면 `audit_incomplete`와 보고서를 확인하세요.
+
+예외에는 승인한 상태를 선택 항목 `severity`로 기록할 수 있고, 알려진 악용 발견을 승인했다면 `known_exploited = true`도 함께 적습니다. 이후 발견의 심각도가 그보다 높아지거나 알려진 악용으로 바뀌면 그 예외는 더 이상 발견을 숨기지 않습니다. 발견은 다시 임계값 판정을 받고, 활성 예외에는 `escalated` 기록이, 게이트에는 `waiver-severity-escalated` 알림이 남습니다. `severity`가 없는 예외는 이전처럼 계속 숨기며 `waiver-severity-unrecorded` 알림을 남깁니다. 알림은 `reasons`와 별개인 게이트의 `notices` 목록에 있고, 그 자체로는 게이트 상태나 종료 코드를 바꾸지 않습니다. 의존성 공지 발견은 발견 ID를 그대로 유지하고 동등한 공지 ID(표시 ID, 묶인 OSV ID, 별칭, 최대 32개)를 `advisory_ids`에 기록합니다. GHSA 공지에 CVE 별칭이 생기거나 더 낮은 CVE 별칭이 나타나기 전에 작성한 예외, `only_new` 기준선, 보고서 비교도 같은 의존성 위치에서 이름이 바뀐 발견과 계속 일치하며, 1.6.4 보고서도 마찬가지입니다. 공유 별칭 때문에 예외나 기준선 발견 하나가 현재 발견 두 개를 덮지는 않습니다.
 
 읽을 수 없는 소스 폴더와 파일은 경고와 불완전한 coverage로 남습니다. 지원하는 파일을 하나도 읽을 수 없는 소스 트리는 명시적인 실행 오류가 됩니다. 텍스트 스테이징 한도(합계 64 MiB, 파일 12,000개)를 넘는 소스 트리는 거부하지 않고 부분 감사합니다. 앱 코드·설정(설정, 앱 코드, 헤더·`.build/`·`vendor/` 같은 vendored 코드 순), 기타 출하 텍스트(기본 리소스·JSON·YAML), Android 번역·한정자 `res/values-*` 파일, 테스트 순으로 스테이징하며, 빠진 파일 수와 바이트는 종류별(`code_and_config`, `other_text`, `localized_values`, `tests`)로 `inventory.input_snapshot.omitted`에 남습니다. 8 MiB 파일 한도를 넘거나 읽기·복사에 실패한 파일도 여기에 셉니다. 읽을 수 없는 디렉터리와, 트리 전체 기준 항목 100,000개(이름순으로 읽음)·깊이 64단계를 넘는 디렉터리는 경고로 보고합니다. 앱 코드·설정이나 기타 출하 텍스트가 빠지면 `app_scope_complete`가 false가 되고 not-applicable coverage도 partial이 됩니다. 완전한 감사가 필요하면 앱 모듈처럼 더 좁은 폴더를 검사하세요. 저장소 캡처 실패는 `not-run`으로 남으며 canary가 삭제됐다는 근거가 될 수 없습니다.
 
+Coverage는 실행 공백과 정밀도 한계를 구분합니다. `partial`은 명시된 범위의 일부를 검사하지 못했다는
+뜻입니다. 예산 도달, 건너뛴 파일, 구문 오류나 손실 있는 변환, 잘린 입력, 온라인 조회 실패, 최근 런타임
+실행의 부분 실패가 여기에 해당하며, 감사를 불완전(종료 코드 `3`)하게 만듭니다. `limited`는 범위 안의
+입력을 모두 검사했지만 제한된 정적 모델이 일부 경로에서 판단을 유보했다는 뜻입니다. 예를 들어 native
+flow의 호출 대상 미해결, 축소 모델로만 보는 Objective-C, 토큰 수준의 JS/TS/Dart 흐름이 그렇습니다.
+`limited` 감사는 명시된 범위에서 완료된 것으로 보며, 보고서(`summary.limited`, SARIF 알림, MASWE 표,
+체크리스트)에 한계를 표시합니다. 여러 항목을 합칠 때는 `partial`이 `limited`보다, `limited`가
+`checked`보다 우선합니다. `scan --strict-coverage`, `policy evaluate --strict-coverage`, 정책의
+`strict_coverage = true`는 `limited`도 불완전으로 처리하며, strict coverage가 아니면 `limited`도 정책
+`required_rules`를 충족합니다. `checked`와 `limited` 모두 안전하다는 뜻은 아닙니다.
+
 | 종료 코드 | 통합 CLI에서의 의미 |
 | --- | --- |
-| `0` | 명령 완료 또는 정책 통과 |
+| `0` | 명령 완료 또는 정책 통과. coverage에 `limited`가 있을 수 있음 |
 | `1` | 실행 오류 |
 | `2` | 잘못된 인자 |
-| `3` | 불완전한 감사·정책, 보고서 검증 실패, 취약점 정보 동기화 실패(부분 실패 포함) |
-| `4` | 발견 항목이 설정한 CI 임계값 초과 |
+| `3` | 불완전한 감사·정책(strict coverage에서는 `limited` 포함), 보고서 검증 실패, 취약점 정보 동기화 실패(부분 실패 포함) |
+| `4` | 발견 항목이 설정한 CI 임계값 또는 정책 초과. `3`보다 우선 |
 | `130` | 중단 |
 
-`--json`은 `ok`, `data` 또는 `error`, `exit_code`를 담은 envelope를 출력합니다. Watch는 주기마다 JSON envelope 하나를 출력합니다(NDJSON). `ok`는 코드 `0`과 `4`에서 `true`입니다. 코드 `4`는 평가 자체는 성공했지만 CI 임계값을 초과했다는 뜻입니다. CI는 `exit_code`와 정책 결과를 확인해야 합니다. 코드 `3`과 `4`에서도 보고서가 생성될 수 있습니다.
+`--json`은 `ok`, `data` 또는 `error`, `exit_code`를 담은 envelope를 출력합니다. Watch는 주기마다 JSON envelope 하나를 출력합니다(NDJSON). `ok`는 코드 `0`과 `4`에서 `true`입니다. 코드 `4`는 평가 자체는 성공했지만 CI 임계값을 초과했다는 뜻입니다. 감사가 불완전하면서 임계값도 넘으면 종료 코드는 `4`이고, 불완전하다는 사실은 보고서 요약과 정책 사유에 그대로 남습니다. CI는 `exit_code`와 정책 결과를 확인해야 합니다. 코드 `3`과 `4`에서도 보고서가 생성될 수 있습니다.
 
 ### GitHub code scanning
 
@@ -373,7 +387,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.6.4; 전체 릴리스 커밋 SHA로 고정
+  - uses: ictechgy/apsa@<commit-sha> # v1.7.0; 전체 릴리스 커밋 SHA로 고정
     with:
       path: android            # 소스 폴더 또는 workspace 안의 APK/AAB/IPA
       fail-on-incomplete: "true"
@@ -382,10 +396,11 @@ steps:
 Action은 같은 버전의 `apsa`를 릴리스의 해시 고정 의존성과 함께 PyPI에서 설치하고
 `scan --format sarif --sarif-root`를 실행한 뒤 작업 요약을 쓰고 SARIF를 code scanning에 업로드하며,
 마지막에 결과를 적용합니다. 정책 실패나 `fail-on` 임계값 초과는 감사가 불완전하더라도 작업을
-실패시킵니다(종료 코드 `3`이 임계값 실패를 가릴 수 있어 Action은 종료 코드만이 아니라 보고서를
-읽습니다). 정책을 쓰면 필수 규칙·필수 취약점 정보·만료된 예외·기준선 검사 등 충족하지 못한 정책
-조건은 모두 작업을 실패시키고, 부분 감사만 `fail-on-incomplete`에 맡깁니다. 이 값이 `"false"`가 아니면
-종료 코드 `3`도 실패합니다. 팀 게이트는
+실패시킵니다(이때 APSA는 `4`로 종료하며, Action은 종료 코드만이 아니라 보고서도 읽습니다). 정책을 쓰면
+필수 규칙·필수 취약점 정보·만료된 예외·기준선 검사 등 충족하지 못한 정책 조건은 모두 작업을 실패시키고,
+부분 감사만 `fail-on-incomplete`에 맡깁니다. 이 값이 `"false"`가 아니면 종료 코드 `3`도 실패합니다.
+`limited` coverage는 `strict-coverage: "true"`가 아니면 작업을 실패시키지 않습니다. 이 값은
+`--strict-coverage`를 전달해 `limited`도 불완전으로 셉니다. 팀 게이트는
 `policy`(필요 시 `baseline-file`, `baseline-sha256`), 단순 임계값은 후보를 제외하는 `fail-on`을 쓰세요.
 
 기본값의 Action은 오프라인이라 CVE·의존성 공지 대조를 하지 않습니다. 의존성 발견에는 `intel-sync`(공개
@@ -482,7 +497,8 @@ MCP는 stdio를 사용하며 명시적인 `--root`가 필요합니다. 여러 ro
 현재 명시적 검사 매핑이 있는 CWE-22·CWE-89·CWE-295·CWE-502를 지원합니다. 나머지는
 `not-assessed`로 반환하며 넓은 MASWE 범주가 겹친다는 이유로 확인하지 않습니다.
 규칙과 약점을 함께 지정하면 둘 다 일치해야 합니다. 실행된 검사와 미실행 검사가
-섞인 결과는 `partial`로 표시합니다.
+섞인 결과는 `partial`로 표시합니다. 제한된 모델이 판단을 유보한 `limited` coverage도 `not-observed`의
+근거가 될 수 없으므로 `partial`로 표시합니다.
 
 `capabilities`는 APSA가 정의한 도구 이름·설명·annotation·파라미터 형태를 정규화한 해시
 `tool_manifest_sha256`을 알려 주며, 한 프로세스 안에서 도구 목록은 바뀌지 않습니다. 서버가 스스로

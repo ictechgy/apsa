@@ -11,7 +11,7 @@ import re
 from pathlib import PurePosixPath, PureWindowsPath
 
 from .completeness import analysis_incomplete, report_incomplete
-from .core import canonical_json, digest
+from .core import advisory_alias_pairs, canonical_json, digest
 from .maswe import (
     RULE_WEAKNESSES,
     UNMAPPED,
@@ -203,9 +203,23 @@ def compare_reports(before: dict, after: dict, *, portable_inputs: bool = False)
     )
     old = {f["id"]: f for f in before.get("findings", [])}
     new = {f["id"]: f for f in after.get("findings", [])}
+    # A dependency advisory whose display ID changed (for example a GHSA gaining a
+    # CVE alias) is still observed under its new finding ID, not removed and added.
+    renamed: dict[str, list[str]] = {}
+    if old.keys() - new.keys() and new.keys() - old.keys():
+        later, earlier = list(new.values()), list(old.values())
+        for position, index in advisory_alias_pairs(later, earlier):
+            if later[position]["id"] not in old and earlier[index]["id"] not in new:
+                renamed.setdefault(later[position]["id"], []).append(earlier[index]["id"])
+    consumed = {earlier_id for prior in renamed.values() for earlier_id in prior}
+    pairs = sorted(
+        (later_id, earlier_id)
+        for later_id in (old.keys() | new.keys()) - consumed
+        for earlier_id in renamed.get(later_id, [later_id])
+    )
     changes = []
-    for identifier in sorted(old.keys() | new.keys()):
-        initial, final = old.get(identifier), new.get(identifier)
+    for identifier, earlier_id in pairs:
+        initial, final = old.get(earlier_id), new.get(identifier)
         observation = (
             "still-observed" if initial and final else ("newly-observed" if final else "no-longer-observed")
         )
@@ -213,6 +227,7 @@ def compare_reports(before: dict, after: dict, *, portable_inputs: bool = False)
         changes.append(
             {
                 "finding_id": identifier,
+                **({"before_finding_id": earlier_id} if earlier_id != identifier else {}),
                 "rule_id": item["rule_id"],
                 "observation": observation,
                 "before_status": initial.get("status") if initial else None,
@@ -507,7 +522,9 @@ def verify_claim(
         verdict = "path-unmatched"
     elif file_state in {"skipped", "not-analyzed"}:
         verdict = "file-not-analyzed"
-    elif observed == "partial" or file_state == "partial":
+    elif observed in {"partial", "limited"} or file_state in {"partial", "limited"}:
+        # A precision-limited check examined the file but its bounded model
+        # abstained on some paths; absence there is no stronger than partial.
         verdict = "partial"
     elif observed == "checked":
         verdict = "partial" if report_incomplete(report) else "not-observed"

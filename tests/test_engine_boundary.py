@@ -33,7 +33,8 @@ def worker_boundary(tmp_path, monkeypatch):
     source = tmp_path / "new-source"
     source.mkdir()
     (source / "New.java").write_text("class New {}")
-    isolation = {"state": "unit-boundary-only"}
+    # Worker DTO tests stand in for an enforced boundary; non-enforced states add a warning.
+    isolation = {"state": "enforced", "backend": "unit-boundary-only"}
     response = {
         "inventory": {
             "dependencies": [],

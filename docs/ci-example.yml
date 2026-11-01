@@ -59,6 +59,8 @@ jobs:
         env:
           AUDIT_RC: ${{ steps.audit.outputs.rc }}
         run: |
+          # 4 takes precedence over 3 when an incomplete audit also exceeds the policy;
+          # limited coverage exits 0 unless the policy sets strict_coverage = true.
           case "$AUDIT_RC" in
             0) echo 'APSA policy passed' ;;
             3) echo '::error::Audit, intelligence, or required coverage is incomplete'; exit 1 ;;

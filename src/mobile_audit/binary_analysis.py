@@ -15,9 +15,11 @@ import zlib
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from quaygate.apk import MAX_ZIP_ENTRIES, unsafe_member
+
 from .cms_verification import verify_cms_code_directory
 from .code_directory_sparse import scatter_pages
-from .core import MAX_ARCHIVE_TOTAL, MAX_FILES, finding, load_plist, redact
+from .core import MAX_ARCHIVE_TOTAL, finding, load_plist, redact
 from .ipa_resource_seal import verify_resource_seal
 
 MAX_DEX_BYTES = 32 * 1024 * 1024
@@ -63,6 +65,9 @@ def _coverage(rule: str, state: str, method: str, note: str) -> dict:
 def _read_member(archive: zipfile.ZipFile, item: zipfile.ZipInfo, limit: int) -> bytes:
     if item.file_size > limit:
         raise BinaryFormatError(f"member exceeds {limit} byte analysis budget")
+    reason = unsafe_member(item)
+    if reason:
+        raise BinaryFormatError(f"member not decompressed: {reason}")
     with archive.open(item) as stream:
         raw = stream.read(limit + 1)
     if len(raw) > limit or len(raw) != item.file_size:
@@ -1007,9 +1012,13 @@ def analyze_binary(path: Path, collected: dict) -> dict:
         return result
     if path.stat().st_size > MAX_ARCHIVE_TOTAL:
         raise ValueError("Archive exceeds binary analysis size limit")
+    from .inputs import _zip_directory_within_budget
+
+    # Same central-directory bound as input inspection, before ZipFile allocates entries.
+    _zip_directory_within_budget(path)
     with zipfile.ZipFile(path) as archive:
         items = archive.infolist()
-        if len(items) > MAX_FILES or sum(item.file_size for item in items) > MAX_ARCHIVE_TOTAL:
+        if len(items) > MAX_ZIP_ENTRIES or sum(item.file_size for item in items) > MAX_ARCHIVE_TOTAL:
             raise ValueError("Archive exceeds binary analysis size/file-count limit")
         names = set()
         for item in items:
@@ -1116,14 +1125,34 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                     envelope_path = bundle_root + "/_CodeSignature/CodeResources"
                     bundle_blobs = {1: info_raw}
                     envelope = None
+                    envelope_error: Exception | None = None
                     try:
                         if envelope_path in names:
                             envelope = _read_member(archive, archive.getinfo(envelope_path), MAX_PLIST_BYTES)
                             # Raw-byte slot-3 concordance is independent of the
                             # resource envelope's supported structure or rules.
                             bundle_blobs[3] = envelope
+                    except Exception as error:
+                        envelope_error = error
+                    app["slices"] = inspect_macho(raw, collected.get("ipa_trust_policy"), bundle_blobs)
+                    directories = [
+                        directory
+                        for slice_ in app["slices"]
+                        for directory in slice_["code_signature"].get("code_directories", [])
+                    ]
+                    seal_bound = bool(directories) and all(
+                        d.get("resource_envelope_bound") is True for d in directories
+                    )
+                    # Info.plist is outside the resource map only when every
+                    # CodeDirectory binds its exact bytes in special slot 1.
+                    info_plist_bound = bool(directories) and all(
+                        d.get("info_plist_bound") is True for d in directories
+                    )
+                    try:
+                        if envelope_error is not None:
+                            raise envelope_error
                         app["resource_seal"] = verify_resource_seal(
-                            archive, bundle_root, executable, envelope
+                            archive, bundle_root, executable, envelope, info_plist_bound
                         )
                     except Exception as error:
                         app["resource_seal"] = {
@@ -1135,19 +1164,12 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                         result["warnings"].append(
                             f"IPA resource envelope inspection incomplete for {envelope_path}: {type(error).__name__}"
                         )
-                    app["slices"] = inspect_macho(raw, collected.get("ipa_trust_policy"), bundle_blobs)
-                    directories = [
-                        directory
-                        for slice_ in app["slices"]
-                        for directory in slice_["code_signature"].get("code_directories", [])
-                    ]
-                    seal_bound = bool(directories) and all(
-                        d.get("resource_envelope_bound") is True for d in directories
-                    )
                     app["resource_seal"]["code_directory_bound"] = seal_bound
                     app["resource_seal"]["signed_resources_verified"] = (
                         seal_bound
                         and app["resource_seal"]["state"] == "consistent"
+                        and app["resource_seal"].get("info_plist_seal")
+                        in {"code-directory", "resource-envelope"}
                         and all(
                             slice_["code_signature"].get("cryptographic_signature_verified")
                             for slice_ in app["slices"]
@@ -1238,7 +1260,8 @@ def analyze_binary(path: Path, collected: dict) -> dict:
                     "BINARY-IOS-RESOURCE-SEAL",
                     "partial" if apps else "not-run",
                     "resource-hash-concordance",
-                    "Checks bounded resource hashes and CodeDirectory slot 3 binding. Unsupported resource rules, "
+                    "Checks bounded resource hashes and CodeDirectory slot 1 (Info.plist) and slot 3 binding; an Info.plist "
+                    "not bound in slot 1 must be sealed in the resource map. Unsupported resource rules, "
                     "symlink/nested seals, missing envelopes and budgets stay explicit. Apple app authenticity, "
                     "provisioning and nested-code policy remain unverified.",
                 )

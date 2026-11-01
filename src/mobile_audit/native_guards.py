@@ -5,6 +5,60 @@ from __future__ import annotations
 import re
 from typing import Any
 
+CANONICAL_TEXT = re.compile(
+    r"canonicalPath|getCanonicalPath\(|standardizedFileURL\.path|resolvingSymlinksInPath\(\)\.path"
+)
+# Constructs whose non-body children may rebind a name for the body.
+BINDING_SCOPES = {
+    "lambda_literal",
+    "lambda_expression",
+    "for_statement",
+    "enhanced_for_statement",
+    "for_in_statement",
+    "catch_clause",
+}
+
+
+def _canonical_local(analyzer: Any, node: Any) -> bool:
+    """One unshadowed function local, bound before this use only from a canonical path."""
+    from .source_analysis import BLOCKS, IDENTIFIERS, _walk
+
+    node = analyzer.unwrap(node) if node is not None else None
+    if node is None or node.type not in IDENTIFIERS or analyzer.function is None:
+        return False
+    name = analyzer.symbol_name(analyzer.text(node))
+    if name in analyzer.parameter_types:
+        return False
+    declarations = [
+        (part, declared[1])
+        for part in _walk(analyzer.function)
+        if (declared := analyzer.declaration(part)) and declared[0] == name
+    ]
+    if len(declarations) != 1 or declarations[0][1] is None:
+        return False
+    declaration, initializer = declarations[0]
+    if declaration.end_byte > node.start_byte or any(
+        not declaration.start_byte <= offset < declaration.end_byte
+        for offset in analyzer.local_literals()[1].get(name, [])
+    ):
+        return False  # Any other (=, +=) binding may replace the canonical root.
+    block = declaration.parent
+    while block is not None and block.type not in BLOCKS:
+        block = block.parent
+    if block is None or not block.start_byte <= node.start_byte < block.end_byte:
+        return False
+    scope = node.parent
+    while scope is not None and scope != block:
+        if scope.type in BINDING_SCOPES and any(
+            part.type in IDENTIFIERS and analyzer.symbol_name(analyzer.text(part)) == name
+            for child in scope.named_children
+            if not child.start_byte <= node.start_byte < child.end_byte
+            for part in _walk(child)
+        ):
+            return False
+        scope = scope.parent
+    return bool(CANONICAL_TEXT.search(analyzer.text(initializer)))
+
 
 def lexical_constraints(value: Any) -> dict[int | tuple[int, str], set[str]]:
     """Record a segment constraint without granting safety to a raw path."""
@@ -137,11 +191,10 @@ def path_predicate(
     else:
         # Prefix equality without a separator also accepts sibling directories (root-evil).
         prefix_text = analyzer.text(prefix)
-        boundary = bool(re.search(r'(?:\+\s*(?:File\.separator|"/"))\s*$', prefix_text))
-        boundary &= bool(
-            re.search(
-                r"canonicalPath|getCanonicalPath\(|standardizedFileURL\.path|resolvingSymlinksInPath\(\)\.path",
-                prefix_text,
+        boundary = bool(re.search(r'(?:\+\s*(?:File\.separator|"/"))\s*$', prefix_text)) and (
+            bool(CANONICAL_TEXT.search(prefix_text))
+            or _canonical_local(
+                analyzer, prefix.child_by_field_name("left") or prefix.child_by_field_name("lhs")
             )
         )
     return (

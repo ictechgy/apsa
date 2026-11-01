@@ -88,6 +88,7 @@ def _slug(value: str, limit: int = 60) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-")[:limit] or "unknown"
 
 
+LITERAL = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\\n])*(?:\1|\\\1)""")
 CREDENTIAL = re.compile(
     r"(?i)\b([\w.-]*(?:token|secret|password|passwd|pwd|api[_-]?key|auth)[\w.-]*\s*[=:]\s*)[^\s,;]+"
 )
@@ -119,7 +120,9 @@ def _string(value: object, label: str) -> str:
 
 def _text(value: object, limit: int = 300) -> str:
     """Untrusted tool text: no literal contents or credential-like assignments."""
-    text = re.sub(r"""(["'`])(?:\\.|(?!\1).)*?\1""", '"…"', _string(value, "text")[: limit * 8])
+    # Escape pairs and plain characters are disjoint, so backtracking stays linear.
+    # A backslash before the line's last quote still closes the literal there.
+    text = LITERAL.sub('"…"', _string(value, "text")[: limit * 8])
     return redact(CREDENTIAL.sub(r"\1[REDACTED]", text)).replace("\n", " ")[:limit]
 
 

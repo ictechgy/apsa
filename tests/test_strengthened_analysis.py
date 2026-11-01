@@ -38,6 +38,7 @@ def test_native_partial_details_scope_call_and_keep_unrelated_rules_partial():
         "column": source.splitlines()[1].index("write(") + 1,
         "call": "write",
         "category": "dispatch",
+        "kind": "precision",
         "scope": "file-call",
         "rule_ids": sorted(RULES),
         "rule_scope": "conservative-all-native-rules",
@@ -45,7 +46,8 @@ def test_native_partial_details_scope_call_and_keep_unrelated_rules_partial():
     files = {item["path"]: item for item in report["metadata"]["files"]}
     assert "ambiguous direct call" in files["Handler.java"]["native_flow_reasons"]
     assert files["Unrelated.java"]["native_flow_reasons"] == []
-    assert all(item["state"] == "partial" for item in report["coverage"])
+    # A precision reason still conservatively covers every native rule, as limited.
+    assert all(item["state"] == "limited" for item in report["coverage"])
 
 
 def test_native_unknown_call_budget_retains_tainted_candidate(monkeypatch):
@@ -122,14 +124,16 @@ def test_native_diagnostics_are_bounded_deduplicated_and_order_independent(monke
 
 
 @pytest.mark.parametrize("path", ["assets/index.android.bundle", "main.bundle", "main.jsbundle"])
-def test_text_bundles_are_analyzed_but_framework_coverage_remains_partial(path):
+def test_text_bundles_are_analyzed_but_framework_coverage_remains_limited(path):
     report = analyze_hybrid([(path, "const value = route.params.url; web.loadUrl(value);")])
     assert report["findings"][0]["rule_id"] == "HYBRID-UNTRUSTED-URL"
     assert report["metadata"]["files"][0]["analysis_state"] == "analyzed"
     framework = report["metadata"]["frameworks"][0]
     assert framework["framework"] == "react-native"
     assert framework["analyzed_text_files"] == 1 and framework["skipped_files"] == 0
-    assert all(item["state"] == "partial" for item in report["coverage"])
+    # Analyzed without a skipped file or budget: bounded token flow is a precision limit.
+    assert all(item["state"] == "limited" for item in report["coverage"])
+    assert report["metadata"]["files"][0]["state"] == "limited"
 
 
 def test_unknown_bundle_requires_metro_marker_and_keeps_literal_control():

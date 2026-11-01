@@ -118,7 +118,7 @@ def test_shadowed_argument_scope_retains_possible_value_and_partial(prefix: str,
     report = _scan("source.let(block = { return it })", prefix=prefix, helpers=helpers)
     assert _matches(report), report
     assert UNAVAILABLE in report["metadata"]["native_flow"]["reasons"], report
-    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "partial"
+    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "limited"
 
 
 @pytest.mark.parametrize("tainted", [False, True])
@@ -230,7 +230,7 @@ def test_reordered_with_keeps_nearest_lambda_returns_local(body: str) -> None:
 def test_ambiguous_with_layout_is_explicitly_partial(body: str) -> None:
     report = _scan(body)
     assert UNAVAILABLE in report["metadata"]["native_flow"]["reasons"], report
-    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "partial"
+    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "limited"
 
 
 def test_lambda_valued_with_receiver_is_not_executed_as_its_block() -> None:

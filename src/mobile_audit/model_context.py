@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from .core import report_incomplete
+from .core import report_incomplete, report_limited
 from .output import MODEL_CONTEXT_INSTRUCTIONS, assistant_context, assistant_finding
 
 SECTIONS = (
@@ -128,6 +128,7 @@ def report_context(
         for state in {c["state"] for c in report["coverage"]}
     }
     base["audit_incomplete"] = report_incomplete(report)
+    base["audit_limited"] = report_limited(report)
     base["filters"] = {"severity": severity, "status": status}
     return page(base, section, values, cursor, limit, max_bytes)
 
@@ -140,3 +141,62 @@ def finding_context(
         result["report_id"] = report_id
     evidence = result.pop("evidence")
     return page(result, "evidence", evidence, cursor, limit, max_bytes)
+
+
+def untrusted_context(value: dict) -> dict:
+    """A report-derived model response: no source excerpts, plus the fixed evidence boundary."""
+    result = assistant_finding(value)
+    result["instructions"] = MODEL_CONTEXT_INSTRUCTIONS
+    return result
+
+
+COMPARE_FINDING_LISTS = ("added", "changed", "no_longer_observed")
+
+
+def compare_context(result: dict, *, max_bytes: int = DEFAULT_BYTES) -> dict:
+    """Model-facing report comparison: no source excerpts, fixed guidance, bounded size.
+
+    Finding lists keep their order; entries that do not fit are counted in
+    ``omitted`` and can be inspected with reports_get or reports_followup.
+    """
+    if type(max_bytes) is not int or not 4096 <= max_bytes <= 262144:
+        raise ValueError("max_bytes must be 4096–262144")
+    # assistant_finding removes every nested `excerpt`, including verification traces.
+    context = assistant_finding(result)
+    context["instructions"] = MODEL_CONTEXT_INSTRUCTIONS
+    lists = {key: context.get(key) or [] for key in COMPARE_FINDING_LISTS}
+    counts = {key: len(values) for key, values in lists.items()}
+    context.update({key: [] for key in COMPARE_FINDING_LISTS})
+    context["finding_counts"] = counts
+    context["omitted"] = dict.fromkeys(COMPARE_FINDING_LISTS, 0)
+    context["partial_response"] = False
+    budget = max_bytes - 512
+    if _size(context) > budget:
+        # Coverage of unchanged checks is the least informative part of a diff.
+        for side, other in (("coverage_before", "coverage_after"), ("coverage_after", "coverage_before")):
+            peers = {
+                (entry.get("rule_id"), entry.get("state"))
+                for entry in result.get(other) or []
+                if isinstance(entry, dict)
+            }
+            context[side] = [
+                entry
+                for entry in context.get(side) or []
+                if not isinstance(entry, dict) or (entry.get("rule_id"), entry.get("state")) not in peers
+            ]
+        context["coverage_unchanged_omitted"] = True
+        context["partial_response"] = True
+    used = _size(context)
+    for key in COMPARE_FINDING_LISTS:
+        for entry in lists[key]:
+            cost = _size({"entry": entry})
+            if used + cost > budget:
+                context["omitted"][key] += 1
+                continue
+            context[key].append(entry)
+            used += cost
+    if any(context["omitted"].values()):
+        context["partial_response"] = True
+    if _size(context) > max_bytes:
+        raise ValueError("Comparison metadata exceeds the byte budget")
+    return context

@@ -271,9 +271,9 @@ def test_raw_rule_identity_cannot_borrow_another_rules_baseline_or_waiver():
             json.dumps(document([result("Entry.java", rule=rule_name)])).encode(), "owned"
         )[0]
 
-    def report(findings):
+    def report(findings, identifier="owned-current"):
         return {
-            "id": "owned-current",
+            "id": identifier,
             "target": "/synthetic/owned",
             "findings": findings,
             "coverage": [{"rule_id": "EXTERNAL-owned", "state": "not-applicable"}],
@@ -284,7 +284,10 @@ def test_raw_rule_identity_cannot_borrow_another_rules_baseline_or_waiver():
     second = imported("tls?check")
     assert first[0]["rule_id"] != second[0]["rule_id"]
     assert first[0]["id"] != second[0]["id"]
-    assert evaluate(report(second), {**policy, "only_new": True}, report(first))["state"] == "failed"
+    assert (
+        evaluate(report(second), {**policy, "only_new": True}, report(first, "owned-before"))["state"]
+        == "failed"
+    )
     waived = {
         **policy,
         "waivers": [

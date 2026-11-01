@@ -603,7 +603,7 @@ def observation_state(observations: list[dict]) -> str:
         or (
             isinstance(observation.get("coverage"), list)
             and any(
-                isinstance(row, dict) and row.get("state") in {"partial", "not-run"}
+                isinstance(row, dict) and row.get("state") in {"partial", "limited", "not-run"}
                 for row in observation["coverage"]
             )
         )

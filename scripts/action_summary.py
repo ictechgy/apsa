@@ -11,9 +11,9 @@ from pathlib import Path
 
 # Load only the stdlib helper, avoiding package/dependency imports under python -I.
 # The Action owns this source alongside its script, even before APSA is installed.
-report_incomplete = runpy.run_path(
-    str(Path(__file__).resolve().parents[1] / "src/mobile_audit/completeness.py")
-)["report_incomplete"]
+_completeness = runpy.run_path(str(Path(__file__).resolve().parents[1] / "src/mobile_audit/completeness.py"))
+report_incomplete = _completeness["report_incomplete"]
+report_limited = _completeness["report_limited"]
 
 
 def sarif_root(target: str, workspace: str) -> str:
@@ -77,6 +77,24 @@ def threshold_exceeded(path: str, fail_on: str) -> bool:
     )
 
 
+def strict_flag(value: str) -> bool:
+    """The Action's strict-coverage input: exactly "true" or "false"."""
+    if value not in {"true", "false"}:
+        raise SystemExit("::error::strict-coverage must be true or false")
+    return value == "true"
+
+
+def audit_incomplete(path: str, strict: bool = False) -> bool:
+    """Whether the report itself is partial, whatever exit code a lenient policy produced.
+
+    With ``strict``, limited coverage (a precision limit) also counts as incomplete.
+    """
+    report = report_of(envelope(path))
+    return bool(report) and (
+        report_incomplete(report, strict=strict) or (report.get("summary") or {}).get("incomplete") is True
+    )
+
+
 def gate_reasons(path: str) -> list[str]:
     """Policy gate reason codes that fail the job (every code except partial-audit)."""
     result = envelope(path)
@@ -92,7 +110,7 @@ def gate_reasons(path: str) -> list[str]:
     return sorted(set(codes))
 
 
-def summary(path: str, code: str) -> str:
+def summary(path: str, code: str, strict: bool = False) -> str:
     result = envelope(path)
     report = report_of(result)
     lines = ["## APSA mobile security audit", ""]
@@ -102,14 +120,27 @@ def summary(path: str, code: str) -> str:
     inventory = report.get("inventory") or {}
     snapshot = inventory.get("input_snapshot") or {}
     incomplete = (
-        report_incomplete(report) or code == "3" or (report.get("summary") or {}).get("incomplete") is True
+        report_incomplete(report, strict=strict)
+        or code == "3"
+        or (report.get("summary") or {}).get("incomplete") is True
     )
+    limited = report_limited(report)
     failed = result.get("ok") is False or code not in {"0", "3", "4"}
     execution = "failed" if failed else "incomplete" if incomplete else "complete for the stated scope"
     lines += [
         f"- Report: `{report.get('id')}` · APSA {report.get('tool_version')} · rules `{report.get('rule_version')}`",
         f"- Audit execution: **{execution}** (exit code {code})",
     ]
+    if limited:
+        lines.append(
+            "- Limited coverage: every input was examined, but the bounded static model abstained on some "
+            "paths; "
+            + (
+                "strict coverage counts this as incomplete."
+                if strict
+                else "this does not make the audit incomplete unless strict-coverage is set."
+            )
+        )
     if failed:
         error = (result.get("error") or {}).get("message", "audit execution failed")
         lines.append(f"- Execution error: {error}.")
@@ -147,9 +178,20 @@ def summary(path: str, code: str) -> str:
     gate = (result.get("data") or {}).get("gate") if isinstance(result.get("data"), dict) else None
     if isinstance(gate, dict):
         lines.append(f"- Policy: **{gate.get('state', 'unknown')}**")
+        # Notices (for example waiver severity escalations) never fail the job; reasons do.
+        notices = Counter(
+            str(notice.get("code"))
+            for notice in gate.get("notices") or []
+            if isinstance(notice, dict) and str(notice.get("code")).replace("-", "").isalnum()
+        )
+        if notices:
+            lines.append(
+                "- Policy notices (non-blocking): "
+                + ", ".join(f"{code} {count}" for code, count in sorted(notices.items()))
+            )
     lines += [
         "",
-        "Candidate findings are heuristics; not-run and partial coverage never mean safe.",
+        "Candidate findings are heuristics; not-run, partial and limited coverage never mean safe.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -169,12 +211,18 @@ def main(argv: list[str]) -> int:
         codes = [c for c in gate_reasons(argv[1]) if c.replace("-", "").isalnum()]
         print(f"gate-reasons={','.join(codes)}")
         return 0
-    if argv[:1] == ["--summary"] and len(argv) == 3:
-        sys.stdout.write(summary(argv[1], argv[2]))
+    if argv[:1] == ["--incomplete"] and len(argv) in {2, 3}:
+        strict = strict_flag(argv[2]) if len(argv) == 3 else False
+        print(f"incomplete={'true' if audit_incomplete(argv[1], strict) else 'false'}")
+        return 0
+    if argv[:1] == ["--summary"] and len(argv) in {3, 4}:
+        strict = strict_flag(argv[3]) if len(argv) == 4 else False
+        sys.stdout.write(summary(argv[1], argv[2], strict))
         return 0
     raise SystemExit(
         "usage: action_summary.py --sarif-root TARGET WORKSPACE | --report-id RESULT"
-        " | --threshold RESULT FAIL_ON | --summary RESULT CODE"
+        " | --threshold RESULT FAIL_ON | --incomplete RESULT [STRICT] | --summary RESULT CODE [STRICT]"
+        " (STRICT is true or false)"
     )
 
 

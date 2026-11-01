@@ -8,6 +8,8 @@ import stat
 import zipfile
 from pathlib import PurePosixPath
 
+from quaygate.apk import unsafe_member
+
 MAX_RESOURCE_BYTES = 128 * 1024 * 1024
 MAX_RESOURCE_FILES = 4096
 MAX_ENVELOPE_BYTES = 2 * 1024 * 1024
@@ -39,8 +41,18 @@ def _safe_relative(name: object) -> bool:
 
 
 def verify_resource_seal(
-    archive: zipfile.ZipFile, root: str, executable: str, envelope: bytes | None
+    archive: zipfile.ZipFile,
+    root: str,
+    executable: str,
+    envelope: bytes | None,
+    info_plist_bound: bool = False,
 ) -> dict:
+    """Compare bundle members with the resource envelope's hashes.
+
+    Info.plist is left out of the envelope only when the caller observed every
+    CodeDirectory binding its exact bytes (special slot 1); otherwise it must be
+    sealed in the resource map like any other bundle file.
+    """
     result = {
         "state": "missing",
         "hashes_verified": False,
@@ -91,12 +103,23 @@ def verify_resource_seal(
     members = {i.filename[len(root) + 1 :]: i for i in bundle_members}
     if len(members) != len(bundle_members) or any(not _safe_relative(name) for name in members):
         return {**result, "state": "unsupported", "reason": "ambiguous or unsafe resource member paths"}
-    excluded = {"Info.plist", PurePosixPath(executable).name}
+    excluded = {PurePosixPath(executable).name}
+    if info_plist_bound:
+        excluded.add("Info.plist")
     unsealed = sum(
         name not in files and name not in excluded and not name.startswith("_CodeSignature/")
         for name in members
     )
     result["unsealed_files"] = unsealed
+    result["info_plist_seal"] = (
+        "code-directory"
+        if info_plist_bound
+        else "resource-envelope"
+        if "Info.plist" in files
+        else "unsealed"
+        if "Info.plist" in members
+        else "absent"
+    )
     total = 0
     for name, seal in files.items():
         if not _safe_relative(name):
@@ -122,7 +145,7 @@ def verify_resource_seal(
                 result["missing_files"] += 1
             continue
         mode = member.external_attr >> 16
-        if stat.S_ISLNK(mode) or (stat.S_IFMT(mode) and not stat.S_ISREG(mode)):
+        if stat.S_ISLNK(mode) or (stat.S_IFMT(mode) and not stat.S_ISREG(mode)) or unsafe_member(member):
             result["unsupported_entries"] += 1
             continue
         if total + member.file_size > MAX_RESOURCE_BYTES:

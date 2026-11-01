@@ -593,21 +593,20 @@ def test_malformed_kev_routing_fields_preserve_cache_and_fail_sync(store, field,
 
 def test_valid_nonmobile_and_authoritative_empty_kev_catalogs_remain_valid():
     assert normalize_kev({"vulnerabilities": []}) == []
-    assert (
-        normalize_kev(
-            {
-                "vulnerabilities": [
-                    {
-                        "cveID": "CVE-2026-12345",
-                        "vulnerabilityName": "issue",
-                        "vendorProject": "Other",
-                        "product": "Server",
-                    }
-                ]
-            }
-        )
-        == []
+    # Non-mobile vendors stay in the catalog: dependency findings correlate KEV by ID.
+    records = normalize_kev(
+        {
+            "vulnerabilities": [
+                {
+                    "cveID": "CVE-2026-12345",
+                    "vulnerabilityName": "issue",
+                    "vendorProject": "Other",
+                    "product": "Server",
+                }
+            ]
+        }
     )
+    assert [(r["id"], r["known_exploited"]) for r in records] == [("CVE-2026-12345", True)]
 
 
 @pytest.mark.parametrize(

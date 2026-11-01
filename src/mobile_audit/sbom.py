@@ -13,8 +13,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from . import __version__
-from .core import report_incomplete
-from .maswe import ADVISORY_PREFIXES
+from .core import advisory_ids, report_incomplete, report_limited
 from .source_context import superseded
 
 NAMESPACE = uuid.UUID("6f1d6c5e-4b8e-5f0a-9a0e-61707361626f")
@@ -115,10 +114,17 @@ def cyclonedx(report: dict, first_observed: dict | None = None) -> dict:
         components.append(component)
     vulnerabilities: dict[str, dict] = {}
     for item in report.get("findings", []):
-        if item.get("origin") != "intelligence" or not item["rule_id"].startswith(ADVISORY_PREFIXES):
+        # Dependency matches by origin and evidence: OSV IDs (GO-, MAL-, PYSEC-, ...)
+        # have no fixed prefix, and OS advisories have environment scope instead.
+        rows = [
+            match
+            for row in item.get("evidence") or []
+            if isinstance(row, dict)
+            for match in row.get("dependency_matches") or [row]
+            if isinstance(match, dict) and isinstance(match.get("dependency"), dict)
+        ]
+        if item.get("origin") != "intelligence" or item.get("scope") == "environment" or not rows:
             continue
-        dep = (item.get("evidence") or [{}])[0].get("dependency") or {}
-        ref = refs.get((dep.get("ecosystem"), dep.get("name"), dep.get("version")))
         entry = vulnerabilities.setdefault(
             item["rule_id"],
             {
@@ -134,8 +140,15 @@ def cyclonedx(report: dict, first_observed: dict | None = None) -> dict:
                 "properties": [_property("known-exploited", bool(item.get("known_exploited")))],
             },
         )
-        if ref and {"ref": ref} not in entry["affects"]:
-            entry["affects"].append({"ref": ref})
+        for row in rows:
+            dep = row["dependency"]
+            ref = refs.get((dep.get("ecosystem"), dep.get("name"), dep.get("version")))
+            if ref and {"ref": ref} not in entry["affects"]:
+                entry["affects"].append({"ref": ref})
+        for alias in advisory_ids(item):
+            # Equivalent advisory IDs (aliases and grouped OSV IDs) of this vulnerability.
+            if alias != item["rule_id"] and _property("advisory-id", alias) not in entry["properties"]:
+                entry["properties"].append(_property("advisory-id", alias))
         entry["properties"] += [
             _property("finding-id", item["id"]),
             _property("evidence-status", item["status"]),
@@ -162,6 +175,7 @@ def cyclonedx(report: dict, first_observed: dict | None = None) -> dict:
             "properties": [
                 _property("report-id", report["id"]),
                 _property("audit-incomplete", report_incomplete(report)),
+                _property("audit-limited", report_limited(report)),
                 *(
                     [
                         _property(

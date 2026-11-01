@@ -35,7 +35,7 @@ JAVA_RULES = [
     "AST-WEBVIEW-SSL-BYPASS",
     "AST-WEBVIEW-UNTRUSTED-URL",
 ]
-JAVA_WARNING = "Native flow remains partial: object alias identity unavailable; unresolved callable identity or argument signature."
+JAVA_WARNING = "Native flow remains limited: object alias identity unavailable; unresolved callable identity or argument signature."
 
 
 def synthetic_result():
@@ -166,7 +166,7 @@ def test_known_incompleteness_rules_and_semantic_reasons_cannot_drift(mutation):
     elif mutation == "missing-warning":
         java["warnings"] = []
     elif mutation == "changed-reason":
-        java["warnings"] = ["Native flow remains partial: entirely different reason."]
+        java["warnings"] = ["Native flow remains limited: entirely different reason."]
     elif mutation == "java-rule-missing":
         java["incomplete_rules"].pop()
     elif mutation == "java-rule-extra":

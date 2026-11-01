@@ -220,13 +220,18 @@ def test_generated_scenario_is_preview_only_until_customized(store, demo, tmp_pa
 
 def test_adb_url_is_quoted_as_remote_shell_data(monkeypatch):
     recorded = []
-    monkeypatch.setattr(
-        "mobile_audit.runtime.command", lambda args, **kwargs: recorded.append(args) or b"Status: ok"
-    )
+
+    def command(args, **kwargs):
+        recorded.append(args)
+        # A debuggable test build answers the run-as preflight with its app UID.
+        return b"10123\n" if args[-1].startswith("run-as ") else b"Status: ok"
+
+    monkeypatch.setattr("mobile_audit.runtime.command", command)
     device = Android("com.example.app", "serial")
     url = "example://test?value=$(touch /tmp/bad);echo hacked"
     device.open_url(url)
-    assert recorded[0][-1].endswith("'example://test?value=$(touch /tmp/bad);echo hacked' -p com.example.app")
+    assert recorded[0][-1] == "run-as com.example.app id -u"
+    assert recorded[1][-1].endswith("'example://test?value=$(touch /tmp/bad);echo hacked' -p com.example.app")
 
 
 def test_ios_url_dispatch_does_not_claim_target_delivery(monkeypatch):

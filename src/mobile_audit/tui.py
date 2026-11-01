@@ -25,8 +25,8 @@ from textual.widgets import (
 from tree_sitter import Language
 
 from . import jobs
-from .cli import demo_target, integration_config
-from .core import report_incomplete, write_json
+from .cli import demo_target, integration_config, plain
+from .core import report_incomplete, report_limited, write_json
 from .intel import source_health, sync
 from .policy import evaluate, load_policy
 from .runtime import plan, validate_scenario
@@ -81,12 +81,16 @@ class AuditApp(App):
                     yield Button("데모 / Demo", id="demo")
                     yield Button("중단", id="cancel", disabled=True)
                     yield Checkbox("의존성 온라인 조회", id="online")
-                yield Static("오프라인 검사와 데모는 API 키 없이 실행됩니다.", id="status")
-                yield Static("검사 전입니다. 결과에는 실행하지 못한 검사도 표시됩니다.", id="summary")
+                yield Static("오프라인 검사와 데모는 API 키 없이 실행됩니다.", id="status", markup=False)
+                yield Static(
+                    "검사 전입니다. 결과에는 실행하지 못한 검사도 표시됩니다.", id="summary", markup=False
+                )
                 yield DataTable(id="findings", cursor_type="row")
                 with VerticalScroll(id="detail-scroll"):
                     yield Markdown(
-                        "발견 항목을 선택하면 근거, 수정 안내, 검사 범위를 확인할 수 있습니다.", id="detail"
+                        "발견 항목을 선택하면 근거, 수정 안내, 검사 범위를 확인할 수 있습니다.",
+                        id="detail",
+                        open_links=False,
                     )
             with TabPane("이력 / Reports", id="reports"):
                 yield Button("새로고침", id="reload")
@@ -109,7 +113,7 @@ class AuditApp(App):
                 )
                 editor.language = "json"
                 yield editor
-                yield Static("먼저 앱을 검사한 뒤 계획을 생성하세요.", id="runtime-status")
+                yield Static("먼저 앱을 검사한 뒤 계획을 생성하세요.", id="runtime-status", markup=False)
             with TabPane("취약점 정보 / Intel", id="intel"):
                 yield Label("공식 공지의 수집 상태와 마지막 성공 시점을 확인하세요.", classes="hint")
                 yield Button("최신 정보 동기화", id="sync", variant="primary")
@@ -120,6 +124,7 @@ class AuditApp(App):
                     yield Markdown(
                         "동기화 후 검색할 수 있습니다. 실패한 소스의 이전 캐시는 유지됩니다.",
                         id="intel-description",
+                        open_links=False,
                     )
             with TabPane("모델 연결 / MCP", id="models"):
                 with VerticalScroll():
@@ -133,7 +138,7 @@ class AuditApp(App):
                 yield Input(placeholder="기준 보고서 ID (only_new 정책에서 필요)", id="policy-baseline")
                 yield Button("현재 보고서 평가", id="policy-evaluate", variant="primary")
                 with VerticalScroll():
-                    yield Markdown("아직 정책을 평가하지 않았습니다.", id="policy-result")
+                    yield Markdown("아직 정책을 평가하지 않았습니다.", id="policy-result", open_links=False)
         yield Footer()
 
     def on_mount(self):
@@ -216,8 +221,14 @@ class AuditApp(App):
             self.action_reload_reports()
         elif event.button.id == "runtime-plan":
             if self.report:
+                try:
+                    generated = plan(self.report)
+                except ValueError as error:
+                    # For example several app identifiers in a multi-module project.
+                    self.query_one("#runtime-status", Static).update(f"계획 생성 오류: {error}")
+                    return
                 self.query_one("#scenario-editor", TextArea).load_text(
-                    json.dumps(plan(self.report), ensure_ascii=False, indent=2)
+                    json.dumps(generated, ensure_ascii=False, indent=2)
                 )
                 self.query_one("#runtime-status", Static).update(
                     "생성된 계획을 실제 앱 동작과 준비 상태에 맞게 수정하세요."
@@ -257,7 +268,7 @@ class AuditApp(App):
             table.clear()
             self.intel_rows = {str(i): row for i, row in enumerate(records)}
             for key, row in self.intel_rows.items():
-                table.add_row(row["id"], row["source"], row["title"], key=key)
+                table.add_row(plain(row["id"]), plain(row["source"]), plain(row["title"]), key=key)
 
     def start_scan(self, path: Path | None = None):
         if self.busy:
@@ -290,6 +301,8 @@ class AuditApp(App):
                 False,
                 "부분 분석입니다. 분석하지 못한 범위와 후보를 함께 확인하세요."
                 if report_incomplete(report)
+                else "검사가 완료됐습니다. 일부 검사는 정적 모델의 정밀도 한계(limited)가 있으니 후보와 함께 확인하세요."
+                if report_limited(report)
                 else "검사가 완료됐습니다. 후보와 미실행 항목을 함께 확인하세요.",
             )
         except Exception as error:
@@ -384,7 +397,7 @@ class AuditApp(App):
         table = self.query_one("#report-list", DataTable)
         table.clear()
         for row in records:
-            table.add_row(row["id"], row["created"], row["target"], key=row["id"])
+            table.add_row(plain(row["id"]), plain(row["created"]), plain(row["target"]), key=row["id"])
 
     def reload_feeds(self):
         store = Store(self.home)
@@ -408,14 +421,18 @@ class AuditApp(App):
         self.query_one("#target", Input).value = report["target"]
         summary = report["summary"]
         self.query_one("#summary", Static).update(
-            f"{len(report['findings'])} findings · {summary['candidates']} candidates · {summary['not_run']} not-run · {summary.get('partial', 0)} partial · {summary['environment_advisories']} OS advisories"
+            f"{len(report['findings'])} findings · {summary['candidates']} candidates · {summary['not_run']} not-run · {summary.get('partial', 0)} partial · {sum(c.get('state') == 'limited' for c in report['coverage'])} limited · {summary['environment_advisories']} OS advisories"
         )
         table = self.query_one("#findings", DataTable)
         table.clear()
         for item in report["findings"]:
             first = item["evidence"][0] if item["evidence"] else {}
             table.add_row(
-                item["severity"], item["status"], item["title"], str(first.get("path", "")), key=item["id"]
+                *(
+                    plain(value)
+                    for value in (item["severity"], item["status"], item["title"], first.get("path", ""))
+                ),
+                key=item["id"],
             )
         details = (
             "## 검사 범위\n\n"

@@ -2,7 +2,7 @@
 
 APSA (앱사)는 [OWASP MASVS](https://mas.owasp.org/MASVS/)의 관련 영역에 개별 증거를 연결합니다. 하나의 규칙이 control이나 [MASTG](https://mas.owasp.org/MASTG/) 테스트의 모든 절차를 구현한다는 뜻은 아닙니다. 실행 보고서의 `coverage`와 `mapping_scope`가 실제 수행 범위를 나타내며, `apsa rules --json`과 MCP `apsa://rules`에서 구현한 규칙을 조회할 수 있습니다.
 
-1.4부터 모든 규칙에 [OWASP MASWE v1.0](https://mas.owasp.org/MASWE/) 약점 ID를 연결하고, 보고서마다 78개 약점 전체의 커버리지 표(관련 검사, `checked`·`partial`·`not-run`·`not-applicable`·`not-assessed` 상태, 발견 ID)를 Markdown·SARIF·MCP `maswe` 섹션·`reports export --format maswe`로 제공합니다. 관련 검사는 약점의 일부만 다루므로 `scope`는 항상 `partial`이며, `not-assessed`는 APSA에 관련 검사가 없다는 뜻입니다. MASWE 데이터는 OWASP MASWE v1.0.0(CC BY-SA 4.0)을 식별자·제목 색인으로 줄인 것입니다.
+1.4부터 모든 규칙에 [OWASP MASWE v1.0](https://mas.owasp.org/MASWE/) 약점 ID를 연결하고, 보고서마다 78개 약점 전체의 커버리지 표(관련 검사, `checked`·`limited`·`partial`·`not-run`·`not-applicable`·`not-assessed` 상태, 발견 ID)를 Markdown·SARIF·MCP `maswe` 섹션·`reports export --format maswe`로 제공합니다. 관련 검사는 약점의 일부만 다루므로 `scope`는 항상 `partial`이며, `not-assessed`는 APSA에 관련 검사가 없다는 뜻입니다. MASWE 데이터는 OWASP MASWE v1.0.0(CC BY-SA 4.0)을 식별자·제목 색인으로 줄인 것입니다.
 
 1.5는 MASTG 데모 미탐에 해당하는 약점 검사를 추가합니다. CRYPTO(깨진 cipher·암묵적 ECB·상수로 만든 키와 IV·짧은 RSA 키·CryptoKit `Insecure` 다이제스트), AUTH(키에 묶이지 않은 생체 인증 결과·기기 비밀번호 대체·새 생체 등록 뒤에도 유지되는 키), NETWORK(TLS 1.2 미만·ATS 밖 iOS API·네트워크 보안 설정의 사용자 CA와 cleartext), PLATFORM(`autoVerify` 없는 App Links·인텐트 리다이렉션·앱 내부용 암시적 Intent·꺼진 Safe Browsing·UIWebView·WKWebView 파일 접근), CODE(경로 조작·secure coding 없는 keyed unarchiving)입니다. 모두 후보 또는 설정 증거이며, 범위와 한계는 [분석 확장의 1.5.0 절](NEXT_ANALYSIS.md#apsa-150-additions)에 있습니다.
 
@@ -17,7 +17,7 @@ APSA (앱사)는 [OWASP MASVS](https://mas.owasp.org/MASVS/)의 관련 영역에
 
 Java/Kotlin/Swift의 구조 분석은 설치 시 포함한 Tree-sitter grammar를 사용합니다. 1.2의 Objective-C `.m`은 제한된 CST 후보·부분 분석을 제공하며, 1.3은 `NS_ENUM` 계열 매크로와 전처리 분기 일부를 호환 처리합니다. `.mm`·Dart·JavaScript와 전체 dispatch·함수 간 분석은 미지원 범위를 표시합니다. APK·AAB는 실제 DEX instruction을 읽고, IPA는 Mach-O 구조와 일부 설정을 읽습니다. 문자열에 API 이름만 존재한다는 이유로 DEX 호출을 검출하지 않습니다. 1.2 확장 기능의 경계는 [분석 범위](NEXT_ANALYSIS.md)에 있습니다.
 
-스캔 전 환경 정보가 없거나 런타임을 실행하지 않았으면 해당 범위는 `not-run`입니다. 캡처 실패·검사 한도는 `partial`/`not-run`, baseline 또는 전환 증거 부족은 `inconclusive`입니다. CI 정책의 `required_rules`와 인텔 최신성 조건으로 팀이 필요한 수행 범위를 지정할 수 있습니다.
+스캔 전 환경 정보가 없거나 런타임을 실행하지 않았으면 해당 범위는 `not-run`입니다. 캡처 실패·검사 한도는 `partial`/`not-run`, 입력은 모두 검사했지만 제한된 정적 모델이 일부 경로에서 판단을 유보하면 `limited`, baseline 또는 전환 증거 부족은 `inconclusive`입니다. CI 정책의 `required_rules`와 인텔 최신성 조건으로 팀이 필요한 수행 범위를 지정할 수 있습니다.
 
 런타임 잔존 정보 coverage는 `purpose=residual`인 canary assertion이 실제로 완료돼야 `checked`입니다. purpose를 생략한 기존 assertion은 residual로 해석합니다. 발견된 잔존 정보 때문에 assertion이 `failed`여도 검사는 수행된 것이며, finding과 CI 심각도 정책으로 판정합니다. 전달·전환·인증만 검사한 시나리오는 잔존 정보 검사를 대신하지 않습니다.
 

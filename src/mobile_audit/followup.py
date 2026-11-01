@@ -10,7 +10,7 @@ import json
 import re
 
 from .completeness import report_incomplete
-from .core import canonical_json, digest
+from .core import advisory_alias_pairs, canonical_json, digest
 from .maswe import RULE_WEAKNESSES, UNMAPPED
 from .verify import COVERAGE_ALIASES, SOURCE_SUFFIXES, compare_reports
 
@@ -213,11 +213,21 @@ def assess_finding_followup(
 
     # Evaluate every candidate before bounding presentation; no omitted candidate becomes absence.
     compatible = [item for item in after.get("findings", []) if _identity(item) == _identity(selected)]
+    # The same dependency advisory at the same location under a changed display ID.
+    later = after.get("findings", [])
+    renamed = {
+        later[position]["id"]
+        for position, _ in advisory_alias_pairs(later, [selected])
+        if _identity(later[position])[1:] == _identity(selected)[1:]
+    }
+    compatible += [item for item in later if item["id"] in renamed and item["rule_id"] != selected["rule_id"]]
     exact = [item for item in compatible if item["id"] == finding_id]
     anchors = _anchors(selected)
     unanchored = _path_only(selected)
     bases = {
-        item["id"]: "semantic-path-and-anchors"
+        item["id"]: "advisory-alias"
+        if item["id"] in renamed
+        else "semantic-path-and-anchors"
         if anchors & _anchors(item)
         else "path-only-unconfirmed"
         if unanchored & _path_only(item)
@@ -403,6 +413,8 @@ def assess_finding_followup(
             for row in report.get("coverage", [])
             if row.get("rule_id") in (rule, COVERAGE_ALIASES.get(rule, rule))
         ]
+        # Absence comparisons need fully checked coverage: a limited check's bounded
+        # model abstained on some paths, so it blocks here although the report is complete.
         if not checks or any(row.get("state") not in ("checked", "observed") for row in checks):
             block("rule-coverage-incomplete", side)
         if not checks or any(not isinstance(row.get("method"), str) or not row["method"] for row in checks):

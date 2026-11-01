@@ -12,6 +12,8 @@ from mobile_audit import audit
 from mobile_audit._parser_worker import analyze
 from mobile_audit.cli import dispatch, parser
 from mobile_audit.inputs import inspect_target
+from mobile_audit.model_context import untrusted_context
+from mobile_audit.output import MODEL_CONTEXT_INSTRUCTIONS
 from mobile_audit.run_options import build_selection, transmission_policy
 from mobile_audit.verify import verify_claim
 from tests.test_competitive_binaries import message, primitive, reference, resource_table
@@ -200,7 +202,8 @@ def test_cli_and_mcp_body_hybrid_claim_contract(tmp_path, store, monkeypatch):
         store,
     )
     assert isinstance(result, dict)
-    assert result["source_file_state"] == "partial"
+    # An analyzed hybrid file without skips or budgets is limited by the bounded model.
+    assert result["source_file_state"] == "limited"
     # Exercise the actual trusted tool body without importing the privacy-denied
     # SDK prompts dependency. This does not validate MCP serving/serialization.
     tree = ast.parse((Path(__file__).parents[1] / "src/mobile_audit/mcp_server.py").read_text())
@@ -220,9 +223,11 @@ def test_cli_and_mcp_body_hybrid_claim_contract(tmp_path, store, monkeypatch):
         "authorize": lambda path: Path(path).resolve(),
         "load_report": lambda store, identifier: store.report(identifier),
         "verify_claim": verify_claim,
+        "untrusted_context": untrusted_context,
     }
     exec(compile(ast.Module(body=[tool], type_ignores=[]), "trusted-mcp-tool-body", "exec"), namespace)
     mcp_result = namespace["verify_finding"](
         str(root), path="app/safe.ts", rule="HYBRID-UNTRUSTED-URL", report_id=report["id"]
     )
-    assert mcp_result == result
+    # The MCP body returns the same claim result inside the fixed untrusted-evidence framing.
+    assert mcp_result == {**result, "instructions": MODEL_CONTEXT_INSTRUCTIONS}

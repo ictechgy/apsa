@@ -80,7 +80,8 @@ class ObjCAnalyzer:
                 "Review security use and replace collision-sensitive MD5/SHA-1."
                 if crypto
                 else "Validate navigation trust and redirects on the owned test build; review the declared receiver type.",
-                "MASVS-CRYPTO" if crypto else "MASVS-NETWORK",
+                # Untrusted content in a web view is a platform-interaction weakness (MASWE-0035).
+                "MASVS-CRYPTO" if crypto else "MASVS-PLATFORM",
                 ["https://developer.apple.com/documentation/webkit/wkwebview"],
                 origin="source",
                 confidence="local-syntax-and-declared-types",
@@ -211,16 +212,27 @@ class ObjCAnalyzer:
                     if value and value[0] == "request":
                         self.emit("OBJC-WEBVIEW-UNTRUSTED-REQUEST", child, value[1])
 
+    @staticmethod
+    def unconditional(node) -> bool:
+        parent = node.parent
+        while parent:
+            if parent.type.startswith("preproc_") or parent.type == "ERROR":
+                return False
+            parent = parent.parent
+        return True
+
     def analyze(self, root):
         nodes = list(walk(root))
         for node in nodes:
+            if node.type == "module_import":
+                # Clang modules: `@import WebKit;` / `@import CommonCrypto.CommonDigest;`.
+                if not self.unconditional(node):
+                    continue
+                module = self.text(node).removeprefix("@import").strip().rstrip(";").split(".")[0].strip()
+                self.webkit |= module == "WebKit"
+                self.crypto |= module == "CommonCrypto"
             if node.type == "preproc_include":
-                parent = node.parent
-                conditional = False
-                while parent:
-                    conditional |= parent.type.startswith("preproc_") or parent.type == "ERROR"
-                    parent = parent.parent
-                if conditional:
+                if not self.unconditional(node):
                     continue
                 header = self.text(node.child_by_field_name("path"))
                 self.webkit |= header in {"<WebKit/WebKit.h>", '"WebKit/WebKit.h"'}

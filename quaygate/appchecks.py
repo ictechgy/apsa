@@ -206,6 +206,43 @@ def _int_or_none(value):
 UNKNOWN = _UNKNOWN
 
 
+def _manifest_cleartext(cleartext, target, note: str = "") -> Finding:
+    """networkSecurityConfig가 적용되지 않을 때 매니페스트 usesCleartextTraffic(또는 targetSdk 기본값)으로 판정."""
+    if cleartext is True:
+        return Finding(
+            "app-cleartext",
+            "평문 트래픽 허용",
+            "warn",
+            MEDIUM,
+            "usesCleartextTraffic=true — 중간자 도청 표면이 열립니다." + note,
+            "false로 바꾸고 networkSecurityConfig로 예외 도메인만 허용하세요.",
+        )
+    if cleartext is False:
+        return Finding("app-cleartext", "평문 트래픽 허용", "pass", None, "명시적 false." + note)
+    if cleartext is UNKNOWN:
+        return Finding(
+            "app-cleartext",
+            "평문 트래픽 허용",
+            "na",
+            None,
+            "usesCleartextTraffic이 참조값이라 해석하지 못했습니다." + note,
+        )
+    if target is not None and target < 28:
+        return Finding(
+            "app-cleartext",
+            "평문 트래픽 허용",
+            "warn",
+            MEDIUM,
+            f"선언 없음 + targetSdk {target}(<28) — 기본값이 평문 허용입니다." + note,
+            "targetSdk를 올리거나 networkSecurityConfig로 명시하세요.",
+        )
+    if target is not None:
+        return Finding(
+            "app-cleartext", "평문 트래픽 허용", "pass", None, f"기본 차단(targetSdk {target})." + note
+        )
+    return Finding("app-cleartext", "평문 트래픽 허용", "na", None, "targetSdk 확인 불가." + note)
+
+
 def load_manifest(apk: Apk) -> Manifest:
     if "AndroidManifest.xml" not in apk.entry_names():
         raise ApkError("AndroidManifest.xml 없음 — APK가 아니거나 손상되었습니다")
@@ -393,55 +430,18 @@ def audit_apk(apk: Apk, cert_runner=None) -> tuple:
                 )
             )
     else:
-        note = ""
-        if cleartext is True:
-            findings.append(
-                Finding(
-                    "app-cleartext",
-                    "평문 트래픽 허용",
-                    "warn",
-                    MEDIUM,
-                    "usesCleartextTraffic=true — 중간자 도청 표면이 열립니다." + note,
-                    "false로 바꾸고 networkSecurityConfig로 예외 도메인만 허용하세요.",
-                )
-            )
-        elif cleartext is False:
-            findings.append(
-                Finding("app-cleartext", "평문 트래픽 허용", "pass", None, "명시적 false." + note)
-            )
-        elif cleartext is UNKNOWN:
-            findings.append(
-                Finding(
-                    "app-cleartext",
-                    "평문 트래픽 허용",
-                    "na",
-                    None,
-                    "usesCleartextTraffic이 참조값이라 해석하지 못했습니다." + note,
-                )
-            )
-        elif target is not None and target < 28:
-            findings.append(
-                Finding(
-                    "app-cleartext",
-                    "평문 트래픽 허용",
-                    "warn",
-                    MEDIUM,
-                    f"선언 없음 + targetSdk {target}(<28) — 기본값이 평문 허용입니다." + note,
-                    "targetSdk를 올리거나 networkSecurityConfig로 명시하세요.",
-                )
-            )
-        elif target is not None:
-            findings.append(
-                Finding(
-                    "app-cleartext",
-                    "평문 트래픽 허용",
-                    "pass",
-                    None,
-                    f"기본 차단(targetSdk {target})." + note,
-                )
-            )
-        else:
-            findings.append(Finding("app-cleartext", "평문 트래픽 허용", "na", None, "targetSdk 확인 불가."))
+        findings.append(_manifest_cleartext(cleartext, target))
+    min_sdk = _int_or_none(m.sdk.get("minSdkVersion", 1))
+    if nsc_ref and (min_sdk is None or min_sdk < 24):
+        # API 23 이하 기기는 networkSecurityConfig를 무시하고 매니페스트 설정(또는 기본값)을 적용한다.
+        legacy = _manifest_cleartext(
+            cleartext,
+            target,
+            f" — minSdk {m.sdk.get('minSdkVersion', '미선언')}: API 23 이하 기기는 "
+            "networkSecurityConfig를 무시하고 매니페스트 설정을 적용합니다.",
+        )
+        if legacy.status != "pass":
+            findings.append(legacy)
 
     if nsc is not None:
         if nsc["user_trust"]:
@@ -514,12 +514,44 @@ def audit_apk(apk: Apk, cert_runner=None) -> tuple:
         resolved = _attr_bool(apk, raw)
         return "true" if resolved is True else "false" if resolved is False else UNKNOWN
 
+    # exported 미선언 시 플랫폼 기본값의 기준 targetSdk — targetSdkVersion이 없으면 minSdkVersion,
+    # 둘 다 없으면 1. 값이 있으나 정수로 해석되지 않으면 None(보수적으로 기본 공개 취급).
+    raw_target = m.sdk.get("targetSdkVersion")
+    raw_min = m.sdk.get("minSdkVersion")
+    export_target = _int_or_none(
+        raw_target if raw_target is not None else raw_min if raw_min is not None else 1
+    )
+
+    def _default_exported(c):
+        """exported 미선언 기본 공개 — intent-filter는 targetSdk<31, provider는 targetSdk<17."""
+        if c["exported"] is not None:
+            return False
+        if c["intent_filters"] and (export_target is None or export_target < 31):
+            return True
+        return c["tag"] == "provider" and (export_target is None or export_target < 17)
+
+    def _label(c):
+        if c["exported"] is not None:
+            return f"{c['tag']} {c['name']}"
+        basis = "intent-filter·targetSdk<31" if c["intent_filters"] else "provider 기본값·targetSdk<17"
+        return f"{c['tag']} {c['name']}(exported 미선언, {basis})"
+
     unknown_exported = [c for c in m.components if _exported_value(c) == UNKNOWN]
     exported_explicit = [c for c in m.components if _exported_value(c) == "true"]
-    unprotected = [c for c in exported_explicit if not _component_protected(c)]
+    exported_default = [c for c in m.components if _default_exported(c)]
+    # 기본 공개는 명시적 exported=true와 같은 보호·정상 패턴·심각도 기준으로 판정한다.
+    unprotected = [c for c in exported_explicit + exported_default if not _component_protected(c)]
     normal_public = [c for c in unprotected if _is_normal_pattern(c)]
     truly_unprotected = [c for c in unprotected if not _is_normal_pattern(c)]
-    implicit = [c for c in m.components if c["exported"] is None and c["intent_filters"]]
+    # targetSdk 31+에서 exported 미선언 intent-filter — 설치가 거부되는 매니페스트라 공개 여부 단언 불가.
+    implicit = [
+        c
+        for c in m.components
+        if c["exported"] is None
+        and c["intent_filters"]
+        and not _default_exported(c)
+        and not _component_protected(c)
+    ]
     reachable = [c for c in implicit if not _is_normal_pattern(c)]
     reachable = reachable + unknown_exported  # 참조 해석 실패 — 보수적으로 도달 가능 취급
     normal_implicit = [c for c in implicit if _is_normal_pattern(c)]
@@ -531,8 +563,12 @@ def audit_apk(apk: Apk, cert_runner=None) -> tuple:
                 "외부 공개 컴포넌트",
                 "warn",
                 MEDIUM,
-                "permission 없이 exported=true: "
-                + ", ".join(f"{c['tag']} {c['name']}" for c in truly_unprotected[:8])
+                (
+                    "permission 없이 exported=true: "
+                    if all(c["exported"] is not None for c in truly_unprotected)
+                    else "permission 없이 외부 공개(exported=true 또는 플랫폼 기본 공개): "
+                )
+                + ", ".join(_label(c) for c in truly_unprotected[:8])
                 + extra,
                 "외부 공개가 필요한지 검토하고, 필요하면 권한·서명 검증을 붙이세요. 불필요하면 exported=false.",
             )
@@ -612,7 +648,11 @@ def audit_apk(apk: Apk, cert_runner=None) -> tuple:
     else:
         findings.append(Finding("app-deeplink", "딥링크 도달 표면", "pass", None, "BROWSABLE 딥링크 없음."))
 
-    exported_providers = [c for c in m.components if c["tag"] == "provider" and _exported_value(c) == "true"]
+    exported_providers = [
+        c
+        for c in m.components
+        if c["tag"] == "provider" and (_exported_value(c) == "true" or _default_exported(c))
+    ]
     grant_providers = [
         c
         for c in exported_providers

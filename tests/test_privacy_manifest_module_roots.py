@@ -9,7 +9,14 @@ from mobile_audit.inputs import inspect_target
 from mobile_audit.platform_checks import platform_checks
 
 PRIVACY = plistlib.dumps(
-    {"NSPrivacyAccessedAPITypes": [{"NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults"}]}
+    {
+        "NSPrivacyAccessedAPITypes": [
+            {
+                "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+                "NSPrivacyAccessedAPITypeReasons": ["CA92.1"],
+            }
+        ]
+    }
 )
 
 

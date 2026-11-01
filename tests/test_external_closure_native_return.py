@@ -128,7 +128,7 @@ def test_project_declaration_does_not_gain_stdlib_inline_identity(declaration: s
     report = _scan(source, *(("fresh/CustomScope.kt", declaration),) if other_file else ())
     assert _matches(report), report  # Candidate over-approximation, never execution proof.
     assert UNAVAILABLE in report["metadata"]["native_flow"]["reasons"], report
-    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "partial"
+    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "limited"
 
 
 @pytest.mark.parametrize("imported", ["import custom.let", "import custom.scope as let", "import custom.*"])
@@ -136,7 +136,7 @@ def test_import_shadow_retains_candidate_and_explicit_partial(imported: str) -> 
     report = _scan(_kotlin('input.getStringExtra("url")?.let { return it }', prefix=imported))
     assert _matches(report), report
     assert UNAVAILABLE in report["metadata"]["native_flow"]["reasons"], report
-    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "partial"
+    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "limited"
 
 
 def test_callable_parameter_named_let_is_not_a_stdlib_proof() -> None:
@@ -156,7 +156,7 @@ def test_other_inline_callback_keeps_possible_return_with_partial_identity() -> 
     )
     assert _matches(report), report
     assert UNAVAILABLE in report["metadata"]["native_flow"]["reasons"], report
-    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "partial"
+    assert next(row for row in report["coverage"] if row["rule_id"] == URL)["state"] == "limited"
 
 
 def test_kotlin_return_union_does_not_transfer_closure_guard() -> None:

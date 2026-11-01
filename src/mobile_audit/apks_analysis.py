@@ -12,12 +12,13 @@ from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import overload
 
+from quaygate.apk import unsafe_member
+
 from .core import MAX_ARCHIVE_TOTAL, MAX_FILES, file_digest, finding_identity
 
 MAX_SELECTED_APKS = 64
 MAX_APK_BYTES = 128 * 1024 * 1024
 MAX_MERGED_RECORDS = 50_000
-MAX_COMPRESSION_RATIO = 1000
 MAX_TOC_BYTES = 8 * 1024 * 1024
 
 
@@ -44,10 +45,9 @@ def _members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
         mode = item.external_attr >> 16
         if stat.S_ISLNK(mode) or (stat.S_IFMT(mode) and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode))):
             raise ValueError("APK-set archive has a special-file member")
-        if item.flag_bits & 1 or item.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
-            raise ValueError("APK-set encrypted or unsupported compressed member")
-        if item.file_size > max(1024 * 1024, item.compress_size * MAX_COMPRESSION_RATIO):
-            raise ValueError("APK-set archive compression ratio budget exceeded")
+        reason = unsafe_member(item)
+        if reason:
+            raise ValueError(f"APK-set archive member not decompressed: {reason}")
     return items
 
 
@@ -216,7 +216,7 @@ def analyze_apks(
         for check in report["coverage"]:
             rebased = _rebase(check, prefix)
             rebased["apk_set_member"] = entry.path
-            if rebased["state"] == "checked":
+            if rebased["state"] in {"checked", "limited"}:
                 rebased["state"] = "partial"
             coverage.append(rebased)
         total_records += len(report["findings"]) + len(report["coverage"])

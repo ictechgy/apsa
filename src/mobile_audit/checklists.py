@@ -131,7 +131,11 @@ def checklist_view(report: dict, checklist: dict) -> dict:
         ):
             status = "not-applicable"
         else:
-            status = {"checked": "no-findings-in-checked-scope", "partial": "partial"}.get(state, "not-run")
+            status = {
+                "checked": "no-findings-in-checked-scope",
+                "limited": "limited",
+                "partial": "partial",
+            }.get(state, "not-run")
         rows.append(
             {
                 **item,
@@ -149,8 +153,9 @@ def checklist_view(report: dict, checklist: dict) -> dict:
         "checklist": {k: checklist[k] for k in ("name", "source") if k in checklist}
         | ({"sha256": checklist["sha256"]} if "sha256" in checklist else {}),
         "note": "Status reflects APSA's related checks only. no-findings-in-checked-scope means every related "
-        "check that applied ran fully without findings; it is not a pass. A mix of run and not-run checks is "
-        "partial; items outside APSA's checks need other evidence.",
+        "check that applied ran fully without findings; it is not a pass. limited means the related checks "
+        "examined the whole input without findings but the bounded static model abstained on some paths. "
+        "A mix of run and not-run checks is partial; items outside APSA's checks need other evidence.",
         "summary": summary,
         "items": rows,
     }
@@ -242,6 +247,7 @@ def timeline(store, target: str, limit: int = 200) -> dict:
                     and previous.get("tool_version") == report.get("tool_version")
                     and previous.get("inventory", {}).get("input_kind")
                     == report.get("inventory", {}).get("input_kind")
+                    # Resolution needs fully checked coverage; limited stays inconclusive.
                     and rule_state(states) == "checked"
                 )
                 if comparable:

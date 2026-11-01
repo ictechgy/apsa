@@ -13,7 +13,7 @@ from .processes import CommandFailure, command
 
 PARSER_TIMEOUT = 90
 MAX_RESULT = 32 * 1024 * 1024
-PARSER_COVERAGE_STATES = frozenset({"checked", "partial", "not-run", "not-applicable"})
+PARSER_COVERAGE_STATES = frozenset({"checked", "limited", "partial", "not-run", "not-applicable"})
 
 
 def _string_list(value: object) -> bool:
@@ -203,10 +203,25 @@ def analyze_target(
                     "Parser exceeded CPU time limit (SIGXCPU); audit incomplete. The audit was not retried."
                 ) from None
             if isolation["state"] == "enforced" and str(error).startswith("Command failed"):
+                # The input-free activation probe already proved this backend starts here.
+                # A later exit (MemoryError, resource signal) comes from parsing the input,
+                # so disabling isolation is not advice for it.
+                status = ""
+                if isinstance(error, CommandFailure) and error.returncode < 0:
+                    try:
+                        status = f" ({signal.Signals(-error.returncode).name})"
+                    except ValueError:
+                        pass
+                cause = (
+                    "The input-free activation probe passed under this backend, so the failure arose "
+                    "while analyzing this input (for example memory exhaustion or a resource-limit "
+                    "signal); audit incomplete."
+                    if isolation.get("activation_probe") == "passed"
+                    else "Audit incomplete."
+                )
                 raise ValueError(
-                    f"Sandboxed parser failed under {isolation['backend']}; the audit was not retried "
-                    f"without OS isolation. {error} If the backend is incompatible with this host, "
-                    "APSA_PARSER_SANDBOX=off runs with resource limits only."
+                    f"Sandboxed parser failed under {isolation['backend']}{status}; the audit was not "
+                    f"retried without OS isolation. {error} {cause}"
                 ) from None
             raise
         if resolved.resolve() != expected_target or identity(resolved) != snapshot["identity"]:
@@ -224,9 +239,17 @@ def analyze_target(
     if not _worker_schema(result):
         raise ValueError("Parser worker returned an invalid schema; audit incomplete")
     result["inventory"]["parser_isolation"] = isolation
-    if isolation.get("activation_probe") == "failed":
+    state = isolation.get("state")
+    if state != "enforced" or isolation.get("activation_probe") == "failed":
+        # Without OS isolation the parser had no network/filesystem confinement.
+        # This is a disclosure, not an incomplete-analysis signal or exit-code change.
+        reason = isolation.get("unavailable_reason") or {
+            "disabled": "APSA_PARSER_SANDBOX=off",
+            "unavailable": "no supported OS sandbox backend found on this host",
+        }.get(str(state), f"isolation state {state!r}")
         result["inventory"]["warnings"].append(
-            f"Parser OS isolation unavailable; parsed with resource limits only: {isolation['unavailable_reason']}"
+            f"Parser OS isolation {'disabled' if state == 'disabled' else 'unavailable'}; "
+            f"parsed with resource limits only: {reason}"
         )
     result["inventory"]["target"] = str(resolved)
     result["inventory"]["input_snapshot"] = {
@@ -271,7 +294,9 @@ def analyze_target(
                 dependency.pop("resolution", None)
         # Without all app code and configuration, a rule may only look not-applicable
         # (for example, the platform's sources were left out).
-        downgraded = {"checked"} | (set() if snapshot.get("app_scope_complete", True) else {"not-applicable"})
+        downgraded = {"checked", "limited"} | (
+            set() if snapshot.get("app_scope_complete", True) else {"not-applicable"}
+        )
         for check in result.get("coverage", []):
             if check["state"] in downgraded:
                 check["state"] = "partial"

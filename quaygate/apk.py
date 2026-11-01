@@ -18,6 +18,23 @@ MAX_TOTAL_BYTES = 256 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 MAX_ZIP_DIRECTORY_BYTES = 8 * 1024 * 1024
 MAX_ZIP_ENTRIES = 20000
+MAX_COMPRESSION_RATIO = 1000
+
+
+def unsafe_member(info: zipfile.ZipInfo) -> str | None:
+    """Return why a member must not be decompressed, or None when its reads stay bounded.
+
+    CPython's ZIP reader passes no output limit to bzip2/LZMA decompressors: a
+    tiny member inflates completely before truncation to file_size. Only
+    STORED/DEFLATE reads honour the requested byte budget.
+    """
+    if info.flag_bits & 1:
+        return "encrypted member"
+    if info.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
+        return f"unsupported compression method {info.compress_type}"
+    if info.file_size > max(1024 * 1024, info.compress_size * MAX_COMPRESSION_RATIO):
+        return "compression ratio budget exceeded"
+    return None
 
 
 def _supported_zip_extra(handle, length, *, local_padding=False):
@@ -217,6 +234,9 @@ class Apk:
                 raise ApkError(f"엔트리 바이트 상한 초과: {name}")
             if self._read_bytes + info.file_size > MAX_TOTAL_BYTES:
                 raise ApkError("APK 누적 읽기 바이트 상한 초과")
+            reason = unsafe_member(info)
+            if reason:
+                raise ApkError(f"엔트리 압축 해제 거부({name}): {reason}")
             with self.zipf.open(info) as handle:
                 data = handle.read(min(limit, MAX_MEMBER_BYTES) + 1)
             self._read_bytes += len(data)
@@ -280,11 +300,14 @@ class Apk:
 
     def has_v2_plus_signature(self) -> bool:
         """APK Signing Block(v2+) 여부 — 중앙 디렉터리 직전 16바이트 매직 확인."""
+        # Read the preflighted snapshot ZipFile owns, never the mutable original path.
+        f = self.zipf.fp
+        if f is None:
+            return False
         try:
-            size = os.path.getsize(self.path)
-            with open(self.path, "rb") as f:
-                f.seek(max(0, size - 65536))
-                tail = f.read()
+            size = f.seek(0, 2)
+            f.seek(max(0, size - 65536))
+            tail = f.read()
             eocd = tail.rfind(b"PK\x05\x06")
             if eocd < 0:
                 return False
@@ -295,18 +318,17 @@ class Apk:
                 return False
             if cd_off < 24:
                 return False
-            with open(self.path, "rb") as f:
-                f.seek(cd_off - 24)
-                footer = f.read(24)
-                if footer[8:] != APK_SIG_BLOCK_MAGIC:
-                    return False
-                # 푸터 크기(매직 앞 u64)와 블록 첫 u64가 일치해야 정식 Signing Block
-                (footer_size,) = struct.unpack("<Q", footer[:8])
-                block_start = cd_off - 8 - footer_size
-                if footer_size < 24 or block_start < 0:
-                    return False
-                f.seek(block_start)
-                (head_size,) = struct.unpack("<Q", f.read(8))
+            f.seek(cd_off - 24)
+            footer = f.read(24)
+            if footer[8:] != APK_SIG_BLOCK_MAGIC:
+                return False
+            # 푸터 크기(매직 앞 u64)와 블록 첫 u64가 일치해야 정식 Signing Block
+            (footer_size,) = struct.unpack("<Q", footer[:8])
+            block_start = cd_off - 8 - footer_size
+            if footer_size < 24 or block_start < 0:
+                return False
+            f.seek(block_start)
+            (head_size,) = struct.unpack("<Q", f.read(8))
             return head_size == footer_size
-        except (OSError, struct.error):
+        except (OSError, ValueError, struct.error):
             return False

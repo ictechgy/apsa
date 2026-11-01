@@ -18,7 +18,7 @@ def test_hybrid_direct_sources_and_literal_controls():
         ("HYBRID-UNTRUSTED-URL", "App.js"),
         ("HYBRID-UNTRUSTED-URL", "main.dart"),
     ]
-    assert all(c["state"] == "partial" for c in result["coverage"])
+    assert all(c["state"] == "limited" for c in result["coverage"])
 
 
 def test_hybrid_cross_file_arguments_returns_and_order():

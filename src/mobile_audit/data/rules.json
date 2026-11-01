@@ -34,7 +34,7 @@
       ".swift"
     ],
     "requires": "WebView|WKWebView|intent\\.data|URLComponents",
-    "pattern": "(?:host|hostname|url|uri)\\s*(?:\\?\\.)?\\s*\\.?\\s*(?:contains|startsWith|endsWith|hasPrefix|hasSuffix)\\s*\\(",
+    "pattern": "(?:(?:url|uri)\\s*(?:\\?\\.)?\\s*\\.?\\s*(?:contains|startsWith|endsWith|hasPrefix|hasSuffix)|(?:host|hostname)\\s*(?:\\?\\.)?\\s*\\.?\\s*(?:contains|startsWith|hasPrefix|(?:endsWith|hasSuffix)(?!\\s*\\(\\s*\\\"\\.)))\\s*\\(",
     "severity": "high",
     "masvs": "MASVS-PLATFORM",
     "remediation": "Parse the URL and validate scheme and exact host, including a dot-boundary check for approved subdomains. Add runtime link cases.",
@@ -117,7 +117,7 @@
       ".mm",
       ".bundle"
     ],
-    "pattern": "(?<![\\w$])(?:Log\\.[divew]|println|print|NSLog|console\\.log|logger\\.\\w+)\\s*\\(",
+    "pattern": "(?<![\\w$])(?:Log\\.(?:[divew]|wtf)|Timber(?:\\.tag\\([^()\\n]*\\))?\\.(?:[divew]|wtf|log)|println|print|debugPrint|NSLog|os_log|console\\.(?:log|info|warn|error|debug|trace)|logger\\.\\w+)\\s*\\(",
     "matcher": "sensitive-log-call-arguments-v3",
     "argument_pattern": "token|password|secret|email|session",
     "pattern_scope": "Call-prefix locator only, applied after comments are blanked as whitespace. The canonical matcher checks argument_pattern inside AST or lexical call boundaries after excluding comments; pattern alone is not the rule.",
@@ -145,9 +145,11 @@
       ".kt",
       ".java",
       ".swift",
-      ".dart"
+      ".dart",
+      ".m",
+      ".mm"
     ],
-    "pattern": "(?:putString|setString|UserDefaults[^\\n]*set)\\s*\\([^\\n]*(?:token|password|secret|session)",
+    "pattern": "(?:putString|setString|UserDefaults(?:[^\\n;]|\\n(?=[ \\t]*\\.))*?\\.set(?:Value|Object)?|NSUserDefaults[^;\\n]*?\\bset(?:Object|Value)\\s*:)\\s*\\(?[^\\n;]*(?:token|password|secret|session)",
     "severity": "medium",
     "masvs": "MASVS-STORAGE",
     "remediation": "Review the data sensitivity and use platform-backed secure storage where required. Verify logout invalidation and deletion policy.",
@@ -196,7 +198,7 @@
     ],
     "mastg_tests": [],
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
-    "requires": "X509TrustManager",
+    "requires": "X509(?:Extended)?TrustManager",
     "pattern": "\\bcheckServerTrusted\\s*\\([^)]*\\)\\s*(?::\\s*Unit\\s*)?(?:throws\\s+[\\w.]+(?:\\s*,\\s*[\\w.]+)*\\s*)?(?:\\{\\s*(?:return\\s*;?\\s*)?\\}|=\\s*Unit\\b)",
     "severity": "high",
     "masvs": "MASVS-NETWORK",
@@ -220,7 +222,7 @@
     "mastg_tests": [],
     "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
     "requires": "HostnameVerifier|hostnameVerifier|ALLOW_ALL",
-    "pattern": "ALLOW_ALL_HOSTNAME_VERIFIER|NoopHostnameVerifier|[Hh]ostnameVerifier\\s*\\{[^{}]{0,300}?\\btrue\\s*\\}|\\bverify\\s*\\([^)]*\\)\\s*(?::\\s*Boolean\\s*)?(?:=\\s*true\\b|\\{\\s*return\\s+true\\s*;?\\s*\\})",
+    "pattern": "ALLOW_ALL_HOSTNAME_VERIFIER|NoopHostnameVerifier|[Hh]ostnameVerifier\\s*\\{[^{}]{0,300}?\\btrue\\s*\\}|[Hh]ostnameVerifier\\s*\\(\\s*\\(\\s*[\\w\\s,]*\\)\\s*->\\s*(?:true\\b|\\{\\s*return\\s+true\\s*;?\\s*\\})|\\bHostnameVerifier\\s+\\w+\\s*=\\s*\\(\\s*[\\w\\s,]*\\)\\s*->\\s*(?:true\\b|\\{\\s*return\\s+true\\s*;?\\s*\\})|\\bverify\\s*\\([^)]*\\)\\s*(?::\\s*Boolean\\s*)?(?:=\\s*true\\b|\\{\\s*return\\s+true\\s*;?\\s*\\})",
     "severity": "high",
     "masvs": "MASVS-NETWORK",
     "remediation": "Keep the default hostname verification; do not replace it with a verifier that returns true.",
@@ -249,6 +251,30 @@
     "remediation": "Keep sensitive data in internal app storage or encrypt it; shared storage is readable by other apps and the user.",
     "references": [
       "https://developer.android.com/privacy-and-security/risks/external-storage"
+    ],
+    "maswe": [
+      "MASWE-0002"
+    ]
+  },
+  {
+    "id": "SOURCE-WORLD-ACCESSIBLE-FILE",
+    "title": "File or preferences created world-readable or world-writable",
+    "mode": "source",
+    "platform": "android",
+    "suffixes": [
+      ".kt",
+      ".java"
+    ],
+    "mastg_tests": [],
+    "mapping_scope": "partial: related OWASP test, not a complete implementation of every test step",
+    "requires": "MODE_WORLD_",
+    "pattern": "\\bMODE_WORLD_(?:READABLE|WRITEABLE)\\b",
+    "case_sensitive": true,
+    "severity": "high",
+    "masvs": "MASVS-STORAGE",
+    "remediation": "Use MODE_PRIVATE and share data through a FileProvider or a permission-protected ContentProvider; world-accessible modes expose app files to every other app.",
+    "references": [
+      "https://developer.android.com/reference/android/content/Context#MODE_WORLD_READABLE"
     ],
     "maswe": [
       "MASWE-0002"

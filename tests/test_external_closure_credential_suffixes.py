@@ -82,7 +82,7 @@ def test_imports_are_from_this_exact_source_tree():
 
 def test_every_generally_admitted_text_suffix_has_credential_coverage():
     assert inputs.TEXT_SUFFIXES <= credential_text.CREDENTIAL_TEXT_SUFFIXES
-    assert credential_text.CREDENTIAL_ONLY_SUFFIXES == {".properties", ".strings", ".pem", ".key"}
+    assert credential_text.CREDENTIAL_ONLY_SUFFIXES == {".properties", ".strings", ".pem", ".key", ".xcconfig"}
 
 
 @pytest.mark.parametrize("kind", ["apk", "ipa"])

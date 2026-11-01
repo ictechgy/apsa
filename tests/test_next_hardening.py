@@ -250,7 +250,7 @@ def test_objc_declared_navigation_flow_and_crypto_are_candidates():
         "OBJC-CRYPTO-WEAK-HASH",
     }
     assert all(f["status"] == "candidate" for f in report["findings"])
-    assert report["metadata"]["files"][0]["state"] == "partial"
+    assert report["metadata"]["files"][0]["state"] == "limited"
     assert not report["pattern_exclusions"]
     flow = next(f for f in report["findings"] if f["rule_id"] == "OBJC-WEBVIEW-UNTRUSTED-REQUEST")
     assert flow["evidence"][0]["line"] == 7
@@ -270,7 +270,7 @@ def test_objc_fixed_unknown_and_joined_values_do_not_gain_taint(replacement):
     report = analyze_sources([("Handler.m", OBJC.replace("[webView loadRequest:request];", replacement))])
     assert "OBJC-WEBVIEW-UNTRUSTED-REQUEST" not in {f["rule_id"] for f in report["findings"]}
     assert any(
-        c["rule_id"] == "OBJC-WEBVIEW-UNTRUSTED-REQUEST" and c["state"] == "partial"
+        c["rule_id"] == "OBJC-WEBVIEW-UNTRUSTED-REQUEST" and c["state"] == "limited"
         for c in report["coverage"]
     )
 
@@ -454,26 +454,98 @@ def test_macos_policy_maps_only_trusted_executable_roots(monkeypatch, tmp_path):
     monkeypatch.setattr(parser_sandbox.sys, "platform", "darwin")
     monkeypatch.setattr(parser_sandbox, "backend", lambda: "/usr/bin/sandbox-exec")
     monkeypatch.setattr(parser_sandbox, "_runtime_roots", lambda: [runtime])
-    parser_sandbox.sandbox_command([sys.executable, "-c", "pass"], target, None, scratch)
-    rule = next(
-        line
-        for line in (scratch / "parser.sb").read_text().splitlines()
-        if line.startswith("(allow file-map-executable")
-    )
+    command, _ = parser_sandbox.sandbox_command([sys.executable, "-c", "pass"], target, None, scratch)
+    profile = _expanded_profile(command, scratch)
+    rule = next(line for line in profile.splitlines() if line.startswith("(allow file-map-executable"))
     assert str(runtime) in rule
     assert str(target) not in rule and str(scratch) not in rule
-    assert '(literal "/")' in (scratch / "parser.sb").read_text()
-    assert '(subpath "/")' not in (scratch / "parser.sb").read_text()
-    assert '(literal "' + str(runtime.parent) + '")' in (scratch / "parser.sb").read_text()
-    assert '(subpath "' + str(runtime.parent) + '")' not in (scratch / "parser.sb").read_text()
-    assert '(subpath "/System")' not in (scratch / "parser.sb").read_text()
-    assert '(subpath "/System/Volumes")' not in (scratch / "parser.sb").read_text()
+    assert '(literal "/")' in profile
+    assert '(subpath "/")' not in profile
+    assert '(literal "' + str(runtime.parent) + '")' in profile
+    assert '(subpath "' + str(runtime.parent) + '")' not in profile
+    assert '(subpath "/System")' not in profile
+    assert '(subpath "/System/Volumes")' not in profile
     archive = target / "Synthetic.aab"
     archive.write_bytes(b"synthetic")
-    parser_sandbox.sandbox_command([sys.executable, "-c", "pass"], archive, None, scratch)
-    profile = (scratch / "parser.sb").read_text()
+    command, _ = parser_sandbox.sandbox_command([sys.executable, "-c", "pass"], archive, None, scratch)
+    profile = _expanded_profile(command, scratch)
     assert '(literal "' + str(target) + '")' in profile
     assert '(subpath "' + str(target) + '")' not in profile
+
+
+def _defines(command: list[str]) -> dict[str, str]:
+    return dict(command[index + 1].split("=", 1) for index, flag in enumerate(command) if flag == "-D")
+
+
+def _expanded_profile(command: list[str], scratch: Path) -> str:
+    """The written Seatbelt profile with each -D path parameter shown as an SBPL literal."""
+    profile = (scratch / "parser.sb").read_text()
+    for name, value in _defines(command).items():
+        profile = profile.replace(f'(param "{name}")', json.dumps(value, ensure_ascii=False))
+    return profile
+
+
+def test_macos_policy_passes_non_ascii_and_sbpl_syntax_paths_only_as_parameters(monkeypatch, tmp_path):
+    monkeypatch.setattr(parser_sandbox.sys, "platform", "darwin")
+    monkeypatch.setattr(parser_sandbox, "backend", lambda: "/usr/bin/sandbox-exec")
+    monkeypatch.setattr(parser_sandbox, "_runtime_roots", lambda: [tmp_path / "runtime"])
+    folder = tmp_path / '입력 "q" \\ ")) (allow default) ;'
+    folder.mkdir()
+    scratch = tmp_path / "작업"
+    scratch.mkdir()
+    args = [sys.executable, "-c", "pass"]
+    profiles, digests = [], []
+    for name in ("테스트앱.apk", "다른앱.apk"):
+        target = folder / name
+        target.write_bytes(b"synthetic")
+        command, metadata = parser_sandbox.sandbox_command(args, target, None, scratch, mode="required")
+        profile = (scratch / "parser.sb").read_text()
+        # SBPL has no \uXXXX escapes and must never parse a path: profile text names none.
+        assert profile.isascii() and str(tmp_path) not in profile and "allow default" not in profile
+        assert command[-len(args) :] == args and command[command.index("-f") + 1] == str(
+            scratch / "parser.sb"
+        )
+        assert {str(target.resolve()), str(folder.resolve()), str(scratch.resolve())} <= set(
+            _defines(command).values()
+        )
+        expanded = _expanded_profile(command, scratch)
+        assert "(subpath " + json.dumps(str(target.resolve()), ensure_ascii=False) + ")" in expanded
+        assert (
+            "(allow file-write* (subpath " + json.dumps(str(scratch.resolve()), ensure_ascii=False)
+            in expanded
+        )
+        profiles.append(profile)
+        digests.append(metadata["policy_sha256"])
+    # The digest still identifies the granted paths although the profile text is unchanged.
+    assert profiles[0] == profiles[1] and digests[0] != digests[1]
+
+
+@pytest.mark.skipif(
+    __import__("os").environ.get("APSA_SANDBOX_TEST") != "1",
+    reason="Explicit disposable-runner OS isolation test only",
+)
+@pytest.mark.parametrize("kind", ["apk", "source"])
+def test_actual_sandbox_scans_non_ascii_input_and_scratch_paths(monkeypatch, tmp_path, kind):
+    import tempfile
+
+    monkeypatch.setenv("APSA_PARSER_SANDBOX", "required")
+    monkeypatch.setenv("APSA_PARSER_LOCK_DIR", str(tmp_path / "locks"))
+    work = tmp_path / '임시 "작업" \\ 공간'
+    work.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(work))
+    manifest = '<manifest package="org.synthetic.korean"><application/></manifest>'
+    if kind == "apk":
+        (tmp_path / "한글 경로").mkdir()
+        target = tmp_path / "한글 경로" / "테스트앱.apk"
+        with zipfile.ZipFile(target, "w") as archive:
+            archive.writestr("AndroidManifest.xml", manifest)
+    else:
+        target = tmp_path / "한글 경로" / "소스 프로젝트"
+        (target / "app/src/main").mkdir(parents=True)
+        (target / "app/src/main/AndroidManifest.xml").write_text(manifest)
+    inventory = engine.analyze_target(target)["inventory"]
+    assert inventory["parser_isolation"]["state"] == "enforced"
+    assert inventory["package"] == "org.synthetic.korean"
 
 
 @pytest.mark.skipif(

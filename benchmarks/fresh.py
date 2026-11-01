@@ -42,7 +42,7 @@ JAVA_INCOMPLETE_RULES = [
     "AST-WEBVIEW-UNTRUSTED-URL",
 ]
 # This semantic diagnostic contains no machine path or temporary identifier.
-JAVA_PARTIAL_WARNING = "Native flow remains partial: object alias identity unavailable; unresolved callable identity or argument signature."
+JAVA_PARTIAL_WARNING = "Native flow remains limited: object alias identity unavailable; unresolved callable identity or argument signature."
 
 
 def load_module(name: str, path: Path):

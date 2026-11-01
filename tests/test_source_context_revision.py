@@ -76,9 +76,10 @@ def test_complete_context_rejects_incomplete_or_disjunctive_guards(language, def
 
 @pytest.mark.parametrize("language", CASES)
 @pytest.mark.parametrize(
-    "defect", ["missing", "nonempty", "duplicate", "unknown-chain", "cycle", "generic", "annotation"]
+    "defect",
+    ["missing", "nonempty", "duplicate", "unknown-chain", "cycle", "generic", "annotation", "member-type"],
 )
-def test_only_unique_complete_empty_ancestry_can_discharge_lookup(language, defect):
+def test_only_unique_resolved_ancestry_can_discharge_lookup(language, defect):
     text = source(language)
     original = {
         "java": "class OwnedBase {}",
@@ -109,10 +110,20 @@ def test_only_unique_complete_empty_ancestry_can_discharge_lookup(language, defe
         }[language]
     elif defect == "generic":
         replacement = original.replace("OwnedBase", "OwnedBase<T>")
+    elif defect == "member-type":
+        replacement = {
+            "java": "class OwnedBase { static class Uri {} }",
+            "kotlin": "open class OwnedBase { class Uri }",
+            "swift": "class OwnedBase { class URLRequest {} }",
+        }[language]
     else:
         replacement = "@Foreign\n" + original
     assert original in text
-    assert_result(language, text.replace(original, replacement), unsafe=True, partial=True)
+    # A unique Java/Kotlin source base whose own ancestry resolves may have members,
+    # type parameters or annotations; only a member type with the looked-up name
+    # shadows it. Swift keeps the empty-ancestry rule.
+    credited = language != "swift" and defect in {"nonempty", "generic", "annotation"}
+    assert_result(language, text.replace(original, replacement), unsafe=not credited, partial=not credited)
 
 
 @pytest.mark.parametrize("language", CASES)

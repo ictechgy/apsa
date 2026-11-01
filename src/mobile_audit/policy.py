@@ -10,17 +10,26 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .core import finding_identity, read_bounded, report_incomplete, severity_rank
+from .core import (
+    finding_identities,
+    match_identities,
+    own_identities,
+    read_bounded,
+    report_incomplete,
+    severity_rank,
+)
 
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 STATUSES = ("candidate", "version-affected", "configuration-confirmed", "runtime-confirmed")
 STATUS_RANK = {status: rank for rank, status in enumerate(STATUSES)}
+WAIVER_FIELDS = {"finding_id", "reason", "expires", "severity", "known_exploited"}
 DEFAULTS = {
     "schema_version": 1,
     "thresholds": {"critical": 0, "high": 0, "medium": -1, "low": -1, "info": -1},
     "allowed_statuses": list(STATUSES[1:]),
     "only_new": False,
     "fail_on_partial": True,
+    "strict_coverage": False,
     "required_rules": [],
     "require_fresh_intel": False,
     "required_feeds": [],
@@ -56,7 +65,7 @@ def _validate(policy: Any) -> dict:
         raise ValueError("Policy schema_version must be 1.")
     result = copy.deepcopy(DEFAULTS)
     result.update(copy.deepcopy(policy))
-    for name in ("only_new", "fail_on_partial", "require_fresh_intel"):
+    for name in ("only_new", "fail_on_partial", "strict_coverage", "require_fresh_intel"):
         if type(result[name]) is not bool:
             raise ValueError(f"Policy {name} must be a boolean.")
     thresholds = result["thresholds"]
@@ -83,8 +92,14 @@ def _validate(policy: Any) -> dict:
     ids = set()
     normalized = []
     for waiver in waivers:
-        if not isinstance(waiver, dict) or set(waiver) != {"finding_id", "reason", "expires"}:
-            raise ValueError("Each waiver must contain exactly finding_id, reason, and expires.")
+        if (
+            not isinstance(waiver, dict)
+            or not {"finding_id", "reason", "expires"} <= set(waiver) <= WAIVER_FIELDS
+        ):
+            raise ValueError(
+                "Each waiver must contain finding_id, reason, and expires, "
+                "and optionally severity and known_exploited."
+            )
         finding_id, reason, expiry = waiver["finding_id"], waiver["reason"], waiver["expires"]
         if not isinstance(finding_id, str) or not re.fullmatch(
             r"F-[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", finding_id
@@ -102,8 +117,19 @@ def _validate(policy: Any) -> dict:
             date.fromisoformat(expiry)
         except ValueError as error:
             raise ValueError(f"Waiver {finding_id} has an invalid expiry date.") from error
+        approved = {}
+        if "severity" in waiver:
+            if waiver["severity"] not in SEVERITIES:
+                raise ValueError(f"Waiver {finding_id} severity must be one of {', '.join(SEVERITIES)}.")
+            approved["severity"] = waiver["severity"]
+        if "known_exploited" in waiver:
+            if type(waiver["known_exploited"]) is not bool:
+                raise ValueError(f"Waiver {finding_id} known_exploited must be a boolean.")
+            if "severity" not in waiver:
+                raise ValueError(f"Waiver {finding_id} known_exploited requires the approved severity.")
+            approved["known_exploited"] = waiver["known_exploited"]
         ids.add(finding_id)
-        normalized.append({"finding_id": finding_id, "reason": reason.strip(), "expires": expiry})
+        normalized.append({"finding_id": finding_id, "reason": reason.strip(), "expires": expiry, **approved})
     result["waivers"] = normalized
     return result
 
@@ -145,6 +171,8 @@ allowed_statuses = ["configuration-confirmed", "runtime-confirmed", "version-aff
 # Add "candidate" explicitly if source/binary candidates should block CI.
 only_new = false
 fail_on_partial = true
+# strict_coverage = true also treats limited (precision-limited, fully examined) coverage as incomplete.
+strict_coverage = false
 required_rules = []
 # Require specific checks for this app, e.g. ["AST-WEBVIEW-UNTRUSTED-URL"].
 require_fresh_intel = false
@@ -166,6 +194,10 @@ info = -1
 # finding_id = "F-<identifier copied from the report>"
 # reason = "Document the reviewed scope and reason for this temporary exception."
 # expires = "YYYY-MM-DD"
+# Record the approved state: a higher severity, or a finding that becomes known
+# exploited, then reopens the finding instead of staying waived.
+# severity = "medium"
+# known_exploited = false
 """
 
 
@@ -204,8 +236,53 @@ def _findings(report: Any, label: str) -> tuple[list[dict], list[dict]]:
     return output, errors
 
 
-def _identity(item: dict) -> str:
-    return finding_identity(item["rule_id"], item["evidence"], item.get("scope", "app"))
+def _identities(items: list[dict]) -> list[tuple[set[str], set[str]]]:
+    return [(own_identities(item), finding_identities(item)) for item in items]
+
+
+def _waiver_escalation(waiver: dict, item: dict) -> bool:
+    """Whether a finding now exceeds the severity or known-exploited state its waiver approved.
+
+    Legacy waivers record no severity and keep suppressing as before.
+    """
+    if "severity" not in waiver:
+        return False
+    return severity_rank(item["severity"]) > severity_rank(waiver["severity"]) or (
+        item.get("known_exploited") is True and waiver.get("known_exploited") is not True
+    )
+
+
+def _created(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _baseline_order_problem(report: dict, baseline: Any) -> dict | None:
+    """Reject baselines that cannot predate the evaluated report.
+
+    A report compared with itself, or with a later snapshot, would mark every
+    current finding as already known and silently pass an only_new gate.
+    """
+    if not isinstance(baseline, dict):
+        return None
+    report_id, baseline_id = report.get("id"), baseline.get("id")
+    if isinstance(report_id, str) and report_id and report_id == baseline_id:
+        return {
+            "code": "baseline-is-report",
+            "message": "Baseline must be an earlier report, not the evaluated report itself.",
+        }
+    before, after = _created(baseline.get("created")), _created(report.get("created"))
+    if before is not None and after is not None and before > after:
+        return {
+            "code": "baseline-not-earlier",
+            "message": "Baseline was created after the evaluated report; choose an earlier report.",
+        }
+    return None
 
 
 def _subject(report: dict) -> tuple:
@@ -277,11 +354,21 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
     eligible = [item for item in current if item["status"] in policy["allowed_statuses"]]
     now = _now()
     today = now.date()
-    active, expired = [], []
-    waived_ids = set()
-    current_ids = {item["id"] for item in current} | {_identity(item) for item in current}
-    for waiver in policy["waivers"]:
-        record = {**waiver, "matched": waiver["finding_id"] in current_ids}
+    active, expired, notices = [], [], []
+    identities = _identities(current)
+    # Each waiver ID matches a finding's own identities or, for a dependency
+    # advisory whose display ID changed, one equivalent advisory identity.
+    waiver_matches = match_identities(
+        identities, [({w["finding_id"]}, {w["finding_id"]}) for w in policy["waivers"]]
+    )
+    matched_by: dict[int, list[dict]] = {}
+    for position, found in enumerate(waiver_matches):
+        for index in found:
+            matched_by.setdefault(index, []).append(current[position])
+    suppressed: set[str] = set()
+    for index, waiver in enumerate(policy["waivers"]):
+        matched = matched_by.get(index, [])
+        record = {**waiver, "matched": bool(matched)}
         if date.fromisoformat(waiver["expires"]) < today:
             expired.append(record)
             incomplete.append(
@@ -291,8 +378,39 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
                 }
             )
         else:
+            reopened = [item for item in matched if _waiver_escalation(waiver, item)]
+            suppressed.update(item["id"] for item in matched if not _waiver_escalation(waiver, item))
+            if "severity" not in waiver:
+                notices.append(
+                    {
+                        "code": "waiver-severity-unrecorded",
+                        "finding_id": waiver["finding_id"],
+                        "message": f"Waiver {waiver['finding_id']} does not record the approved severity, "
+                        "so a severity or known-exploited escalation cannot reopen its finding.",
+                    }
+                )
+            if reopened:
+                escalation = {
+                    "waived_severity": waiver["severity"],
+                    "waived_known_exploited": waiver.get("known_exploited", False),
+                    "current_severity": max((item["severity"] for item in reopened), key=severity_rank),
+                    "known_exploited": any(item.get("known_exploited") is True for item in reopened),
+                    "findings": sorted(item["id"] for item in reopened),
+                }
+                record["escalated"] = escalation
+                notices.append(
+                    {
+                        "code": "waiver-severity-escalated",
+                        "finding_id": waiver["finding_id"],
+                        **escalation,
+                        "message": f"Waiver {waiver['finding_id']} approved severity {waiver['severity']}"
+                        + (" with known exploitation" if escalation["waived_known_exploited"] else "")
+                        + f"; the finding is now {escalation['current_severity']}"
+                        + (" and known exploited" if escalation["known_exploited"] else "")
+                        + ", so the waiver no longer suppresses it.",
+                    }
+                )
             active.append(record)
-            waived_ids.add(waiver["finding_id"])
     baseline_existing = escalated = 0
     if policy["only_new"]:
         if baseline is None:
@@ -302,6 +420,10 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
         else:
             previous, errors = _findings(baseline, "Baseline")
             incomplete.extend(errors)
+            ordering = _baseline_order_problem(report, baseline)
+            if ordering is not None:
+                incomplete.append(ordering)
+                previous = []
             if isinstance(baseline, dict):
                 try:
                     subject_matches = _subject(report) == _subject(baseline)
@@ -322,12 +444,19 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
                             }
                         )
                         previous = []
-            known: dict[str, list[dict]] = {}
-            for item in previous:
-                known.setdefault(_identity(item), []).append(item)
+            # Every identity of every baseline item counts, including equivalent
+            # advisory IDs, but an alias never lets one baseline item cover two findings.
+            # Ambiguity is judged against every current finding, not only gated ones.
+            known = dict(
+                zip(
+                    (item["id"] for item in current),
+                    match_identities(identities, _identities(previous)),
+                    strict=True,
+                )
+            )
             newly_observed = []
             for item in eligible:
-                prior = known.get(_identity(item), [])
+                prior = [previous[index] for index in known[item["id"]]]
                 covered = any(
                     severity_rank(old["severity"]) >= severity_rank(item["severity"])
                     and STATUS_RANK[old["status"]] >= STATUS_RANK[item["status"]]
@@ -339,8 +468,8 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
                     newly_observed.append(item)
                     escalated += bool(prior)
             eligible = newly_observed
-    waived = [item for item in eligible if item["id"] in waived_ids or _identity(item) in waived_ids]
-    gated = [item for item in eligible if item["id"] not in waived_ids and _identity(item) not in waived_ids]
+    waived = [item for item in eligible if item["id"] in suppressed]
+    gated = [item for item in eligible if item["id"] not in suppressed]
     by_severity = {severity: sum(item["severity"] == severity for item in gated) for severity in SEVERITIES}
     blocking = []
     for severity, count in by_severity.items():
@@ -367,19 +496,24 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
             {"code": "invalid-coverage", "message": "Report coverage must contain rule_id/state records."}
         )
         coverage = []
+    strict = policy["strict_coverage"]
     if policy["fail_on_partial"]:
-        partial_rules = sorted({item["rule_id"] for item in coverage if item["state"] == "partial"})
-        if report_incomplete({**report, "coverage": coverage}):
+        # Limited coverage examined the whole scope; strict coverage also counts it.
+        counted = {"partial", "limited"} if strict else {"partial"}
+        partial_rules = sorted({item["rule_id"] for item in coverage if item["state"] in counted})
+        if report_incomplete({**report, "coverage": coverage}, strict=strict):
             incomplete.append(
                 {
                     "code": "partial-audit",
                     "rules": partial_rules,
-                    "message": "Audit explicitly reports partial execution or coverage.",
+                    "message": "Audit explicitly reports partial execution or coverage"
+                    + (", or limited coverage under strict_coverage." if strict else "."),
                 }
             )
+    satisfied = {"checked", "not-applicable"} | (set() if strict else {"limited"})
     for rule in policy["required_rules"]:
         checks = [item for item in coverage if item["rule_id"] == rule]
-        if not checks or any(item["state"] not in {"checked", "not-applicable"} for item in checks):
+        if not checks or any(item["state"] not in satisfied for item in checks):
             incomplete.append(
                 {
                     "code": "required-rule-incomplete",
@@ -435,7 +569,8 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
                         "message": f"Required intelligence feed {source} is missing, failed, stale, or has invalid freshness evidence.",
                     }
                 )
-    state = "incomplete" if incomplete else "failed" if failures else "passed"
+    # A threshold failure is never masked by incompleteness; both remain in reasons.
+    state = "failed" if failures else "incomplete" if incomplete else "passed"
     return {
         "schema_version": 1,
         "state": state,
@@ -454,6 +589,8 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
             "by_severity": by_severity,
         },
         "reasons": [*incomplete, *failures],
+        # Notices never change the gate state or exit code; reasons do.
+        "notices": notices,
         "active_waivers": active,
         "expired_waivers": expired,
         "waived_findings": [item["id"] for item in waived],
@@ -464,5 +601,6 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
             "thresholds": policy["thresholds"],
             "only_new": policy["only_new"],
             "fail_on_partial": policy["fail_on_partial"],
+            "strict_coverage": policy["strict_coverage"],
         },
     }

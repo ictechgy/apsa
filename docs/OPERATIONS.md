@@ -67,15 +67,15 @@ apsa policy evaluate latest --policy apsa.toml --baseline REPORT_ID --home /abso
 
 기본 정책은 `configuration-confirmed`, `runtime-confirmed`, `version-affected`만 임계값에 포함하며 `candidate`는 명시적으로 추가합니다. `only_new=true`는 실제 기준 보고서가 필요합니다. 동일한 발견도 심각도 또는 증거 상태가 상승하면 새 발견으로 평가합니다. 기준 보고서를 바꾸는 결정은 검토 기록으로 남기십시오.
 
-예외는 정확한 발견 ID, 비어 있지 않은 이유, `YYYY-MM-DD` 만료일이 필요합니다. 만료일은 UTC 해당 날짜까지 유효하며 만료·잘못된 예외는 검사를 `incomplete`로 만듭니다. `required_rules`는 `checked` 또는 `not-applicable`만 인정하며, 미실행·부분 실행·단순 관측(`observed`)은 통과를 막습니다. 예를 들어 `RUNTIME-DEEPLINK`는 URL 요청 성공만으로 만족하지 않고 대상 앱의 전달 marker 검증이 필요합니다. 전달 확인은 별도의 인증 검증을 대신하지 않습니다. 기본적으로 명시적인 `partial`도 통과를 막지만 계획만 존재하는 런타임 항목 전체를 자동 실패시키지 않습니다. 실시간 인텔을 필수로 삼으면 `require_fresh_intel`과 `required_feeds`를 명시하십시오.
+예외는 정확한 발견 ID, 비어 있지 않은 이유, `YYYY-MM-DD` 만료일이 필요합니다. 만료일은 UTC 해당 날짜까지 유효하며 만료·잘못된 예외는 검사를 `incomplete`로 만듭니다. `required_rules`는 `checked`, `not-applicable`과 `strict_coverage`가 false일 때의 `limited`를 인정하며, 미실행·부분 실행·단순 관측(`observed`)은 통과를 막습니다. `limited`는 입력 전체를 검사했지만 제한된 정적 모델이 일부 경로에서 판단을 유보했다는 뜻이고, `strict_coverage = true`나 `--strict-coverage`를 쓰면 불완전으로 셉니다. 예를 들어 `RUNTIME-DEEPLINK`는 URL 요청 성공만으로 만족하지 않고 대상 앱의 전달 marker 검증이 필요합니다. 전달 확인은 별도의 인증 검증을 대신하지 않습니다. 기본적으로 명시적인 `partial`도 통과를 막지만 계획만 존재하는 런타임 항목 전체를 자동 실패시키지 않습니다. 실시간 인텔을 필수로 삼으면 `require_fresh_intel`과 `required_feeds`를 명시하십시오.
 
 | 코드 | 의미 |
 | --- | --- |
 | 0 | 정상 처리 또는 정책 통과 |
 | 1 | 실행 실패 |
 | 2 | 잘못된 사용법·입력 설정 |
-| 3 | 정책 불완전, 보고서 검증 실패, 인텔 동기화 실패 등 |
-| 4 | 정상 평가 결과가 정책 임계값을 초과 |
+| 3 | 정책·감사 불완전(strict coverage에서는 `limited` 포함), 보고서 검증 실패, 인텔 동기화 실패 등 |
+| 4 | 정상 평가 결과가 정책 임계값을 초과. 불완전과 함께 발생해도 4가 우선 |
 | 130 | 사용자 인터럽트 |
 
 JSON의 `ok=true`는 종료 코드 4도 포함하므로 CI는 `exit_code`와 정책 `state`를 함께 확인하십시오. 정책 없는 일반 정적 검사의 종료 코드 0만으로 모든 범위를 검사했다고 판단하지 마십시오.

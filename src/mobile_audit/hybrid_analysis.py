@@ -572,7 +572,15 @@ class Flow:
                 end += 2
             name = ".".join(parts)
             value = set(env.get(parts[0], set()))
-            if name.startswith(("route.params", "window.location", "Uri.base.queryParameters")):
+            if name.startswith(
+                (
+                    "route.params",
+                    "props.route.params",
+                    "this.props.route.params",
+                    "window.location",
+                    "Uri.base.queryParameters",
+                )
+            ):
                 value.add(Origin(function.path, token.line, name))
             open_ = end + 1
             if open_ < len(tokens) and tokens[open_].text == "(" and open_ in pairs:
@@ -624,7 +632,13 @@ class Flow:
                     "evaluateJavaScript",
                 }:
                     sink = "HYBRID-JS-EVAL"
-                elif parts[-1] in {"executeSql", "rawQuery", "rawInsert", "rawUpdate"}:
+                elif parts[-1] in {"executeSql", "rawQuery", "rawInsert", "rawUpdate", "rawDelete"} or (
+                    # sqflite Database/Transaction/Batch.execute; the bare name is too generic elsewhere.
+                    parts[-1] == "execute"
+                    and function.path.endswith(".dart")
+                    and len(parts) >= 2
+                    and re.search(r"(?i)(?:db|database|txn|transaction|batch)$", parts[-2]) is not None
+                ):
                     sink = "HYBRID-SQL-INPUT"
                 elif parts[-1] in {"invokeMethod", "callHandler", "postMessage"} or name.startswith(
                     "NativeModules."
@@ -857,6 +871,9 @@ def analyze_hybrid(
     if observations_truncated:
         warnings.append("Hybrid input observation budget reached; additional framework content is unknown")
     flow = Flow(functions, imports, texts)
+    # A flow budget is an execution gap (partial); the bounded model's other
+    # abstentions over analyzed files are a precision limit (limited).
+    flow_budget = False
     # Reserve emission work within the unchanged total operation cap. Summary
     # exhaustion cannot consume all work before direct sinks are inspected.
     flow.operation_limit = max(1, MAX_OPERATIONS // 2)
@@ -869,8 +886,10 @@ def analyze_hybrid(
             flow.summaries = updated
         else:
             warnings.append("Hybrid callable summary iteration budget reached")
+            flow_budget = True
     except ValueError as error:
         warnings.append(f"Hybrid callable summaries incomplete: {error}")
+        flow_budget = True
     summary_operations = flow.operations
     flow.operation_limit = MAX_OPERATIONS
     try:
@@ -878,8 +897,10 @@ def analyze_hybrid(
             flow.run_function(function, True)
     except ValueError as error:
         warnings.append(f"Hybrid modeled emission incomplete: {error}")
+        flow_budget = True
     if flow.truncated:
         warnings.append("Hybrid finding/origin/call-depth budget reached")
+        flow_budget = True
     if flow.uncertain_calls:
         warnings.append(
             "Hybrid callable identity unresolved or shadowed; uncertain calls retain argument taint"
@@ -891,6 +912,14 @@ def analyze_hybrid(
     for record in files:
         if record["analysis_state"] == "analyzed":
             record["flow_state"] = "incomplete" if warnings else "bounded-modeled"
+            record["state"] = "partial" if flow_budget else "limited"
+    analyzed = any(record["analysis_state"] == "analyzed" for record in files)
+    execution_gap = (
+        observations_truncated
+        or flow_budget
+        or any(record["analysis_state"] == "skipped" for record in files)
+    )
+    coverage_state = "partial" if execution_gap else "limited" if analyzed else "not-applicable"
     frameworks = []
     for framework in sorted({record.get("framework", "javascript") for record in files}):
         members = [record for record in files if record.get("framework", "javascript") == framework]
@@ -912,7 +941,7 @@ def analyze_hybrid(
         "coverage": [
             {
                 "rule_id": rule,
-                "state": "partial" if files or observations_truncated else "not-applicable",
+                "state": coverage_state,
                 "method": "hybrid-structural-flow",
                 "note": note,
             }

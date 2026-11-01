@@ -70,9 +70,14 @@ def sandbox_command(
         path.resolve() for path in hidden if any(path.resolve().is_relative_to(root) for root in reads)
     )
     if sys.platform == "darwin":
-        # JSON quoted path strings have the escaping needed by SBPL string literals.
-        def quoted(path):
-            return json.dumps(str(path), ensure_ascii=True)
+        # Paths reach Seatbelt as -D parameters, never as SBPL source: string
+        # literals have no \uXXXX escapes (non-ASCII paths would not match), and
+        # a parameter value cannot alter the profile's syntax.
+        parameters: dict[str, str] = {}
+
+        def param(path):
+            name = parameters.setdefault(str(path), f"PATH{len(parameters)}")
+            return f'(param "{name}")'
 
         system_code = [
             Path("/System/Library"),
@@ -92,10 +97,10 @@ def sandbox_command(
             "(deny default)",
             "(allow process-fork)",
             "(allow sysctl-read)",
-            "(allow process-exec (literal " + quoted(Path(sys.executable).resolve()) + "))",
+            "(allow process-exec (literal " + param(Path(sys.executable).resolve()) + "))",
             *(
                 # Framework builds (python.org, Homebrew) re-exec this app-bundle interpreter.
-                "(allow process-exec (literal " + quoted(app.resolve()) + "))"
+                "(allow process-exec (literal " + param(app.resolve()) + "))"
                 for app in [Path(sys.base_prefix) / "Resources/Python.app/Contents/MacOS/Python"]
                 if app.is_file()
             ),
@@ -103,28 +108,30 @@ def sandbox_command(
             '(allow file-read* file-test-existence (literal "/usr/bin/openssl"))',
             "(allow file-read-metadata)",
             "(allow file-read* file-test-existence "
-            + " ".join("(subpath " + quoted(path) + ")" for path in paths)
+            + " ".join("(subpath " + param(path) + ")" for path in paths)
             + ' (literal "/"))',
             "(allow file-read* file-test-existence "
-            + " ".join("(literal " + quoted(path) + ")" for path in read_parents)
+            + " ".join("(literal " + param(path) + ")" for path in read_parents)
             + ")",
             "(allow file-map-executable "
-            + " ".join("(subpath " + quoted(path) + ")" for path in executable_maps)
+            + " ".join("(subpath " + param(path) + ")" for path in executable_maps)
             + ' (literal "/usr/bin/openssl"))',
             '(allow file-read* (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
             '(allow file-read-data file-write-data file-test-existence (subpath "/dev/fd"))',
-            "(allow file-write* (subpath " + quoted(scratch) + ') (literal "/dev/null"))',
+            "(allow file-write* (subpath " + param(scratch) + ') (literal "/dev/null"))',
         ]
         rules += [
-            "(deny file-read* file-write* file-map-executable (subpath " + quoted(path) + "))"
+            "(deny file-read* file-write* file-map-executable (subpath " + param(path) + "))"
             for path in protected
         ]
         profile = "\n".join(rules) + "\n"
         path = scratch / "parser.sb"
         path.write_text(profile)
         path.chmod(0o600)
-        command = [executable, "-f", str(path), *args]
-        policy_bytes = profile.encode()
+        defines = [arg for value, name in parameters.items() for arg in ("-D", f"{name}={value}")]
+        command = [executable, *defines, "-f", str(path), *args]
+        # The digest covers parameter values too: the profile text alone names no path.
+        policy_bytes = json.dumps([profile, defines], ensure_ascii=True).encode()
     else:
         command = [
             executable,

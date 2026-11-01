@@ -144,7 +144,8 @@ def run(manifest_path: Path = DEFAULT_MANIFEST, case_ids: list[str] | None = Non
                 {
                     row["rule_id"]
                     for row in analysis.get("coverage", [])
-                    if row["state"] in {"partial", "not-run"}
+                    # Benchmarks stay strict: a precision-limited rule is not scored.
+                    if row["state"] in {"partial", "limited", "not-run"}
                 }
             )
         except (OSError, ValueError, KeyError, UnicodeError) as exception:
