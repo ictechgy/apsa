@@ -1355,3 +1355,89 @@ def test_inherited_homonyms_beyond_direct_bases_are_recorded(files):
 def test_another_class_private_homonym_is_not_a_candidate():
     report = analyze_sources(TWO_DAOS)
     assert "opener receiver identity unresolved" not in report["metadata"]["native_flow"]["reasons"]
+
+
+# Round-10 review shapes: argument comments, receiver parameters, vararg with defaults,
+# framework on-demand static imports and function-typed properties elsewhere.
+R10_CASES = {
+    "1-java-arg-comment": [
+        (
+            "app/Repo.java",
+            """package com.example;
+import android.content.Intent;
+import android.database.sqlite.SQLiteDatabase;
+public class Repo {
+  private SQLiteDatabase db;
+  void openDatabase(String name, boolean readOnly) { db.execSQL("ATTACH DATABASE '" + name + "' AS extra"); }
+  void go(Intent intent) { openDatabase(intent.getStringExtra("q"), /* readOnly= */ false); }
+}
+""",
+        )
+    ],
+    "2a-java-receiver-param": [
+        (
+            "app/BaseRepo.java",
+            """package com.example;
+import android.database.sqlite.SQLiteDatabase;
+public class BaseRepo { protected SQLiteDatabase db; protected void openDatabase(BaseRepo this, String n) { db.execSQL("ATTACH DATABASE '" + n + "' AS extra"); } }
+""",
+        ),
+        (
+            "app/Main.java",
+            """package com.example;
+import android.content.Intent;
+public class Main extends BaseRepo { void go(Intent i) { openDatabase(i.getStringExtra("q")); } }
+""",
+        ),
+    ],
+    "2b-kotlin-vararg-defaults": [
+        (
+            "app/Repo.kt",
+            """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class Repo { lateinit var db: SQLiteDatabase
+    fun openDatabase(name: String, readOnly: Boolean = false, vararg attach: String) { db.execSQL("ATTACH DATABASE '" + name + "' AS extra") }
+    fun q(intent: Intent) { openDatabase(intent.dataString ?: "") } }
+""",
+        )
+    ],
+    "3-framework-star-import": [
+        (
+            "app/Db.java",
+            """package com.example;
+public final class Db { public static Object openDatabase(String n, Object f, long flags) { return null; } }
+""",
+        ),
+        (
+            "app/Main.java",
+            """package com.example;
+import static com.example.Db.openDatabase;
+import static android.database.sqlite.SQLiteDatabase.*;
+import android.content.Intent;
+public class Main { void go(Intent intent, String path) {
+  openDatabase(path, null, 0).execSQL("DELETE FROM t WHERE id = " + intent.getStringExtra("q")); } }
+""",
+        ),
+    ],
+    "4-outer-property-binding": [
+        (
+            "app/O.kt",
+            """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class Outer(private val db: SQLiteDatabase) {
+    var openDatabase: (String) -> Unit = { n -> db.execSQL("ATTACH '" + n + "'") }
+    inner class In { fun go(intent: Intent) { openDatabase(intent.getStringExtra("q") ?: "") } }
+}
+""",
+        )
+    ],
+}
+
+
+@pytest.mark.parametrize("name", sorted(R10_CASES))
+def test_round_ten_opener_shapes_never_claim_checked_without_a_finding(name):
+    report = analyze_sources(R10_CASES[name])
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"

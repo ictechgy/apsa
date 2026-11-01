@@ -138,16 +138,19 @@ device or credential service was contacted.
   their enclosing function; early exits in Java constructors guard later
   statements; a receiverless `openDatabase`/`openOrCreateDatabase` is the
   framework opener unless a Java or Kotlin source callable of that name could
-  take its arguments, or a value binding of that name is in scope. Otherwise
-  it is followed as project code where the flow can resolve it, and which
-  callee runs is treated as certain only when the flow's resolution covers
-  every such source callable and no framework static import shares the name,
-  and then only when every target declares a `SQLiteDatabase` return, the
-  call's arity cannot fit `Context.openOrCreateDatabase(name, mode, factory[,
-  handler])`, or the name is `openDatabase` (which Context does not declare).
-  In every other case the receiver and the arguments only pick the more likely
-  result type, and the guess is recorded (`opener receiver identity
-  unresolved`, so coverage is `limited`);
+  take its arguments and is visible at the call (another class's private
+  member is not), a property or value binding of that name exists, or a
+  non-framework import of that name reaches it. Otherwise it is followed as
+  project code where the flow can resolve it, and which callee runs is treated
+  as certain only when the flow's resolution covers every such source
+  callable, no property of that name exists and no framework static import
+  (single or on-demand) could supply the name, and then only when every target
+  declares a `SQLiteDatabase` return, the call's arity cannot fit
+  `Context.openOrCreateDatabase(name, mode, factory[, handler])`, or the name
+  is `openDatabase` (which Context does not declare). In every other case the
+  receiver and the arguments only pick the more likely result type, and the
+  guess is recorded (`opener receiver identity unresolved`, so coverage is
+  `limited`);
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies

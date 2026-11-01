@@ -1086,9 +1086,18 @@ class Analyzer:
         ]
         framework_import = any(
             symbol.startswith(("android.", "androidx.")) for symbol in flow.imported_symbols(self, call.name)
+        ) or any(
+            declaration.removeprefix("static ").strip().startswith(("android.", "androidx."))
+            and declaration.strip().endswith(".*")
+            and (self.language == "kotlin" or declaration.strip().startswith("static "))
+            for declaration in self.imports
         )
-        bound = flow.value_binding(self, call, frame) is not None or flow.module_value_present(
-            self, call.name, aliases=True
+        # A function-typed property of that name (inherited, on an outer class, anywhere)
+        # may be the callee too; the value-binding check sees only the current scope.
+        bound = (
+            flow.value_binding(self, call, frame) is not None
+            or flow.module_value_present(self, call.name, aliases=True)
+            or self.property_homonym(call.name)
         )
         if not targets:
             if not candidates and not bound and not (relevant and self.opener_reachable(call, frame)):
@@ -1099,7 +1108,9 @@ class Analyzer:
         self.opener_follow = True
         self.opener_returns = all(self.declared_return(target) for target in targets)
         resolved = {id(target.node) for target in targets}
-        complete = not framework_import and all(id(target.node) in resolved for target in candidates)
+        complete = (
+            not framework_import and not bound and all(id(target.node) in resolved for target in candidates)
+        )
         if complete and all(self.declares_database(target) for target in targets):
             self.opener_certain = True
             return True
@@ -1113,13 +1124,47 @@ class Analyzer:
         self.opener_prefers_framework = kind == "yes" and self.context_arguments(call, frame)
         return True
 
+    def property_homonym(self, name: str) -> bool:
+        """Whether any Java or Kotlin source declares a property or field of that name."""
+        flow = self.native_flow
+        if flow is None:
+            return False
+        cache: dict[str, bool] = flow.__dict__.setdefault("opener_property_names", {})
+        if name not in cache:
+            found = False
+            for analyzer, root, _nodes in flow.files:
+                if found or analyzer.language not in {"java", "kotlin"}:
+                    continue
+                for node in _walk(root):
+                    if node.type == "property_declaration":
+                        names = [
+                            child.named_children[0]
+                            for child in node.named_children
+                            if child.type == "variable_declaration" and child.named_children
+                        ]
+                    elif node.type == "field_declaration":
+                        names = [
+                            child.named_children[0]
+                            for child in node.named_children
+                            if child.type == "variable_declarator" and child.named_children
+                        ]
+                    else:
+                        continue
+                    if any(analyzer.text(item) == name for item in names):
+                        found = True
+                        break
+            cache[name] = found
+        return cache[name]
+
     def visible_member(self, target: Any, node: Any) -> bool:
         """Whether a callable may be visible at `node`: a private member is visible only
         inside its declaring class (Java: inside its top-level class)."""
-        if not target.owner or not target.analyzer.has_modifier(target.node, "private"):
+        if not target.analyzer.has_modifier(target.node, "private"):
             return True
         if target.analyzer.path != self.path:
-            return False
+            return False  # private members, and Kotlin private top-level functions, are file-local
+        if not target.owner:
+            return True
         declaring = target.node.parent
         while declaring is not None and declaring.type not in {
             "class_declaration",
@@ -1145,7 +1190,7 @@ class Analyzer:
 
     def call_arity(self, call: Call) -> int:
         """Argument count of a call, counting a trailing lambda (a SAM argument)."""
-        return len(call.args) + sum(
+        return sum(1 for argument in call.args if argument.type not in COMMENTS) + sum(
             1
             for child in call.node.children
             for part in (child.children if child.type == "call_suffix" else [child])
@@ -1165,17 +1210,25 @@ class Analyzer:
         )
         if parameters is None:
             return True
-        declared = [
-            part
-            for part in parameters.named_children
-            if part.type in {"parameter", "formal_parameter", "spread_parameter", "receiver_parameter"}
-        ]
-        text = target.analyzer.text(parameters)
-        if "..." in text or "vararg" in text:
-            return arity >= len(declared) - 1
-        if "=" in text:
-            return arity <= len(declared)  # default values make trailing parameters optional
-        return arity == len(declared)
+        # A receiver parameter (`Foo this`) takes no argument; a parameter followed by `=`
+        # has a default; a vararg (Kotlin modifier or Java `...`) takes any number.
+        children = parameters.children
+        required = maximum = 0
+        unbounded = False
+        for index, child in enumerate(children):
+            if child.type not in {"parameter", "formal_parameter", "spread_parameter"}:
+                continue
+            default = index + 1 < len(children) and children[index + 1].type == "="
+            vararg = child.type == "spread_parameter" or (
+                index > 0
+                and children[index - 1].type == "parameter_modifiers"
+                and "vararg" in target.analyzer.text(children[index - 1])
+            )
+            maximum += 1
+            unbounded = unbounded or vararg
+            if not default and not vararg:
+                required += 1
+        return required <= arity and (unbounded or arity <= maximum)
 
     def opener_reachable(self, call: Call, frame: Frame) -> bool:
         """Whether an unresolved receiverless opener may still reach project code."""
