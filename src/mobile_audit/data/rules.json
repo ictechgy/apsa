@@ -34,7 +34,7 @@
       ".swift"
     ],
     "requires": "WebView|WKWebView|intent\\.data|URLComponents",
-    "pattern": "(?:(?:url|uri)\\s*(?:\\?\\.)?\\s*\\.?\\s*(?:contains|startsWith|endsWith|hasPrefix|hasSuffix)|(?:host|hostname)\\s*(?:\\?\\.)?\\s*\\.?\\s*(?:contains|startsWith|hasPrefix|(?:endsWith|hasSuffix)(?!\\s*\\(\\s*\\\"\\.)))\\s*\\(",
+    "pattern": "(?:(?:url|uri)\\s*(?:\\?\\.)?\\s*\\.?\\s*(?:contains|startsWith|endsWith|hasPrefix|hasSuffix)|(?:host|hostname)\\s*(?:\\?\\.)?\\s*\\.?\\s*(?:contains|startsWith|hasPrefix|(?:endsWith|hasSuffix)(?!\\s*\\(\\s*\\\"\\.(?!(?:(?:[\\w-]+\\.)*amazonaws\\.com|github\\.io|githubusercontent\\.com|gitlab\\.io|firebaseapp\\.com|firebaseio\\.com|web\\.app|herokuapp\\.com|appspot\\.com|run\\.app|cloudfunctions\\.net|cloudfront\\.net|elasticbeanstalk\\.com|azurewebsites\\.net|azurestaticapps\\.net|azureedge\\.net|cloudapp\\.net|blob\\.core\\.windows\\.net|trafficmanager\\.net|netlify\\.app|vercel\\.app|now\\.sh|pages\\.dev|workers\\.dev|blogspot\\.com|wordpress\\.com|wixsite\\.com|glitch\\.me|onrender\\.com|fly\\.dev|surge\\.sh|ngrok\\.io|ngrok-free\\.app)\\\"))))\\s*\\(",
     "severity": "high",
     "masvs": "MASVS-PLATFORM",
     "remediation": "Parse the URL and validate scheme and exact host, including a dot-boundary check for approved subdomains. Add runtime link cases.",
@@ -149,7 +149,7 @@
       ".m",
       ".mm"
     ],
-    "pattern": "(?:putString|setString|UserDefaults(?:[^\\n;]|\\n(?=[ \\t]*\\.))*?\\.set(?:Value|Object)?|NSUserDefaults[^;\\n]*?\\bset(?:Object|Value)\\s*:)\\s*\\(?[^\\n;]*(?:token|password|secret|session)",
+    "pattern": "(?:putString|setString|UserDefaults(?:(?:[^\\n;Uu]|[Uu](?!serDefaults)){0,200}+\\n(?=[ \\t]*\\.)(?:[^\\n;]{0,200}+\\n(?=[ \\t]*\\.)){0,3}?)??(?>[^\\n;]{0,200}?\\.set)(?:Value|Object)?+|NSUserDefaults(?>[^;\\n]{0,200}?\\bset(?:Object|Value)\\s*+:))\\s*+\\(?[^\\n;]{0,200}(?:token|password|secret|session)",
     "severity": "medium",
     "masvs": "MASVS-STORAGE",
     "remediation": "Review the data sensitivity and use platform-backed secure storage where required. Verify logout invalidation and deletion policy.",

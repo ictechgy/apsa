@@ -18,8 +18,10 @@ device or credential service was contacted.
   Objective-C model (`OBJC-*` rules), hybrid JS/TS/Dart flow, project-specified
   Swift SQL sinks and unresolved Kotlin imports. `limited` is reported in JSON,
   Markdown, SARIF, CycloneDX, checklists, the TUI, MCP and the Action summary,
-  and exits 0 by default. Most real projects that ended with exit 3 under 1.6.x
-  now end with 0 or 4. `scan --strict-coverage`, `policy evaluate
+  and exits 0 by default. Many projects that ended with exit 3 under 1.6.x now
+  end with 0 or 4; Swift apps that also contain Objective-C sources, and
+  projects whose sources are partly examined by a rule (see below), stay at
+  exit 3 as in 1.6.4. `scan --strict-coverage`, `policy evaluate
   --strict-coverage`, policy `strict_coverage = true` and the Action input
   `strict-coverage: "true"` restore the previous strictness. Without strict
   coverage, `limited` also satisfies policy `required_rules`. `limited` does not
@@ -112,8 +114,15 @@ device or credential service was contacted.
 
 - Source flow: guards no longer leak across `else if`, `switch`/`when` and loop
   bodies; Kotlin string templates, same-class constants and `apply`/`run`/`with`
-  implicit receivers are modelled; Swift `if let`/`guard let` bindings and
-  bodies are analyzed; `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
+  implicit receivers are modelled; Swift `if`/`guard` condition clauses are
+  analyzed in source order, so checks after `if let`/`guard let` credit the
+  bound value, chained, typed, shorthand and `case` bindings and sinks in
+  `guard` else bodies are followed, a shadowing `if let` no longer credits the
+  outer variable, and `AST-WEBVIEW-HOST-ALLOWLIST` reads every clause of a
+  navigation-policy condition; early exits in Java constructors guard later
+  statements; a project method named `openDatabase`/`openOrCreateDatabase` is
+  analyzed as project code rather than as the framework opener;
+  `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies
   parse losslessly.
@@ -128,7 +137,10 @@ device or credential service was contacted.
 - Source rules: Timber, `Log.wtf`, more `console.*`, `debugPrint` and `os_log`
   logging; `UserDefaults.setValue`, multi-line chains and Objective-C
   `NSUserDefaults` token storage; dot-anchored host suffix checks are no longer
-  reported; new `SOURCE-WORLD-ACCESSIBLE-FILE`; lambda hostname verifiers and
+  reported unless the suffix is a shared-hosting public suffix (`.github.io`,
+  `.web.app`, `.herokuapp.com`, `*.amazonaws.com` and similar), which the AST
+  engine also no longer accepts as a host allowlist; new
+  `SOURCE-WORLD-ACCESSIBLE-FILE`; lambda hostname verifiers and
   `X509ExtendedTrustManager`; Kotlin `*Activity` subclasses and SQLite
   accessors; Objective-C `@import`; React Navigation route params and sqflite
   `rawDelete`/`execute`; `.xcconfig` credential screening (`.env` remains
@@ -162,14 +174,23 @@ APK, AAB, IPA, ZIP and APK-set inputs, including each selected APK of an
 directory exceeds the entry or byte budget, or when no end record lies within
 the last 64 KiB + 22 bytes (the widest window a supported CPython searches).
 SARIF ingest redacts credential-like assignments in linear time, with unchanged
-output. Non-ASCII paths work under macOS parser isolation.
+output. `STORAGE-TOKEN-PREFS` scans in linear time: a `UserDefaults` chain is
+followed for up to four continuation lines of up to 200 characters, and the
+credential word must appear within 200 characters after the setter. Non-ASCII paths work under macOS parser isolation.
 
 ## Remaining limits
 
 Analysis remains bounded and partial. Swift memberwise initializers are not
 modelled, so SwiftUI views that construct other source views usually report
 `limited`. Android framework member-type lists come from the public SDK
-surface and were not checked against `android.jar`. Hermes bytecode is not
+surface and were not checked against `android.jar`. In Kotlin Multiplatform
+projects, rules not implemented for Swift still report the Kotlin result.
+SARIF `executionSuccessful` stays `true` for `limited` coverage; the limitation
+is reported as a notification. Some URL sources (`URLContexts.first`), Swift
+`&&` conditions (the comma form is credited) and negated early-return host
+checks are not credited as guards, so guarded code there can still be
+reported. The shared-hosting suffix list is curated rather than the full public
+suffix list. Hermes bytecode is not
 decoded, and the hybrid engine is not a complete JavaScript/TypeScript/Dart
 grammar. Static candidates do not establish runtime reachability or
 exploitability. This release does not include a GUI installer.

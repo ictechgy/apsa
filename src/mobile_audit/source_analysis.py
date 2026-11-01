@@ -51,8 +51,21 @@ FUNCTIONS = {
 COMMENTS = {"comment", "line_comment", "block_comment", "multiline_comment"}
 STRINGS = {"string_literal", "line_string_literal", "multi_line_string_literal", "character_literal"}
 IDENTIFIERS = {"identifier", "simple_identifier"}
-BLOCKS = {"block", "statements", "function_body"}
+# Statement lists; Java constructors have their own body type, Kotlin/Swift reuse block/function_body.
+BLOCKS = {"block", "statements", "function_body", "constructor_body"}
 URI_REFERENCE = "https://developer.android.com/privacy-and-security/risks/unsafe-uri-loading"
+# Shared-hosting public suffixes: anyone can register a subdomain, so a dot-anchored suffix
+# check against one is no allowlist. WEBVIEW-HOST-MATCH in data/rules.json uses the same list.
+SHARED_HOSTING_SUFFIXES = (
+    r"(?:[\w-]+\.)*amazonaws\.com|github\.io|githubusercontent\.com|gitlab\.io"
+    r"|firebaseapp\.com|firebaseio\.com|web\.app|herokuapp\.com|appspot\.com|run\.app"
+    r"|cloudfunctions\.net|cloudfront\.net|elasticbeanstalk\.com|azurewebsites\.net"
+    r"|azurestaticapps\.net|azureedge\.net|cloudapp\.net|blob\.core\.windows\.net"
+    r"|trafficmanager\.net|netlify\.app|vercel\.app|now\.sh|pages\.dev|workers\.dev"
+    r"|blogspot\.com|wordpress\.com|wixsite\.com|glitch\.me|onrender\.com|fly\.dev|surge\.sh"
+    r"|ngrok\.io|ngrok-free\.app"
+)
+SHARED_HOSTING = re.compile(SHARED_HOSTING_SUFFIXES, re.I)
 # Framework flag values a PendingIntent flags expression may contain. Intent activity flags
 # share bits with PendingIntent flags (FLAG_ACTIVITY_CLEAR_TOP is FLAG_IMMUTABLE's bit), so
 # mutability is decided by value, not by name.
@@ -536,6 +549,30 @@ class Frame:
         )
 
 
+@dataclass(frozen=True)
+class SwiftClause:
+    """One comma-separated clause of a Swift `if`/`guard` condition list.
+
+    A boolean clause has `condition`. An optional binding or `case` pattern has the
+    names it binds (name, bound identifier node) and its `initializer`, which is None
+    for the `if let x` shorthand that unwraps the existing binding under the same name.
+    """
+
+    condition: Any = None
+    names: tuple[tuple[str, Any], ...] = ()
+    initializer: Any = None
+    pattern: bool = False
+
+    @property
+    def node(self) -> Any:
+        """The node recorded in the enclosing condition list for this clause."""
+        if self.condition is not None:
+            return self.condition
+        if self.initializer is not None:
+            return self.initializer
+        return self.names[0][1] if self.names else None
+
+
 SQLITE_DATABASE = "android.database.sqlite.SQLiteDatabase"
 # SDK accessors whose result is a SQLiteDatabase even when the helper type is a project class.
 SQLITE_ACCESSORS = {"writableDatabase", "readableDatabase"}
@@ -804,52 +841,83 @@ class Analyzer:
                     found.append((self.symbol_name(match.group(0)), following))
         return found
 
-    def swift_condition_parts(self, node: Any) -> tuple[list[Any], list[tuple[str, Any, Any]], Any, Any]:
-        """Split a Swift if/guard into boolean conditions, `let`/`var` bindings, body and else arm.
+    def swift_clauses(self, node: Any) -> tuple[list[SwiftClause], Any, Any]:
+        """Split a Swift if/guard into its condition clauses in source order, body and else arm.
 
-        Bindings are (name, initializer or None for `if let x`, bound identifier node).
+        The grammar lays the clauses out as flat `condition`/`bound_identifier` children
+        separated by unlabeled commas; a comma inside a `case` pattern is a `condition`.
         """
-        parts: list[Any] = []
-        bindings: list[tuple[str, Any, Any]] = []
+        clauses: list[SwiftClause] = []
+        current: list[tuple[str | None, Any]] = []
         then_node = else_node = None
-        pending = None
         seen_else = False
         for index, child in enumerate(node.children):
             field = node.field_name_for_child(index)
-            if field == "bound_identifier":
-                if pending is not None:
-                    bindings.append((pending[0], None, pending[1]))
-                pending = (self.symbol_name(self.text(child)), child)
-            elif field == "condition":
-                if not child.is_named or child.type == "value_binding_pattern":
-                    continue
-                if pending is not None:
-                    bindings.append((pending[0], child, pending[1]))
-                    pending = None
-                else:
-                    parts.append(child)
-            elif child.type == "else":
+            if field in {"condition", "bound_identifier"}:
+                current.append((field, child))
+                continue
+            clauses += self.swift_clause(current)
+            current = []
+            if child.type == "else":
                 seen_else = True
             elif child.type in {"statements", "if_statement"}:
                 if seen_else:
                     else_node = child
                 elif then_node is None:
                     then_node = child
-        if pending is not None:
-            bindings.append((pending[0], None, pending[1]))
-        return parts, bindings, then_node, else_node
+        clauses += self.swift_clause(current)
+        return clauses, then_node, else_node
 
-    def bind_swift_local(self, name: str, expression: Any, anchor: Any, source: Frame, target: Frame) -> None:
-        """Bind an optional-binding name like a local declaration initialized from `expression`."""
-        if expression is None:
+    def swift_clause(self, parts: list[tuple[str | None, Any]]) -> list[SwiftClause]:
+        """Classify one clause: a boolean condition, an optional binding or a `case` pattern."""
+        children = [child for _, child in parts]
+        equals = next((index for index, child in enumerate(children) if child.type == "="), len(children))
+        head = children[:equals]
+        if not any(child.type in {"case", "value_binding_pattern"} for child in head):
+            return [SwiftClause(condition=child) for child in children if child.is_named]
+        initializer = next((child for child in children[equals + 1 :] if child.is_named), None)
+        names: list[tuple[str, Any]] = []
+        # `case let .x(a)` and `let (a, b)` bind every bare pattern name; `case .x(let a)` binds a.
+        binds_all = False
+        for label, child in parts[:equals]:
+            if label == "bound_identifier":
+                names.append((self.symbol_name(self.text(child)), child))
+            elif child.type == "value_binding_pattern":
+                binds_all = True
+            elif child.type == "pattern":
+                for part in _walk(child):
+                    if part.type != "pattern":
+                        continue
+                    named = part.named_children
+                    if binds_all and len(named) == 1 and named[0].type in IDENTIFIERS:
+                        names.append((self.symbol_name(self.text(named[0])), named[0]))
+                    names += [
+                        (self.symbol_name(self.text(item)), item)
+                        for index, item in enumerate(part.children)
+                        if part.field_name_for_child(index) == "bound_identifier"
+                    ]
+        pattern = any(child.type in {"case", "pattern"} for child in head)
+        return [SwiftClause(names=tuple(names), initializer=initializer, pattern=pattern)]
+
+    def bind_swift_clause(self, clause: SwiftClause, frame: Frame) -> None:
+        """Bind a clause's names in `frame` like local declarations initialized from its initializer.
+
+        An optional binding holds the unwrapped value. A `case` or destructuring pattern
+        binds part of the matched value, so its names keep only the value's taint.
+        """
+        if clause.initializer is None:
             # `if let x` / `guard let x` unwraps the existing binding under the same name.
             return
-        value = self.value(expression, source).bind(self.point(anchor))
-        if self.native_flow is not None:
-            value = self.native_flow.local_value(self, anchor, "", value, target, initialized=True)
-        target.local_names.add(name)
-        target.constants.pop(name, None)
-        target.values[name] = Value(value.traces, value.category, value.type_name, value.identity)
+        value = self.value(clause.initializer, frame)
+        if clause.pattern:
+            value = Value(value.traces)
+        for name, anchor in clause.names:
+            bound = value.bind(self.point(anchor))
+            if self.native_flow is not None:
+                bound = self.native_flow.local_value(self, anchor, "", bound, frame, initialized=True)
+            frame.local_names.add(name)
+            frame.constants.pop(name, None)
+            frame.values[name] = Value(bound.traces, bound.category, bound.type_name, bound.identity)
 
     def sqlite_database_call(self, call: Call, receiver: Value) -> bool:
         """SDK calls that return a SQLiteDatabase: helper getters and Context/SQLiteDatabase openers."""
@@ -860,12 +928,27 @@ class Analyzer:
         if call.name not in SQLITE_OPENERS:
             return False
         if call.receiver is None:
-            return True
+            # A project method of the same name is analyzed like any other call.
+            return not self.project_callable(call.name, call.node)
         key = self.key(call.receiver)
         return (
             key in {"SQLiteDatabase", SQLITE_DATABASE}
             or bool(re.search(r"\b(?:Context|Activity|Application|Service)\b", receiver.type_name))
             or bool(re.fullmatch(r"(?i)(?:\w*context|ctx)(?:\(\))?", key or ""))
+        )
+
+    def project_callable(self, name: str, node: Any) -> bool:
+        """Whether the analyzed sources of this language declare a function or method `name`."""
+        if self.native_flow is not None:
+            return any(
+                target.analyzer.language == self.language for target in self.native_flow.by_name.get(name, [])
+            )
+        root = node
+        while root.parent is not None:
+            root = root.parent
+        return any(
+            part.type in FUNCTIONS and self.symbol_name(self.text(_field(part, "name"))) == name
+            for part in _walk(root)
         )
 
     def identifier_value(self, name: str, frame: Frame, node: Any) -> Value:
@@ -1610,7 +1693,7 @@ class Analyzer:
                     receiver.category == "host"
                     and literal
                     and literal.startswith(".")
-                    and self.hostname(literal[1:])
+                    and self.owned_suffix(literal[1:])
                 ):
                     return {trace.origin: {"host"} for trace in receiver.traces}
         from .native_guards import path_predicate
@@ -1620,6 +1703,11 @@ class Analyzer:
     @staticmethod
     def hostname(value: str) -> bool:
         return bool(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", value)) and ".." not in value
+
+    @classmethod
+    def owned_suffix(cls, value: str) -> bool:
+        """A host suffix only its owner can extend: not a shared-hosting public suffix."""
+        return cls.hostname(value) and not SHARED_HOSTING.fullmatch(value)
 
     def comparison(self, expression: Any, literal_node: Any, frame: Frame) -> dict[GuardKey, set[str]]:
         value = self.value(expression, frame)
@@ -1742,7 +1830,7 @@ class Analyzer:
                     call.name in {"endsWith", "hasSuffix"}
                     and receiver.category == "host"
                     and literal.startswith(".")
-                    and self.hostname(literal[1:])
+                    and self.owned_suffix(literal[1:])
                 ):
                     continue
                 results.append(call)
@@ -2458,15 +2546,46 @@ class Analyzer:
                     self.native_flow.assign_member(self, left, value, frame)
                 return
         if node.type in {"if_statement", "if_expression"}:
-            bindings: list[tuple[str, Any, Any]] = []
+            # Checks every clause of a multi-clause Swift condition establishes, in clause order.
+            established: dict[GuardKey, set[str]] = {}
+            bound: set[str] = set()
             if self.language == "swift":
-                # Swift lays out `if let a = b, c { ... } else { ... }` as flat children.
-                parts, bindings, then_node, else_node = self.swift_condition_parts(node)
-                for part in [*parts, *(expression for _, expression, _ in bindings if expression)]:
-                    self.visit(part, frame, guards, conditions)
-                condition = parts[0] if len(parts) == 1 and not bindings else None
-                constraint_nodes = parts
-                nested = [*conditions, *parts, *(expression for _, expression, _ in bindings if expression)]
+                # Swift lays out `if let a = b, c { ... } else { ... }` as flat clauses that run
+                # in source order like `&&`: each one sees the names bound and the checks
+                # passed by the clauses before it, so it is evaluated in the branch frame.
+                clauses, then_node, else_node = self.swift_clauses(node)
+                branch = frame.copy()
+                positive = {origin: checks.copy() for origin, checks in guards.items()}
+                nested = conditions.copy()
+                for clause in clauses:
+                    if clause.condition is not None:
+                        self.visit(clause.condition, branch, positive, nested)
+                        self.navigation_policy(clause.condition, then_node, branch)
+                        for origin, checks in self.constraints(clause.condition, branch).items():
+                            positive.setdefault(origin, set()).update(checks)
+                            established.setdefault(origin, set()).update(checks)
+                    else:
+                        if clause.initializer is not None:
+                            self.visit(clause.initializer, branch, positive, nested)
+                        self.bind_swift_clause(clause, branch)
+                        bound.update(name for name, _ in clause.names)
+                    if clause.node is not None:
+                        nested.append(clause.node)
+                # A clause's other effects reach both arms; the names it binds stay in the branch.
+                for key in frame.values:
+                    if key not in bound:
+                        frame.values[key] = branch.values.get(key, frame.values[key])
+                frame.bridges = branch.bridges.copy()
+                frame.javascript = branch.javascript.copy()
+                frame.object_fields = {key: values.copy() for key, values in branch.object_fields.items()}
+                frame.constants = {
+                    **{key: value for key, value in branch.constants.items() if key not in bound},
+                    **{key: value for key, value in frame.constants.items() if key in bound},
+                }
+                single = len(clauses) == 1 and clauses[0].condition is not None
+                condition = clauses[0].condition if single else None
+                constraint_nodes = [clause.condition for clause in clauses if clause.condition is not None]
+                before = frame.copy()
             else:
                 condition = _field(node, "condition")
                 if condition:
@@ -2476,17 +2595,25 @@ class Analyzer:
                 else_node = _field(node, "alternative") or (children[1] if len(children) > 1 else None)
                 constraint_nodes = [condition] if condition else []
                 nested = [*conditions, condition] if condition else conditions
-            self.navigation_policy(condition, then_node, frame)
-            positive = {origin: checks.copy() for origin, checks in guards.items()}
-            for part in constraint_nodes:
-                for origin, checks in self.constraints(part, frame).items():
-                    positive.setdefault(origin, set()).update(checks)
-            before = frame.copy()
-            branch = frame.copy()
-            for name, expression, anchor in bindings:
-                self.bind_swift_local(name, expression, anchor, before, branch)
+                self.navigation_policy(condition, then_node, frame)
+                positive = {origin: checks.copy() for origin, checks in guards.items()}
+                for part in constraint_nodes:
+                    for origin, checks in self.constraints(part, frame).items():
+                        positive.setdefault(origin, set()).update(checks)
+                before = frame.copy()
+                branch = frame.copy()
             if then_node:
                 self.visit(then_node, branch, positive, nested)
+            for name in bound:
+                # Bindings end with the branch; an outer name one shadowed keeps its own value.
+                if name in before.values:
+                    branch.values[name] = before.values[name]
+                else:
+                    branch.values.pop(name, None)
+                if name in before.constants:
+                    branch.constants[name] = before.constants[name]
+                else:
+                    branch.constants.pop(name, None)
             alternative = before.copy()
             if else_node:
                 # The else branch runs only when the condition is false; a guard it
@@ -2502,10 +2629,11 @@ class Analyzer:
                 pass
             elif condition is None:
                 # A multi-clause Swift condition holds after the `if` only when its else exits.
+                # Its checks are the ones made in clause order on the values the clauses saw,
+                # never re-read through a name an `if let` shadowed.
                 if exits(self, else_node):
-                    for part in constraint_nodes:
-                        for origin, checks in self.constraints(part, before).items():
-                            guards.setdefault(origin, set()).update(checks)
+                    for origin, checks in established.items():
+                        guards.setdefault(origin, set()).update(checks)
             elif exits(self, then_node) and not else_node:
                 continuation = path_predicate(self, condition, before, positive=False)
                 for origin, checks in continuation.items():
@@ -2559,19 +2687,25 @@ class Analyzer:
             return
         if node.type == "guard_statement" and self.language == "swift":
             # The continuation is guarded only when the else body exits the function.
-            parts, bindings, _, body = self.swift_condition_parts(node)
+            clauses, _, body = self.swift_clauses(node)
             from .native_guards import exits as definitely_exits
 
             exits = bool(body is not None and definitely_exits(self, body))
-            # `guard let` names are bound in the enclosing scope after the statement.
-            for name, expression, anchor in bindings:
-                if expression is not None:
-                    self.visit(expression, frame, guards, conditions)
-                self.bind_swift_local(name, expression, anchor, frame, frame)
-            for condition in parts:
-                self.visit(condition, frame, guards, conditions)
+            entry = frame.copy()
+            entry_guards = {origin: checks.copy() for origin, checks in guards.items()}
+            entry_conditions = conditions.copy()
+            # Clauses run in source order in the enclosing scope, where `guard let` names stay
+            # bound after the statement: a clause sees the names bound before it, and a later
+            # binding replaces an earlier one that an earlier check was made on.
+            for clause in clauses:
+                if clause.condition is None:
+                    if clause.initializer is not None:
+                        self.visit(clause.initializer, frame, guards, conditions)
+                    self.bind_swift_clause(clause, frame)
+                    continue
+                self.visit(clause.condition, frame, guards, conditions)
                 if exits:
-                    for origin, checks in self.constraints(condition, frame).items():
+                    for origin, checks in self.constraints(clause.condition, frame).items():
                         guards.setdefault(origin, set()).update(checks)
                         if (
                             "path-contained" in checks
@@ -2580,7 +2714,13 @@ class Analyzer:
                             and isinstance(origin, tuple)
                         ):
                             self.guarded_paths.add(origin)
-                    conditions.append(condition)
+                    conditions.append(clause.condition)
+            if body is not None:
+                # The else body runs when a clause fails, from the state before the guard: no
+                # condition or binding of the guard holds there, and it never falls through.
+                markers = [clause.node for clause in clauses if clause.node is not None]
+                self.visit(body, entry, entry_guards, [*entry_conditions, *markers])
+                self.active_guards = guards
             return
         if node.type in BLOCKS:
             local = frame.copy()
@@ -2593,6 +2733,11 @@ class Analyzer:
                     declaration = self.declaration(declaration_node)
                     if declaration:
                         declared.add(declaration[0])
+                if child.type == "guard_statement" and self.language == "swift":
+                    # `guard let` names are locals of this block like declarations.
+                    declared.update(
+                        name for clause in self.swift_clauses(child)[0] for name, _ in clause.names
+                    )
                 self.visit(child, local, local_guards, local_conditions)
                 from .native_guards import exits
 
