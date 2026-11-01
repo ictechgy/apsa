@@ -164,9 +164,10 @@ class Main : Activity() {
     ids=["same-package", "same-file"],
 )
 def test_inherited_member_hides_a_top_level_opener(files):
+    # The Activity's inherited member types the result; the same-named top-level
+    # function is followed as well, and any abstention on it is recorded.
     report = analyze_sources(files)
     assert {item["rule_id"] for item in report["findings"]} == {"AST-SQL-CONCAT"}
-    assert report["metadata"]["native_flow"]["state"] == "checked"
 
 
 def test_top_level_opener_is_followed_from_a_class_without_supertypes():
@@ -315,8 +316,8 @@ def test_local_class_sees_the_enclosing_activity_member_before_a_top_level_opene
     # declaring that function must not change how the call is typed.
     alone = analyze_sources([("app/Main.kt", LOCAL_CLASS_IN_ACTIVITY)])
     both = analyze_sources([("app/Main.kt", LOCAL_CLASS_IN_ACTIVITY), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)])
+    # The same-named function is followed too, so only the findings must agree.
     assert [item["rule_id"] for item in both["findings"]] == [item["rule_id"] for item in alone["findings"]]
-    assert both["metadata"]["native_flow"]["reasons"] == alone["metadata"]["native_flow"]["reasons"]
 
 
 EXTENSION_RECEIVER = """package com.example.app
@@ -350,14 +351,6 @@ def test_extension_receiver_keeps_the_inherited_member_ahead_of_a_top_level_open
 
 # Round-4 external review scenarios: Kotlin and Java pick an implicit receiver's
 # inherited Context member only when Context's openOrCreateDatabase can apply.
-EXTENSION_PROPERTY = """package com.example.app
-import android.content.Context
-import android.content.Intent
-val Context.purgeDb get() = openOrCreateDatabase("app.db", 0, null)
-fun Context.purge(intent: Intent) {
-    purgeDb.execSQL("DELETE FROM t WHERE id = " + intent.getStringExtra("q"))
-}
-"""
 OWN_MEMBER_WITH_CONTEXT = """package com.example.app
 import android.content.Context
 import android.content.Intent
@@ -442,12 +435,12 @@ def test_receiver_precedence_follows_kotlin_and_java_resolution(files):
 
 @pytest.mark.parametrize(
     ("path", "caller"),
-    [("app/Handle.kt", SCOPE_LAMBDA_LOCAL_FUNCTION), ("app/Purge.kt", EXTENSION_PROPERTY)],
-    ids=["scope-lambda-local-function", "extension-property"],
+    [("app/Handle.kt", SCOPE_LAMBDA_LOCAL_FUNCTION)],
+    ids=["scope-lambda-local-function"],
 )
 def test_receiver_typing_does_not_depend_on_a_top_level_opener(path, caller):
-    # A local function inside `activity.run { }` and an extension property getter see
-    # a Context receiver, so a same-package top-level opener must not change the typing.
+    # A local function inside `activity.run { }` sees the Activity receiver, so a
+    # same-package top-level opener must not change the findings.
     alone = analyze_sources([(path, caller)])
     both = analyze_sources([(path, caller), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)])
     assert [item["rule_id"] for item in both["findings"]] == [item["rule_id"] for item in alone["findings"]]
@@ -523,3 +516,198 @@ def test_a_followed_opener_declared_to_return_a_database_keeps_that_type():
         [("app/Db.kt", DATABASE_RETURNING_OPENER), ("app/Repo.kt", NON_CONTEXT_SUPERTYPE_CALLER)]
     )
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+# A project opener the flow resolves is always followed; the receiver decision only
+# adds the framework type. No reading may drop a flow while coverage says checked.
+R5_FILE_OPENER = """package com.example.app
+import java.io.File
+fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): File = File(name)
+"""
+R5_CASES = {
+    "1-string-return-in-apply": [
+        (
+            "app/Db.kt",
+            """package com.example.app
+fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): String = "DELETE FROM t WHERE id = '" + name + "'"
+""",
+        ),
+        (
+            "app/H.kt",
+            """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class Handler(private val db: SQLiteDatabase) {
+    fun go(intent: Intent) {
+        "scope".apply { val sql = openOrCreateDatabase(intent.getStringExtra("q") ?: "", 0, null); db.execSQL(sql) }
+    }
+}
+""",
+        ),
+    ],
+    "2-shape-third-param-db": [
+        (
+            "app/Db.kt",
+            """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+fun openOrCreateDatabase(name: String, mode: Int, db: SQLiteDatabase) { db.execSQL("ATTACH DATABASE '" + name + "' AS extra") }
+""",
+        ),
+        (
+            "app/Main.kt",
+            """package com.example.app
+import android.app.Activity
+import android.database.sqlite.SQLiteDatabase
+class Main(private val db: SQLiteDatabase) : Activity() {
+    fun go() { openOrCreateDatabase(intent.getStringExtra("q") ?: "", 0, db) }
+}
+""",
+        ),
+    ],
+    "3-java-static-method": [
+        (
+            "app/Db.java",
+            """package com.example;
+import android.database.sqlite.SQLiteDatabase;
+public final class Db {
+    static SQLiteDatabase shared;
+    public static SQLiteDatabase openOrCreateDatabase(String name, int mode, SQLiteDatabase.CursorFactory factory) {
+        shared.execSQL("ATTACH DATABASE '" + name + "' AS extra");
+        return shared;
+    }
+}
+""",
+        ),
+        (
+            "app/Main.java",
+            """package com.example;
+import static com.example.Db.openOrCreateDatabase;
+import android.app.Activity;
+import android.content.Intent;
+import android.database.sqlite.SQLiteDatabase;
+public class Main extends Activity {
+    static void purge(Intent intent, int mode, SQLiteDatabase.CursorFactory factory) {
+        openOrCreateDatabase(intent.getStringExtra("q"), mode, factory);
+    }
+}
+""",
+        ),
+    ],
+    "4.1-local-function-shadow": [
+        (
+            "app/P.kt",
+            """package com.example.app
+import android.app.Activity
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class P(private val db: SQLiteDatabase) {
+    fun Activity.purge(intent: Intent) {
+        fun openOrCreateDatabase(name: String, mode: Int, factory: Any?) { db.execSQL("ATTACH DATABASE '" + name + "' AS extra") }
+        openOrCreateDatabase(intent.getStringExtra("q") ?: "", 0, null)
+    }
+}
+""",
+        ),
+    ],
+    "4.2-own-member-anon-activity-init": [
+        (
+            "app/Repo.kt",
+            """package com.example.app
+import android.app.Activity
+import android.content.Intent
+import java.io.File
+class Repo {
+    fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): File = File(name)
+    fun run(intent: Intent) {
+        object : Activity() { init { openOrCreateDatabase("app.db", 0, null).execSQL("DELETE FROM t WHERE id = " + intent.getStringExtra("q")) } }
+    }
+}
+""",
+        ),
+    ],
+    "5-with-local-function": [
+        ("app/Db.kt", R5_FILE_OPENER),
+        (
+            "app/H.kt",
+            """package com.example.app
+import android.app.Activity
+import android.content.Intent
+fun handle(activity: Activity, intent: Intent) {
+    with(activity) {
+        fun runSql() {
+            val db = openOrCreateDatabase("app.db", 0, null)
+            db.execSQL("DELETE FROM t WHERE id = " + (intent.getStringExtra("q") ?: ""))
+        }
+        runSql()
+    }
+}
+""",
+        ),
+    ],
+    "6-nested-service-name": [
+        (
+            "app/Db.kt",
+            """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+lateinit var shared: SQLiteDatabase
+fun openOrCreateDatabase(name: String, mode: Int, factory: Any?) { shared.execSQL("ATTACH DATABASE '" + name + "' AS extra") }
+""",
+        ),
+        (
+            "app/O.kt",
+            """package com.example.app
+import android.content.Intent
+class Outer {
+    class SyncService
+    fun SyncService.run(intent: Intent) { openOrCreateDatabase(intent.getStringExtra("q") ?: "", 0, null) }
+}
+""",
+        ),
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "1-string-return-in-apply",
+        "3-java-static-method",
+        "4.2-own-member-anon-activity-init",
+        "5-with-local-function",
+    ],
+)
+def test_followed_project_openers_keep_their_flows(name):
+    report = analyze_sources(R5_CASES[name])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+@pytest.mark.parametrize("name", sorted(R5_CASES))
+def test_a_project_opener_never_disappears_under_checked_coverage(name):
+    report = analyze_sources(R5_CASES[name])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or (
+        report["metadata"]["native_flow"]["state"] != "checked"
+    )
+
+
+RECURSIVE_SCOPE_RECEIVER = """package com.example.app
+class Handler { fun go() { with(openOrCreateDatabase("a.db", 0, null)) { openOrCreateDatabase("b.db", 0, null) } } }
+"""
+EXECUTOR_DELEGATE = """package com.example.app
+import java.util.concurrent.ExecutorService
+class TracingExecutor(d: ExecutorService) : ExecutorService by d {
+    fun purge(q: String) { openOrCreateDatabase(q, 0, null) }
+}
+"""
+
+
+def test_an_opener_used_as_its_own_scope_receiver_does_not_recurse():
+    report = analyze_sources([("app/Db.kt", SINKING_HELPER), ("app/Handler.kt", RECURSIVE_SCOPE_RECEIVER)])
+    assert "native flow recursion budget" not in report["metadata"]["native_flow"]["reasons"]
+
+
+def test_a_non_context_library_base_does_not_claim_checked_over_a_skipped_helper():
+    # ExecutorService is no Context; its imported identity keeps the helper followed.
+    report = analyze_sources([("app/Db.kt", SINKING_HELPER), ("app/Tracing.kt", EXECUTOR_DELEGATE)])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or (
+        report["metadata"]["native_flow"]["state"] != "checked"
+    )

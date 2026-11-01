@@ -613,6 +613,29 @@ SQLITE_DATABASE = "android.database.sqlite.SQLiteDatabase"
 SQLITE_ACCESSORS = {"writableDatabase", "readableDatabase"}
 SQLITE_GETTERS = {"getWritableDatabase", "getReadableDatabase"}
 SQLITE_OPENERS = {"openOrCreateDatabase", "openDatabase"}
+# Framework Service classes (each a Context) known by simple name.
+CONTEXT_SERVICE_TYPES = {
+    "Service",
+    "IntentService",
+    "JobIntentService",
+    "JobService",
+    "LifecycleService",
+    "FirebaseMessagingService",
+    "AccessibilityService",
+    "InputMethodService",
+    "WallpaperService",
+    "NotificationListenerService",
+    "MediaBrowserService",
+    "MediaBrowserServiceCompat",
+    "MediaSessionService",
+    "TileService",
+    "VpnService",
+    "HostApduService",
+    "DreamService",
+    "RemoteViewsService",
+    "ConnectionService",
+    "InCallService",
+}
 # Common receiver types that declare no openOrCreateDatabase member.
 NON_CONTEXT_TYPES = {
     "Any",
@@ -719,10 +742,10 @@ class Analyzer:
         self.intent_checks = 0
         # Kotlin lambda parameters bound to the receiver of let/also/use, for Intent text lookups.
         self.aliases: dict[str, Any] = {}
-        # A framework-typed opener whose project target is also followed (receiver unknown).
+        # A receiverless opener that resolves to project code, which is always followed.
         self.opener_follow = False
-        # A followed project opener declared to return a SQLiteDatabase.
-        self.opener_database = False
+        # The framework type certainly applies (override, declared, Context receiver).
+        self.opener_certain = False
         self.class_context_cache: dict[tuple[int, int], str] = {}
         self.package_name = _package_name(text)
         parts = self.package_name.split(".") if self.package_name else []
@@ -995,7 +1018,7 @@ class Analyzer:
     def sqlite_database_call(self, call: Call, receiver: Value, frame: Frame) -> bool:
         """SDK calls that return a SQLiteDatabase: helper getters and Context/SQLiteDatabase openers."""
         self.opener_follow = False
-        self.opener_database = False
+        self.opener_certain = False
         if self.language not in {"java", "kotlin"}:
             return False
         if call.name in SQLITE_GETTERS:
@@ -1003,8 +1026,7 @@ class Analyzer:
         if call.name not in SQLITE_OPENERS:
             return False
         if call.receiver is None:
-            # A project function the call resolves to is analyzed like any other call.
-            return not self.project_callable(call, receiver, frame)
+            return self.opener_database_type(call, receiver, frame)
         key = self.key(call.receiver)
         return (
             key in {"SQLiteDatabase", SQLITE_DATABASE}
@@ -1012,19 +1034,24 @@ class Analyzer:
             or bool(re.fullmatch(r"(?i)(?:\w*context|ctx)(?:\(\))?", key or ""))
         )
 
-    def project_callable(self, call: Call, receiver: Value, frame: Frame) -> bool:
-        """Whether a receiverless opener resolves to project code rather than the SDK.
+    def opener_database_type(self, call: Call, receiver: Value, frame: Frame) -> bool:
+        """Whether a receiverless opener's result is typed as the framework SQLiteDatabase.
 
-        The bounded flow's own call resolution decides. An override returns the framework
-        type, and in Kotlin an inherited `Context.openOrCreateDatabase` of an implicit
-        receiver wins over a top-level function, so those keep the SDK identity.
+        Without a project target the call is the framework opener. A project target the
+        bounded flow's own resolution finds is always followed (`opener_follow`), so its
+        sinks and returned taint stay in the analysis; the decision here only adds the
+        database type to the result. It is added for an override, for a target declared to
+        return SQLiteDatabase, and for a target shaped like Context.openOrCreateDatabase
+        when an implicit receiver in scope may be a Context, whose inherited member wins.
+        A wrong answer can therefore only add sink typing, never drop a flow.
         """
         flow = self.native_flow
         if flow is None:
-            return False
+            return True
         targets, _ = flow.resolve(self, call, receiver, frame)
         if not targets:
-            return False
+            return True
+        self.opener_follow = True
         for target in targets:
             modifiers = next(
                 (child for child in target.node.named_children if child.type == "modifiers"), None
@@ -1032,24 +1059,18 @@ class Analyzer:
             if "override" in flow.declaration_tokens(target.node) or re.search(
                 r"@Override\b", target.analyzer.text(modifiers)
             ):
-                return False
-        if call.name == "openOrCreateDatabase" and any(
+                self.opener_certain = True
+                return True
+        if all(self.declares_database(target) for target in targets):
+            self.opener_certain = True
+            return True
+        if call.name != "openOrCreateDatabase" or not any(
             self.context_opener_shape(target) for target in targets
         ):
-            # Arguments that fit Context's own openOrCreateDatabase(String, int, factory[,
-            # handler]) also fit the inherited member, which an implicit receiver supplies
-            # ahead of a project function of another class or a top-level function.
-            owner = flow.owner(self, self.function) if self.function is not None else ""
-            own = all(target.owner and target.owner == owner for target in targets)
-            kind = self.receiver_context(call.node, frame, classes=not own)
-            if kind == "maybe":
-                self.opener_follow = True
-            if kind != "no":
-                return False
-        # A project opener declared to return a SQLiteDatabase keeps that type even when
-        # the bounded flow abstains on the call.
-        self.opener_database = all(self.declares_database(target) for target in targets)
-        return True
+            return False
+        kind = self.receiver_context(call.node, frame, classes=True)
+        self.opener_certain = kind == "yes"
+        return kind != "no"
 
     @staticmethod
     def declares_database(target: Any) -> bool:
@@ -1108,17 +1129,62 @@ class Analyzer:
 
     def receiver_scope_lambda(self, node: Any) -> bool:
         """Whether a Kotlin lambda is the block of `x.run`, `x.apply` or `with(x)`."""
-        holder = node.parent
-        call = holder.parent if holder is not None and holder.type == "annotated_lambda" else None
+        return self.scope_receiver(node) is not None
+
+    def scope_receiver(self, node: Any) -> Any:
+        """The receiver expression of a `x.run`, `x.apply` or `with(x)` block lambda.
+
+        The lambda may trail the call or be passed in parentheses (`x.run({ ... })`).
+        """
+        call = node.parent
+        for _ in range(3):
+            if call is None or call.type == "call_expression":
+                break
+            if call.type not in {"annotated_lambda", "value_argument", "value_arguments"}:
+                return None
+            call = call.parent
         if call is None or call.type != "call_expression" or not call.named_children:
-            return False
+            return None
         callee = call.named_children[0]
+        arguments = call
+        if callee.type == "call_expression" and callee.named_children:
+            arguments, callee = callee, callee.named_children[0]  # `with(x) { }` wraps `with(x)`
         name = re.search(r"(\w+)\s*$", self.text(callee))
         if name is None:
-            return False
+            return None
         if name.group(1) == "with":
-            return True
-        return callee.type == "navigation_expression" and name.group(1) in {"run", "apply"}
+            values = next((part for part in arguments.named_children if part.type == "value_arguments"), None)
+            first = values.named_children[0] if values is not None and values.named_children else None
+            return (
+                first.named_children[0] if first is not None and first.named_children else first
+            ) or callee
+        if callee.type == "navigation_expression" and name.group(1) in {"run", "apply"}:
+            return callee.named_children[0] if callee.named_children else callee
+        return None
+
+    def scope_receiver_context(self, lambda_node: Any, frame: Frame, node: Any) -> str:
+        """Whether the receiver bound by a `run`/`apply`/`with` block is a Context."""
+        expression = self.scope_receiver(lambda_node)
+        if expression is None:
+            return "maybe"
+        if expression.type in STRINGS:
+            return "no"
+        if expression.type not in IDENTIFIERS:
+            return "maybe"
+        name = self.symbol_name(self.text(expression))
+        bound = frame.values.get(name)
+        if bound is not None and bound.type_name:
+            return self.context_type(bound.type_name, node)
+        current = lambda_node.parent
+        while current is not None:
+            if current.type in FUNCTIONS:
+                declared = next((kind for pname, kind, _ in self.parameters(current) if pname == name), None)
+                if declared:
+                    return self.context_type(declared, node)
+            current = current.parent
+        if name in self.field_types:
+            return self.context_type(self.field_types[name], node)
+        return "maybe"
 
     def receiver_context(self, node: Any, frame: Frame, *, classes: bool) -> str:
         """Whether an implicit receiver in scope at `node` is a Context: "yes", "no" or "maybe".
@@ -1135,11 +1201,15 @@ class Analyzer:
         """
         kotlin = self.language == "kotlin"
         answers: set[str] = set()
-        if kotlin and "this" in self.aliases:
-            # The scope lambda bound its receiver value; re-evaluating it could re-run calls.
-            bound = frame.values.get("this") or self.value(self.aliases["this"], frame)
+        aliased = kotlin and "this" in self.aliases
+        if aliased:
+            # Use the value the scope lambda bound; re-evaluating the receiver could
+            # re-run calls (or recurse through an opener used as its own receiver).
+            bound = frame.values.get("this")
             answers.add(
-                "no"
+                "maybe"
+                if bound is None
+                else "no"
                 if bound.category in {"text", "url", "intent", "request", "host", "scheme"}
                 else self.context_type(bound.type_name, node)
                 if bound.type_name
@@ -1168,7 +1238,10 @@ class Analyzer:
                     else "maybe"
                 )
             elif kotlin and current.type == "lambda_literal" and self.receiver_scope_lambda(current):
-                answers.add("maybe")
+                if aliased:
+                    aliased = False  # the innermost receiver block is the bound alias above
+                else:
+                    answers.add(self.scope_receiver_context(current, frame, node))
             elif not kotlin and current.type == "object_creation_expression":
                 if any(child.type == "class_body" for child in current.children):
                     if not classes:
@@ -1246,14 +1319,24 @@ class Analyzer:
                 definitions = flow.class_definitions.get(next(iter(owners)), [])
                 if len(definitions) == 1:
                     source, base = definitions[0]
-                    return source.class_context(base, depth) if source is self else "maybe"
-        if re.fullmatch(
-            r"Context|ContextWrapper|ContextThemeWrapper|\w*Activity|\w*Service|\w*Application",
-            name,
+                    return source.class_context(base, depth)
+        imported = next(
+            (
+                declaration
+                for declaration in self.imports
+                if re.fullmatch(rf"[\w.]*\.{re.escape(name)}(?:\s+as\s+\w+)?", declaration)
+            ),
+            "",
+        )
+        if imported.startswith(("java.", "javax.", "kotlin.", "kotlinx.")) or name in NON_CONTEXT_TYPES:
+            return "no"
+        if re.fullmatch(r"Context|ContextWrapper|ContextThemeWrapper|\w*Activity|\w*Application", name):
+            return "yes"
+        if name in CONTEXT_SERVICE_TYPES or (
+            name.endswith("Service")
+            and imported.startswith(("android.", "androidx.", "com.google.firebase."))
         ):
             return "yes"
-        if name in NON_CONTEXT_TYPES:
-            return "no"
         return "maybe"
 
     def identifier_value(self, name: str, frame: Frame, node: Any) -> Value:
@@ -1662,22 +1745,25 @@ class Analyzer:
             receiver = self.value(call.receiver, frame)
             args = [self.value(arg, frame) for arg in call.args]
             database = self.sqlite_database_call(call, receiver, frame)
-            follow, declared = self.opener_follow, self.opener_database
-            self.opener_follow = self.opener_database = False
-            if database:
-                if follow and self.native_flow is not None:
-                    # The implicit receiver may or may not be a Context: follow the
-                    # project function too, so either reading keeps its sinks.
-                    self.native_flow.call(self, call, frame, receiver, args)
-                return Value(type_name=SQLITE_DATABASE)
-            if self.native_flow is not None:
+            follow, certain = self.opener_follow, self.opener_certain
+            self.opener_follow = self.opener_certain = False
+            if follow and self.native_flow is not None:
+                # A project opener is always followed; the framework type is only added,
+                # and a possible (not certain) Context member never replaces a known
+                # project return type.
                 result = self.native_flow.call(self, call, frame, receiver, args)
-                if declared:
+                if database and (certain or result is None or not result.type_name):
                     return (
                         Value(result.traces, result.category, SQLITE_DATABASE, result.identity)
                         if result is not None
                         else Value(type_name=SQLITE_DATABASE)
                     )
+                if result is not None:
+                    return result
+            elif database:
+                return Value(type_name=SQLITE_DATABASE)
+            elif self.native_flow is not None:
+                result = self.native_flow.call(self, call, frame, receiver, args)
                 if result is not None:
                     return result
             if call.name == "getIntent" and (call.receiver is None or self.text(call.receiver) == "this"):

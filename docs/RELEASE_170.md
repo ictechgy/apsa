@@ -136,17 +136,14 @@ device or credential service was contacted.
   bodies are analyzed and counted as functions (they were skipped without a
   coverage gap), while initializers of local or anonymous classes stay part of
   their enclosing function; early exits in Java constructors guard later
-  statements; a receiverless `openDatabase`/`openOrCreateDatabase` is analyzed
-  as project code only when the native flow's own call resolution finds a
-  non-override project target for it. A target shaped like
-  `Context.openOrCreateDatabase(String, int, factory[, handler])` yields to the
-  inherited member (the framework `SQLiteDatabase` type) when an implicit
-  receiver in scope is a Context (an enclosing class, extension or
-  scope-function receiver; a method of the enclosing class itself is followed
-  unless an extension or scope-function receiver comes between); when a
-  receiver's type is unknown, the project function is followed as well and
-  the result keeps the framework type, and a followed project opener declared
-  to return `SQLiteDatabase` keeps that type even when the flow abstains;
+  statements; a receiverless `openDatabase`/`openOrCreateDatabase` that the
+  native flow's own call resolution maps to project code is always followed as
+  project code, and its result is typed as the framework `SQLiteDatabase` when
+  the target is an override or is declared to return `SQLiteDatabase`, or when
+  it is shaped like `Context.openOrCreateDatabase(String, int, factory[,
+  handler])` and an implicit receiver in scope (an enclosing class, extension or
+  scope-function receiver) is a Context whose inherited member wins, or may be
+  one while the project function's return type is unknown;
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies
