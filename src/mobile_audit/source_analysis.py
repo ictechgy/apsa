@@ -537,8 +537,33 @@ NO_DATA_RECEIVERS = {
     "submit",
     "execute",
 }
-# Members that read a value out of an object; passing it hands over no part of the object.
+# Event-handler registrations take a callback, not a builder (`b.onClick { }`,
+# `view.setOnClickListener { }`, `doOnTextChanged { }`): its lambda writes into nothing.
+CALLBACK_REGISTRATIONS = re.compile(
+    r"(?:on|doOn|addOn)[A-Z]|set\w*(?:Listener|Callback)$|add\w*(?:Listener|Callback)$"
+)
+# Members that read a value out of an object; passing it hands over no part of the object
+# (`b.length`, `b.id`, `m.getName()`).
 VALUE_MEMBERS = {
+    "id",
+    "name",
+    "title",
+    "text",
+    "key",
+    "value",
+    "type",
+    "tag",
+    "label",
+    "index",
+    "status",
+    "url",
+    "uri",
+    "path",
+    "code",
+    "message",
+    "description",
+    "version",
+    "string",
     "length",
     "size",
     "count",
@@ -580,6 +605,35 @@ BUILDER_MEMBERS = {
 }
 # Another `build…` callee's receiver is unknown: these names are taken as its members.
 BUILDER_MEMBER_NAMES = frozenset().union(*BUILDER_MEMBERS.values())
+# The receiver types of the builders above, for project extensions of them.
+BUILDER_RECEIVERS = {
+    "buildString": "StringBuilder",
+    "buildList": "MutableList",
+    "buildSet": "MutableSet",
+    "buildMap": "MutableMap",
+    "buildJsonObject": "JsonObjectBuilder",
+    "buildJsonArray": "JsonArrayBuilder",
+    "buildAnnotatedString": "Builder",
+    "buildSpannedString": "SpannableStringBuilder",
+    "sequence": "SequenceScope",
+    "iterator": "SequenceScope",
+    "flow": "FlowCollector",
+    "channelFlow": "ProducerScope",
+    "callbackFlow": "ProducerScope",
+    "produce": "ProducerScope",
+    "liveData": "LiveDataScope",
+}
+# Coroutine builders and runners: their lambda's receiver is a scope, on any receiver.
+COROUTINE_BUILDERS = {
+    "launch",
+    "async",
+    "withContext",
+    "runBlocking",
+    "coroutineScope",
+    "supervisorScope",
+    "withTimeout",
+    "withTimeoutOrNull",
+}
 # Element functions whose closure decides (a predicate, a comparator) or acts per element:
 # its result is not part of the call's value, which is the receiver's elements, a count,
 # a flag or nothing.
@@ -978,6 +1032,9 @@ class ClosureEffects:
     # For a known builder's lambda (buildString, flow, sequence, ...), the receiver's
     # members that write into it: found before any project function of the same name.
     members: frozenset[str] = frozenset()
+    # The receiver type of a builder whose members are all known (`StringBuilder`): any
+    # other receiverless call is no member of it, unless a project extension of it.
+    receiver_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -1280,6 +1337,8 @@ class Analyzer:
         self.closure_writes: dict[tuple[int, int], dict[str, Value]] = {}
         # result_position per node: structural, so kept for the file.
         self.result_positions: dict[tuple[int, int, str], bool] = {}
+        # Functions declared in each class body (and its companion), by name.
+        self.class_functions: dict[tuple[int, int], dict[str, list[Any]]] = {}
         self.guarded_paths: set[tuple[int, str]] = set()
         self.unguarded_paths: set[tuple[int, str]] = set()
         self.finding_start = 0
@@ -2629,20 +2688,27 @@ class Analyzer:
                 part for part in node.named_children if part.type not in COMMENTS | {"variable_declaration"}
             ]
             return self.value(subject[-1], frame) if subject else Value()
+        if node.type == "switch_statement" and self.language == "swift":
+            # A switch expression evaluates to one of its cases' values, not its subject.
+            return self.changed(
+                node,
+                _union(
+                    [
+                        self.value(entry, frame)
+                        for entry in node.named_children
+                        if entry.type == "switch_entry"
+                    ]
+                ),
+            )
         if node.type == "switch_entry" and self.language == "swift":
-            values = self.switch_entry_values(node, frame)
-            if values:
-                with self.names_bound(frame, values):
-                    return self.changed(
-                        node,
-                        _union(
-                            [
-                                self.value(child, frame)
-                                for child in node.named_children
-                                if child.type != "switch_pattern"
-                            ]
-                        ),
-                    )
+            # A case's value is its last statement, read while its names are bound; its
+            # pattern and where clause are conditions.
+            body = next((part for part in node.named_children if part.type == "statements"), None)
+            last = self.last_statement(body) if body is not None else None
+            if last is None:
+                return Value()
+            with self.names_bound(frame, self.switch_entry_values(node, frame)):
+                return self.changed(node, self.value(last, frame))
         binding = self.when_binding(node)
         if binding is not None:
             # A `when (val u = x)` evaluates to an entry's value, read while u is bound;
@@ -2650,8 +2716,11 @@ class Analyzer:
             key, variable, expression = binding
             subject = self.value(expression, frame).bind(self.point(variable))
             with self.subject_bound(frame, key, subject):
+                # Each entry's value is its body's last statement; its conditions are not values.
                 entries = [
-                    self.value(child, frame) for child in node.named_children if child.type != "when_subject"
+                    self.value(self.last_statement(branch), frame)
+                    for branch in self.branch_bodies(node) or []
+                    if branch is not None
                 ]
             return self.changed(node, _union(entries))
         if node.type in CLOSURES:
@@ -4467,7 +4536,20 @@ class Analyzer:
                 key = (call.node.start_byte, call.node.end_byte, call.node.type)
                 previous = self.visited_values.get(key, Value())
                 result = self.changed(call.node, _union(self.call_inputs(call, receiver, args)))
-                self.visited_values[key] = _union([previous, result], previous.category, previous.type_name)
+                merged = _union([previous, result], previous.category, previous.type_name)
+                if not any(
+                    TRACE_PARTIAL in trace.description
+                    for value in (previous, receiver, *args)
+                    for trace in value.traces
+                ):
+                    # A cut no input carried comes from folding the block's result in.
+                    merged = Value(
+                        tuple(self.possible_result(trace) for trace in merged.traces),
+                        merged.category,
+                        merged.type_name,
+                        merged.identity,
+                    )
+                self.visited_values[key] = merged
             return
         if (
             node.type == "unary_expression"
@@ -4830,26 +4912,39 @@ class Analyzer:
         effects = None
         if used:
             callee = owner.name.rsplit(".", 1)[-1] if owner is not None else ""
-            # A SAM constructor or composable (`Runnable { }`, `Column { }`) and a coroutine
-            # or runner callee (`withContext`, `runCatching`, `lazy`) give their lambda no
-            # receiver whose data their value returns.
+            # `Sql.execute { }`, `Sql.Query { }`: an entry point of a project or library object.
+            on_object = (
+                owner is not None
+                and owner.receiver is not None
+                and self.text(owner.receiver).strip()[:1].isupper()
+            )
+            # A SAM constructor or composable (`Runnable { }`, `Column { }`), a coroutine or
+            # runner callee (`withContext`, `runCatching`, `lazy`) and an event-handler
+            # registration give their lambda no receiver whose data their value returns.
             implicit = (
                 self.language == "kotlin"
                 and node.type == "lambda_literal"
                 and arity is None
                 and not positions
-                and callee not in NO_DATA_RECEIVERS
-                and not callee[:1].isupper()
+                and callee not in COROUTINE_BUILDERS
+                and not (callee in NO_DATA_RECEIVERS and not on_object)
+                and not (callee[:1].isupper() and not on_object)
+                and not CALLBACK_REGISTRATIONS.match(callee)
             )
             if supplied or implicit:
+                # The standard builders (`buildString { }`, `flow { }`) are called without a
+                # receiver or on a coroutine scope; `Ext.flow { }` is another object's DSL.
+                standard = implicit and not on_object and callee in BUILDER_MEMBERS
                 members = (
-                    BUILDER_MEMBERS.get(
-                        callee, BUILDER_MEMBER_NAMES if callee.startswith("build") else frozenset()
-                    )
-                    if implicit
+                    BUILDER_MEMBERS[callee]
+                    if standard
+                    else BUILDER_MEMBER_NAMES
+                    if implicit and (callee.startswith("build") or callee in BUILDER_MEMBERS)
                     else frozenset()
                 )
-                effects = ClosureEffects(supplied, implicit, [], members)
+                effects = ClosureEffects(
+                    supplied, implicit, [], members, BUILDER_RECEIVERS.get(callee, "") if standard else ""
+                )
         self.visit_scope_lambda(
             node, frame, guards, conditions, "", None, optional=True, bindings=bindings, effects=effects
         )
@@ -4862,11 +4957,10 @@ class Analyzer:
         data = [arg for arg in call.args if self.closure_argument(arg) is None]
         # Only the object itself, or a part of it, handed over can be written into
         # (not `b.length`), by a call written as a statement (not a condition).
-        targets = (
-            [arg for arg in data if self.handed_over(arg, frame)]
-            if self.statement_position(call.node)
-            else []
-        )
+        statement = self.statement_position(call.node)
+        targets = [arg for arg in data if self.handed_over(arg, frame)] if statement else []
+        # `appendFilter(this, q)` in a builder lambda hands the implicit receiver itself.
+        handed_this = statement and any(self.implicit_this(arg, frame) for arg in data)
         name = call.name.rsplit(".", 1)[-1]
         writes = (
             call.receiver is not None
@@ -4876,9 +4970,11 @@ class Analyzer:
         )
         # `append("<p>").append(q)` and `this.append(q)` write into the implicit receiver.
         chain = (
-            [] if writes or call.receiver is None or name in READ_ONLY_MEMBERS else self.implicit_chain(call)
+            []
+            if writes or call.receiver is None or name in READ_ONLY_MEMBERS
+            else self.implicit_chain(call, frame)
         )
-        if not writes and not chain and not targets:
+        if not writes and not chain and not targets and not handed_this:
             return
         # What the call writes into the supplied object is its data, whichever callee
         # runs (a followed project function of the same name returns nothing), what a
@@ -4892,14 +4988,23 @@ class Analyzer:
             if closure is not None
             and (
                 name in RESULT_STORING_CALLS
-                or self.closure_arity(closure) is None
+                # `b.section { q }` and a DSL's `title { q }` give content; an explicitly imported
+                # library function's lambda (`logcat { "msg $q" }`) is a lazy message.
+                or writes
+                and (call.receiver is not None or not self.imported_function(name))
+                and self.closure_arity(closure) is None
                 and name not in SELECTING_FUNCTIONS | INLINE_CALLEES | READ_ONLY_MEMBERS
                 and name not in ELEMENT_FUNCTIONS
+                and not CALLBACK_REGISTRATIONS.match(name)
                 and self.content_closure(closure)
             )
         ]
         written = _union(
-            [self.reused(arg, frame) for arg in data if not self.supplied(arg, frame)]
+            [
+                self.reused(arg, frame)
+                for arg in data
+                if not self.supplied(arg, frame) and not self.implicit_this(arg, frame)
+            ]
             + [
                 self.reused(arg, frame)
                 for link in chain
@@ -4913,16 +5018,22 @@ class Analyzer:
             ]
             + content
         )
+        if (targets or handed_this) and call.receiver is not None and not self.supplied(call.receiver, frame):
+            # `parts.joinTo(b)`, `parts.joinTo(this)` write their receiver into the handed object.
+            handed = _union([written, self.reused(call.receiver, frame)])
+        else:
+            handed = written
         if call.receiver is not None and writes:
             self.record_effect(call.receiver, frame, written)
         elif writes or chain:
             self.record_effect(None, frame, written)
-        if targets and call.receiver is not None and not self.supplied(call.receiver, frame):
-            # `parts.joinTo(b)` writes its receiver into the handed object.
-            written = _union([written, self.reused(call.receiver, frame)])
+        elif handed_this:
+            self.record_effect(None, frame, handed)
+        written = handed
         for arg in targets:
             # A helper handed the supplied object (`fill(b, q)`) may write into it.
-            self.record_effect(arg, frame, written, receiverless=False)
+            for part in self.handed_parts(arg):
+                self.record_effect(part, frame, written, receiverless=False)
 
     def reused(self, node: Any, frame: Frame) -> Value:
         """value() of a node the visit just walked: its calls keep the values they were visited with."""
@@ -5004,22 +5115,63 @@ class Analyzer:
             self.result_positions[key] = result
         return result
 
+    def imported_function(self, name: str) -> bool:
+        """A callee this file imports by name (`import logcat.logcat`), not a receiver's member."""
+        return self.native_flow is not None and bool(self.native_flow.imported_symbols(self, name))
+
     def content_closure(self, closure: Any) -> bool:
         """A closure whose result is a value (`{ q }`, `{ "a" + q }`), not the result of a
-        call it makes (`{ audit.log(q) }`, a callback)."""
-        statements = [
-            part for part in closure.named_children if part.type not in COMMENTS | {"lambda_parameters"}
-        ]
-        if len(statements) == 1 and statements[0].type == "statements":
-            statements = [part for part in statements[0].named_children if part.type not in COMMENTS]
-        last = self.unwrap(statements[-1]) if statements else None
-        return last is not None and self.call(last) is None and last.type not in STATEMENT_ONLY
+        call it makes (`{ audit.log(q) }`, `{ [weak self] in self?.log(q) }`, a callback)."""
+        return self.value_result(self.last_statement(closure))
 
-    def implicit_chain(self, call: Call) -> list[Call]:
+    def last_statement(self, node: Any) -> Any:
+        """The last statement of a closure or block body, past signatures and capture lists."""
+        for _ in range(8):
+            if node is None or node.type not in CLOSURES | BLOCKS | {"control_structure_body"}:
+                return node
+            parts = [
+                part
+                for part in node.named_children
+                if part.type not in COMMENTS
+                and part.type not in {"lambda_parameters", "lambda_function_type", "capture_list", "label"}
+            ]
+            if not parts:
+                return None
+            node = parts[-1]
+        return node
+
+    def value_result(self, node: Any, depth: int = 0) -> bool:
+        """Whether an expression's value can be a value it holds rather than only a call's result."""
+        node = self.unwrap(node)
+        if node is None or depth > 16:
+            return False
+        if node.type in {"jump_expression", "control_transfer_statement", "return_statement"}:
+            values = [part for part in node.named_children if part.type not in COMMENTS | {"label"}]
+            return bool(values) and self.value_result(values[-1], depth + 1)
+        if node.type in STATEMENT_ONLY:
+            return False
+        if self.branching(node):
+            return any(
+                self.value_result(self.last_statement(branch), depth + 1)
+                for branch in self.branch_bodies(node) or []
+                if branch is not None
+            )
+        call = self.call(node)
+        if call is None:
+            return True
+        # A transform of data (`q.trim()`, `"$q".lowercase()`, `String.format(..)`) is a value;
+        # a receiverless call, one on this/self, or a logger call is a side effect.
+        if call.receiver is None:
+            return False
+        root = re.split(r"[.?!(\[]", self.text(call.receiver).strip(), maxsplit=1)[0]
+        return root not in {"this", "self", "super", "Log", "Timber", "System", "print", "println"}
+
+    def implicit_chain(self, call: Call, frame: Frame) -> list[Call]:
         """The calls of a chain written into a Kotlin lambda's implicit receiver.
 
         `append("<p>").append(q)` starts at a receiverless write, `this.append(q)` at
-        the lambda's `this`; the chain is a statement. Empty for any other chain.
+        the lambda's `this` (not one an `apply`/`run`/`with` block rebound); the chain is
+        a statement. Empty for any other chain.
         """
         links = []
         node = call.receiver
@@ -5029,7 +5181,7 @@ class Analyzer:
             node = self.unwrap(node)
             if node is None:
                 return []
-            if node.type in {"this_expression", "this"} and self.text(node).strip() == "this":
+            if self.implicit_this(node, frame):
                 return [call, *links] if self.implicit_write(call, call.node) else []
             inner = self.call(node)
             if inner is None:
@@ -5042,18 +5194,73 @@ class Analyzer:
             node = inner.receiver
         return []
 
+    def implicit_this(self, node: Any, frame: Frame) -> bool:
+        """`this` in a Kotlin lambda with a possible implicit receiver, not rebound by a scope block."""
+        node = self.unwrap(node)
+        return (
+            node is not None
+            and node.type in {"this_expression", "this"}
+            and self.text(node).strip() == "this"
+            and "this" not in frame.values
+            and any(effects.implicit for effects in self.closure_effects)
+        )
+
     def statement_position(self, node: Any) -> bool:
         """An expression written as a statement of a block or lambda (also its last one,
-        and a Java lambda's expression body)."""
+        and a Java lambda's expression body), also under Swift `try`/`await` or `_ =`."""
         parent = node.parent
-        return parent is not None and parent.type in {
+        while parent is not None and parent.type in {"try_expression", "await_expression"}:
+            parent = parent.parent
+        if (
+            parent is not None
+            and parent.type == "assignment"
+            and parent.named_children
+            and self.text(parent.named_children[0]).strip() == "_"
+        ):
+            parent = parent.parent
+        if parent is None:
+            return False
+        if parent.type in {
             "statements",
             "block",
             "lambda_literal",
             "lambda_expression",
             "control_structure_body",
             "expression_statement",
-        }
+        }:
+            return True
+        if self.language != "kotlin":
+            return False
+        # tree-sitter-kotlin 1.1.0 hangs an unbraced body directly under its statement.
+        parts = [part for part in parent.named_children if part.type not in COMMENTS]
+        position = next(
+            (
+                index
+                for index, part in enumerate(parts)
+                if (part.start_byte, part.end_byte, part.type) == (node.start_byte, node.end_byte, node.type)
+            ),
+            None,
+        )
+        if position is None:
+            return False
+        if parent.type == "if_expression":
+            condition = _field(parent, "condition") or parts[0]
+            return (condition.start_byte, condition.end_byte) != (node.start_byte, node.end_byte)
+        if parent.type in {"when_entry", "for_statement", "while_statement"}:
+            # The body follows the entry's conditions, the loop variable and iterable, or the condition.
+            return position == len(parts) - 1
+        if parent.type == "do_while_statement":
+            return position == 0
+        if parent.type == "labeled_expression":
+            return self.statement_position(parent)
+        if (
+            parent.type == "binary_expression"
+            and position == len(parts) - 1
+            and len(parts) == 2
+            and self.raw[parts[0].end_byte : parts[1].start_byte].strip() == b"?:"
+        ):
+            return self.statement_position(parent)  # `x ?: append(q)`
+        return False
 
     def implicit_write(self, call: Call, position: Any = None) -> bool:
         """A receiverless call that may write into a Kotlin lambda's implicit receiver.
@@ -5067,7 +5274,10 @@ class Analyzer:
         """
         name = call.name.rsplit(".", 1)[-1]
         owner = next((effects for effects in reversed(self.closure_effects) if effects.implicit), None)
-        if owner is None or name in NON_WRITERS or not name[:1].islower():
+        if owner is not None and self.language == "kotlin" and name.startswith("+") and name[1:2].isalpha():
+            # tree-sitter-kotlin reads `+format(q)` as a call of `+format`: a DSL unaryPlus of its result.
+            return self.statement_position(position if position is not None else call.node)
+        if owner is None or name in NON_WRITERS or not (name[:1].islower() or name[:1] == "_"):
             # A capitalized callee is a constructor (`File(q)`, `IllegalStateException(q)`);
             # tree-sitter-kotlin reads `!isAllowed(q)` as a call of `!isAllowed`, a negation.
             return False
@@ -5076,9 +5286,15 @@ class Analyzer:
             return False
         if name in owner.members or self.native_flow is None:
             return True
+        if owner.receiver_type:
+            # A known builder's receiver has no other member: only a project extension of
+            # it (`fun StringBuilder.appendSql(..)`) writes into it.
+            return self.project_extension(name, call, {owner.receiver_type})
         if self.enclosing_function(call, name):
             return False
         classes = self.native_flow.project_ancestry(self.native_flow.owner(self, self.function))
+        if self.project_extension(name, call, {owner_class.rsplit(".", 1)[-1] for owner_class in classes}):
+            return False  # `fun Repo.log(..)` called in a Repo method binds to this.
         return not any(
             # A Kotlin class can extend a Java one and call its members receiverless.
             (target.analyzer.language == self.language or target.owner and target.analyzer.language == "java")
@@ -5087,10 +5303,45 @@ class Analyzer:
                 if target.owner
                 else self.native_flow.top_level_visible(self, target, call.name)
             )
-            and self.native_flow.signature_visible(self, target, call)
+            and (
+                self.native_flow.signature_visible(self, target, call)
+                or target.analyzer.language == "kotlin"
+                and target.analyzer.accepts_arguments(target.node, len(call.args))
+            )
             and self.native_flow.lexical_visible(self, target, call)
-            for target in self.native_flow.by_name.get(name, [])
+            for alias in {
+                name,
+                *(symbol.rsplit(".", 1)[-1] for symbol in self.native_flow.imported_symbols(self, name)),
+            }
+            for target in self.native_flow.by_name.get(alias, [])
         )
+
+    def project_extension(self, name: str, call: Call, receivers: set[str]) -> bool:
+        """A Kotlin project extension function of this name on one of these receiver types."""
+        if self.native_flow is None:
+            return False
+        for target in self.native_flow.by_name.get(name, []):
+            if target.analyzer.language != "kotlin":
+                continue
+            declared = _field(target.node, "name")
+            receiver = next(
+                (
+                    child
+                    for child in target.node.named_children
+                    if declared is not None
+                    and child.end_byte <= declared.start_byte
+                    and child.type in {"user_type", "nullable_type", "type_identifier"}
+                ),
+                None,
+            )
+            if receiver is None:
+                continue
+            spelled = re.sub(r"<.*", "", target.analyzer.text(receiver)).rstrip("?").strip()
+            if spelled.rsplit(".", 1)[-1] in receivers and target.analyzer.accepts_arguments(
+                target.node, len(call.args)
+            ):
+                return True
+        return False
 
     def enclosing_function(self, call: Call, name: str) -> bool:
         """A function of this name that can take the call's arguments, declared in a Kotlin
@@ -5098,29 +5349,35 @@ class Analyzer:
         node = call.node.parent
         while node is not None:
             if node.type == "class_body":
-                members = list(node.named_children)
-                for companion in (part for part in node.named_children if part.type == "companion_object"):
-                    members += [
-                        member
-                        for body in companion.named_children
-                        if body.type == "class_body"
-                        for member in body.named_children
-                    ]
-                for member in members:
-                    declared = _field(member, "name") if member.type == "function_declaration" else None
-                    if (
-                        declared is not None
-                        and self.text(declared) == name
-                        and not any(
-                            child.type == "."
-                            for child in member.children
-                            if child.end_byte <= declared.start_byte
-                        )
-                        and self.accepts_arguments(member, len(call.args))
-                    ):
+                for member in self.body_functions(node).get(name, []):
+                    if self.accepts_arguments(member, len(call.args)):
                         return True
             node = node.parent
         return False
+
+    def body_functions(self, body: Any) -> dict[str, list[Any]]:
+        """The non-extension functions a class body and its companion object declare, by name."""
+        key = (body.start_byte, body.end_byte)
+        cached = self.class_functions.get(key)
+        if cached is not None:
+            return cached
+        members = list(body.named_children)
+        for companion in (part for part in body.named_children if part.type == "companion_object"):
+            members += [
+                member
+                for part in companion.named_children
+                if part.type == "class_body"
+                for member in part.named_children
+            ]
+        functions: dict[str, list[Any]] = {}
+        for member in members:
+            declared = _field(member, "name") if member.type == "function_declaration" else None
+            if declared is not None and not any(
+                child.type == "." for child in member.children if child.end_byte <= declared.start_byte
+            ):
+                functions.setdefault(self.text(declared), []).append(member)
+        self.class_functions[key] = functions
+        return functions
 
     def accepts_arguments(self, function: Any, count: int) -> bool:
         """Whether a Kotlin function declaration can take this many arguments."""
@@ -5320,18 +5577,64 @@ class Analyzer:
             return False
         if target.type in IDENTIFIERS:
             return self.supplied(target, frame)
+        branches = self.branch_bodies(target) if self.branching(target) else None
+        if target.type == "ternary_expression":
+            branches = [_field(target, "consequence"), _field(target, "alternative")]
+        if branches:
+            # `q == null ? m.getBody() : m.getHead()`: either part may be the one handed over.
+            return any(
+                self.handed_over(self.last_statement(branch), frame)
+                for branch in branches
+                if branch is not None
+            )
         getter = self.call(target)
         if getter is not None:
-            # `m.getBody()`: a part returned by a getter of the object.
+            # `m.getBody()`, `m.getChild("body")`: a part returned by a getter of the object.
             name = getter.name.rsplit(".", 1)[-1]
             return (
                 getter.receiver is not None
-                and not getter.args
-                and name not in READ_ONLY_MEMBERS | VALUE_MEMBERS
+                and all(self.literal_argument(arg) for arg in getter.args)
+                and name not in READ_ONLY_MEMBERS
+                and not self.value_member(name)
                 and self.supplied(target, frame)
             )
         navigation = self.navigation(target)
-        return bool(navigation and navigation[1] not in VALUE_MEMBERS and self.supplied(target, frame))
+        return bool(navigation and not self.value_member(navigation[1]) and self.supplied(target, frame))
+
+    def handed_parts(self, node: Any) -> list[Any]:
+        """The objects an argument hands over: each branch of a conditional, else itself."""
+        target = node.named_children[-1] if node.type == "value_argument" and node.named_children else node
+        target = self.unwrap(target)
+        if target is None:
+            return []
+        branches = self.branch_bodies(target) if self.branching(target) else None
+        if target.type == "ternary_expression":
+            branches = [_field(target, "consequence"), _field(target, "alternative")]
+        if not branches:
+            return [target]
+        return [
+            part
+            for branch in branches
+            if branch is not None
+            for part in self.handed_parts(self.last_statement(branch))
+        ]
+
+    def value_member(self, name: str) -> bool:
+        """A member that reads a value (`length`, `id`) or its getter (`getId()`, `isEmpty()`)."""
+        for prefix in ("get", "is"):
+            if name.startswith(prefix) and name[len(prefix) : len(prefix) + 1].isupper():
+                bare = name[len(prefix) :]
+                name = bare[:1].lower() + bare[1:]
+                break
+        return name in VALUE_MEMBERS or name in {"empty", "notEmpty", "blank", "notBlank"}
+
+    def literal_argument(self, node: Any) -> bool:
+        """An argument that is a literal (`"body"`, `0`)."""
+        target = self.unwrap(node)
+        return target is not None and (
+            target.type
+            in STRINGS | {"integer_literal", "number_literal", "boolean_literal", "decimal_integer_literal"}
+        )
 
     def alias_supplied(self, name: str, expression: Any, frame: Frame) -> None:
         """`val c = b` for a supplied object b: what is written through c is written into b."""
@@ -5653,17 +5956,17 @@ class Analyzer:
                 self.visited_values[key] = self.reused(branch, frame)
 
     def switch_bindings(self, entry: Any) -> list[tuple[str, tuple]]:
-        """Names a Swift switch case binds with `let`/`var`, each with what it binds.
+        """Names a Swift switch case binds with `let`/`var`, each with the path to what it binds.
 
-        ("whole",) is the subject itself (`let x`, `let x?`, `.some(let x)`), ("tuple", i)
-        an element of a tuple pattern (`(let a, _)`, `let (a, b)`), ("payload",) an
-        associated value of an enum case (`.open(let url)`). Enum case names and
-        associated-value labels (`url:` in `.open(url: let dest)`) bind nothing.
+        A path is a sequence of steps from the subject: ("tuple", i) is element i of a tuple
+        pattern (`(let a, _)`, `let (a, b)`), ("payload",) an enum case's associated value
+        (`.open(let url)`); no step is the value itself (`let x`, `let x?`, `.some(let x)`).
+        Enum case names and labels (`url:` in `.open(url: let dest)`) bind nothing.
         """
         found: list[tuple[str, tuple]] = []
         for pattern in (part for part in entry.named_children if part.type == "switch_pattern"):
             for top in (part for part in pattern.named_children if part.type == "pattern"):
-                self.pattern_bindings(top, False, ("whole",), found)
+                self.pattern_bindings(top, False, (), found)
         return found
 
     def pattern_bindings(self, node: Any, binding: bool, path: tuple, found: list[tuple[str, tuple]]) -> None:
@@ -5675,11 +5978,11 @@ class Analyzer:
             case = children[dot + 1] if dot + 1 < len(children) else None
             unwrap = case is not None and self.text(case) == "some" and len(subpatterns) == 1
             for part in subpatterns:
-                self.pattern_bindings(part, binding, path if unwrap else ("payload",), found)
+                self.pattern_bindings(part, binding, path if unwrap else (*path, ("payload",)), found)
             return
         if len(subpatterns) > 1:
             for index, part in enumerate(subpatterns):
-                self.pattern_bindings(part, binding, ("tuple", index) if path == ("whole",) else path, found)
+                self.pattern_bindings(part, binding, (*path, ("tuple", index)), found)
             return
         for index, child in enumerate(children):
             if child.type in IDENTIFIERS and binding:
@@ -5707,32 +6010,36 @@ class Analyzer:
         if not bindings or subject is None:
             return {}
         whole = self.reused(subject, frame)
-        literal = self.unwrap(subject)
-        # An unlabeled tuple literal subject (`switch (safe, link)`) has positional elements.
-        elements = (
-            [part for part in literal.named_children if part.type not in COMMENTS]
-            if literal is not None
-            and literal.type == "tuple_expression"
-            and not any(child.type == ":" for child in literal.children)
-            else []
-        )
-        payload = None
-        values: dict[str, Value] = {}
-        for name, path in bindings:
-            if path == ("whole",):
-                values[name] = whole
-            elif path[0] == "tuple" and path[1] < len(elements):
-                values[name] = self.reused(elements[path[1]], frame)
-            elif path[0] == "tuple":
-                values[name] = Value(whole.traces, whole.category)
+        return {name: self.pattern_value(subject, whole, path, frame) for name, path in bindings}
+
+    def pattern_value(self, node: Any, value: Value, path: tuple, frame: Frame) -> Value:
+        """The value a pattern path reaches: tuple literal elements by position, then an
+        enum case's payload (sources, category and stored payload, no type or identity)."""
+        for step in path:
+            if step[0] == "tuple":
+                elements = self.tuple_elements(self.unwrap(node) if node is not None else None)
+                if step[1] < len(elements):
+                    node = elements[step[1]]
+                    value = self.reused(node, frame)
+                    continue
+                node, value = None, Value(value.traces, value.category)
             else:
-                if payload is None:
-                    stored = (
-                        list(frame.object_fields.get(whole.identity, {}).values()) if whole.identity else []
-                    )
-                    payload = Value(_union([whole, *stored]).traces, whole.category)
-                values[name] = payload
-        return values
+                stored = list(frame.object_fields.get(value.identity, {}).values()) if value.identity else []
+                node, value = None, Value(_union([value, *stored]).traces, value.category)
+        return value
+
+    def tuple_elements(self, literal: Any) -> list[Any]:
+        """The element expressions of a Swift tuple literal, labeled (`(a: x, b: y)`) or not."""
+        if literal is None or literal.type != "tuple_expression":
+            return []
+        children = literal.children
+        return [
+            child
+            for index, child in enumerate(children)
+            if child.is_named
+            and child.type not in COMMENTS
+            and not (index + 1 < len(children) and children[index + 1].type == ":")
+        ]
 
     @staticmethod
     @contextmanager
@@ -5922,7 +6229,15 @@ class Analyzer:
             if key in declared or changed is frame.values[key]:
                 continue
             if writes is not None:
-                writes[key] = changed
+                # What the closure stored there: not the traces the name held before it ran
+                # (a write on one branch keeps them in the closure's own frame).
+                before = {trace.origin for trace in frame.values[key].traces}
+                writes[key] = Value(
+                    tuple(trace for trace in changed.traces if trace.origin not in before),
+                    changed.category,
+                    changed.type_name,
+                    changed.identity,
+                )
             if optional:
                 # Like a branch without else: keep the value from before and the lambda's.
                 values = [frame.values[key], changed]
@@ -6202,6 +6517,7 @@ class Analyzer:
         self.evaluated_inputs = None
         self.closure_effects = []
         self.closure_writes = {}
+        self.closure_written = {}
         self.guarded_paths = set()
         self.unguarded_paths = set()
         enclosing = function.parent

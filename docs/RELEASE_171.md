@@ -63,8 +63,9 @@ credential service was contacted.
   also where the `when` or `switch` is a value outside closures (whose value
   is its entries', not the subject's): `case let x`, `case let x?` and
   `case .some(let x)` bind the subject itself, as `if let` does; a tuple
-  pattern binds an element of a tuple subject (`switch (safe, link)`,
-  `case (let a, _)`); an enum case's associated value (`case .open(let url)`)
+  pattern binds an element of a tuple literal subject (`switch (safe, link)`,
+  `case (let a, _)`, also labeled or nested, and an enum payload inside an
+  element); an enum case's associated value (`case .open(let url)`)
   carries the subject's sources and category and what is stored in its
   payload, without the enum's type or object identity. A label (`url:` in
   `case let .open(url: dest)`) binds nothing.
@@ -106,29 +107,45 @@ credential service was contacted.
   value): a receiverless call that is no constructor (`File(q)`,
   `IllegalStateException(q)`), no standard top-level function (`println`,
   `require`, `listOf`, ...) and no project function of a class, companion
-  object or object around it, of a class it extends, or of the top level
-  that this file can name (`buildString { append(q) }`, `div { text(q) }`,
-  `div { +q }`, `request { parameter("q", q) }`), a chain it starts or a
-  `this.` call (`append("<p>").append(q)`, `this.append(q)`), a nested DSL
+  object or object around it, of a class it extends (also an extension of
+  that class), or of the top level
+  that this file can name, also through an import alias
+  (`buildString { append(q) }`, `div { text(q) }`, `div { +q }`,
+  `div { +format(q) }`, `request { parameter("q", q) }`; also in an unbraced
+  `if`/`when`/`for`/`while` body), a chain it starts or a
+  `this.` call (`append("<p>").append(q)`, `this.append(q)`; not a `this` an
+  `apply`/`run`/`with` block rebound), a helper handed `this`
+  (`appendFilter(this, q)`), a nested DSL
   call (`p { +q }`), and an assignment to a name that is no local or field
   (`request { url = q }`). A known builder's writing members (`append` in
   `buildString`, `add` in `buildList`, `put` in `buildMap`, `yield` in
   `sequence`, `emit` in `flow`, `send` in `channelFlow`, ...; for another
   `build…` callee, any of these names) are its receiver's even where a
-  project function has that name. The lambdas of `withContext`,
+  project function has that name; any other receiverless call in one of these
+  builders is no member of its receiver, unless a project extension of the
+  receiver type (`fun StringBuilder.appendSql(..)`). The lambdas of
+  `withContext`,
   `runCatching`, `lazy`, `launch`, `async`, `synchronized`, `repeat`,
   `thread`, `remember`, ..., of SAM constructors and of composables
-  (`Runnable { }`, `Column { }`) have no such receiver. What a call writes is
+  (`Runnable { }`, `Column { }`) and of event-handler registrations
+  (`b.onClick { }`, `setOnClickListener { }`, `doOnTextChanged { }`) have no
+  such receiver; on a project or library object (`Sql.execute { }`,
+  `Sql.Query { }`) such a name is that object's DSL. What a call writes is
   its data, whichever callee runs, and the result of a closure the receiver
-  stores or takes as content (`m.getOrPut(k) { q }`, `b.section { q }`; not
-  a callback whose result is a call it makes, `b.onClick { log(q) }`).
+  stores or takes as content (`m.getOrPut(k) { q }`, `b.section { q }`,
+  `b.title { q.uppercase() }`, a DSL's `title { q }`; not a callback whose
+  result is a side-effect call, `b.onClick { log(q) }`, Swift
+  `b.onTap { [weak self] in self?.log(q) }`, nor the lazy message of an
+  imported logger, `logcat { "msg $q" }`).
   Writes through a local alias (`val c = b`), a force-unwrap (`b!!`, Swift
   `b!`), a `let`/`also`/`use` block on it (`b.let { it.append(q) }`), a
-  helper call written as a statement that is handed the object or a part of
+  helper call written as a statement (also under Swift `try`, `await` or
+  `_ =`) that is handed the object or a part of
   it (`fill(b, q)`, `Fill.paragraph(b.body, q)`, Java
-  `Fill.into(m.getBody(), q)`, `parts.joinTo(b)`; assumed
+  `Fill.into(m.getBody(), q)`, `m.getChild("body")`, either branch of a
+  conditional, `parts.joinTo(b)`, `parts.joinTo(this)`; assumed
   to write its other arguments and its receiver into it; a value read from
-  it, `b.length`, a reading member such as `b.contains(q)` or
+  it, `b.length`, `b.id`, `m.getName()`, a reading member such as `b.contains(q)` or
   `b.contentEquals(q)`, and a helper in a condition write nothing), an index
   (`b.items[0].text = q`, Swift `m["q"] = q`) or a nested builder on it
   (`b.group { g -> g.append(q) }`) count too, and so does the builder call
@@ -182,7 +199,11 @@ closure may fill (passed to a call or written element by element) is treated
 as filled. A closure result over the trace cap that a call's value includes
 (`Ext.io({ big })` with more than eight sources, or a `run { }` block's) is
 `limited` (`source trace abstention`), where 1.7.0 reported the parenthesized
-form `partial`. With `--strict-coverage`, `limited` exits 3 (a `--fail-on`
+form `partial`. Kotlin `x!!` is the value of `x` for literal key and IV
+tracking, filled buffers and intent-target checks:
+`SecretKeySpec(key!!.toByteArray(), ..)` with a literal key is reported,
+`nextBytes(raw!!)` fills `raw`, and a component check on `nested!!` is
+credited. With `--strict-coverage`, `limited` exits 3 (a `--fail-on`
 threshold exits 4).
 
 ## Remaining limits
@@ -202,7 +223,14 @@ unknown callee that names an inherited framework member
 (`Ext.page { setTitle(q) }`) is taken as a write into its possible receiver.
 What a helper writes from elsewhere (`fill(b)` reading its own input) and an
 `apply`/`run`/`with` block on a declared supplied parameter are not tracked
-(the latter is `limited`); `groupBy` keys taint the grouped elements. An
+(the latter is `limited`); `groupBy` keys taint the grouped elements. A project
+function named like a DSL member (an own or top-level `text(s)`) hides that
+DSL's `text(q)`, although Kotlin finds the lambda's receiver member first;
+`+greet(q)` writes `q` even where `greet` returns a constant; a library
+extension of a known builder's receiver (`buildString { appendXyz(q) }`) is
+no write unless it is the lambda's last expression; a Swift tuple held in a
+variable (`let pair = (safe, link); switch pair`) binds each element to the
+whole tuple. An
 exit inside a scope block (`run { return@outer }`) does not end the enclosing
 statement list, so dead statements after it are still visited. Closures in
 Kotlin class property initializers (`val listener = View.OnClickListener { }`,

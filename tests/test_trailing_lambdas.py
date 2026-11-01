@@ -2102,6 +2102,8 @@ def test_chained_stored_and_handed_writes_reach_the_call_value(build: str) -> No
     [
         'Markup.render { b -> if (Text.same(b.text, q)) println(0); b.append("x"); Unit }',
         'Markup.render { sb -> sb.onClick { audit.log(q) }; sb.append("safe") }',
+        'Markup.render { sb -> sb.onClick { record(q) }; sb.append("safe") }',
+        'Markup.render { sb -> sb.setOnClickListener { record(q) }; sb.append("safe") }',
     ],
 )
 def test_conditions_and_callbacks_on_a_supplied_object_are_no_writes(build: str) -> None:
@@ -2226,10 +2228,11 @@ def test_closures_that_finish_before_the_assignment_keep_no_write(assign: str) -
 def test_long_branch_chain_in_a_closure_stays_fast() -> None:
     import time
 
-    chain = " else ".join(f'if (k == "{i}") {{ "https://docs.example.test/{i}" }}' for i in range(800))
-    started = time.perf_counter()
-    report = _kotlin(
-        f"""class M(private val web: WebView) {{
+    def elapsed(branches: int) -> float:
+        chain = " else ".join(
+            f'if (k == "{i}") {{ "https://docs.example.test/{i}" }}' for i in range(branches)
+        )
+        source = f"""class M(private val web: WebView) {{
     fun go(intent: Intent) {{
         val q = intent.getStringExtra("q") ?: ""
         val k = intent.getStringExtra("k") ?: ""
@@ -2237,10 +2240,18 @@ def test_long_branch_chain_in_a_closure_stays_fast() -> None:
     }}
 }}
 """
-    )
-    # Each node's result position is decided once; the uncached walk took about 9 s here.
-    assert time.perf_counter() - started < 5
-    assert _hit(report, URL)
+        best = float("inf")
+        found = True
+        for _ in range(2):
+            started = time.perf_counter()
+            found = _hit(_kotlin(source), URL) and found
+            best = min(best, time.perf_counter() - started)
+        assert found
+        return best
+
+    # Each node's result position is decided once: four times the branches cost about four
+    # times as much (the uncached walk grew about 50 times from 200 to 800 branches).
+    assert elapsed(800) < 20 * max(elapsed(200), 0.01)
 
 
 @pytest.mark.parametrize(
@@ -2407,3 +2418,460 @@ final class Viewer {{
 )
 def test_swift_switch_expression_value_reads_its_case_bindings(body: str, expected: bool) -> None:
     assert _hit(_swift(SWIFT_SWITCH_VALUE.format(body=body)), URL) is expected
+
+
+@pytest.mark.parametrize(
+    "build, expected",
+    [
+        (
+            'Markup.render { b -> b.onClick { if (q.isEmpty()) log(q) else track(q) }; b.append("x"); Unit }',
+            False,
+        ),
+        ('Markup.render { b -> b.section { if (q.isEmpty()) "x" else q }; Unit }', True),
+        ("buildString { appendFilter(this, q) }", True),
+        (
+            'buildString { val other = StringBuilder(); other.apply { this.append(q) }; append("SELECT 1") }',
+            False,
+        ),
+        ("buildString { apply { this.append(q) } }", True),
+    ],
+)
+def test_callbacks_content_and_this_in_builder_lambdas(build: str, expected: bool) -> None:
+    helpers = "private fun appendFilter(sb: StringBuilder, f: String) { sb.append(f) }"
+    assert _hit(_kotlin(OWN_HELPER.format(supertype="", helpers=helpers, build=build)), SQL) is expected
+
+
+def test_inherited_helper_with_a_defaulted_parameter_writes_nothing() -> None:
+    base = KOTLIN + 'open class BaseRepo {\n    fun log(msg: String, tag: String = "T") {}\n}\n'
+    sub = KOTLIN + OWN_HELPER.format(
+        supertype=" : BaseRepo()", helpers="", build='buildString { log(q); append("SELECT 1") }'
+    )
+    report = analyze_sources([("app/BaseRepo.kt", base), ("app/R.kt", sub)])
+    assert not _hit(report, SQL), report["findings"]
+
+
+SWIFT_QUERY = """import UIKit
+import WebKit
+final class V {{
+    let web = WKWebView()
+    func application(_ app: UIApplication, open url: URL, options: [String: Any]) {{
+        let query = url.absoluteString
+        {body}
+    }}
+}}
+"""
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        (
+            "let html = Page.render { b in b.onTap { [weak self] in self?.track(query) }; "
+            'b.add("<p>x</p>"); return b.html }\n        web.loadHTMLString(html, baseURL: nil)',
+            False,
+        ),
+        (
+            'let target: URL = switch query { case "help": URL(string: "https://docs.example.test/help")!; '
+            'default: URL(string: "https://docs.example.test/")! }\n        web.load(URLRequest(url: target))',
+            False,
+        ),
+        (
+            'let target: URL = switch query { case "": URL(string: "https://docs.example.test/")!; default: url }\n'
+            "        web.load(URLRequest(url: target))",
+            True,
+        ),
+        (
+            'let page = Markup.render({ b in try Fill.into(b, query); b.add("x") })\n'
+            "        web.loadHTMLString(page, baseURL: nil)",
+            True,
+        ),
+        (
+            'let page = Markup.render({ b in _ = Fill.into(b, query); b.add("x") })\n'
+            "        web.loadHTMLString(page, baseURL: nil)",
+            True,
+        ),
+    ],
+)
+def test_swift_callbacks_switch_values_and_wrapped_helper_statements(body: str, expected: bool) -> None:
+    assert _hit(_swift(SWIFT_QUERY.format(body=body)), URL) is expected
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (
+            'when (val q = intent.getStringExtra("x")!!) { q.trim() -> "https://docs.example.test/a"; else -> HOME }',
+            False,
+        ),
+        (
+            'when (val q = intent.getStringExtra("x")!!) { "" -> { android.util.Log.d("t", q); HOME }; else -> HOME }',
+            False,
+        ),
+        ('when (val q = intent.getStringExtra("x")!!) { "" -> HOME; else -> q }', True),
+    ],
+)
+def test_when_value_is_its_entries_last_values_not_their_conditions(value: str, expected: bool) -> None:
+    report = _kotlin(
+        f"""const val HOME = "https://docs.example.test/"
+class W(private val web: WebView) {{
+    fun q(intent: Intent) {{
+        val s = {value}
+        web.loadUrl(s)
+    }}
+}}
+"""
+    )
+    assert _hit(report, URL) is expected
+
+
+@pytest.mark.parametrize(
+    "case, expected",
+    [
+        ('case let x where x.count > 3: "https://docs.example.test/a"', False),
+        ("case let x where x.count > 3: x", True),
+    ],
+)
+def test_swift_case_value_is_its_last_statement_not_its_where_clause(case: str, expected: bool) -> None:
+    body = (
+        f'let target: String = switch query {{ {case}; default: "https://docs.example.test/b" }}\n'
+        "        web.load(URLRequest(url: URL(string: target)!))"
+    )
+    assert _hit(_swift(SWIFT_QUERY.format(body=body)), URL) is expected
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'append("SELECT \'"); if (flag) append(q); append("\'")',
+        'append("SELECT \'"); if (flag) append(q) else append("x"); append("\'")',
+        'append("SELECT \'"); for (i in 0..1) append(q); append("\'")',
+        'append("SELECT \'"); while (flag) append(q); append("\'")',
+        'append("SELECT \'"); when (q.length) { 0 -> append("x"); else -> append(q) }; append("\'")',
+    ],
+)
+def test_unbraced_bodies_in_a_builder_are_statements(body: str) -> None:
+    report = _kotlin(
+        f"""class R(private val db: SQLiteDatabase) {{
+    var flag = true
+    fun q(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+        db.execSQL(buildString {{ {body} }})
+    }}
+}}
+"""
+    )
+    assert _hit(report, SQL)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        'Markup.render { b -> if (q.isNotEmpty()) Fill.paragraph(b, q); b.append("x"); Unit }',
+        'Markup.render { b -> if (q.isNotEmpty()) b.group { g -> g.append(q) }; b.append("x"); Unit }',
+    ],
+)
+def test_unbraced_helper_and_nested_builder_writes_reach_the_call_value(build: str) -> None:
+    assert _hit(_kotlin(KOTLIN_BUILDER.format(build=build)), SQL)
+
+
+def test_unary_plus_of_a_call_writes_its_result() -> None:
+    report = _kotlin(
+        """class R(private val web: WebView) {
+    fun q(intent: Intent) {
+        val q = intent.getStringExtra("q") ?: ""
+        web.loadUrl(div { +format(q); br() })
+    }
+}
+"""
+    )
+    assert _hit(report, URL)
+
+
+def test_aliased_project_function_is_no_dsl_write() -> None:
+    util = """package com.example.util
+fun log(s: String) {}
+"""
+    kotlin = (
+        "package com.example.app\nimport android.content.Intent\nimport android.webkit.WebView\n"
+        "import com.example.util.log as audit\n"
+        """class R(private val web: WebView) {
+    fun q(intent: Intent) {
+        val q = intent.getStringExtra("q") ?: ""
+        web.loadUrl(Ext.page { audit(q); "https://docs.example.test/" })
+    }
+}
+"""
+    )
+    report = analyze_sources([("app/Util.kt", util), ("app/R.kt", kotlin)])
+    assert not _hit(report, URL), report["findings"]
+
+
+@pytest.mark.parametrize("build", ['buildString { note(q); append("SELECT 1") }'])
+def test_helper_of_a_project_base_with_a_framework_base_writes_nothing(build: str) -> None:
+    base = (
+        KOTLIN
+        + "import androidx.lifecycle.ViewModel\nopen class BaseVm : ViewModel() {\n    fun note(s: String) {}\n}\n"
+    )
+    sub = KOTLIN + OWN_HELPER.format(supertype=" : BaseVm()", helpers="", build=build)
+    report = analyze_sources([("app/BaseVm.kt", base), ("app/R.kt", sub)])
+    assert not _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "assign",
+    [
+        'u = Ext.fetch { if (u.isEmpty()) u = "https://docs.example.test/help" }',
+        'u = Ext.fetch { Ext.inner { u = "https://docs.example.test/help" } }',
+    ],
+)
+def test_conditional_callback_write_drops_the_value_from_before(assign: str) -> None:
+    report = _kotlin(
+        f"""class R(private val web: WebView) {{
+    fun q(intent: Intent) {{
+        var u = intent.getStringExtra("u")!!
+        println(u)
+        {assign}
+        web.loadUrl(u)
+    }}
+}}
+"""
+    )
+    assert not _hit(report, URL), report["findings"]
+
+
+def test_sam_constructor_lambda_has_no_data_receiver() -> None:
+    report = _kotlin(
+        """class R(private val web: WebView) {
+    fun q(intent: Intent) {
+        val q = intent.getStringExtra("q") ?: ""
+        val page = java.util.concurrent.Callable { record(q); "https://docs.example.test/" }.call()
+        web.loadUrl(page)
+    }
+}
+"""
+    )
+    assert not _hit(report, URL), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        (
+            'val key: String? = "0123456789abcdef"\n        println(SecretKeySpec(key!!.toByteArray(), "AES"))',
+            True,
+        ),
+        (
+            "val raw: ByteArray? = ByteArray(16)\n        java.security.SecureRandom().nextBytes(raw!!)\n"
+            '        println(SecretKeySpec(raw, "AES"))',
+            False,
+        ),
+    ],
+)
+def test_force_unwrap_is_the_value_for_key_material(body: str, expected: bool) -> None:
+    report = analyze_sources(
+        [
+            (
+                "app/K.kt",
+                "package com.example.app\nimport javax.crypto.spec.SecretKeySpec\n"
+                f"class K {{\n    fun make() {{\n        {body}\n    }}\n}}\n",
+            )
+        ]
+    )
+    assert _hit(report, "AST-CRYPTO-HARDCODED-KEY") is expected
+
+
+@pytest.mark.parametrize(
+    "helpers, build, expected",
+    [
+        ("", "Markup.render { b -> b.section { q.trim() }; Unit }", True),
+        ("", "Ext.page { title { q }; footer() }", True),
+        ("", 'buildString { listOf(q).joinTo(this); append("x") }', True),
+        (
+            "fun StringBuilder.appendSql(s: String) { append(s) }",
+            'buildString { appendSql(q); append("x") }',
+            True,
+        ),
+        ("", 'Sql.execute { where("name = \'" + q + "\'"); limit(10) }', True),
+        ("", "Ext.flow { trySendBlocking(q); close() }.toString()", True),
+        ("", 'buildString { checkArgument(q.length < 64, "long $q"); append("SELECT 1") }', False),
+        ("", 'buildList { trace("open", q); add("SELECT 1") }.joinToString()', False),
+        ("fun R.note(s: String) {}", 'Ext.page { note(q); "SELECT 1" }', False),
+        (
+            "companion object { fun log(vararg parts: String) {} }",
+            'Ext.page { log(q, "x"); "SELECT 1" }',
+            False,
+        ),
+        ("", 'buildString { val n: String? = null; n ?: append(q); append("x") }', True),
+    ],
+)
+def test_builder_and_dsl_write_rules(helpers: str, build: str, expected: bool) -> None:
+    assert _hit(_kotlin(OWN_HELPER.format(supertype="", helpers=helpers, build=build)), SQL) is expected
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        'buildString { logcat { "query for $q" }; append("SELECT 1") }',
+        'Ext.page { logcat { "query for $q" }; "SELECT 1" }',
+    ],
+)
+def test_imported_lazy_message_logger_is_no_content(build: str) -> None:
+    kotlin = KOTLIN + "import logcat.logcat\n" + OWN_HELPER.format(supertype="", helpers="", build=build)
+    assert not _hit(analyze_sources([("app/R.kt", kotlin)]), SQL)
+
+
+@pytest.mark.parametrize(
+    "build, expected",
+    [
+        ('Markup.render { b -> Analytics.track(b.id, q); b.append("x"); Unit }', False),
+        ("Markup.render { b -> Fill.into(if (q.isEmpty()) b.body else b.head, q); Unit }", True),
+    ],
+)
+def test_values_and_parts_of_a_supplied_object_handed_to_helpers(build: str, expected: bool) -> None:
+    assert _hit(_kotlin(KOTLIN_BUILDER.format(build=build)), SQL) is expected
+
+
+def test_java_getter_with_a_literal_argument_hands_a_part() -> None:
+    report = _java(
+        """class C {
+  SQLiteDatabase db;
+  void q(Intent intent) {
+    String q = intent.getStringExtra("q");
+    String page = Markup.render(m -> { Fill.into(m.getChild("body"), q); });
+    db.execSQL("SELECT " + page);
+  }
+}
+"""
+    )
+    assert _hit(report, SQL)
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        [
+            (
+                "app/BaseRepo.kt",
+                KOTLIN + "open class BaseRepo {\n    fun log(s: String) {}\n}\n",
+            ),
+            (
+                "app/R.kt",
+                KOTLIN
+                + OWN_HELPER.format(
+                    supertype=" : BaseRepo(), Runnable",
+                    helpers="override fun run() {}",
+                    build='buildString { log(q); append("SELECT 1") }',
+                ),
+            ),
+        ],
+        [
+            (
+                "app/src/main/java/com/example/base/BaseRepo.java",
+                "package com.example.base;\npublic class BaseRepo { public void log(String s) { } }\n",
+            ),
+            (
+                "app/R.kt",
+                KOTLIN
+                + "import com.example.base.*\n"
+                + OWN_HELPER.format(
+                    supertype=" : BaseRepo()", helpers="", build='buildString { log(q); append("SELECT 1") }'
+                ),
+            ),
+        ],
+    ],
+)
+def test_inherited_helpers_through_interfaces_and_star_imports_write_nothing(files: list) -> None:
+    report = analyze_sources(files)
+    assert not _hit(report, SQL), report["findings"]
+
+
+SWIFT_TUPLES = """import UIKit
+import WebKit
+enum Route {{ case external(URL), home }}
+final class V {{
+    let web = WKWebView()
+    func application(_ app: UIApplication, open url: URL, options: [String: Any]) {{
+        let safe = URL(string: "https://docs.example.test/")!
+        let route: Route = .external(safe)
+        {body}
+    }}
+}}
+"""
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "switch (route, url) { case (.external(let a), _): web.load(URLRequest(url: a)); default: break }",
+        "switch (home: safe, link: url) { case (let a, _): web.load(URLRequest(url: a)) }",
+        "switch (link: url, home: safe) { case (_, let b): web.load(URLRequest(url: b)) }",
+        "switch ((safe, url), 1) { case ((let a, _), _): web.load(URLRequest(url: a)) }",
+    ],
+)
+def test_swift_nested_and_labeled_tuple_patterns_bind_their_element(body: str) -> None:
+    assert not _hit(_swift(SWIFT_TUPLES.format(body=body)), URL)
+
+
+@pytest.mark.parametrize(
+    "files, base",
+    [
+        (
+            [
+                (
+                    "app/BaseVm.kt",
+                    KOTLIN
+                    + "import androidx.lifecycle.ViewModel\nopen class BaseVm : ViewModel() { fun note(s: String) {} }\n",
+                ),
+                (
+                    "app/R.kt",
+                    KOTLIN
+                    + 'class R : BaseVm() {\n    fun q() { println(Ext.page { note("x"); "y" }) }\n}\n',
+                ),
+            ],
+            "com.example.app.BaseVm",
+        ),
+        (
+            [
+                ("app/BaseRepo.kt", KOTLIN + "open class BaseRepo { fun note(s: String) {} }\n"),
+                (
+                    "app/R.kt",
+                    KOTLIN
+                    + "class R : BaseRepo(), Runnable {\n    override fun run() {}\n"
+                    + '    fun q() { println(Ext.page { note("x"); "y" }) }\n}\n',
+                ),
+            ],
+            "com.example.app.BaseRepo",
+        ),
+        (
+            [
+                (
+                    "app/src/main/java/com/example/base/BaseRepo.java",
+                    "package com.example.base;\npublic class BaseRepo { public void note(String s) { } }\n",
+                ),
+                (
+                    "app/R.kt",
+                    KOTLIN
+                    + "import com.example.base.*\nclass R : BaseRepo() {\n"
+                    + '    fun q() { println(Ext.page { note("x"); "y" }) }\n}\n',
+                ),
+            ],
+            "com.example.base.BaseRepo",
+        ),
+    ],
+)
+def test_project_ancestry_reaches_bases_past_framework_parents_interfaces_and_star_imports(
+    files: list, base: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mobile_audit import native_flow
+
+    seen: dict[str, set[str]] = {}
+    original = native_flow.NativeFlow.project_ancestry
+
+    def spy(self, owner: str) -> set[str]:
+        result = original(self, owner)
+        seen[owner] = set(result)
+        return result
+
+    monkeypatch.setattr(native_flow.NativeFlow, "project_ancestry", spy)
+    analyze_sources(files)
+    assert base in seen.get("com.example.app.R", set()), seen

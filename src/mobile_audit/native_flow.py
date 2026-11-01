@@ -336,6 +336,7 @@ CONTEXT = (
     "evaluated_inputs",
     "closure_effects",
     "closure_writes",
+    "closure_written",
     "guarded_paths",
     "unguarded_paths",
     "finding_start",
@@ -1797,12 +1798,18 @@ class NativeFlow:
         while pending and len(found) < MAX_EMPTY_BASE_DEPTH * 4:
             for analyzer, nominal in self.class_definitions.get(pending.pop(), []):
                 for reference in self.supertype_references(analyzer, nominal) or []:
-                    bases = self.class_owners(analyzer, reference, nominal)
+                    # A supertype spelling is read in the scope around the class, not in its body.
+                    bases = self.class_owners(analyzer, reference, nominal.parent)
                     if not bases and analyzer.language == "kotlin":
                         # A Kotlin class can extend a Java class of its package or an import.
                         namespace = self.namespaces[id(analyzer)]
                         names = {reference, f"{namespace}.{reference}" if namespace else reference}
                         names |= self.imported_symbols(analyzer, reference.partition(".")[0], classes=True)
+                        names |= {
+                            declaration.strip()[:-1] + reference
+                            for declaration in analyzer.imports
+                            if declaration.strip().endswith(".*")
+                        }
                         bases = {
                             name
                             for name in names
