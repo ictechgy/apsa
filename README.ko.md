@@ -350,7 +350,7 @@ apsa jobs status JOB_ID --json
 
 심각도 기준 CI 판정은 기본적으로 `candidate`를 제외합니다. 포함하려면 `--include-candidates`나 정책의 `allowed_statuses`를 사용하세요. 필수 규칙은 `checked`, `limited`, `not-applicable` coverage를 인정하며(`limited`는 `strict_coverage`가 false일 때만), 부분 실행이나 필수 검사 누락은 통과시키지 않습니다. 예외에는 발견 ID, 이유, 만료일이 필요합니다. 백그라운드 작업의 `completed`는 작업이 끝났다는 뜻입니다. 감사가 완전한지 판단하려면 `audit_incomplete`와 보고서를 확인하세요.
 
-예외에는 승인한 상태를 선택 항목 `severity`로 기록할 수 있고, 알려진 악용 발견을 승인했다면 `known_exploited = true`도 함께 적습니다. 이후 발견의 심각도가 그보다 높아지거나 알려진 악용으로 바뀌면 그 예외는 더 이상 발견을 숨기지 않습니다. 발견은 다시 임계값 판정을 받고, 활성 예외에는 `escalated` 기록이, 게이트에는 `waiver-severity-escalated` 알림이 남습니다. `severity`가 없는 예외는 이전처럼 계속 숨기며 `waiver-severity-unrecorded` 알림을 남깁니다. 알림은 `reasons`와 별개인 게이트의 `notices` 목록에 있고, 그 자체로는 게이트 상태나 종료 코드를 바꾸지 않습니다. 의존성 공지 발견은 발견 ID를 그대로 유지하고 동등한 공지 ID(표시 ID, 묶인 OSV ID, 별칭, 최대 32개)를 `advisory_ids`에 기록합니다. GHSA 공지에 CVE 별칭이 생기거나 더 낮은 CVE 별칭이 나타나기 전에 작성한 예외, `only_new` 기준선, 보고서 비교도 같은 의존성 위치에서 이름이 바뀐 발견과 계속 일치하며, 1.6.4 보고서도 마찬가지입니다. 공유 별칭 때문에 예외나 기준선 발견 하나가 현재 발견 두 개를 덮지는 않습니다.
+예외에는 승인한 상태를 선택 항목 `severity`로 기록할 수 있고, 알려진 악용 발견을 승인했다면 `known_exploited = true`도 함께 적습니다. 이후 발견의 심각도가 그보다 높아지거나 알려진 악용으로 바뀌면 그 예외는 더 이상 발견을 숨기지 않습니다. 발견은 다시 임계값 판정을 받고, 활성 예외에는 `escalated` 기록이, 게이트에는 `waiver-severity-escalated` 알림이 남습니다. `severity`가 없는 예외는 이전처럼 계속 숨기며 `waiver-severity-unrecorded` 알림을 남깁니다. 알림은 `reasons`와 별개인 게이트의 `notices` 목록에 있고, 그 자체로는 게이트 상태나 종료 코드를 바꾸지 않습니다. 의존성 공지 발견은 발견 ID를 그대로 유지하고 동등한 공지 ID(표시 ID, 묶인 OSV ID, 별칭, 최대 32개)를 `advisory_ids`에 기록합니다. GHSA 공지에 CVE 별칭이 생기거나 더 낮은 CVE 별칭이 나타나기 전에 작성한 예외, `only_new` 기준선, 보고서 비교도 같은 의존성 위치에서 이름이 바뀐 발견과 계속 일치하며, 1.6.4 보고서도 마찬가지입니다. 별칭 일치는 표시 ID를 통해서만 인정됩니다. 이전 표시 ID가 현재 발견의 `advisory_ids`에 있거나 그 반대여야 하며, 다른 별칭(예: 여러 CVE를 묶은 PYSEC·GHSA 레코드)만 공유하는 발견은 서로 다른 발견입니다. 일치는 일대일로만 인정됩니다. 자기 ID로 일치하는 발견에는 별칭 일치가 추가되지 않고, 여러 이전 발견이나 예외와 공유되는 별칭은 아무것과도 일치하지 않으므로 그 발견은 다시 열립니다. 한 발견에 활성 예외가 여러 개 일치하면 그중 하나라도 심각도가 상승한 경우 발견을 숨기지 않습니다.
 
 읽을 수 없는 소스 폴더와 파일은 경고와 불완전한 coverage로 남습니다. 지원하는 파일을 하나도 읽을 수 없는 소스 트리는 명시적인 실행 오류가 됩니다. 텍스트 스테이징 한도(합계 64 MiB, 파일 12,000개)를 넘는 소스 트리는 거부하지 않고 부분 감사합니다. 앱 코드·설정(설정, 앱 코드, 헤더·`.build/`·`vendor/` 같은 vendored 코드 순), 기타 출하 텍스트(기본 리소스·JSON·YAML), Android 번역·한정자 `res/values-*` 파일, 테스트 순으로 스테이징하며, 빠진 파일 수와 바이트는 종류별(`code_and_config`, `other_text`, `localized_values`, `tests`)로 `inventory.input_snapshot.omitted`에 남습니다. 8 MiB 파일 한도를 넘거나 읽기·복사에 실패한 파일도 여기에 셉니다. 읽을 수 없는 디렉터리와, 트리 전체 기준 항목 100,000개(이름순으로 읽음)·깊이 64단계를 넘는 디렉터리는 경고로 보고합니다. 앱 코드·설정이나 기타 출하 텍스트가 빠지면 `app_scope_complete`가 false가 되고 not-applicable coverage도 partial이 됩니다. 완전한 감사가 필요하면 앱 모듈처럼 더 좁은 폴더를 검사하세요. 저장소 캡처 실패는 `not-run`으로 남으며 canary가 삭제됐다는 근거가 될 수 없습니다.
 
@@ -358,7 +358,8 @@ Coverage는 실행 공백과 정밀도 한계를 구분합니다. `partial`은 �
 뜻입니다. 예산 도달, 건너뛴 파일, 구문 오류나 손실 있는 변환, 잘린 입력, 온라인 조회 실패, 최근 런타임
 실행의 부분 실패가 여기에 해당하며, 감사를 불완전(종료 코드 `3`)하게 만듭니다. `limited`는 범위 안의
 입력을 모두 검사했지만 제한된 정적 모델이 일부 경로에서 판단을 유보했다는 뜻입니다. 예를 들어 native
-flow의 호출 대상 미해결, 축소 모델로만 보는 Objective-C, 토큰 수준의 JS/TS/Dart 흐름이 그렇습니다.
+flow의 호출 대상 미해결, 축소 모델로만 보는 Objective-C(`OBJC-*` 규칙. `AST-*` 규칙은 Objective-C를
+검사하지 않으므로 다른 언어와 함께 있으면 `partial`), 토큰 수준의 JS/TS/Dart 흐름이 그렇습니다.
 `limited` 감사는 명시된 범위에서 완료된 것으로 보며, 보고서(`summary.limited`, SARIF 알림, MASWE 표,
 체크리스트)에 한계를 표시합니다. 여러 항목을 합칠 때는 `partial`이 `limited`보다, `limited`가
 `checked`보다 우선합니다. `scan --strict-coverage`, `policy evaluate --strict-coverage`, 정책의
@@ -374,7 +375,7 @@ flow의 호출 대상 미해결, 축소 모델로만 보는 Objective-C, 토큰 
 | `4` | 발견 항목이 설정한 CI 임계값 또는 정책 초과. `3`보다 우선 |
 | `130` | 중단 |
 
-`--json`은 `ok`, `data` 또는 `error`, `exit_code`를 담은 envelope를 출력합니다. Watch는 주기마다 JSON envelope 하나를 출력합니다(NDJSON). `ok`는 코드 `0`과 `4`에서 `true`입니다. 코드 `4`는 평가 자체는 성공했지만 CI 임계값을 초과했다는 뜻입니다. 감사가 불완전하면서 임계값도 넘으면 종료 코드는 `4`이고, 불완전하다는 사실은 보고서 요약과 정책 사유에 그대로 남습니다. CI는 `exit_code`와 정책 결과를 확인해야 합니다. 코드 `3`과 `4`에서도 보고서가 생성될 수 있습니다.
+`--json`은 `ok`, `data` 또는 `error`, `exit_code`를 담은 envelope를 출력합니다. Watch는 주기마다 JSON envelope 하나를 출력합니다(NDJSON). `ok`는 코드 `0`과 `4`에서 `true`입니다. 코드 `4`는 평가 자체는 성공했지만 CI 임계값을 초과했다는 뜻입니다. 감사가 불완전하면서 임계값도 넘으면 종료 코드는 `4`이고 `ok`는 `true`입니다. 불완전하다는 사실은 보고서의 `summary.incomplete`와 정책의 `partial-audit` 사유에 그대로 남습니다. CI는 `exit_code`와 정책 결과를 확인해야 합니다. 코드 `3`과 `4`에서도 보고서가 생성될 수 있습니다.
 
 ### GitHub code scanning
 
@@ -399,8 +400,9 @@ Action은 같은 버전의 `apsa`를 릴리스의 해시 고정 의존성과 함
 실패시킵니다(이때 APSA는 `4`로 종료하며, Action은 종료 코드만이 아니라 보고서도 읽습니다). 정책을 쓰면
 필수 규칙·필수 취약점 정보·만료된 예외·기준선 검사 등 충족하지 못한 정책 조건은 모두 작업을 실패시키고,
 부분 감사만 `fail-on-incomplete`에 맡깁니다. 이 값이 `"false"`가 아니면 종료 코드 `3`도 실패합니다.
-`limited` coverage는 `strict-coverage: "true"`가 아니면 작업을 실패시키지 않습니다. 이 값은
-`--strict-coverage`를 전달해 `limited`도 불완전으로 셉니다. 팀 게이트는
+`limited` coverage는 `strict-coverage: "true"`(`--strict-coverage` 전달)나 정책의
+`strict_coverage = true`가 없으면 작업을 실패시키지 않습니다. 둘 중 하나가 있으면 `limited`도 불완전으로
+셉니다. `incomplete` 출력도 같은 판단을 따르며, 종료 코드 `4` 뒤의 `partial-audit` 사유도 포함합니다. 팀 게이트는
 `policy`(필요 시 `baseline-file`, `baseline-sha256`), 단순 임계값은 후보를 제외하는 `fail-on`을 쓰세요.
 
 기본값의 Action은 오프라인이라 CVE·의존성 공지 대조를 하지 않습니다. 의존성 발견에는 `intel-sync`(공개

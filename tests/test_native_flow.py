@@ -853,7 +853,8 @@ def test_parser_node_budget_remains_partial_with_new_flow_registry(monkeypatch):
     )
     assert any("AST node budget exceeded" in warning for warning in report["warnings"])
     assert report["metadata"]["native_flow"]["state"] == "not-run"
-    assert all(item["state"] == "not-run" for item in report["coverage"])
+    # No flow ran, but the dropped source is an execution gap for every AST rule.
+    assert all(item["state"] == "partial" for item in report["coverage"])
 
 
 def test_duplicate_trace_merge_cannot_erase_unsafe_or_incomplete_state():

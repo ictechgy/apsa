@@ -55,6 +55,20 @@ def _md_code(value: object) -> str:
     return f"{fence}{pad}{text}{pad}{fence}"
 
 
+# Line and paragraph separators, C1 controls and bidi controls that JSON leaves raw
+# with ensure_ascii=False; inside a JSON string their escapes are equivalent.
+_JSON_BLOCK_CONTROL = re.compile(r"[\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+
+
+def _md_json(value: object) -> str:
+    """Report data as a fenced JSON block, fenced longer than any backtick run inside it."""
+    text = _JSON_BLOCK_CONTROL.sub(
+        lambda match: f"\\u{ord(match.group()):04x}", json.dumps(value, ensure_ascii=False, indent=2)
+    )
+    fence = "`" * max(3, max(map(len, re.findall(r"`+", text)), default=0) + 1)
+    return f"\n{fence}json\n{text}\n{fence}"
+
+
 def _md_reference(url: object) -> str:
     """A plain http(s) URL as written; other URLs as literal autolinks; anything else as text."""
     text = str(url)
@@ -97,20 +111,18 @@ def markdown(report: dict) -> str:
                 else []
             ),
             f"\n{_md_text(item['remediation'])}",
-            "\n```json\n" + json.dumps(item["evidence"], ensure_ascii=False, indent=2) + "\n```",
+            _md_json(item["evidence"]),
         ]
         lines += [f"\n- {_md_reference(url)}" for url in item["references"]]
     lines += [
         "\n## OS/environment advisories",
-        "\n```json\n"
-        + json.dumps(report.get("environment_advisories", []), ensure_ascii=False, indent=2)
-        + "\n```",
+        _md_json(report.get("environment_advisories", [])),
         "\n## Coverage",
-        "\n```json\n" + json.dumps(report["coverage"], ensure_ascii=False, indent=2) + "\n```",
+        _md_json(report["coverage"]),
         "\n## OWASP MASWE coverage",
         *maswe_markdown(report),
         "\n## Intelligence provenance",
-        "\n```json\n" + json.dumps(report["intel_snapshot"], ensure_ascii=False, indent=2) + "\n```",
+        _md_json(report["intel_snapshot"]),
         "\n## Limitations",
     ]
     lines += [f"\n- {_md_text(w)}" for w in report.get("warnings", [])]

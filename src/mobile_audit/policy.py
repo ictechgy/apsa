@@ -253,13 +253,14 @@ def _waiver_escalation(waiver: dict, item: dict) -> bool:
 
 
 def _created(value: Any) -> datetime | None:
+    """A report creation time; APSA writes UTC, so a time without an offset is read as UTC."""
     if not isinstance(value, str) or not value:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed if parsed.tzinfo is not None else None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 def _baseline_order_problem(report: dict, baseline: Any) -> dict | None:
@@ -357,7 +358,8 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
     active, expired, notices = [], [], []
     identities = _identities(current)
     # Each waiver ID matches a finding's own identities or, for a dependency
-    # advisory whose display ID changed, one equivalent advisory identity.
+    # advisory whose display ID changed and that no waiver names exactly, one
+    # unambiguous equivalent advisory identity.
     waiver_matches = match_identities(
         identities, [({w["finding_id"]}, {w["finding_id"]}) for w in policy["waivers"]]
     )
@@ -365,7 +367,8 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
     for position, found in enumerate(waiver_matches):
         for index in found:
             matched_by.setdefault(index, []).append(current[position])
-    suppressed: set[str] = set()
+    waived_ids: set[str] = set()
+    reopened_ids: set[str] = set()
     for index, waiver in enumerate(policy["waivers"]):
         matched = matched_by.get(index, [])
         record = {**waiver, "matched": bool(matched)}
@@ -379,7 +382,8 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
             )
         else:
             reopened = [item for item in matched if _waiver_escalation(waiver, item)]
-            suppressed.update(item["id"] for item in matched if not _waiver_escalation(waiver, item))
+            waived_ids.update(item["id"] for item in matched)
+            reopened_ids.update(item["id"] for item in reopened)
             if "severity" not in waiver:
                 notices.append(
                     {
@@ -411,6 +415,9 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
                     }
                 )
             active.append(record)
+    # One escalated waiver reopens its finding even when another active waiver
+    # (for example a legacy one without severity) also matches it.
+    suppressed = waived_ids - reopened_ids
     baseline_existing = escalated = 0
     if policy["only_new"]:
         if baseline is None:
@@ -445,7 +452,8 @@ def evaluate(report: dict, policy: dict, baseline: dict | None = None) -> dict:
                         )
                         previous = []
             # Every identity of every baseline item counts, including equivalent
-            # advisory IDs, but an alias never lets one baseline item cover two findings.
+            # advisory IDs, but an alias matches only one-to-one and never adds a
+            # baseline item to an identity match (see match_identities).
             # Ambiguity is judged against every current finding, not only gated ones.
             known = dict(
                 zip(

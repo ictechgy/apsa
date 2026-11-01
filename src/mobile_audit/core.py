@@ -255,6 +255,7 @@ def finding_identities(item: dict) -> set[str]:
     by each equivalent advisory ID at the same dependency location, so a display
     ID change (a GHSA advisory gaining a CVE alias, or a lower CVE alias) still
     matches baselines, waivers and comparisons written against the earlier ID.
+    ``match_identities`` uses these only against the other side's display ID.
     Reports without ``advisory_ids`` (1.6.4 and earlier) keep their own identities.
     """
     identities = own_identities(item)
@@ -268,11 +269,19 @@ def match_identities(
 ) -> list[dict[int, str]]:
     """Map each current entry to the previous entries it is the same finding as.
 
-    Entries are ``(own identities, every identity)`` pairs. A shared own identity
-    matches as it always has (``"identity"``). Any other shared identity is an
-    advisory alias match (``"advisory-alias"``), accepted only when that previous
-    entry corresponds to no other current entry: a shared alias never lets one
-    prior finding or waiver cover two current findings.
+    Entries are ``(own identities, every identity)`` pairs; own identities derive
+    from the display ID (a waiver's own identity is its finding ID). A shared own
+    identity matches as it always has (``"identity"``). An entry reaches another by
+    advisory alias only through a display ID: one entry's own identity is among the
+    other's equivalent identities. Two entries that merely share a third alias (for
+    example an umbrella PYSEC or GHSA record listing several CVEs) never reach each
+    other. An alias match (``"advisory-alias"``) is accepted only one-to-one: the
+    current entry has no identity match and reaches exactly one previous entry, and
+    no other current entry reaches that previous entry, by identity or alias.
+    Anything else is ambiguous and matches nothing, so the finding is reopened:
+    an alias never adds a second prior finding or waiver to an identity match,
+    never merges several prior findings into one, and never lets one prior
+    finding or waiver cover two current findings.
     """
     own_index: dict[str, list[int]] = {}
     every_index: dict[str, list[int]] = {}
@@ -286,18 +295,24 @@ def match_identities(
     reached: dict[int, set[int]] = {}
     for position, (own, every) in enumerate(current):
         exact = {index for identity in own for index in own_index.get(identity, ())}
-        alias = {index for identity in every | own for index in every_index.get(identity, ())} - exact
+        # The previous display ID is an equivalent ID of the current entry, or the reverse.
+        alias = (
+            {index for identity in every | own for index in own_index.get(identity, ())}
+            | {index for identity in own for index in every_index.get(identity, ())}
+        ) - exact
         direct.append(exact)
         aliased.append(alias)
         for index in exact | alias:
             reached.setdefault(index, set()).add(position)
-    return [
-        {
-            **{index: "advisory-alias" for index in sorted(alias) if len(reached[index]) == 1},
-            **{index: "identity" for index in sorted(exact)},
-        }
-        for exact, alias in zip(direct, aliased, strict=True)
-    ]
+    matches: list[dict[int, str]] = []
+    for position, (exact, alias) in enumerate(zip(direct, aliased, strict=True)):
+        if exact:
+            matches.append({index: "identity" for index in sorted(exact)})
+        elif len(alias) == 1 and reached[min(alias)] == {position}:
+            matches.append({min(alias): "advisory-alias"})
+        else:
+            matches.append({})
+    return matches
 
 
 def match_findings(current: list[dict], previous: list[dict]) -> list[dict[int, str]]:

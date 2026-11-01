@@ -97,6 +97,7 @@ def analyze_apks(
     specs: dict | None = None,
 ) -> dict:
     from .apks_selection import DeviceSpec, SelectedApk, select_apks
+    from .inputs import _zip_directory_within_budget
 
     if device_spec is None:
         raise ValueError("APK-set inspection requires an explicit device specification")
@@ -104,6 +105,9 @@ def analyze_apks(
     records: list[tuple[SelectedApk, dict, dict, str]] = []
     nested_entries = 0
     expanded_bytes = 0
+    # Bound the outer and each selected APK's central directory before ZipFile
+    # allocates an entry object per directory record.
+    _zip_directory_within_budget(target)
     with zipfile.ZipFile(target) as archive, tempfile.TemporaryDirectory(prefix="apsa-apks-") as temporary:
         items = _members(archive)
         by_name = {item.filename: item for item in items}
@@ -117,6 +121,7 @@ def analyze_apks(
             if item.is_dir():
                 raise ValueError("APK-set selected member is a directory")
             raw = _read(archive, item, MAX_APK_BYTES)
+            _zip_directory_within_budget(BytesIO(raw))
             with zipfile.ZipFile(BytesIO(raw)) as nested:
                 nested_items = _members(nested)
                 if "AndroidManifest.xml" not in {member.filename for member in nested_items}:

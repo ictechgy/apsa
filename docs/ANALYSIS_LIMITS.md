@@ -19,11 +19,40 @@ Java, Kotlin and Swift use bounded direct-call and field summaries. Recursion,
 unknown receiver dispatch, ambiguous overloads, unavailable return/body flow and
 inventory/trace/route budgets remain unresolved. They do not supply sanitizer
 proof. Existing conservative scope is retained: every unresolved native-flow
-reason applies to all native rules. A reason naming a budget (for example
-`source trace budget` or `native flow recursion budget`) is an execution gap and
-keeps that coverage `partial`; any other reason is a precision limit and makes
-coverage `limited` when nothing else left it partial. An unaffected file's empty
-diagnostic list does not make its rules globally complete.
+reason applies to all native rules. Every reason has an explicit kind. A budget
+reason (a resource cap on evaluations, depth, recursion, inventory, element or
+target counts, traces or routes; for example `source trace budget` or
+`native flow recursion budget`) is an execution gap and keeps that coverage
+`partial`; a precision reason is an abstention of the bounded model and makes
+coverage `limited` when nothing else left it partial. A trace keeps the kind of
+its cut through later calls and sinks: a value the model abstained on (for
+example `constructor field mapping unavailable`) records
+`source trace abstention` when passed to a call and stays `limited`, while a
+trace cut by the trace cap (origins dropped when values merge, including at a
+sink) records `source trace budget` and stays `partial`.
+Field summaries whose sources and contents stopped changing while derived trace
+identities still change record the precision reason
+`field summary fixed point unresolved`; contents still changing at the round cap
+record the budget reason `field summary fixed-point budget`. An unaffected
+file's empty diagnostic list does not make its rules globally complete.
+
+Objective-C `.m` files are examined only by the `OBJC-*` rules, through a
+reduced model: they are `limited` when every observed function was analyzed and
+`partial` when a function inside `#if`/`#ifdef`/`#elif`/`#else`, a parse error
+or a lossy adaptation was skipped, or a file was dropped before analysis.
+Objective-C++ `.mm` files are never examined, so any `.mm` file leaves the
+`OBJC-*` rules `partial`. Functions hidden by unexpanded macros are never
+observed; that remains a precision limit, and `function_inventory_complete`
+stays false. `AST-*` rules never examine Objective-C or Objective-C++: beside
+Java, Kotlin or Swift sources they are `partial`, and for an
+Objective-C-family-only source set they are `not-run` (Android-only rules are
+`not-applicable` for iOS-only sources).
+
+A recognized source file dropped before parsing (byte or node budget, an
+unavailable grammar, a parser failure) is an execution gap even when no other
+file parsed: the rules stay `partial`, never `not-run`, and its file row stays
+`skipped`, which also counts as incomplete. Unsupported-language files alone
+leave AST rules `not-run`.
 
 `source_analysis.native_flow.partial_details` records the reason, file, line,
 column, call name where available, uncertainty category, `kind` (`budget` or

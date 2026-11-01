@@ -78,7 +78,8 @@ def parser() -> Parser:
     scan_parser.add_argument(
         "--format",
         choices=["json", "markdown", "sarif", "maswe"],
-        help="Format of the --out file; inferred from a .sarif, .md or .json suffix, otherwise json",
+        help="Format of the --out file; inferred from a .sarif, .md or .json suffix, otherwise json "
+        "(ignored with a warning without --out)",
     )
     scan_parser.add_argument(
         "--sarif-root",
@@ -587,9 +588,11 @@ def dispatch(args, store: Store, use_json=False) -> tuple[dict | list | None, in
         )
         requested_format = args.format
         if requested_format is not None and not args.out:
-            raise UsageError(
-                "--format selects the --out file format; add --out PATH "
-                "(without it the summary prints, or the JSON envelope with --json)"
+            # As in 1.6.4, --format without --out writes nothing; scripts keep working.
+            print(
+                f"apsa: warning: --format {requested_format} is ignored without --out "
+                "(the summary prints, or the JSON envelope with --json)",
+                file=sys.stderr,
             )
         if args.out:
             args.format = output_format(requested_format, args.out, "json")

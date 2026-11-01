@@ -481,7 +481,8 @@ def test_parser_byte_budget_skips_file_without_network(monkeypatch):
     )
     report = scan("java", "class A { void open() { String destination = getIntent().getDataString(); } }")
     assert report["findings"] == []
-    assert report["coverage"][0]["state"] == "not-run"
+    # The only source was dropped before parsing: an execution gap, not an absent check.
+    assert report["coverage"][0]["state"] == "partial"
     assert any("byte budget" in warning for warning in report["warnings"])
 
 
@@ -542,7 +543,7 @@ def test_node_budget_and_invalid_record_do_not_look_like_a_clean_scan(monkeypatc
     monkeypatch.setattr(source_analysis, "MAX_AST_NODES", 4)
     report = analyze_sources([{}, ("broken",), ("A.java", "class A { void open() {} }")])
     assert report["findings"] == []
-    assert report["coverage"][0]["state"] == "not-run"
+    assert report["coverage"][0]["state"] == "partial"
     assert report["coverage"][0]["skipped_files"] == 3
     assert any("node budget" in warning for warning in report["warnings"])
 

@@ -414,7 +414,7 @@ apsa jobs status JOB_ID --json
 
 Severity gates exclude `candidate` findings by default. Opt in with `--include-candidates` or the policy's `allowed_statuses`. Required rules accept `checked`, `limited` or `not-applicable` coverage (`limited` only while `strict_coverage` is false); partial execution and missing required checks do not pass. Waivers need a finding ID, a reason, and an expiry date. A background job being `completed` means it finished; check its `audit_incomplete` flag and report before treating the audit as complete.
 
-A waiver can record the state that was approved with an optional `severity`, plus `known_exploited = true` when a known-exploited finding was approved. If the finding later rises above that severity or becomes known exploited, the waiver stops suppressing it: the finding goes through the thresholds again, the active waiver gets an `escalated` record, and the gate adds a `waiver-severity-escalated` notice. A waiver without `severity` keeps suppressing as before and adds a `waiver-severity-unrecorded` notice. Notices are in the gate's `notices` list, separate from `reasons`, and never change the gate state or exit code by themselves. Dependency advisory findings keep their finding IDs and list equivalent advisory IDs in `advisory_ids` (the display ID, grouped OSV IDs and aliases, at most 32). Waivers, `only_new` baselines and report comparisons written before a GHSA advisory gained a CVE alias, or before a lower CVE alias appeared, still match the renamed finding at the same dependency location, including reports from 1.6.4. A shared alias never lets one waiver or baseline finding cover two current findings.
+A waiver can record the state that was approved with an optional `severity`, plus `known_exploited = true` when a known-exploited finding was approved. If the finding later rises above that severity or becomes known exploited, the waiver stops suppressing it: the finding goes through the thresholds again, the active waiver gets an `escalated` record, and the gate adds a `waiver-severity-escalated` notice. A waiver without `severity` keeps suppressing as before and adds a `waiver-severity-unrecorded` notice. Notices are in the gate's `notices` list, separate from `reasons`, and never change the gate state or exit code by themselves. Dependency advisory findings keep their finding IDs and list equivalent advisory IDs in `advisory_ids` (the display ID, grouped OSV IDs and aliases, at most 32). Waivers, `only_new` baselines and report comparisons written before a GHSA advisory gained a CVE alias, or before a lower CVE alias appeared, still match the renamed finding at the same dependency location, including reports from 1.6.4. Alias matching goes only through a display ID (the earlier display ID is among the finding's `advisory_ids`, or the reverse) and is one-to-one: a finding that matches under its own ID gains no alias match, and an alias shared with several earlier findings or waivers matches nothing, so the finding is reopened. When several active waivers match one finding, any escalated one reopens it.
 
 Unreadable source directories and files leave warnings and incomplete coverage; a source tree with no readable supported files fails explicitly. A source tree over the text staging budgets (64 MiB, 12,000 files) is audited partially rather than refused. Files are staged by kind in this order: app code and configuration (configuration first, then the app's code, then headers and vendored code such as `.build/` or `vendor/`), other shipped text (base resources, JSON, YAML), localized or qualified Android `res/values-*` files, then tests. `inventory.input_snapshot.omitted` counts the files and bytes left out by kind (`code_and_config`, `other_text`, `localized_values`, `tests`), including files over the 8 MiB file limit and files that could not be read or staged. Unreadable directories, and directories past the tree-wide budgets of 100,000 entries (read in name order) or 64 levels, are reported as warnings instead. When app code, configuration or other shipped text is left out, `app_scope_complete` is false and not-applicable coverage also becomes partial. For a complete audit, scan a narrower folder such as the app module. Storage capture failures remain `not-run` and cannot establish that a canary was deleted.
 
@@ -424,8 +424,9 @@ parse errors or a lossy adaptation, input was truncated, an online query failed,
 or the latest runtime run was partial. A `partial` entry makes the audit
 incomplete (exit `3`). `limited` means every input in scope was examined, but the
 bounded static model abstained on some paths, for example unresolved native-flow
-call targets, Objective-C seen only through its reduced model, or token-level
-JS/TS/Dart flow. A `limited` audit stays complete for the stated scope; reports
+call targets, Objective-C seen only through its reduced model (`OBJC-*` rules;
+`AST-*` rules never examine Objective-C, so beside other languages they are
+`partial`), or token-level JS/TS/Dart flow. A `limited` audit stays complete for the stated scope; reports
 show the limitation (`summary.limited`, SARIF notifications, the MASWE matrix and
 checklists). Across entries, `partial` outranks `limited`, which outranks
 `checked`. `scan --strict-coverage`, `policy evaluate --strict-coverage` or
@@ -442,7 +443,7 @@ strict coverage, `limited` also satisfies policy `required_rules`. Neither
 | `4` | Findings exceeded the configured CI threshold or policy; takes precedence over `3` |
 | `130` | Interrupted |
 
-`--json` emits an envelope containing `ok`, `data` or `error`, and `exit_code`; watch emits one JSON envelope per cycle (NDJSON). `ok` is `true` for codes `0` and `4`; code `4` means evaluation succeeded but the CI threshold was exceeded. An audit that is both incomplete and over a threshold exits `4`; the report summary and policy reasons still record the incompleteness. CI must check `exit_code` and the policy result. Reports may still be produced for codes `3` and `4`.
+`--json` emits an envelope containing `ok`, `data` or `error`, and `exit_code`; watch emits one JSON envelope per cycle (NDJSON). `ok` is `true` for codes `0` and `4`; code `4` means evaluation succeeded but the CI threshold was exceeded. An audit that is both incomplete and over a threshold exits `4` with `ok` `true`; the report's `summary.incomplete` and the policy's `partial-audit` reason still record the incompleteness. CI must check `exit_code` and the policy result. Reports may still be produced for codes `3` and `4`.
 
 ### GitHub code scanning
 
@@ -470,8 +471,10 @@ action also reads the report rather than the exit code alone). With a policy,
 every unmet policy condition (required rules, required intelligence, expired
 waivers, baseline checks) fails the job; only a partial audit is left to
 `fail-on-incomplete`, which fails on exit `3` unless set to `"false"`. Limited
-coverage does not fail the job unless `strict-coverage: "true"`, which passes
-`--strict-coverage` and counts limited coverage as incomplete. Use
+coverage does not fail the job unless `strict-coverage: "true"` (which passes
+`--strict-coverage`) or the policy sets `strict_coverage = true`; either counts
+limited coverage as incomplete. The `incomplete` output reports the same
+decision, including a `partial-audit` reason behind exit `4`. Use
 `policy` (with `baseline-file` and `baseline-sha256`) for team gates, or
 `fail-on` for a severity threshold that excludes candidates.
 

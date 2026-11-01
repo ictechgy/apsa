@@ -17,7 +17,9 @@ from __future__ import annotations
 
 
 def _file_state(item: object, *, strict: bool) -> bool:
-    if not isinstance(item, dict) or item.get("state") == "partial" or item.get("partial"):
+    # A "skipped" file row is a recognized source dropped before analysis (a
+    # budget, an unavailable grammar, a parser failure): never a benign skip.
+    if not isinstance(item, dict) or item.get("state") in {"partial", "skipped"} or item.get("partial"):
         return True
     return strict and item.get("state") == "limited"
 

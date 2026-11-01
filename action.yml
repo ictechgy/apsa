@@ -28,7 +28,7 @@ inputs:
     description: Without a policy, fail on non-candidate findings at or above this severity (low, medium, high, critical).
     default: ""
   fail-on-incomplete:
-    description: Fail when the report records an incomplete audit (exit code 3, or a policy with fail_on_partial = false). Limited coverage counts only with strict-coverage.
+    description: Fail when the report records an incomplete audit (exit code 3, or a policy with fail_on_partial = false). Limited coverage counts only with strict-coverage or a policy with strict_coverage = true.
     default: "true"
   strict-coverage:
     description: Also treat limited coverage (every input examined, but the bounded static model abstained on some paths) as incomplete; passes --strict-coverage.
@@ -60,7 +60,7 @@ outputs:
     description: APSA exit code (0 complete for the stated scope, possibly with limited coverage; 3 incomplete; 4 policy or threshold failure, which takes precedence over 3).
     value: ${{ steps.scan.outputs.exit-code }}
   incomplete:
-    description: "true when the report records an incomplete audit (an execution gap; with strict-coverage, limited coverage too), otherwise false."
+    description: "true when the report records an incomplete audit (an execution gap; with strict-coverage or policy strict_coverage, limited coverage too), otherwise false."
     value: ${{ steps.scan.outputs.incomplete }}
 
 runs:

@@ -89,8 +89,15 @@ def _slug(value: str, limit: int = 60) -> str:
 
 
 LITERAL = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\\n])*(?:\1|\\\1)""")
+# A credential-like key is a whole run of [\w.-] characters that contains a key word and
+# is assigned a value. Starting only at a run's first character, with the key word
+# checked by an atomic lookahead and possessive runs, keeps matching linear: a long run
+# of key words without an assignment is scanned once rather than once per word boundary.
+# The result is the same as the earlier word-boundary form, whose leading "." or "-"
+# characters stayed outside the match and are now kept inside group 1.
 CREDENTIAL = re.compile(
-    r"(?i)\b([\w.-]*(?:token|secret|password|passwd|pwd|api[_-]?key|auth)[\w.-]*\s*[=:]\s*)[^\s,;]+"
+    r"(?i)(?<![\w.-])(?=[\w.-]*?(?:token|secret|password|passwd|pwd|api[_-]?key|auth))"
+    r"([\w.-]*+\s*+[=:]\s*+)[^\s,;]++"
 )
 
 

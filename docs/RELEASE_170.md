@@ -14,54 +14,99 @@ device or credential service was contacted.
   or lossy adaptation, a skipped file, truncated input, online query errors,
   partial runtime evidence). It still makes the audit incomplete (exit 3).
   The new `limited` state means every input was examined but the bounded static
-  model abstained on some paths: non-budget native-flow abstentions, the reduced
-  Objective-C model, hybrid JS/TS/Dart flow, project-specified Swift SQL sinks
-  and unresolved Kotlin imports. `limited` is reported in JSON, Markdown, SARIF,
-  CycloneDX, checklists, the TUI, MCP and the Action summary, and exits 0 by
-  default. Most real projects that ended with exit 3 under 1.6.x now end with
-  0 or 4. `scan --strict-coverage`, `policy evaluate --strict-coverage`, policy
-  `strict_coverage = true` and the Action input `strict-coverage: "true"`
-  restore the previous strictness. `limited` does not establish absence:
-  timeline resolution, follow-up coverage and compare change verification
-  still require `checked`.
+  model abstained on some paths: precision native-flow reasons, the reduced
+  Objective-C model (`OBJC-*` rules), hybrid JS/TS/Dart flow, project-specified
+  Swift SQL sinks and unresolved Kotlin imports. `limited` is reported in JSON,
+  Markdown, SARIF, CycloneDX, checklists, the TUI, MCP and the Action summary,
+  and exits 0 by default. Most real projects that ended with exit 3 under 1.6.x
+  now end with 0 or 4. `scan --strict-coverage`, `policy evaluate
+  --strict-coverage`, policy `strict_coverage = true` and the Action input
+  `strict-coverage: "true"` restore the previous strictness. Without strict
+  coverage, `limited` also satisfies policy `required_rules`. `limited` does not
+  establish absence: timeline resolution, follow-up coverage and compare change
+  verification still require `checked`.
+- **Native-flow reason kinds.** Every native-flow reason has an explicit kind
+  (`budget` or `precision`, listed in `partial_details`) instead of being
+  classified by the word "budget". A value the model abstained on (for example
+  `constructor field mapping unavailable`) that later reaches a call records
+  `source trace abstention` and stays `limited`. Origins dropped by the trace
+  cap, including at a sink, record `source trace budget` and stay `partial`;
+  evidence source kinds carry `[native-flow-partial]` for a budget cut and
+  `[native-flow-limited]` for an abstention. Field summaries that stop
+  converging while their contents no longer change record `field summary fixed
+  point unresolved` (`limited`); `field summary fixed-point budget` means the
+  contents were still changing at the round cap and stays `partial`.
+- **Objective-C coverage.** `AST-*` rules never examine Objective-C (`.m`) or
+  Objective-C++ (`.mm`). Beside Java, Kotlin or Swift sources they are
+  `partial` (exit 3), as in 1.6.4; Android-only `AST-*` rules are not affected
+  by those files. For Objective-C-only sources the `AST-*` rules are `not-run`
+  and the `OBJC-*` rules are `limited`. An Objective-C method inside
+  `#if`/`#ifdef`/`#elif`/`#else`, any `.mm` file, or an Objective-C file dropped
+  before analysis leaves the `OBJC-*` rules `partial`, so a `.mm`-only project
+  now exits 3. Functions hidden by unexpanded macros remain a precision limit
+  (`limited`, `function_inventory_complete: false`).
+- **Dropped sources.** When every recognized source file is dropped before
+  parsing (byte or node budget, unavailable grammar, parser failure), the
+  `AST-*` rules are `partial` (exit 3) instead of `not-run`. A `skipped` source
+  file row also counts as incomplete.
 - **Exit 4 takes precedence over exit 3.** When an audit is incomplete and also
   exceeds a `--fail-on` threshold or a policy threshold, the CLI and the policy
-  gate now return 4 (`failed`). The incompleteness reasons are still recorded.
-  CI that relied on 3 masking a threshold failure now sees 4.
+  gate now return 4 (`failed`), and the JSON envelope keeps `ok: true`. The
+  incompleteness is still recorded in `summary.incomplete` and the gate's
+  `partial-audit` reason. CI that relied on 3 masking a threshold failure now
+  sees 4.
 - **Policy.** New optional fields: `strict_coverage` (default `false`) and, per
   waiver, `severity` and `known_exploited`. A waiver that records `severity`
   stops suppressing its finding when the finding's severity rises above it or
   the finding becomes known exploited; the gate reports this as a
   `waiver-severity-escalated` notice. Waivers without `severity` keep working
-  and add a `waiver-severity-unrecorded` notice. Notices are in the gate's new
-  `notices` list and never change the gate state or exit code. APSA 1.6.x
+  and add a `waiver-severity-unrecorded` notice. When several active waivers
+  match one finding, any escalated one reopens it. Notices are in the gate's
+  new `notices` list and never change the gate state or exit code. APSA 1.6.x
   rejects policy files that use the new fields. The decision artifact's
   `policy_sha256` changes for unchanged policy files because the normalized
   policy now includes the `strict_coverage` default. An `only_new` baseline that
   is the evaluated report itself, or was created after it, makes the gate
   incomplete (`baseline-is-report`, `baseline-not-earlier`) instead of passing.
+  Report `created` times without a UTC offset are read as UTC for this check.
 - **Advisory identities.** Dependency advisory findings keep their IDs and now
   list equivalent identities in `advisory_ids` (display ID, grouped OSV IDs and
   aliases, at most 32). Waivers, `only_new` baselines, `reports compare`,
   verification and follow-up match a finding whose display ID changed (for
   example a GHSA advisory that gained a CVE alias) at the same dependency
-  location, including against 1.6.4 reports. An alias shared by several
-  findings never matches; those findings are reopened. SARIF
-  `partialFingerprints` are unchanged.
+  location, including against 1.6.4 reports. An alias matches two findings
+  only through a display ID: the earlier display ID is among the later
+  finding's `advisory_ids`, or the reverse. Findings that share only another
+  alias (for example one PYSEC or GHSA record listing several CVEs) are
+  different findings, and a 1.6.4 waiver or baseline finding matches only a
+  finding that lists its display ID. The match is also one-to-one: a finding
+  that matches under its own ID gains no alias match, and an alias that reaches
+  several earlier findings or waivers (for example merged advisories), or an
+  earlier finding or waiver that several findings reach, matches nothing. Those
+  findings are reopened, no longer waived, or listed by `reports compare` as
+  added and no longer observed. SARIF `partialFingerprints` are unchanged.
 - **More findings against existing baselines.** Detection is broader (below),
   `QG-APP-EXPORTED` for implicitly exported components is now MEDIUM, library
   KEV entries can raise dependency severity, `MAL-` advisories are critical and
   more source/configuration rules exist. Rescan before approving a baseline.
 - **Interfaces.** MCP `reports_compare` returns bounded model context
-  (`max_bytes`, excerpts removed) and report-derived MCP responses carry
-  untrusted-data instructions; the MCP tool manifest hash changed. Runtime plans
-  no longer prefill `open_url` steps from app data. Real devices must be named
-  in `scenario.device` (only a single attached emulator is chosen
+  (`max_bytes`, excerpts removed): changed coverage entries and, with
+  `verification=true`, finding transitions and runtime pairs are bounded and
+  counted in `coverage_counts`, `verification_counts` and `omitted`, and
+  oversized metadata is reduced to identities and pairing state
+  (`metadata_truncated: true`) rather than failing. Report-derived MCP responses
+  carry untrusted-data instructions; the MCP tool manifest hash changed. Runtime
+  plans no longer prefill `open_url` steps from app data. Real devices must be
+  named in `scenario.device` (only a single attached emulator is chosen
   automatically), and manipulation steps require a debuggable app. `--out`
-  infers the export format from its suffix; a contradicting `--format` exits 2.
+  infers the export format from its suffix; a contradicting `--format` exits 2,
+  and `--format` without `--out` still writes nothing, now with a stderr warning.
   The Action's `fail-on-incomplete` uses the report, and it has a new
-  `incomplete` output. Parser isolation warnings are always shown when
-  isolation is not enforced. Installed 1.6.4 agent skills report as outdated.
+  `incomplete` output; both honor policy `strict_coverage` as well as the
+  `strict-coverage` input, a `partial-audit` gate reason counts as incomplete
+  even with exit 4, and an exit-3 run is summarized as incomplete rather than as
+  an execution error. Parser isolation warnings are always shown when isolation
+  is not enforced. Installed 1.6.4 agent skills report as outdated.
 
 ## Detection and correctness
 
@@ -92,11 +137,19 @@ device or credential service was contacted.
   exception-domain weakening, default-exported providers, user-CA trust on
   targetSdk ≤ 23, cleartext with minSdk < 24, nested domain-config inheritance
   and privacy declarations without reasons are reported. Multi-domain ATS
-  evidence is kept and non-string TLS versions no longer crash.
+  evidence is kept under the 1.6.4 finding ID (one per Info.plist) and
+  non-string TLS versions no longer crash. QuayGate `app-cleartext`
+  (`QG-APP-CLEARTEXT`): with minSdk below 24 and a network security
+  configuration, an app that does not declare `usesCleartextTraffic` is
+  reported as medium whatever its targetSdk, because devices on API 23 and
+  lower ignore the configuration and permit cleartext by default.
 - Intelligence: rejected display aliases no longer drop OSV advisories; KEV is
   matched by alias and stored in full; VEX covers GO-/MAL-/PYSEC- origins;
   several versions at one dependency path merge into one finding's
-  `dependency_matches`; Markdown output escapes report text.
+  `dependency_matches`; Markdown output escapes report text and fences
+  evidence, coverage, environment-advisory and intelligence JSON with a
+  backtick run longer than any inside it, escaping line/paragraph separators
+  and C1/bidi controls in that JSON.
 
 ## Input robustness
 
@@ -104,7 +157,12 @@ bzip2/LZMA ZIP members, plist shared-reference expansion, malformed manifests,
 SARIF ingest regular expressions, UTF-16 DTDs in legacy XML paths and very
 large ZIP central directories (up to 20,000 entries / 8 MiB, including binary
 analysis) now produce bounded partial results instead of stopping the audit.
-Non-ASCII paths work under macOS parser isolation.
+APK, AAB, IPA, ZIP and APK-set inputs, including each selected APK of an
+`.apks`, are refused before ZIP entries are allocated when the central
+directory exceeds the entry or byte budget, or when no end record lies within
+the last 64 KiB + 22 bytes (the widest window a supported CPython searches).
+SARIF ingest redacts credential-like assignments in linear time, with unchanged
+output. Non-ASCII paths work under macOS parser isolation.
 
 ## Remaining limits
 

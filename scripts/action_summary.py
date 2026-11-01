@@ -47,6 +47,27 @@ def report_of(result: dict) -> dict:
     return result if any(key in result for key in fields) else {}
 
 
+def gate_of(result: dict) -> dict:
+    """The policy gate of a ``scan --policy`` envelope, or an empty dict."""
+    data = result.get("data")
+    gate = data.get("gate") if isinstance(data, dict) else None
+    return gate if isinstance(gate, dict) else {}
+
+
+def effective_strict(result: dict, strict: bool) -> bool:
+    """The Action input or the evaluated policy's strict_coverage: either counts limited coverage."""
+    policy = gate_of(result).get("policy")
+    return strict or (isinstance(policy, dict) and policy.get("strict_coverage") is True)
+
+
+def partial_audit_reason(result: dict) -> bool:
+    """Whether the policy gate recorded a partial-audit reason (it may share exit 4 with a failure)."""
+    return any(
+        isinstance(reason, dict) and reason.get("code") == "partial-audit"
+        for reason in gate_of(result).get("reasons") or []
+    )
+
+
 RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
@@ -87,11 +108,15 @@ def strict_flag(value: str) -> bool:
 def audit_incomplete(path: str, strict: bool = False) -> bool:
     """Whether the report itself is partial, whatever exit code a lenient policy produced.
 
-    With ``strict``, limited coverage (a precision limit) also counts as incomplete.
+    With ``strict`` or a policy with ``strict_coverage = true``, limited coverage
+    (a precision limit) also counts as incomplete, as does a partial-audit gate reason.
     """
-    report = report_of(envelope(path))
+    result = envelope(path)
+    report = report_of(result)
     return bool(report) and (
-        report_incomplete(report, strict=strict) or (report.get("summary") or {}).get("incomplete") is True
+        report_incomplete(report, strict=effective_strict(result, strict))
+        or (report.get("summary") or {}).get("incomplete") is True
+        or partial_audit_reason(result)
     )
 
 
@@ -119,13 +144,16 @@ def summary(path: str, code: str, strict: bool = False) -> str:
         return "\n".join(lines + [f"APSA did not complete: {error} (exit code {code})."]) + "\n"
     inventory = report.get("inventory") or {}
     snapshot = inventory.get("input_snapshot") or {}
+    strict = effective_strict(result, strict)
     incomplete = (
         report_incomplete(report, strict=strict)
         or code == "3"
         or (report.get("summary") or {}).get("incomplete") is True
+        or partial_audit_reason(result)
     )
     limited = report_limited(report)
-    failed = result.get("ok") is False or code not in {"0", "3", "4"}
+    # Exit 3 returns the report in an ok: false envelope: an incomplete audit, not an execution error.
+    failed = code not in {"0", "3", "4"} or (result.get("ok") is False and code != "3")
     execution = "failed" if failed else "incomplete" if incomplete else "complete for the stated scope"
     lines += [
         f"- Report: `{report.get('id')}` · APSA {report.get('tool_version')} · rules `{report.get('rule_version')}`",

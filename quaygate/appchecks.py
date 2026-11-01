@@ -206,8 +206,12 @@ def _int_or_none(value):
 UNKNOWN = _UNKNOWN
 
 
-def _manifest_cleartext(cleartext, target, note: str = "") -> Finding:
-    """networkSecurityConfig가 적용되지 않을 때 매니페스트 usesCleartextTraffic(또는 targetSdk 기본값)으로 판정."""
+def _manifest_cleartext(cleartext, target, note: str = "", *, legacy_platform: bool = False) -> Finding:
+    """networkSecurityConfig가 적용되지 않을 때 매니페스트 usesCleartextTraffic(또는 targetSdk 기본값)으로 판정.
+
+    legacy_platform은 API 23 이하 기기 판정이다. targetSdk 28+의 기본 차단은 Android 9+
+    플랫폼에서만 적용되므로, 그 기기에서는 선언이 없으면 targetSdk와 무관하게 평문이 허용된다.
+    """
     if cleartext is True:
         return Finding(
             "app-cleartext",
@@ -226,6 +230,16 @@ def _manifest_cleartext(cleartext, target, note: str = "") -> Finding:
             "na",
             None,
             "usesCleartextTraffic이 참조값이라 해석하지 못했습니다." + note,
+        )
+    if legacy_platform:
+        return Finding(
+            "app-cleartext",
+            "평문 트래픽 허용",
+            "warn",
+            MEDIUM,
+            "usesCleartextTraffic 선언 없음 — API 23 이하 기기에서는 targetSdk"
+            f" {target if target is not None else '미확인'}와 무관하게 기본값이 평문 허용입니다." + note,
+            'android:usesCleartextTraffic="false"를 명시하거나 minSdk를 24 이상으로 올리세요.',
         )
     if target is not None and target < 28:
         return Finding(
@@ -439,6 +453,7 @@ def audit_apk(apk: Apk, cert_runner=None) -> tuple:
             target,
             f" — minSdk {m.sdk.get('minSdkVersion', '미선언')}: API 23 이하 기기는 "
             "networkSecurityConfig를 무시하고 매니페스트 설정을 적용합니다.",
+            legacy_platform=True,
         )
         if legacy.status != "pass":
             findings.append(legacy)

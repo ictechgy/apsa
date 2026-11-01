@@ -19,7 +19,7 @@ from .source_analysis import (
     RULES,
     SQL_SINKS,
     STRINGS,
-    TRACE_PARTIAL,
+    TRACE_LIMITED,
     Analyzer,
     Call,
     Frame,
@@ -28,7 +28,7 @@ from .source_analysis import (
     _field,
     _union,
     _walk,
-    budget_reason,
+    trace_cuts,
 )
 
 MAX_CALL_DEPTH = 8
@@ -40,6 +40,62 @@ MAX_EFFECT_DEPTH = 8
 MAX_EFFECT_OBJECTS = 128
 MAX_EMPTY_BASE_DEPTH = 8
 MAX_EXTENSION_TYPES = 4096
+
+# Every native-flow reason has an explicit kind. A budget reason is an execution
+# gap: a resource cap (evaluations, depth, recursion, inventory/element/target
+# counts, trace caps) cut the analysis, so coverage stays partial. A precision
+# reason is an abstention of the bounded model on examined code, so coverage is
+# limited. A reason missing here is treated as a budget; tests require every
+# reason recorded in source to be listed.
+REASON_KINDS = {
+    "Swift extension member type inventory budget": "budget",
+    "aggregate element inventory budget": "budget",
+    "ambiguous target budget": "budget",
+    "callable inventory budget": "budget",
+    "field summary fixed-point budget": "budget",
+    "native flow recursion budget": "budget",
+    "path route evidence budget": "budget",
+    "recursion or call evaluation budget": "budget",
+    "reference effect inventory budget": "budget",
+    "source trace budget": "budget",
+    "Kotlin non-local return context unavailable": "precision",
+    "Kotlin scope import identity unavailable": "precision",
+    "Swift inout writeback unavailable": "precision",
+    "aggregate reference ownership unavailable": "precision",
+    "ambiguous class identity": "precision",
+    "ambiguous direct call": "precision",
+    "anonymous allocation dispatch unresolved": "precision",
+    "anonymous callable scope unavailable": "precision",
+    "callable argument type identity unresolved": "precision",
+    "callable body unavailable": "precision",
+    "callable value binding unresolved": "precision",
+    "compound assignment operator dispatch unavailable": "precision",
+    "constructor field mapping unavailable": "precision",
+    "cyclic reference effect inventory": "precision",
+    "field summary fixed point unresolved": "precision",
+    "indexed object alias unavailable": "precision",
+    "inherited overload signature unresolved": "precision",
+    "inout storage target unavailable": "precision",
+    "lexical overload signature unresolved": "precision",
+    "nominal callable scope unavailable": "precision",
+    "object alias identity unavailable": "precision",
+    "object storage alias unavailable": "precision",
+    "package identity unavailable": "precision",
+    "reachable field ownership unavailable": "precision",
+    "receiver field inventory unavailable": "precision",
+    "receiver runtime dispatch unresolved": "precision",
+    "return flow unavailable": "precision",
+    "source receiver type identity unresolved": "precision",
+    "source trace abstention": "precision",
+    "unresolved callable identity": "precision",
+    "unresolved callable identity or argument signature": "precision",
+    "unresolved reference argument effects": "precision",
+}
+
+
+def reason_kind(reason: str) -> str:
+    """``"budget"`` or ``"precision"``; an unlisted reason stays conservative (budget)."""
+    return REASON_KINDS.get(reason, "budget")
 
 
 class StorageKey(Enum):
@@ -525,13 +581,15 @@ class NativeFlow:
     ) -> None:
         """Record diagnostic scope without narrowing conservative rule coverage.
 
-        A budget reason is an execution gap (rule coverage stays partial); any
-        other reason is a precision limit of the bounded model (coverage limited).
+        A budget reason (see ``REASON_KINDS``) is an execution gap (rule coverage
+        stays partial); a precision reason is a limit of the bounded model
+        (coverage limited).
         """
         self.partial_events += 1
         self.reasons.add(reason)
+        budget = reason_kind(reason) == "budget"
         if analyzer is not None:
-            if budget_reason(reason):
+            if budget:
                 analyzer.truncated_rules.update(RULES)
             else:
                 analyzer.limited_rules.update(RULES)
@@ -540,7 +598,7 @@ class NativeFlow:
             node = analyzer.function
         category = (
             "budget"
-            if "budget" in reason
+            if budget
             else "dispatch"
             if "dispatch" in reason or "ambiguous" in reason or "signature" in reason
             else "inventory"
@@ -2687,6 +2745,24 @@ class NativeFlow:
         )
 
     @staticmethod
+    def content_signature(value: Value) -> tuple:
+        """A field value without derived trace origins, which unknown calls rehash every round."""
+        return (
+            frozenset(
+                (
+                    getattr(trace.source, "node", trace.source),
+                    trace.description,
+                    trace.path_safe,
+                    trace.path_route,
+                )
+                for trace in value.traces
+            ),
+            value.category,
+            value.type_name,
+            value.identity,
+        )
+
+    @staticmethod
     def merge(values: list[Value]) -> Value:
         categories = {value.category for value in values}
         types = {value.type_name for value in values}
@@ -2703,7 +2779,7 @@ class NativeFlow:
                 Trace(
                     trace.origin,
                     trace.source,
-                    trace.description + TRACE_PARTIAL,
+                    trace.description + TRACE_LIMITED,
                     trace.steps,
                     False,
                     trace.path_route,
@@ -2718,8 +2794,17 @@ class NativeFlow:
     def call(
         self, analyzer: Analyzer, call: Call, frame: Frame, receiver: Value, args: list[Value]
     ) -> Value | None:
-        if any(TRACE_PARTIAL in trace.description for value in [receiver, *args] for trace in value.traces):
+        # A cut trace keeps its original kind through later calls.
+        cuts = {
+            kind
+            for value in [receiver, *args]
+            for trace in value.traces
+            for kind in trace_cuts(trace.description)
+        }
+        if "budget" in cuts:
             self.partial("source trace budget", analyzer, call=call)
+        if "precision" in cuts:
+            self.partial("source trace abstention", analyzer, call=call)
         syntactic_inout = [argument for argument in call.args if self.syntactic_inout(analyzer, argument)]
         binding = self.value_binding(analyzer, call, frame)
         if binding is not None:
@@ -3137,6 +3222,8 @@ class NativeFlow:
 
     def run(self) -> None:
         previous = None
+        previous_content = None
+        content_stable = False
         failed_files = set()
         for _round_index in range(MAX_FIELD_ROUNDS):
             for analyzer, root, nodes in self.files:
@@ -3161,8 +3248,20 @@ class NativeFlow:
             )
             if state == previous or not state:
                 return
-            previous = state
-        self.partial("field summary fixed-point budget")
+            content = {
+                (owner, name): self.content_signature(value)
+                for owner, fields in self.fields.items()
+                for name, value in fields.items()
+            }
+            content_stable = content == previous_content
+            previous, previous_content = state, content
+        # Field content (sources, descriptions, safety, routes, types) that stopped
+        # changing while derived trace identities still churn is non-convergence
+        # of the bounded model, not an exhausted budget. Content still growing at
+        # the round cap means more rounds could add flows: a budget cut.
+        self.partial(
+            "field summary fixed point unresolved" if content_stable else "field summary fixed-point budget"
+        )
 
     def metadata(self) -> dict:
         return {
@@ -3172,12 +3271,14 @@ class NativeFlow:
             "state": "partial" if self.reasons else "checked",
             "reasons": sorted(self.reasons),
             # Budget reasons are execution gaps; precision reasons are bounded-model abstentions.
-            "budget_reasons": sorted(reason for reason in self.reasons if budget_reason(reason)),
-            "precision_reasons": sorted(reason for reason in self.reasons if not budget_reason(reason)),
+            "budget_reasons": sorted(reason for reason in self.reasons if reason_kind(reason) == "budget"),
+            "precision_reasons": sorted(
+                reason for reason in self.reasons if reason_kind(reason) == "precision"
+            ),
             "partial_details": [
                 {
                     "reason": reason,
-                    "kind": "budget" if budget_reason(reason) else "precision",
+                    "kind": reason_kind(reason),
                     "path": path or None,
                     "line": line or None,
                     "column": column or None,

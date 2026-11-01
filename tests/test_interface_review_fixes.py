@@ -493,8 +493,6 @@ def test_cli_scan_and_get_survive_bracketed_paths(tmp_path, demo, capsys, monkey
 def test_scan_format_is_inferred_from_out_suffix_or_rejected(tmp_path, demo, capsys):
     home = tmp_path / "new-home"
     args = ["--json", "--home", str(home), "scan", str(demo)]
-    assert main([*args, "--format", "sarif"]) == 2
-    assert "--out" in json.loads(capsys.readouterr().out)["error"]["message"]
     contradictory = tmp_path / "new-contradiction.sarif"
     assert main([*args, "--format", "json", "--out", str(contradictory)]) == 2
     assert not contradictory.exists()

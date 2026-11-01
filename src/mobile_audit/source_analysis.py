@@ -354,13 +354,18 @@ LIMITS_NOTE = (
     "Lexical path containment does not prove symlink-free storage "
     "or race-free filesystem access."
 )
+# A trace cut by a resource cap (an execution gap) and a trace the bounded model
+# abstained on (a precision limit) carry distinct markers, so later calls and
+# sinks keep the original kind. Either marker keeps the trace unsafe.
 TRACE_PARTIAL = " [native-flow-partial]"
+TRACE_LIMITED = " [native-flow-limited]"
+TRACE_MARKERS = {TRACE_PARTIAL: "budget", TRACE_LIMITED: "precision"}
 GuardKey = int | tuple[int, str]
 
 
-def budget_reason(reason: str) -> bool:
-    """A native-flow reason naming a budget is an execution gap; any other is a precision limit."""
-    return "budget" in reason
+def trace_cuts(description: str) -> set[str]:
+    """The kinds ("budget", "precision") of cuts recorded on a trace description."""
+    return {kind for marker, kind in TRACE_MARKERS.items() if marker in description}
 
 
 def _walk(node: Any, *, descend_functions: bool = True):
@@ -465,8 +470,9 @@ def _union(values: list[Value], category: str = "unknown", type_name: str = "") 
             previous = traces.get(key)
             if previous is not None:
                 description = trace.description
-                if TRACE_PARTIAL in previous.description and TRACE_PARTIAL not in description:
-                    description += TRACE_PARTIAL
+                for marker in TRACE_MARKERS:
+                    if marker in previous.description and marker not in description:
+                        description += marker
                 trace = Trace(
                     trace.origin,
                     trace.source,
@@ -478,6 +484,7 @@ def _union(values: list[Value], category: str = "unknown", type_name: str = "") 
             traces[key] = trace
     kept = tuple(traces.values())
     if len(kept) > 8:
+        # Collapsing origins beyond the trace cap is a budget cut.
         last = kept[-1]
         kept = (
             *kept[:7],
@@ -1448,7 +1455,7 @@ class Analyzer:
             return None
         value = self.value(right, frame)
         if not value.traces or any(
-            TRACE_PARTIAL in trace.description
+            trace_cuts(trace.description)
             or not (
                 trace.path_safe
                 or trace.description.endswith(BASENAME)
@@ -1628,7 +1635,14 @@ class Analyzer:
         if len(self.findings) >= MAX_AST_FINDINGS:
             self.truncated_rules.add(rule)
             return
-        if any(TRACE_PARTIAL in trace.description for trace in traces):
+        cuts = {kind for trace in traces for kind in trace_cuts(trace.description)}
+        if "budget" in cuts:
+            # A trace cut by the trace cap (an execution gap) may reach a sink
+            # without a later call; record the budget so diagnostics match.
+            self.truncated_rules.add(rule)
+            if self.native_flow is not None:
+                self.native_flow.partial("source trace budget", self, node=node)
+        if "precision" in cuts:
             self.limited_rules.add(rule)
         title, severity, remediation, reference = RULES[rule]
         row = self.location(node)["line"] - 1
@@ -1822,7 +1836,7 @@ class Analyzer:
                 trace
                 for trace in value.traces
                 if declared["kind"] == "sql"
-                or TRACE_PARTIAL in trace.description
+                or trace_cuts(trace.description)
                 or not {"scheme", "host"} <= guards.get(trace.origin, set())
             )
             if unsafe:
@@ -1854,7 +1868,7 @@ class Analyzer:
             trace
             for trace in value.traces
             if javascript_sink
-            or TRACE_PARTIAL in trace.description
+            or trace_cuts(trace.description)
             or not {"scheme", "host"} <= guards.get(trace.origin, set())
         )
         validation = {
@@ -2122,14 +2136,14 @@ class Analyzer:
         traces = tuple(
             trace
             for trace in value.traces
-            if not trace.description.endswith(BASENAME) or TRACE_PARTIAL in trace.description
+            if not trace.description.endswith(BASENAME) or trace_cuts(trace.description)
         )
         if not traces:
             return
         unsafe = tuple(
             trace
             for trace in traces
-            if TRACE_PARTIAL in trace.description
+            if trace_cuts(trace.description)
             or (
                 not trace.path_safe
                 and "path-contained" not in guards.get(trace.origin, set())
@@ -3533,7 +3547,7 @@ def analyze_sources(
     unavailable: dict[str, str] = {}
     findings: list[dict] = []
     warnings: list[str] = []
-    parsed = skipped = total = 0
+    parsed = skipped = total = unsupported_files = 0
     seen_languages: set[str] = set()
     unsupported: set[str] = set()
     pattern_exclusions: dict[str, dict[str, list[dict[str, int]]]] = {}
@@ -3568,6 +3582,7 @@ def analyze_sources(
         if not language:
             if suffix in UNSUPPORTED_SOURCE:
                 unsupported.add(suffix)
+                unsupported_files += 1
                 skipped += 1
             continue
         seen_languages.add(language)
@@ -3654,12 +3669,21 @@ def analyze_sources(
                 analyzer = Analyzer(path, text, language, specs, exposed_providers, android_levels)
                 native_files.append((analyzer, tree.root_node, nodes))
                 native_metrics.append((analyzer, metric))
-            # Every parsed ObjC function is examined, but only through the reduced
-            # model (no preprocessing, dispatch or interprocedural flow): a
-            # precision limit. Parse errors and lossy adaptations stay partial.
+            # An analyzed ObjC function is examined only through the reduced model
+            # (no preprocessing, dispatch or interprocedural flow): a precision
+            # limit. A skipped ObjC function (inside #if/#ifdef/#elif/#else, a
+            # recovered error or a lossy adaptation span) was not examined: an
+            # execution gap, like parse errors and lossy adaptations.
+            objc_skipped = language == "objc" and analyzer.function_counts["skipped"] > 0
+            if objc_skipped and not (tree.root_node.has_error or lossy):
+                warnings.append(
+                    f"Objective-C analysis skipped {analyzer.function_counts['skipped']} conditionally "
+                    f"compiled function(s) in {path}; source remains partial."
+                )
+                skipped += 1
             metric["state"] = (
                 "partial"
-                if tree.root_node.has_error or lossy
+                if tree.root_node.has_error or lossy or objc_skipped
                 else "limited"
                 if language == "objc"
                 else "checked"
@@ -3739,34 +3763,64 @@ def analyze_sources(
         warnings.append(
             f"AST mobile checks do not support these source languages: {', '.join(sorted(unsupported))}."
         )
-    state = "partial" if parsed and skipped else "checked" if parsed else "not-run"
+    # A recognized source file or record dropped before parsing (byte or node
+    # budget, unavailable grammar, parser failure) is an execution gap even when
+    # nothing else parsed; unsupported-language files alone stay not-run.
+    state = (
+        "partial"
+        if (parsed and skipped) or skipped > unsupported_files
+        else "checked"
+        if parsed
+        else "not-run"
+    )
     objc_files = [metric for metric in file_metrics if metric["language"] == "objc"]
-    if objc_files:
-        # AST rules see ObjC only through the reduced ObjC model.
-        limited_rules.update(RULES)
+    # AST rules never examine Objective-C or Objective-C++ (.mm); OBJC-* rules
+    # cover .m through a reduced model. Beside a language AST rules analyze, the
+    # unexamined ObjC-family sources are an execution gap (partial); as the only
+    # source languages they leave AST rules not-run. Android-only rules are out
+    # of scope for ObjC, as for Swift.
+    ast_languages = seen_languages - {"objc"}
+    objc_family = bool(objc_files) or ".mm" in unsupported
+    other_unsupported = unsupported - {".mm"}
+    objc_only = objc_family and not ast_languages and not other_unsupported
+    ios_only = (
+        bool(seen_languages or unsupported) and seen_languages <= {"swift", "objc"} and not other_unsupported
+    )
+    declared_sql = any(item.get("kind") == "sql" for item in (specs or {}).get("sink", []))
+
+    def ast_state(rule: str) -> str:
+        android_only = rule.endswith(ANDROID_ONLY)
+        if android_only and ios_only:
+            return "not-applicable"
+        if objc_only:
+            return "not-run"
+        objc_gap = objc_family and not android_only
+        if rule == "AST-SQL-CONCAT" and ast_languages == {"swift"} and declared_sql:
+            examined = state == "checked" and rule not in truncated_rules and not objc_gap
+            return "limited" if examined else "partial"
+        if rule in SWIFT_UNIMPLEMENTED and ast_languages == {"swift"} and not other_unsupported:
+            return "not-run"
+        if objc_gap:
+            return "partial"
+        if rule in truncated_rules and state == "checked":
+            return "partial"
+        if rule in limited_rules and state == "checked":
+            return "limited"
+        return state
+
     inventory_complete = (
         bool(parsed)
         and not skipped
         and "native flow recursion budget" not in flow_metadata["reasons"]
-        # Unexpanded ObjC macros can declare functions the CST does not show.
+        # Unexpanded ObjC macros can declare functions the CST never shows. Such
+        # unobserved functions are a documented precision limit (OBJC rules stay
+        # limited); the inventory is never claimed complete.
         and not any(metric["functions"] is not None for metric in objc_files)
     )
     coverage = [
         {
             "rule_id": rule,
-            "state": "not-applicable"
-            if rule.endswith(ANDROID_ONLY) and seen_languages == {"swift"} and not unsupported
-            else ("limited" if state == "checked" and rule not in truncated_rules else "partial")
-            if rule == "AST-SQL-CONCAT"
-            and seen_languages == {"swift"}
-            and any(item.get("kind") == "sql" for item in (specs or {}).get("sink", []))
-            else "not-run"
-            if rule in SWIFT_UNIMPLEMENTED and seen_languages == {"swift"} and not unsupported
-            else "partial"
-            if rule in truncated_rules and state == "checked"
-            else "limited"
-            if rule in limited_rules and state == "checked"
-            else state,
+            "state": ast_state(rule),
             "method": "source-ast-local-flow",
             "mapping_scope": "partial",
             "languages": sorted(seen_languages),
@@ -3787,27 +3841,40 @@ def analyze_sources(
             )
             + (
                 " The built-in check is not implemented for Swift; project-declared SQL sinks cover only their exact specifications."
-                if rule in SWIFT_UNIMPLEMENTED and seen_languages == {"swift"}
+                if rule in SWIFT_UNIMPLEMENTED and ast_languages == {"swift"}
+                else ""
+            )
+            + (
+                " AST rules do not examine Objective-C sources; OBJC-* rules cover them through a reduced model."
+                if objc_family and not rule.endswith(ANDROID_ONLY)
                 else ""
             ),
         }
         for rule in RULES
     ]
-    if "objc" in seen_languages:
+    if objc_family:
         from .objc_analysis import RULES as OBJC_RULES
 
         objc_analyzed = any(metric["functions"] is not None for metric in objc_files)
-        # Analyzed ObjC is limited by the reduced model; a skipped or partially
-        # parsed ObjC file, or a truncated AST pass, is an execution gap.
+        # OBJC rules are limited by the reduced model only when every observed
+        # ObjC function was analyzed (a declaration without a body has nothing
+        # to examine). A skipped function, a skipped or partially parsed file,
+        # or a truncated AST pass is an execution gap, as is any Objective-C++
+        # (.mm) file, which the reduced model never examines. Functions hidden by
+        # unexpanded macros are never observed: a documented precision limit
+        # recorded as function_inventory_complete = false, not a gap.
         objc_gap = (
-            any(metric["state"] != "limited" for metric in objc_files)
+            ".mm" in unsupported
+            or any(metric["state"] != "limited" for metric in objc_files)
+            or any((metric["functions"] or {}).get("skipped") for metric in objc_files)
             or findings_truncated
             or remaining_records > 0
         )
         coverage.extend(
             {
                 "rule_id": rule,
-                "state": ("partial" if objc_gap else "limited") if objc_analyzed else "not-run",
+                # Every ObjC-family file dropped before analysis is still a gap.
+                "state": "partial" if objc_gap else "limited" if objc_analyzed else "not-run",
                 "method": "objc-cst-local-flow",
                 "mapping_scope": "partial",
                 "note": "Known WebKit declared types and straight-line request flow; CommonCrypto direct calls. No preprocessing, ObjC++/dispatch/swizzling, interprocedural flow, guard or runtime proof.",

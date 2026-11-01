@@ -89,8 +89,15 @@ renamed finding at the same dependency location with its earlier ID and lists
 the pair under `changed` (its `rule_id` differs), not as one added and one
 no-longer-observed finding. Verification lists it as `still-observed` under the
 new `finding_id`, with the earlier ID in `before_finding_id`. A report from
-1.6.4 without `advisory_ids` still pairs. A shared alias pairs nothing when it
-would make one earlier finding correspond to two later findings.
+1.6.4 without `advisory_ids` still pairs. An alias pairs two findings only
+through a display ID: the earlier display ID is among the later finding's
+`advisory_ids`, or the later display ID is among the earlier finding's. Two
+findings that share only another alias (for example one PYSEC or GHSA record
+listing several CVEs) are different findings. The pairing is also one-to-one:
+nothing pairs by alias when the later finding already pairs under its own ID,
+when it reaches several earlier findings (merged advisories), or when another
+later finding also reaches that earlier finding. Such findings are listed as
+added and no longer observed instead.
 
 ## Runtime and binary limits
 

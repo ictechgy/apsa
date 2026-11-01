@@ -15,7 +15,7 @@ from xml.sax.handler import ContentHandler
 
 from defusedxml import sax as defused_sax
 
-from .core import finding, load_plist
+from .core import finding, finding_identity, load_plist
 from .credential_text import CREDENTIAL_TEXT_SUFFIXES
 from .rules import strip_comments
 
@@ -592,21 +592,25 @@ def _ats_exceptions(inventory: dict) -> tuple[list[dict], list[dict]]:
                 reasons_by_domain[str(domain)[:200]] = reasons
         # Domains are not part of a finding identity, so one finding lists every weakened domain.
         if reasons_by_domain:
-            findings.append(
-                finding(
-                    "IOS-ATS-EXCEPTION",
-                    "ATS exception weakens transport security",
-                    "medium",
-                    "configuration-confirmed",
-                    [
-                        {"path": config.get("path", ""), "domain": domain, "reasons": reasons}
-                        for domain, reasons in sorted(reasons_by_domain.items())
-                    ],
-                    "Remove the exception or limit it to the specific host and setting that needs it; keep TLS 1.2+ with forward secrecy.",
-                    "MASVS-NETWORK",
-                    [ATS_REFERENCE],
-                )
+            path = config.get("path", "")
+            item = finding(
+                "IOS-ATS-EXCEPTION",
+                "ATS exception weakens transport security",
+                "medium",
+                "configuration-confirmed",
+                [
+                    {"path": path, "domain": domain, "reasons": reasons}
+                    for domain, reasons in sorted(reasons_by_domain.items())
+                ],
+                "Remove the exception or limit it to the specific host and setting that needs it; keep TLS 1.2+ with forward secrecy.",
+                "MASVS-NETWORK",
+                [ATS_REFERENCE],
             )
+            # The ID is the rule and the one Info.plist location, as in 1.6.4, rather
+            # than one location per evidence row: adding or removing a domain keeps the
+            # ID, and 1.6.4 waivers and baselines for multi-domain files still match.
+            item["id"] = finding_identity("IOS-ATS-EXCEPTION", [{"path": path}])
+            findings.append(item)
     return findings, [
         {
             "rule_id": "IOS-ATS-EXCEPTION",

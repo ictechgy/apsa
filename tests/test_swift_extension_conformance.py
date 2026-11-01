@@ -50,6 +50,11 @@ LAYOUTS = [
 ]
 
 
+def gap_state(report):
+    """Precision abstentions leave coverage limited; a budget reason keeps it partial."""
+    return "partial" if report["metadata"]["native_flow"]["budget_reasons"] else "limited"
+
+
 def checked_inputs(report):
     assert all(
         not item["parse_errors"] and not item["native_parse_errors"] for item in report["metadata"]["files"]
@@ -82,7 +87,7 @@ def test_extension_conformance_is_lookup_uncertainty(kind, layout, reverse, cont
     else:
         # Unknown protocol membership can supply any root, including Foundation.
         assert report["metadata"]["native_flow"]["state"] == "partial", report
-        assert states == {"partial"}, report
+        assert states == {gap_state(report)}, report
         if control == "affected" and kind != "empty":
             assert matches and all(item["status"] == "candidate" for item in matches), report
 
@@ -109,7 +114,7 @@ def test_private_alias_in_extension_file_still_affects_other_caller_file(kind, l
     report = analyze_sources(inputs)
     matches, states = checked_inputs(report)
     assert matches and all(item["status"] == "candidate" for item in matches), report
-    assert states == {"partial"} and report["metadata"]["native_flow"]["state"] == "partial", report
+    assert states == {gap_state(report)} and report["metadata"]["native_flow"]["state"] == "partial", report
 
 
 @pytest.mark.parametrize("limit", [0, 1])

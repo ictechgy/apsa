@@ -11,6 +11,7 @@ import tomllib
 import zipfile
 import zlib
 from pathlib import Path
+from typing import BinaryIO
 from urllib.parse import unquote
 
 from defusedxml import ElementTree as ET
@@ -620,38 +621,57 @@ class SourceBudgetExceeded(ValueError):
     pass
 
 
-def _zip_directory_within_budget(target: Path) -> None:
+# ZipFile searches for the end record from this many bytes before the end of the
+# file: CPython 3.11 and early 3.12 releases start at 64 KiB + 22 bytes, newer
+# releases one byte later. The bound covers the widest supported window.
+ZIP_END_SEARCH = (1 << 16) + 22
+
+
+def _zip_directory_within_budget(target: Path | BinaryIO) -> None:
     """Bound the central directory ZipFile will read before it allocates entries.
 
     ZipFile builds an entry object for every directory record before any caller
     check. Locate the end record as ZipFile does and bound every 32-bit or ZIP64
     directory size and count it may use by the legacy reader's directory budget.
+    Without an end record in that window the directory cannot be bounded, so the
+    archive is refused rather than left to ZipFile.
     """
-    with target.open("rb") as handle:
-        size = handle.seek(0, 2)
-        region = max(0, size - 65557)
-        start = max(0, region - 76)
-        handle.seek(start)
-        tail = handle.read()
-        if len(tail) >= 22 and tail[-22:-18] == b"PK\x05\x06" and tail[-2:] == b"\0\0":
-            end = len(tail) - 22
-        else:
-            end = tail.rfind(b"PK\x05\x06", region - start)
-            if end < 0 or end + 22 > len(tail):
-                return  # No end record: ZipFile rejects the archive itself.
-        records = [struct.unpack_from("<HI", tail, end + 10)]
-        if end >= 20 and tail[end - 20 : end - 16] == b"PK\x06\x07":
-            (relative,) = struct.unpack_from("<Q", tail, end - 12)
-            for offset in {relative, start + end - 76}:
-                if 0 <= offset <= size - 56:
-                    handle.seek(offset)
-                    record = handle.read(56)
-                    if record[:4] == b"PK\x06\x06":
-                        records.append(struct.unpack_from("<QQ", record, 32))
+    if isinstance(target, Path):
+        with target.open("rb") as handle:
+            records = _zip_directory_records(handle)
+    else:
+        records = _zip_directory_records(target)
+    if records is None:
+        raise ValueError("Archive exceeds safe size/file-count limit: no bounded ZIP end record")
     if any(
         entries > MAX_ZIP_ENTRIES or directory > MAX_ZIP_DIRECTORY_BYTES for entries, directory in records
     ):
         raise ValueError("Archive exceeds safe size/file-count limit")
+
+
+def _zip_directory_records(handle: BinaryIO) -> list[tuple[int, int]] | None:
+    """The (entry count, directory bytes) pairs ZipFile may use, or None without an end record."""
+    size = handle.seek(0, 2)
+    region = max(0, size - ZIP_END_SEARCH)
+    start = max(0, region - 76)
+    handle.seek(start)
+    tail = handle.read()
+    if len(tail) >= 22 and tail[-22:-18] == b"PK\x05\x06" and tail[-2:] == b"\0\0":
+        end = len(tail) - 22
+    else:
+        end = tail.rfind(b"PK\x05\x06", region - start)
+        if end < 0 or end + 22 > len(tail):
+            return None
+    records = [struct.unpack_from("<HI", tail, end + 10)]
+    if end >= 20 and tail[end - 20 : end - 16] == b"PK\x06\x07":
+        (relative,) = struct.unpack_from("<Q", tail, end - 12)
+        for offset in {relative, start + end - 76}:
+            if 0 <= offset <= size - 56:
+                handle.seek(offset)
+                record = handle.read(56)
+                if record[:4] == b"PK\x06\x06":
+                    records.append(struct.unpack_from("<QQ", record, 32))
+    return records
 
 
 def _outer_app_index(parts: tuple[str, ...]) -> int | None:

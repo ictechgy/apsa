@@ -233,7 +233,7 @@ def test_a_split_advisory_group_does_not_cover_both_parts_through_one_baseline_i
     assert gate["counts"]["baseline_existing"] == 0 and len(gate["gate_findings"]) == 2
 
 
-def test_merged_advisories_are_covered_by_either_legacy_finding():
+def test_merged_advisories_are_reopened_rather_than_covered_by_either_legacy_finding():
     old = correlated(advisory(), advisory(OTHER))
     assert len(old) == 2
     merged = advisory(aliases=("CVE-2026-1000",))
@@ -244,8 +244,11 @@ def test_merged_advisories_are_covered_by_either_legacy_finding():
     }
     [new] = correlated(merged)
     assert {GHSA, OTHER} <= set(new["advisory_ids"])
-    gate = evaluate(report(new), config(only_new=True), report(*map(legacy, old)))
-    assert gate["counts"]["baseline_existing"] == 1
+    # The merged finding reaches two legacy findings by alias. That is not one-to-one,
+    # so neither legacy finding (whose severity may differ) covers it: it is reopened.
+    gate = evaluate(report(new), config(thresholds={"medium": 0}, only_new=True), report(*map(legacy, old)))
+    assert gate["counts"]["baseline_existing"] == 0 and gate["counts"]["escalated"] == 0
+    assert gate["state"] == "failed" and gate["gate_findings"] == [new["id"]]
 
 
 class Reports:

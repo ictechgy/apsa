@@ -11,11 +11,14 @@ publication is tracked separately in [release readiness](../RELEASE_READINESS.md
 
 ## Fixed, inspectable tool surface
 
-- The unreleased review fixes make `reports_compare` return model context without source
-  excerpts, with fixed untrusted-evidence instructions and a `max_bytes` bound (4096–262144,
-  default 65536) that counts omitted entries. `reports_checklist` also lists the
-  `limited` status (checks that examined the whole input while the bounded static
-  model abstained on some paths). Its default hash is
+- In APSA 1.7.0, `reports_compare` returns model context without source excerpts,
+  with fixed untrusted-evidence instructions and a `max_bytes` bound (4096–262144,
+  default 65536) that counts omitted entries, including changed coverage entries and
+  `verification=true` finding transitions and runtime pairs; a large diff is
+  trimmed, never rejected.
+  `reports_checklist` also lists the `limited` status (checks that examined the
+  whole input while the bounded static model abstained on some paths). The 1.7.0
+  default hash is
   `f3d2acec8abdffffd1d267a835ea2fd8a1aeba64d90531db766cdab8171e291a` and the runtime hash is
   `0c66d7f8e1642d15dce60c9a90a6ef7c204a0ca15f0ee85409b35874caee8af8`.
 - APSA 1.6.3 additionally serves read-only `reports_followup`.

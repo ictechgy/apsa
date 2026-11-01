@@ -21,10 +21,18 @@ from mobile_audit.core import finding
 from mobile_audit.engine import PARSER_COVERAGE_STATES, _worker_schema
 from mobile_audit.hybrid_analysis import analyze_hybrid
 from mobile_audit.maswe import aggregate_states, rule_state
-from mobile_audit.native_flow import NativeFlow
+from mobile_audit.native_flow import REASON_KINDS, NativeFlow
 from mobile_audit.output import markdown, sarif
 from mobile_audit.policy import evaluate, load_policy, template
-from mobile_audit.source_analysis import RULES, TRACE_PARTIAL, Analyzer, Trace, analyze_sources
+from mobile_audit.source_analysis import (
+    ANDROID_ONLY,
+    RULES,
+    TRACE_LIMITED,
+    TRACE_PARTIAL,
+    Analyzer,
+    Trace,
+    analyze_sources,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 URL = "AST-WEBVIEW-UNTRUSTED-URL"
@@ -55,6 +63,10 @@ def as_report(analysis: dict, key: str = "source_analysis", **extra) -> dict:
 
 def states(analysis: dict, rules=RULES) -> set[str]:
     return {row["state"] for row in analysis["coverage"] if row["rule_id"] in rules}
+
+
+OBJC_RULES = {"OBJC-WEBVIEW-UNTRUSTED-REQUEST", "OBJC-CRYPTO-WEAK-HASH"}
+ANDROID_AST_RULES = {rule for rule in RULES if rule.endswith(ANDROID_ONLY)}
 
 
 # --- producers --------------------------------------------------------------------------
@@ -90,10 +102,7 @@ def test_a_budget_native_reason_keeps_ast_rules_partial(monkeypatch):
     )
     flow = analysis["metadata"]["native_flow"]
     assert flow["budget_reasons"], flow
-    assert all(
-        detail["kind"] == ("budget" if "budget" in detail["reason"] else "precision")
-        for detail in flow["partial_details"]
-    )
+    assert all(detail["kind"] == REASON_KINDS[detail["reason"]] for detail in flow["partial_details"])
     assert states(analysis) == {"partial"}
     assert any(warning.startswith("Native flow remains partial:") for warning in analysis["warnings"])
     assert report_incomplete(as_report(analysis))
@@ -133,15 +142,18 @@ def _analyzer(path: str, text: str, language: str) -> tuple[Analyzer, object, li
     return analyzer, root, nodes
 
 
-def test_trace_partial_emission_is_a_precision_limit_and_finding_budget_is_a_gap(monkeypatch):
+def test_trace_cut_kind_routes_emission_and_finding_budget_is_a_gap(monkeypatch):
     analyzer, root, _ = _analyzer("A.java", "class A { void f() {} }", "java")
-    analyzer.emit(URL, root, traces=(Trace(1, root, "input" + TRACE_PARTIAL),))
+    analyzer.emit(URL, root, traces=(Trace(1, root, "input" + TRACE_LIMITED),))
     assert analyzer.limited_rules == {URL} and not analyzer.truncated_rules
+    # A trace cut by the trace cap is an execution gap, not a precision limit.
+    analyzer.emit("AST-PATH-TRAVERSAL", root, traces=(Trace(2, root, "input" + TRACE_PARTIAL),))
+    assert analyzer.truncated_rules == {"AST-PATH-TRAVERSAL"} and analyzer.limited_rules == {URL}
     import mobile_audit.source_analysis as module
 
     monkeypatch.setattr(module, "MAX_AST_FINDINGS", 0)
     analyzer.emit("AST-SQL-CONCAT", root)
-    assert analyzer.truncated_rules == {"AST-SQL-CONCAT"}
+    assert analyzer.truncated_rules == {"AST-PATH-TRAVERSAL", "AST-SQL-CONCAT"}
 
 
 def test_unresolved_kotlin_import_withdrawal_is_limited_without_native_flow():
@@ -156,8 +168,15 @@ def test_objc_files_are_limited_unless_their_parse_is_partial():
     (metric,) = analysis["metadata"]["files"]
     assert metric["state"] == "limited"
     assert analysis["coverage"][0]["skipped_files"] == 0
-    assert states(analysis, {"OBJC-WEBVIEW-UNTRUSTED-REQUEST", "OBJC-CRYPTO-WEAK-HASH"}) == {"limited"}
-    assert states(analysis) == {"limited"}  # AST rules see ObjC only through the reduced model.
+    assert states(analysis, OBJC_RULES) == {"limited"}
+    # AST rules never examine ObjC: alone it leaves them not-run (Android-only: not-applicable).
+    assert states(analysis, ANDROID_AST_RULES) == {"not-applicable"}
+    assert states(analysis, set(RULES) - ANDROID_AST_RULES) == {"not-run"}
+    assert all(
+        "AST rules do not examine Objective-C" in row["note"]
+        for row in analysis["coverage"]
+        if row["rule_id"] in set(RULES) - ANDROID_AST_RULES
+    )
     # Unexpanded macros can hide declarations; the inventory is not claimed complete.
     assert analysis["metadata"]["function_inventory_complete"] is False
     report = as_report(analysis)
@@ -168,11 +187,16 @@ def test_objc_files_are_limited_unless_their_parse_is_partial():
     assert report_incomplete(as_report(broken))
 
 
-def test_objc_with_java_keeps_java_checked_files_and_limited_rules():
+def test_objc_with_java_leaves_ast_rules_partial_except_android_only_rules():
     analysis = analyze_sources([("A.m", OBJC), ("B.java", "class B { void idle() {} }")])
     files = {row["path"]: row["state"] for row in analysis["metadata"]["files"]}
     assert files == {"A.m": "limited", "B.java": "checked"}
-    assert states(analysis) == {"limited"}
+    # ObjC sources in scope were not examined by AST rules: an execution gap.
+    assert states(analysis, set(RULES) - ANDROID_AST_RULES) == {"partial"}
+    # Android-only rules do not apply to ObjC; the Java file alone decides them.
+    assert states(analysis, ANDROID_AST_RULES) == {"checked"}
+    assert states(analysis, OBJC_RULES) == {"limited"}
+    assert report_incomplete(as_report(analysis))
 
 
 def test_swift_declared_sql_spec_only_is_limited():
@@ -365,6 +389,7 @@ def test_cli_scan_of_objc_project_is_complete_but_limited(tmp_path, capsys):
     assert report["summary"]["incomplete"] is False and report["summary"]["limited"] is True
     objc = {row["state"] for row in report["coverage"] if row["rule_id"].startswith("OBJC-")}
     assert objc == {"limited"}
+    assert states(report, set(RULES) - ANDROID_AST_RULES) == {"not-run"}
     assert cli.main(["--json", "--home", str(home), "scan", str(source), "--strict-coverage"]) == 3
     capsys.readouterr()
     policy = tmp_path / "policy.json"
@@ -373,6 +398,135 @@ def test_cli_scan_of_objc_project_is_complete_but_limited(tmp_path, capsys):
     assert cli.main(evaluate_args) == 0
     assert cli.main([*evaluate_args, "--strict-coverage"]) == 3
     capsys.readouterr()
+
+
+SWIFT = 'import Foundation\nfunc fixedName() -> String { return "fixed" }\n'
+CONDITIONAL_OBJC = """#import <CommonCrypto/CommonDigest.h>
+@implementation NewSyntheticConditional
+#if TARGET_OS_IOS
+- (void)digest:(const void *)data size:(CC_LONG)size {
+    unsigned char output[16];
+    CC_MD5(data, size, output);
+}
+#endif
+@end
+"""
+
+
+def _ios_source(root: Path, files: dict[str, str]) -> Path:
+    # Resolve: hosted macOS runners expose TMPDIR through a symlink.
+    source = root.resolve() / "new-ios-source"
+    source.mkdir()
+    for name, text in files.items():
+        (source / name).write_text(text)
+    (source / "Info.plist").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>'
+        "<key>CFBundleIdentifier</key><string>new.synthetic.ios</string></dict></plist>"
+    )
+    return source
+
+
+def _scan(source: Path, capsys, *arguments: str) -> tuple[int, dict]:
+    code = cli.main(["--json", "--home", str(source.parent / "home"), "scan", str(source), *arguments])
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_swift_with_objc_leaves_ast_rules_partial_and_exits_3(tmp_path, capsys):
+    analysis = analyze_sources([("Fixed.swift", SWIFT), ("Handler.m", OBJC)])
+    assert states(analysis, ANDROID_AST_RULES) == {"not-applicable"}  # iOS-only sources.
+    assert states(analysis, {"AST-CRYPTO-ECB", "AST-CRYPTO-WEAK-CIPHER", "AST-SQL-CONCAT"}) == {"not-run"}
+    examined = set(RULES) - ANDROID_AST_RULES - {"AST-CRYPTO-ECB", "AST-CRYPTO-WEAK-CIPHER", "AST-SQL-CONCAT"}
+    assert states(analysis, examined) == {"partial"}
+    assert states(analysis, OBJC_RULES) == {"limited"}
+    code, envelope = _scan(_ios_source(tmp_path, {"Fixed.swift": SWIFT, "Handler.m": OBJC}), capsys)
+    report = envelope["data"]
+    assert code == 3 and envelope["ok"] is False and report["summary"]["incomplete"] is True
+    assert states(report, examined) == {"partial"}
+    assert states(report, OBJC_RULES) == {"limited"}
+
+
+def test_conditionally_compiled_objc_method_is_an_execution_gap(tmp_path, capsys):
+    analysis = analyze_sources([("Conditional.m", CONDITIONAL_OBJC)])
+    (metric,) = analysis["metadata"]["files"]
+    assert metric["functions"]["skipped"] == 1 and metric["functions"]["analyzed"] == 0
+    assert metric["state"] == "partial" and analysis["coverage"][0]["skipped_files"] == 1
+    assert states(analysis, OBJC_RULES) == {"partial"}
+    assert any("conditionally compiled function" in warning for warning in analysis["warnings"])
+    assert report_incomplete(as_report(analysis))
+    code, envelope = _scan(_ios_source(tmp_path, {"Conditional.m": CONDITIONAL_OBJC}), capsys)
+    report = envelope["data"]
+    assert code == 3 and report["summary"]["incomplete"] is True
+    assert states(report, OBJC_RULES) == {"partial"}
+    files = report["inventory"]["source_analysis"]["files"]
+    assert [row["state"] for row in files if row["language"] == "objc"] == ["partial"]
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        [("Bridge.mm", "@implementation B @end")],
+        [("Handler.m", OBJC), ("Bridge.mm", "@implementation B @end")],
+    ],
+)
+def test_objective_c_plus_plus_is_an_execution_gap_for_objc_rules(sources):
+    analysis = analyze_sources(sources)
+    assert states(analysis, OBJC_RULES) == {"partial"}
+    # Neither AST nor OBJC rules examine .mm; ObjC-family sources alone leave AST rules not-run.
+    assert states(analysis, set(RULES) - ANDROID_AST_RULES) == {"not-run"}
+    assert states(analysis, ANDROID_AST_RULES) == {"not-applicable"}
+    assert report_incomplete(as_report(analysis))
+    with_swift = analyze_sources([*sources, ("Fixed.swift", SWIFT)])
+    assert states(with_swift, OBJC_RULES) == {"partial"}
+    assert "partial" in states(with_swift)
+
+
+def test_every_source_dropped_before_parsing_is_partial(monkeypatch):
+    import mobile_audit.source_analysis as module
+
+    monkeypatch.setattr(module, "MAX_AST_BYTES", 4)
+    java = analyze_sources([("A.java", "class A { void f() {} }"), ("B.kt", "class B")])
+    assert states(java) == {"partial"} and java["coverage"][0]["parsed_files"] == 0
+    assert report_incomplete(as_report(java))
+    objc = analyze_sources([("A.m", OBJC)])
+    assert states(objc, OBJC_RULES) == {"partial"}  # Not "not-run": the file was dropped.
+    assert report_incomplete(as_report(objc))
+    # Unsupported-language files alone remain an absent check, not a dropped source.
+    assert states(analyze_sources([("App.js", "const a = 1;")])) == {"not-run"}
+
+
+def test_cli_exits_3_when_every_source_exceeds_the_byte_budget(tmp_path, capsys):
+    from mobile_audit.source_analysis import MAX_AST_BYTES
+
+    root = tmp_path.resolve() / "new-oversized-source"
+    java = root / "app/src/main/java/n"
+    java.mkdir(parents=True)
+    (java / "Oversized.java").write_text(
+        "class Oversized {\n" + "// padding\n" * (MAX_AST_BYTES // 11 + 1) + "}\n"
+    )
+    (root / "app/src/main/AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="new.synthetic">'
+        '<application android:allowBackup="false"/></manifest>'
+    )
+    code, envelope = _scan(root, capsys)
+    report = envelope["data"]
+    (row,) = report["inventory"]["source_analysis"]["files"]
+    assert row["state"] == "skipped" and row["reason"] == "parser byte budget exceeded"
+    assert code == 3 and report["summary"]["incomplete"] is True
+    assert states(report) == {"partial"}
+
+
+def test_unobserved_macro_functions_stay_a_precision_limit():
+    macro = """#import <CommonCrypto/CommonDigest.h>
+#define DIGEST(name) - (void)name:(const void *)data { unsigned char o[16]; CC_MD5(data, 1, o); }
+@implementation NewSyntheticMacro
+DIGEST(digest)
+@end
+"""
+    analysis = analyze_sources([("Macro.m", macro)])
+    (metric,) = analysis["metadata"]["files"]
+    assert metric["functions"]["skipped"] == 0 and metric["state"] == "limited"
+    assert states(analysis, OBJC_RULES) == {"limited"}
+    assert analysis["metadata"]["function_inventory_complete"] is False
 
 
 # --- Action helper ----------------------------------------------------------------------
@@ -416,3 +570,90 @@ def test_action_declares_strict_coverage_and_exit_precedence():
     assert audit["env"]["APSA_STRICT_COVERAGE"] == "${{ inputs.strict-coverage }}"
     assert "args+=(--strict-coverage)" in audit["run"]
     assert '--incomplete "$RUNNER_TEMP/apsa-result.json" "$APSA_STRICT_COVERAGE"' in audit["run"]
+
+
+def _write_envelope(path: Path, envelope: dict) -> Path:
+    path.write_text(json.dumps(envelope))
+    return path
+
+
+def test_action_helper_honors_policy_strict_coverage(tmp_path, capsys):
+    # Policy strict_coverage = true with fail_on_partial = false exits 0 for a limited-only
+    # report, yet the Action (strict-coverage input false) must still report it incomplete.
+    source = _ios_source(tmp_path, {"Handler.m": OBJC})
+    policy = source.parent / "new-strict-policy.json"
+    policy.write_text(json.dumps({"schema_version": 1, "strict_coverage": True, "fail_on_partial": False}))
+    code, envelope = _scan(source, capsys, "--policy", str(policy))
+    assert code == 0 and envelope["data"]["gate"]["policy"]["strict_coverage"] is True
+    assert report_limited(envelope["data"]["report"])
+    fixture = _write_envelope(source.parent / "new-policy-result.json", envelope)
+    assert _helper("--incomplete", str(fixture), "false") == "incomplete=true\n"
+    assert _helper("--incomplete", str(fixture)) == "incomplete=true\n"
+    text = _helper("--summary", str(fixture), "0", "false")
+    assert "Audit execution: **incomplete** (exit code 0)" in text
+    assert "strict coverage counts this as incomplete" in text
+    # A lenient policy leaves limited coverage complete for the stated scope.
+    policy.write_text(json.dumps({"schema_version": 1}))
+    code, envelope = _scan(source, capsys, "--policy", str(policy))
+    lenient = _write_envelope(source.parent / "new-lenient-result.json", envelope)
+    assert code == 0 and _helper("--incomplete", str(lenient), "false") == "incomplete=false\n"
+    assert "Audit execution: **complete for the stated scope**" in _helper("--summary", str(lenient), "0")
+
+
+def test_action_helper_reports_a_partial_audit_reason_beside_exit_4(tmp_path, capsys):
+    source = _ios_source(tmp_path, {"Handler.m": OBJC})
+    policy = source.parent / "new-blocking-policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "strict_coverage": True,
+                "allowed_statuses": ["candidate"],
+                "thresholds": {"critical": 0, "high": 0, "medium": 0, "low": -1, "info": -1},
+            }
+        )
+    )
+    code, envelope = _scan(source, capsys, "--policy", str(policy))
+    codes = {reason["code"] for reason in envelope["data"]["gate"]["reasons"]}
+    assert code == 4 and {"partial-audit", "severity-threshold"} <= codes
+    fixture = _write_envelope(source.parent / "new-exit4-result.json", envelope)
+    assert _helper("--incomplete", str(fixture), "false") == "incomplete=true\n"
+    text = _helper("--summary", str(fixture), "4", "false")
+    assert "Audit execution: **incomplete** (exit code 4)" in text
+    assert "complete for the stated scope" not in text and "Execution error" not in text
+
+
+def test_action_summary_treats_a_real_exit_3_envelope_as_incomplete_not_failed(tmp_path, capsys):
+    root = tmp_path.resolve() / "new-android-source"
+    java = root / "app/src/main/java/n"
+    java.mkdir(parents=True)
+    (java / "Broken.java").write_text("class Broken { void f( { int x = ; } }\n")
+    (root / "app/src/main/AndroidManifest.xml").write_text(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="new.synthetic">'
+        '<application android:allowBackup="false"/></manifest>'
+    )
+    code, envelope = _scan(root, capsys)
+    assert code == 3 and envelope["ok"] is False and envelope["exit_code"] == 3
+    assert "error" not in envelope and envelope["data"]["summary"]["incomplete"] is True
+    fixture = _write_envelope(root.parent / "new-exit3-result.json", envelope)
+    text = _helper("--summary", str(fixture), "3")
+    assert "Audit execution: **incomplete** (exit code 3)" in text
+    assert "failed" not in text and "Execution error" not in text
+    assert _helper("--incomplete", str(fixture)) == "incomplete=true\n"
+    # A genuine execution failure keeps its label.
+    error = _write_envelope(root.parent / "new-error.json", {"ok": False, "data": envelope["data"]})
+    assert "Audit execution: **failed** (exit code 1)" in _helper("--summary", str(error), "1")
+
+
+def test_action_fails_on_policy_strict_coverage_without_the_strict_input(tmp_path, capsys):
+    from tests.test_interface_review_fixes import _run_action
+
+    source = _ios_source(tmp_path, {"Handler.m": OBJC})
+    policy = source.parent / "new-strict-policy.json"
+    policy.write_text(json.dumps({"schema_version": 1, "strict_coverage": True, "fail_on_partial": False}))
+    code, envelope = _scan(source, capsys, "--policy", str(policy))
+    assert code == 0
+    inputs = {"policy": "apsa.toml", "fail-on-incomplete": "true", "strict-coverage": "false"}
+    code, text, outputs = _run_action(tmp_path.resolve() / "new-action", envelope, 0, **inputs)
+    assert outputs["incomplete"] == "true" and outputs["exit-code"] == "0"
+    assert code == 3 and "partial or incomplete" in text
