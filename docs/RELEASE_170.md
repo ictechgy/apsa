@@ -137,17 +137,17 @@ device or credential service was contacted.
   coverage gap), while initializers of local or anonymous classes stay part of
   their enclosing function; early exits in Java constructors guard later
   statements; a receiverless `openDatabase`/`openOrCreateDatabase` is the
-  framework opener unless a source callable of that name (in either language)
-  could take its arguments, or a value binding of that name is in scope.
-  Otherwise it is followed as project code where the flow can resolve it, and
-  which callee runs is treated as certain only when the flow's resolution
-  covers every such source callable and no framework static import shares the
-  name, and then only when every target declares a `SQLiteDatabase` return,
-  the call's arity cannot fit `Context.openOrCreateDatabase(name, mode,
-  factory[, handler])`, or the name is `openDatabase` (which Context does not
-  declare). In every other case the receiver and the arguments only pick the
-  more likely result type, and the guess is recorded (`opener receiver
-  identity unresolved`, so coverage is `limited`);
+  framework opener unless a Java or Kotlin source callable of that name could
+  take its arguments, or a value binding of that name is in scope. Otherwise
+  it is followed as project code where the flow can resolve it, and which
+  callee runs is treated as certain only when the flow's resolution covers
+  every such source callable and no framework static import shares the name,
+  and then only when every target declares a `SQLiteDatabase` return, the
+  call's arity cannot fit `Context.openOrCreateDatabase(name, mode, factory[,
+  handler])`, or the name is `openDatabase` (which Context does not declare).
+  In every other case the receiver and the arguments only pick the more likely
+  result type, and the guess is recorded (`opener receiver identity
+  unresolved`, so coverage is `limited`);
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies
@@ -229,22 +229,24 @@ host) are reported conservatively. Trailing lambdas of calls other than Kotlin
 scope functions (click listeners, coroutine builders, `runOnUiThread`, Swift
 trailing closures) are not analyzed unless they contain a non-local `return` (or
 are a SwiftUI `.onOpenURL` handler), as in 1.6.x, and coverage does not mark
-them. Calls to Kotlin extension functions on a value (`x.go()` with `fun
-String.go()`) are not followed. Constructor calls such as `Foo(x)` do not pass
-their arguments into Kotlin or Swift initializer bodies, and Kotlin class-level
-property initializers are not analyzed. Native field summaries can accumulate
-duplicate traces of one source with re-derived origins, so whether
-non-convergence is reported as `limited` (`field summary fixed point
-unresolved`) or as a `partial` budget gap can depend on the round cap. A trace
-cap that is hit is always a budget gap; a round cap that is hit is a budget gap
-unless the field contents stopped changing in the last round. QuayGate checks
-legacy devices separately only when a network security configuration is
-referenced; without one, cleartext is judged by the manifest value and the
-targetSdk default, although devices below API 28 permit cleartext by default and
-API 21-22 ignore an explicit `false`. Hermes bytecode is not decoded, and the
-hybrid engine is not a complete JavaScript/TypeScript/Dart grammar. Static
-candidates do not establish runtime reachability or exploitability. This release
-does not include a GUI installer.
+them. A same-named project override elsewhere (for example an `Application`
+overriding `openOrCreateDatabase`) makes receiverless opener calls in unrelated
+classes `limited`, with their findings kept. Calls to Kotlin extension functions
+on a value (`x.go()` with `fun String.go()`) are not followed. Constructor calls
+such as `Foo(x)` do not pass their arguments into Kotlin or Swift initializer
+bodies, and Kotlin class-level property initializers are not analyzed. Native
+field summaries can accumulate duplicate traces of one source with re-derived
+origins, so whether non-convergence is reported as `limited` (`field summary
+fixed point unresolved`) or as a `partial` budget gap can depend on the round
+cap. A trace cap that is hit is always a budget gap; a round cap that is hit is
+a budget gap unless the field contents stopped changing in the last round.
+QuayGate checks legacy devices separately only when a network security
+configuration is referenced; without one, cleartext is judged by the manifest
+value and the targetSdk default, although devices below API 28 permit cleartext
+by default and API 21-22 ignore an explicit `false`. Hermes bytecode is not
+decoded, and the hybrid engine is not a complete JavaScript/TypeScript/Dart
+grammar. Static candidates do not establish runtime reachability or
+exploitability. This release does not include a GUI installer.
 
 Publication is performed by the existing immutable-tag workflow after review and
 hosted checks. PyPI/MCP/GitHub publication and Linux/macOS public installation

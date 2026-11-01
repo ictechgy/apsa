@@ -1274,3 +1274,84 @@ def test_round_nine_opener_shapes_never_claim_checked_without_a_finding(name):
     report = analyze_sources(R9_CASES[name])
     sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
+
+
+def test_a_swift_homonym_does_not_make_kotlin_framework_openers_limited():
+    swift = (
+        "ios/DB.swift",
+        "enum DB { static func openOrCreateDatabase(_ a: String, _ b: Int, _ c: Any?) {} }\n",
+    )
+    report = analyze_sources([("app/Main.kt", SDK_ACTIVITY), swift])
+    assert "opener receiver identity unresolved" not in report["metadata"]["native_flow"]["reasons"]
+
+
+MID_INTERFACE = [
+    (
+        "app/Repo.kt",
+        """package com.example
+import android.database.sqlite.SQLiteDatabase
+interface Repo { fun getDb(): SQLiteDatabase
+    fun openDatabase(name: String) { getDb().execSQL("ATTACH DATABASE '" + name + "' AS extra") } }
+""",
+    ),
+    ("app/Mid.java", "package com.example;\npublic interface Mid extends Repo {}\n"),
+    (
+        "app/Main.java",
+        """package com.example;
+import android.app.Activity;
+import android.database.sqlite.SQLiteDatabase;
+public class Main extends Activity implements Mid {
+    public SQLiteDatabase getDb() { return null; }
+    void go() { openDatabase(getIntent().getStringExtra("q")); }
+}
+""",
+    ),
+]
+NINE_LINK_CHAIN = (
+    [
+        (
+            "app/C0.java",
+            "package com.example;\nimport android.app.Activity;\nimport android.database.sqlite.SQLiteDatabase;\n"
+            "public class C0 extends Activity { protected SQLiteDatabase db; protected void openDatabase(String n) "
+            '{ db.execSQL("ATTACH DATABASE \'" + n + "\' AS extra"); } }\n',
+        )
+    ]
+    + [
+        (f"app/C{i}.java", f"package com.example;\npublic class C{i} extends C{i - 1} {{}}\n")
+        for i in range(1, 10)
+    ]
+    + [
+        (
+            "app/Main.java",
+            "package com.example;\npublic class Main extends C9 { void go() "
+            '{ openDatabase(getIntent().getStringExtra("q")); } }\n',
+        )
+    ]
+)
+TWO_DAOS = [
+    (
+        f"app/{name}.kt",
+        f"""package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+import java.io.File
+class {name} {{
+    private fun openDatabase(): SQLiteDatabase = SQLiteDatabase.openOrCreateDatabase(File("x.db"), null)
+    fun q(i: Intent) {{ openDatabase().rawQuery("SELECT * FROM t WHERE id = " + i.dataString, null) }}
+}}
+""",
+    )
+    for name in ("UserDao", "OrderDao")
+]
+
+
+@pytest.mark.parametrize("files", [MID_INTERFACE, NINE_LINK_CHAIN], ids=["mid-interface", "nine-link-chain"])
+def test_inherited_homonyms_beyond_direct_bases_are_recorded(files):
+    report = analyze_sources(files)
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
+
+
+def test_another_class_private_homonym_is_not_a_candidate():
+    report = analyze_sources(TWO_DAOS)
+    assert "opener receiver identity unresolved" not in report["metadata"]["native_flow"]["reasons"]

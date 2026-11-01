@@ -1078,7 +1078,11 @@ class Analyzer:
         # arguments may be the callee: name resolution through inheritance, receivers
         # and imports is not modelled completely, so certainty needs all of them resolved.
         candidates = [
-            target for target in flow.by_name.get(call.name, []) if self.accepts_arity(target, arity)
+            target
+            for target in flow.by_name.get(call.name, [])
+            if target.analyzer.language in {"java", "kotlin"}
+            and self.accepts_arity(target, arity)
+            and self.visible_member(target, call.node)
         ]
         framework_import = any(
             symbol.startswith(("android.", "androidx.")) for symbol in flow.imported_symbols(self, call.name)
@@ -1108,6 +1112,36 @@ class Analyzer:
         kind = self.receiver_context(call.node, frame, classes=True)
         self.opener_prefers_framework = kind == "yes" and self.context_arguments(call, frame)
         return True
+
+    def visible_member(self, target: Any, node: Any) -> bool:
+        """Whether a callable may be visible at `node`: a private member is visible only
+        inside its declaring class (Java: inside its top-level class)."""
+        if not target.owner or not target.analyzer.has_modifier(target.node, "private"):
+            return True
+        if target.analyzer.path != self.path:
+            return False
+        declaring = target.node.parent
+        while declaring is not None and declaring.type not in {
+            "class_declaration",
+            "object_declaration",
+            "companion_object",
+            "object_literal",
+            "enum_declaration",
+            "record_declaration",
+            "interface_declaration",
+        }:
+            declaring = declaring.parent
+        if declaring is None:
+            return True
+        if target.analyzer.language == "java":
+            while declaring.parent is not None and declaring.parent.type != "program":
+                declaring = declaring.parent
+        current = node
+        while current is not None:
+            if current.start_byte == declaring.start_byte and current.end_byte == declaring.end_byte:
+                return True
+            current = current.parent
+        return False
 
     def call_arity(self, call: Call) -> int:
         """Argument count of a call, counting a trailing lambda (a SAM argument)."""
@@ -1155,9 +1189,10 @@ class Analyzer:
         namespace = flow.namespaces[id(self)]
         ancestors: set[str] | None = None
         receiver_scoped: bool | None = None
+        arity = self.call_arity(call)
         for target in flow.by_name.get(call.name, []):
             source = target.analyzer
-            if source.language != self.language:
+            if source.language != self.language or not self.accepts_arity(target, arity):
                 continue
             if source.path == self.path or (
                 not target.owner and namespace and flow.namespaces[id(source)] == namespace
