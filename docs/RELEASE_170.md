@@ -137,17 +137,17 @@ device or credential service was contacted.
   coverage gap), while initializers of local or anonymous classes stay part of
   their enclosing function; early exits in Java constructors guard later
   statements; a receiverless `openDatabase`/`openOrCreateDatabase` that may
-  reach a project callable (a value binding, a callable of the same file or
-  package, a method of an in-source base class, or a project import) is always
-  followed as project code (one the flow cannot resolve records why). Its
-  result is typed as the framework `SQLiteDatabase` with certainty when the
-  target is an override or is declared to return `SQLiteDatabase`. When the
-  call's arguments also fit `Context.openOrCreateDatabase(String, int,
-  CursorFactory[, DatabaseErrorHandler])` and an implicit receiver in scope
-  may be a Context (an enclosing class, extension or scope-function receiver
-  such as `with(requireContext())`), which callee runs is uncertain: the
-  result type follows the more likely reading, and the guess is always
-  recorded (`opener receiver identity unresolved`, so coverage is `limited`);
+  reach a source callable of that name (a value binding, a callable of the
+  same file or package, a member of an in-source base class or of an extension
+  or scope receiver, a project import, or a member of a base class written in
+  the other source language) is followed as project code where the flow can.
+  Which callee runs is treated as certain only when every target declares a
+  `SQLiteDatabase` return, when the call's arity cannot fit
+  `Context.openOrCreateDatabase(name, mode, factory[, handler])`, or for
+  `openDatabase` (which Context does not declare) when no extension or scope
+  receiver is in scope. Otherwise the receiver and the arguments only pick the
+  more likely result type, and the guess is recorded (`opener receiver
+  identity unresolved`, so coverage is `limited`);
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies
@@ -225,10 +225,14 @@ guarded code there can still be reported. The shared-hosting and second-level
 suffix lists are curated rather than the full public suffix list. A few
 owner-specific provider hostnames that look like provider zones (an App Service
 name ending in `-NN`, a default Static Web Apps or legacy Elastic Beanstalk
-host) are reported conservatively. Constructor calls such as `Foo(x)` do not
-pass their arguments into Kotlin or Swift initializer bodies, and Kotlin
-class-level property initializers are not analyzed. Native field summaries can
-accumulate duplicate traces of one source with re-derived origins, so whether
+host) are reported conservatively. Trailing lambdas of calls other than Kotlin
+scope functions (click listeners, coroutine builders, `runOnUiThread`, Swift
+trailing closures) are not analyzed, as in 1.6.x, and coverage does not mark
+them. Calls to Kotlin extension functions on a value (`x.go()` with `fun
+String.go()`) are not followed. Constructor calls such as `Foo(x)` do not pass
+their arguments into Kotlin or Swift initializer bodies, and Kotlin class-level
+property initializers are not analyzed. Native field summaries can accumulate
+duplicate traces of one source with re-derived origins, so whether
 non-convergence is reported as `limited` (`field summary fixed point
 unresolved`) or as a `partial` budget gap can depend on the round cap. A trace
 cap that is hit is always a budget gap; a round cap that is hit is a budget gap

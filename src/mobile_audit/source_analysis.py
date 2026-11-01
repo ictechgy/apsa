@@ -372,8 +372,9 @@ FILE_SINKS = {
 LIMITS_NOTE = (
     "Local def-use and bounded direct interprocedural flow; no dynamic method dispatch, unbounded interprocedural flow, "
     "component reachability, redirect, or authentication-state proof. Kotlin scope-function lambdas "
-    "(let, also, use, apply, run, with) are followed as blocks that may not run; other closure arguments "
-    "are inspected conservatively without transferring their guards. Unlabeled Kotlin lambda returns "
+    "(let, also, use, apply, run, with) are followed as blocks that may not run; other closures passed "
+    "in parentheses are inspected without their guards; other trailing lambdas are not analyzed. "
+    "Unlabeled Kotlin lambda returns "
     "are conservatively joined into the enclosing return; unavailable inline-call identity remains partial. "
     "Kotlin returns to a resolved enclosing function label also join that function's return; "
     "lambda-local labeled Kotlin returns and Java/Swift closure returns remain local. "
@@ -761,6 +762,8 @@ class Analyzer:
         self.opener_returns = False
         # The best guess for an uncertain opener is the framework member.
         self.opener_prefers_framework = False
+        # A framework-typed opener whose possible project callee is recorded, not followed.
+        self.opener_record = False
         self.class_context_cache: dict[tuple[int, int], str] = {}
         self.package_name = _package_name(text)
         parts = self.package_name.split(".") if self.package_name else []
@@ -1036,6 +1039,7 @@ class Analyzer:
         self.opener_certain = False
         self.opener_returns = False
         self.opener_prefers_framework = False
+        self.opener_record = False
         if self.language not in {"java", "kotlin"}:
             return False
         if call.name in SQLITE_GETTERS:
@@ -1054,52 +1058,90 @@ class Analyzer:
     def opener_database_type(self, call: Call, receiver: Value, frame: Frame) -> bool:
         """Whether a receiverless opener's result is typed as the framework SQLiteDatabase.
 
-        Without a project target the call is the framework opener. A project target the
-        bounded flow's own resolution finds is always followed (`opener_follow`), so its
-        sinks and returned taint stay in the analysis; the decision here only adds the
-        database type to the result. It is added for an override, for a target declared to
-        return SQLiteDatabase, and for a target shaped like Context.openOrCreateDatabase
-        when an implicit receiver in scope may be a Context, whose inherited member wins.
-        A wrong answer can therefore only add sink typing, never drop a flow.
+        Without a reachable project callable of that name the call is the framework opener.
+        A project target the flow's own resolution finds is always followed
+        (`opener_follow`), so its sinks and returned taint stay in the analysis. Which
+        callee runs is treated as certain only when it is provable from the call alone:
+        every target declares a SQLiteDatabase return (both readings agree), or the call's
+        arity cannot fit Context.openOrCreateDatabase(name, mode, factory[, handler]), or
+        the name is `openDatabase`, which Context does not declare, and no extension or
+        scope receiver may supply another member. Every other case is a guess between the
+        project function and an inherited framework member: the receiver walk only picks
+        the more likely result type, and the guess is recorded (`limited`).
         """
         flow = self.native_flow
         if flow is None:
             return True
         targets, relevant = flow.resolve(self, call, receiver, frame)
         if not targets:
-            # A same-named project callable the call could reach (a value binding, a
-            # callable of this file or package, a project import) that the flow cannot
-            # resolve here is still followed, so the flow records why; the result keeps
-            # the framework type. Framework imports and other classes' methods are not.
-            self.opener_follow = relevant and self.opener_reachable(call, frame)
+            # A same-named source callable the call may reach (a value binding, this file
+            # or package, a base class or receiver's member, a project import, or one in
+            # the other source language) is followed when the flow can, and the guess is
+            # recorded; framework imports and unrelated classes' methods are not.
+            reachable = self.opener_reachable(call, frame)
+            self.opener_follow = relevant and reachable
+            self.opener_record = reachable or self.other_language_homonym(call)
             return True
         self.opener_follow = True
         self.opener_returns = all(self.declared_return(target) for target in targets)
-        for target in targets:
-            modifiers = next(
-                (child for child in target.node.named_children if child.type == "modifiers"), None
-            )
-            if "override" in flow.declaration_tokens(target.node) or re.search(
-                r"@Override\b", target.analyzer.text(modifiers)
-            ):
-                self.opener_certain = True
-                return True
         if all(self.declares_database(target) for target in targets):
             self.opener_certain = True
             return True
-        if call.name != "openOrCreateDatabase" or not self.context_arguments(call, frame):
-            # No inherited framework member can take this call: the project function runs.
+        if call.name == "openDatabase":
+            # Context declares no openDatabase; only another receiver's member could differ.
+            self.opener_certain = not self.receiver_in_scope(call.node)
+            return False
+        # A trailing lambda (a SAM CursorFactory) is an argument too.
+        arity = len(call.args) + sum(
+            1
+            for child in call.node.children
+            for part in (child.children if child.type == "call_suffix" else [child])
+            if part.type == "annotated_lambda"
+        )
+        if arity not in {3, 4}:
+            # Context's openOrCreateDatabase takes three or four arguments.
             self.opener_certain = True
             return False
+        # The receiver walk and the arguments only pick the more likely result type.
         kind = self.receiver_context(call.node, frame, classes=True)
-        if kind == "no":
-            # No implicit receiver in scope is a Context: the project function runs.
-            self.opener_certain = True
-            return False
-        # Context's member may run instead. The receiver walk only picks the more likely
-        # result type; the call stays uncertain and the guess is recorded.
-        self.opener_prefers_framework = kind == "yes"
+        self.opener_prefers_framework = kind == "yes" and self.context_arguments(call, frame)
         return True
+
+    def other_language_homonym(self, call: Call) -> bool:
+        """Whether a same-named callable of the other source language may be the callee:
+        a member of a class named among the enclosing classes' supertypes, or any such
+        callable when an extension or scope receiver is in scope."""
+        from .native_flow import NativeFlow
+
+        flow = self.native_flow
+        if flow is None:
+            return False
+        others = [
+            target for target in flow.by_name.get(call.name, []) if target.analyzer.language != self.language
+        ]
+        if not others:
+            return False
+        if self.receiver_in_scope(call.node):
+            return True
+        bases: set[str] = set()
+        current = call.node.parent
+        while current is not None:
+            if current.type in {
+                "class_declaration",
+                "object_declaration",
+                "companion_object",
+                "object_literal",
+            }:
+                references = NativeFlow.supertype_references(self, current)
+                if references is None:
+                    return True
+                bases.update(reference.rsplit(".", 1)[-1] for reference in references)
+            elif current.type == "object_creation_expression":
+                kind = next((child for child in current.named_children if "type" in child.type), None)
+                if kind is not None:
+                    bases.add(re.sub(r"<.*", "", self.text(kind)).rsplit(".", 1)[-1])
+            current = current.parent
+        return any(target.owner and target.owner.rsplit(".", 1)[-1] in bases for target in others)
 
     def opener_reachable(self, call: Call, frame: Frame) -> bool:
         """Whether an unresolved receiverless opener may still reach project code."""
@@ -1121,8 +1163,11 @@ class Analyzer:
             ):
                 return True
             if target.owner:
-                # A method inherited from an in-source base class (in any file) is
-                # reachable; unreadable ancestry is treated as possibly reaching it.
+                # A method of a scope-function or extension receiver's class, or one
+                # inherited from an in-source base class (in any file), is reachable;
+                # unreadable ancestry is treated as possibly reaching it.
+                if self.receiver_in_scope(call.node):
+                    return True
                 if ancestors is None:
                     ancestors = self.source_ancestors(call.node)
                 if ancestors is None or target.owner in ancestors:
@@ -1145,6 +1190,23 @@ class Analyzer:
                     return True
         return False
 
+    def receiver_in_scope(self, node: Any) -> bool:
+        """Whether a Kotlin scope-function or extension receiver is in scope at `node`."""
+        if self.language != "kotlin":
+            return False
+        if "this" in self.aliases:
+            return True
+        current = node.parent
+        while current is not None:
+            if current.type in {"function_declaration", "anonymous_function", "property_declaration"} and any(
+                child.type == "." for child in current.children
+            ):
+                return True
+            if current.type == "lambda_literal" and self.receiver_scope_lambda(current):
+                return True
+            current = current.parent
+        return False
+
     def source_ancestors(self, node: Any) -> set[str] | None:
         """Owner identities of the in-source base classes of the classes enclosing `node`.
 
@@ -1164,8 +1226,22 @@ class Analyzer:
                 "object_declaration",
                 "companion_object",
                 "object_literal",
+                "enum_declaration",
+                "record_declaration",
+                "interface_declaration",
             }:
                 pending.append((self, current, 0))
+            elif current.type == "object_creation_expression" and any(
+                child.type == "class_body" for child in current.children
+            ):
+                # A Java anonymous class extends the instantiated type.
+                kind = next((child for child in current.named_children if "type" in child.type), None)
+                if kind is None:
+                    return None
+                for owner in flow.class_owners(self, re.sub(r"<.*", "", self.text(kind)), current):
+                    owners.add(owner)
+                    for source, base in flow.class_definitions.get(owner, []):
+                        pending.append((source, base, 1))
             current = current.parent
         seen: set[int] = set()
         while pending:
@@ -1177,7 +1253,7 @@ class Analyzer:
             if references is None:
                 return None
             for reference in references:
-                for owner in flow.class_owners(analyzer, reference, nominal):
+                for owner in flow.class_owners(analyzer, reference, nominal.parent or nominal):
                     owners.add(owner)
                     for source, base in flow.class_definitions.get(owner, []):
                         pending.append((source, base, depth + 1))
@@ -1915,14 +1991,15 @@ class Analyzer:
             receiver = self.value(call.receiver, frame)
             args = [self.value(arg, frame) for arg in call.args]
             database = self.sqlite_database_call(call, receiver, frame)
-            follow, certain, returns, prefers = (
+            follow, certain, returns, prefers, record = (
                 self.opener_follow,
                 self.opener_certain,
                 self.opener_returns,
                 self.opener_prefers_framework,
+                self.opener_record,
             )
             self.opener_follow = self.opener_certain = self.opener_returns = False
-            self.opener_prefers_framework = False
+            self.opener_prefers_framework = self.opener_record = False
             if follow and self.native_flow is not None:
                 # A project opener is always followed. Unless the framework type is certain
                 # (an override or a declared SQLiteDatabase return), which callee runs is a
@@ -1941,6 +2018,9 @@ class Analyzer:
                 if result is not None:
                     return result
             elif database:
+                if record and self.native_flow is not None:
+                    # A source callable of that name may run instead; the flow cannot follow it.
+                    self.native_flow.partial("opener receiver identity unresolved", self, call=call)
                 return Value(type_name=SQLITE_DATABASE)
             elif self.native_flow is not None:
                 result = self.native_flow.call(self, call, frame, receiver, args)

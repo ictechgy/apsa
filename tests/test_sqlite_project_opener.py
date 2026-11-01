@@ -1001,3 +1001,158 @@ def test_a_source_class_of_another_language_is_not_a_context_by_name():
     report = analyze_sources(SAME_PACKAGE_JAVA_ACTIVITY_NAME)
     sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
+
+
+REPO_WITH_OPENER = """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+import java.io.File
+class Repo {
+    fun openDatabase(name: String): SQLiteDatabase {
+        val db = SQLiteDatabase.openOrCreateDatabase(File("x.db"), null)
+        db.execSQL("ATTACH DATABASE '" + name + "' AS extra")
+        return db
+    }
+}
+"""
+WITH_REPO_CALLER = """package com.example.app
+import android.content.Intent
+class Main { fun q(intent: Intent, repo: Repo) { with(repo) { openDatabase(intent.dataString ?: "") } } }
+"""
+
+
+def test_a_scope_receiver_method_in_another_file_is_followed_or_recorded():
+    report = analyze_sources([("app/Repo.kt", REPO_WITH_OPENER), ("app/Main.kt", WITH_REPO_CALLER)])
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
+
+
+# Round-8 review shapes: an opener is certain only when its arity or the targets'
+# declared SQLiteDatabase return proves the callee; every other guess is recorded.
+R8_FILE_OPENER = """package com.example.app
+import java.io.File
+fun openOrCreateDatabase(path: String, flags: Int, cb: Any?): File = File(path)
+"""
+R8_CASES = {
+    "c1-ext-repo-other-file": [
+        (
+            "app/Repo.kt",
+            """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+class Repo(private val db: SQLiteDatabase) {
+    fun openDatabase(name: String) { db.execSQL("ATTACH DATABASE '" + name + "' AS extra") }
+}
+""",
+        ),
+        (
+            "app/Sync.kt",
+            """package com.example.app
+import android.content.Intent
+fun Repo.attach(intent: Intent) { openDatabase(intent.getStringExtra("q") ?: "") }
+""",
+        ),
+    ],
+    "c1-java-anon-base": [
+        (
+            "app/BaseTask.java",
+            """package com.example;
+import android.database.sqlite.SQLiteDatabase;
+public abstract class BaseTask implements Runnable {
+    protected SQLiteDatabase db;
+    protected void openDatabase(String name) { db.execSQL("ATTACH DATABASE '" + name + "' AS extra"); }
+}
+""",
+        ),
+        (
+            "app/Main.java",
+            """package com.example;
+import android.app.Activity;
+public class Main extends Activity {
+    void go() { new BaseTask() { public void run() { openDatabase(getIntent().getStringExtra("q")); } }.run(); }
+}
+""",
+        ),
+    ],
+    "c2-java-base-kotlin-sub": [
+        (
+            "app/Base.java",
+            """package com.example.app;
+import android.database.sqlite.SQLiteDatabase;
+import java.io.File;
+public class BaseRepo {
+    protected SQLiteDatabase openDatabase(String name) {
+        SQLiteDatabase db = SQLiteDatabase.openOrCreateDatabase(new File("x.db"), null);
+        db.execSQL("ATTACH DATABASE '" + name + "' AS extra");
+        return db;
+    }
+}
+""",
+        ),
+        (
+            "app/Main.kt",
+            """package com.example.app
+import android.content.Intent
+class Main : BaseRepo() { fun q(intent: Intent) { openDatabase(intent.dataString ?: "") } }
+""",
+        ),
+    ],
+    "c3-override-interface-querybuilder": [
+        (
+            "app/S.kt",
+            """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteQueryBuilder
+interface Finder { fun openDatabase(): SQLiteQueryBuilder }
+class Search : Finder {
+    override fun openDatabase(): SQLiteQueryBuilder = SQLiteQueryBuilder()
+    fun find(i: Intent) { openDatabase().appendWhere("name = '" + i.getStringExtra("q") + "'") }
+}
+""",
+        )
+    ],
+    "g1-named-args-reordered": [
+        ("app/Db.kt", R8_FILE_OPENER),
+        (
+            "app/A.kt",
+            """package com.example.app
+import android.app.Activity
+import android.content.Intent
+fun Activity.go(intent: Intent) {
+    val db = openOrCreateDatabase(factory = null, mode = 0, name = "app.db")
+    db.execSQL("DELETE FROM t WHERE id = " + intent.getStringExtra("q"))
+}
+""",
+        ),
+    ],
+    "g2-activity-receiver-lambda": [
+        ("app/Db.kt", R8_FILE_OPENER),
+        (
+            "app/R.kt",
+            """package com.example.app
+import android.app.Activity
+import android.content.Intent
+class Repository { fun load(intent: Intent) { val q = intent.getStringExtra("q") ?: ""; val read: Activity.() -> Unit = { openOrCreateDatabase("app.db", 0, null).execSQL("DELETE FROM t WHERE id = " + q) } } }
+""",
+        ),
+    ],
+    "g3-override-queries-interface": [
+        (
+            "app/S.kt",
+            """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteQueryBuilder
+interface Queries { fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): SQLiteQueryBuilder }
+class Store : Queries {
+    override fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): SQLiteQueryBuilder = SQLiteQueryBuilder()
+    fun go(intent: Intent) { openOrCreateDatabase("app.db", 0, null).appendWhere("id = " + intent.getStringExtra("q")) }
+}
+""",
+        )
+    ],
+}
+
+
+@pytest.mark.parametrize("name", sorted(R8_CASES))
+def test_round_eight_opener_shapes_never_claim_checked_without_a_finding(name):
+    report = analyze_sources(R8_CASES[name])
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
