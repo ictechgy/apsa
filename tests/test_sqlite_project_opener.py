@@ -711,3 +711,27 @@ def test_a_non_context_library_base_does_not_claim_checked_over_a_skipped_helper
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or (
         report["metadata"]["native_flow"]["state"] != "checked"
     )
+
+
+UNKNOWN_LIBRARY_SCOPE_RECEIVER = """package com.example.app
+import android.content.Intent
+import com.lib.Thing
+fun go(x: Thing, i: Intent) {
+    val q = i.getStringExtra("q") ?: ""
+    with(x) {
+        val db = openOrCreateDatabase("app.db", 0, null)
+        db.execSQL("DELETE FROM t WHERE id = " + q)
+    }
+}
+"""
+
+
+def test_keeping_a_project_return_type_for_an_unknown_receiver_is_recorded():
+    # `Thing` may be a Context whose inherited member would run; the project function
+    # returns File, so the framework type is withheld and the guess is recorded.
+    report = analyze_sources(
+        [("app/Go.kt", UNKNOWN_LIBRARY_SCOPE_RECEIVER), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)]
+    )
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
+    assert "opener receiver identity unresolved" in report["metadata"]["native_flow"]["reasons"]

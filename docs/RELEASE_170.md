@@ -143,7 +143,8 @@ device or credential service was contacted.
   it is shaped like `Context.openOrCreateDatabase(String, int, factory[,
   handler])` and an implicit receiver in scope (an enclosing class, extension or
   scope-function receiver) is a Context whose inherited member wins, or may be
-  one while the project function's return type is unknown;
+  one while the project function's return type is unknown (when that type is
+  known, the guess is recorded and coverage is `limited`);
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies

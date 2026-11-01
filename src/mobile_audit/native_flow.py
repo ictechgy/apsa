@@ -81,6 +81,7 @@ REASON_KINDS = {
     "nominal callable scope unavailable": "precision",
     "object alias identity unavailable": "precision",
     "object storage alias unavailable": "precision",
+    "opener receiver identity unresolved": "precision",
     "package identity unavailable": "precision",
     "reachable field ownership unavailable": "precision",
     "receiver field inventory unavailable": "precision",

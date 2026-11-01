@@ -1758,6 +1758,10 @@ class Analyzer:
                         if result is not None
                         else Value(type_name=SQLITE_DATABASE)
                     )
+                if database:
+                    # A receiver that may be a Context could make the inherited framework
+                    # member run instead; keeping the project type is a recorded guess.
+                    self.native_flow.partial("opener receiver identity unresolved", self, call=call)
                 if result is not None:
                     return result
             elif database:
