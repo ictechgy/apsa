@@ -241,7 +241,14 @@ them. A Kotlin call written with parentheses and a trailing lambda (`f(x) { }`)
 is also not followed into the callee, so its arguments do not reach sinks in
 the callee's body. A same-named project override elsewhere (for example an `Application`
 overriding `openOrCreateDatabase`) makes receiverless opener calls in unrelated
-classes `limited`, with their findings kept. Calls to Kotlin extension functions
+classes `limited`, with their findings kept. A project opener helper declared
+to return a library type (for example Room's `SupportSQLiteDatabase`) is not
+provably a non-database return, so receiverless calls to it are also `limited`
+with their findings kept. Two rare return spellings are not recognised as
+`SQLiteDatabase`: a Kotlin import alias (`import ...SQLiteDatabase as Db`)
+when a project class has the alias's simple name, and a definitely non-null
+type such as `T & Any`; a receiverless `openDatabase` declared either way can
+lose its finding while coverage stays `checked`. Calls to Kotlin extension functions
 on a value (`x.go()` with `fun String.go()`) are not followed. Constructor calls
 such as `Foo(x)` do not pass their arguments into Kotlin or Swift initializer
 bodies, and Kotlin class-level property initializers are not analyzed. Native

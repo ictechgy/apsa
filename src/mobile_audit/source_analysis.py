@@ -1100,8 +1100,9 @@ class Analyzer:
         import shares the name, and then either every target declares a SQLiteDatabase
         return (directly, through a typealias or a bounded type parameter), or the name is
         `openDatabase` or the arity cannot fit Context.openOrCreateDatabase while every
-        target states its return type. Every other case is a guess: the receiver and the
-        arguments only pick the result type, and the guess is recorded (`limited`).
+        target's return is provably not a database (`not_database_return`). Every other
+        case is a guess: the receiver and the arguments only pick the result type, and the
+        guess is recorded (`limited`).
         """
         flow = self.native_flow
         if flow is None:
