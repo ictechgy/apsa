@@ -7,6 +7,7 @@ Anyone can register a subdomain of a shared-hosting suffix such as `github.io`, 
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
 
@@ -127,6 +128,18 @@ ADDED_SHARED = [
     ".azurefd.net",
 ]
 PUBLIC = [".com", ".app", ".io", ".co.uk", ".org.uk", ".com.au", ".co.jp", ".co.kr", ".com.br", ".co.in"]
+PUBLIC += [
+    ".pe.kr",
+    ".or.kr",
+    ".ne.kr",
+    ".go.kr",
+    ".ac.kr",
+    ".re.kr",
+    ".com.vn",
+    ".co.th",
+    ".com.my",
+    ".com.ph",
+]
 
 
 @pytest.mark.parametrize("suffix", ADDED_SHARED + PUBLIC)
@@ -134,7 +147,17 @@ def test_bare_or_public_dot_suffix_is_reported_by_the_rule(suffix):
     assert PATTERN.search(f'uri.host?.endsWith("{suffix}") == true')
 
 
-@pytest.mark.parametrize("suffix", [".example.co.uk", ".example.com.au", ".shop.example.app", ".example.io"])
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        ".example.co.uk",
+        ".example.com.au",
+        ".shop.example.app",
+        ".example.io",
+        ".example.pe.kr",
+        ".example.co.th",
+    ],
+)
 def test_registrable_dot_suffix_under_a_public_one_is_spared(suffix):
     assert not PATTERN.search(f'uri.host?.endsWith("{suffix}") == true')
 
@@ -150,3 +173,61 @@ def test_registrable_dot_suffix_under_a_public_one_is_spared(suffix):
 def test_engine_does_not_credit_a_public_suffix(path, template, suffix, expected):
     report = analyze_sources([(path, template.replace("SUFFIX", suffix))])
     assert {item["rule_id"] for item in report["findings"]} & REPORTED == expected
+
+
+# Providers that issue hostnames one zone below their suffix: anyone can deploy under the zone.
+PROVIDER_ZONES = [
+    ".a.run.app",
+    ".us-central1.run.app",
+    ".uc.r.appspot.com",
+    ".r.appspot.com",
+    ".us-east-1.elasticbeanstalk.com",
+    ".eastus2.azurestaticapps.net",
+    ".2.azurestaticapps.net",
+    ".eastus-01.azurewebsites.net",
+    ".westeurope.cloudapp.azure.com",
+    ".eu.ngrok.io",
+]
+OWNED_UNDER_ZONES = [
+    ".svc-123.us-central1.run.app",
+    ".myproject.appspot.com",
+    ".myenv.us-east-1.elasticbeanstalk.com",
+    ".gentle-sky.eastus2.azurestaticapps.net",
+    ".myapp.azurewebsites.net",
+    ".myname.ngrok.io",
+]
+
+
+@pytest.mark.parametrize("suffix", PROVIDER_ZONES)
+def test_provider_zone_suffix_is_reported(suffix):
+    assert PATTERN.search(f'uri.host?.endsWith("{suffix}") == true')
+    assert not source_analysis.Analyzer.owned_suffix(suffix[1:])
+
+
+@pytest.mark.parametrize("suffix", OWNED_UNDER_ZONES)
+def test_owned_host_under_a_provider_zone_is_spared(suffix):
+    assert not PATTERN.search(f'uri.host?.endsWith("{suffix}") == true')
+    assert source_analysis.Analyzer.owned_suffix(suffix[1:])
+
+
+@pytest.mark.parametrize(
+    ("suffix", "expected"), [(".a.run.app", REPORTED), (".svc-123.us-central1.run.app", set())]
+)
+def test_engine_does_not_credit_a_provider_zone(suffix, expected):
+    report = analyze_sources([("App/Links.swift", SWIFT.replace("SUFFIX", suffix))])
+    assert {item["rule_id"] for item in report["findings"]} & REPORTED == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'host.endsWith(".' + "a." * 100_000 + 'run.ap")',
+        'host.endsWith(".' + "a" * 200_000 + '.r.appspot.co")',
+        'host.endsWith(".x.r.appspot.co' * 7_000,
+    ],
+    ids=["many-labels", "long-label", "many-checks"],
+)
+def test_suffix_exemption_stays_linear(text):
+    started = time.perf_counter()
+    PATTERN.findall(text)
+    assert time.perf_counter() - started < 1.0

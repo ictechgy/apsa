@@ -36,8 +36,9 @@ identities still change record the precision reason
 record the budget reason `field summary fixed-point budget`. Unknown calls
 re-derive trace origins each round, so a field can accumulate duplicate traces
 of the same source; whether those reach the trace cap before the round cap
-decides the kind, so the classification can depend on the round cap. A trace or
-round cap that is hit is always a budget gap. An unaffected file's empty
+decides the kind, so the classification can depend on the round cap. A trace
+cap that is hit is always a budget gap; a round cap that is hit is a budget gap
+unless the field contents stopped changing in the last round. An unaffected file's empty
 diagnostic list does not make its rules globally complete.
 
 Objective-C `.m` files are examined only by the `OBJC-*` rules, through a

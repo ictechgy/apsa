@@ -51,8 +51,11 @@ device or credential service was contacted.
   `AST-SQL-CONCAT` have no Swift model. In projects that mix Kotlin or Java
   with Swift (Kotlin Multiplatform, or Android and iOS apps in one repository)
   they are now `limited` with a note instead of `checked`: exit 0 by default, 3
-  under strict coverage. Swift-only projects keep `not-run`, and any execution
-  gap keeps them `partial`.
+  under strict coverage. Without strict coverage, `limited` also satisfies
+  policy `required_rules` for them, although the Swift sources were not checked
+  by these rules. In such mixed projects any execution gap keeps them
+  `partial`. Swift-only projects keep `not-run`, since these rules never run
+  on Swift.
 - **Dropped sources.** When every recognized source file is dropped before
   parsing (byte or node budget, unavailable grammar, parser failure), the
   `AST-*` rules are `partial` (exit 3) instead of `not-run`. A `skipped` source
@@ -135,8 +138,9 @@ device or credential service was contacted.
   their enclosing function; early exits in Java constructors guard later
   statements; a receiverless `openDatabase`/`openOrCreateDatabase` is analyzed
   as project code only when it resolves from the call site to a non-override
-  method of the enclosing class or a visible Kotlin top-level function, and
-  otherwise keeps the framework `SQLiteDatabase` identity;
+  method of the enclosing class, or, from top-level code or a class without
+  supertypes, to a visible Kotlin top-level function, and otherwise keeps the
+  framework `SQLiteDatabase` identity;
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies
@@ -154,8 +158,9 @@ device or credential service was contacted.
   `NSUserDefaults` token storage; dot-anchored host suffix checks are no longer
   reported unless the suffix is a bare top-level domain, a common country
   second-level suffix (such as `.co.uk`) or a shared-hosting suffix
-  (`.github.io`, `.web.app`, `.herokuapp.com`, `*.amazonaws.com`, Google Cloud
-  and Firebase Storage, Azure static web and Front Door, Cloudflare R2 and
+  (`.github.io`, `.web.app`, `.herokuapp.com`, `*.amazonaws.com`, provider
+  zones such as `.a.run.app` or `.<region>.r.appspot.com`, Google Cloud and
+  Firebase Storage, Azure static web and Front Door, Cloudflare R2 and
   similar), which the AST engine also no longer accepts as a host allowlist; new
   `SOURCE-WORLD-ACCESSIBLE-FILE`; lambda hostname verifiers and
   `X509ExtendedTrustManager`; Kotlin `*Activity` subclasses and SQLite
@@ -204,22 +209,27 @@ credential word must appear within 200 characters after the setter.
 
 Analysis remains bounded and partial. Swift memberwise initializers are not
 modelled, so SwiftUI views that construct other source views usually report
-`limited`. Android framework member-type lists come from the public SDK
-surface and were not checked against `android.jar`. SARIF `executionSuccessful` stays `true` for `limited` coverage; the limitation
-is reported as a notification. Some URL sources (`URLContexts.first`), Swift
-`&&` conditions (the comma form is credited) and negated early-return host
-checks are not credited as guards, so guarded code there can still be
-reported. The shared-hosting and second-level suffix lists are curated rather
-than the full public suffix list. Constructor calls such as `Foo(x)` do not
-pass their arguments into Kotlin or Swift initializer bodies, and Kotlin
-class-level property initializers are not analyzed. Native field summaries can accumulate duplicate traces of one
-source with re-derived origins, so whether non-convergence is reported as
-`limited` (`field summary fixed point unresolved`) or as a `partial` budget gap
-can depend on the round cap; a trace or round cap that is hit is always
-reported as a budget gap. Hermes bytecode is not
-decoded, and the hybrid engine is not a complete JavaScript/TypeScript/Dart
-grammar. Static candidates do not establish runtime reachability or
-exploitability. This release does not include a GUI installer.
+`limited`. Android framework member-type lists come from the public SDK surface
+and were not checked against `android.jar`. SARIF `executionSuccessful` stays
+`true` for `limited` coverage; the limitation is reported as a notification.
+Some URL sources (`URLContexts.first`), Swift `&&` conditions (the comma form is
+credited) and negated early-return host checks are not credited as guards, so
+guarded code there can still be reported. The shared-hosting and second-level
+suffix lists are curated rather than the full public suffix list. Constructor
+calls such as `Foo(x)` do not pass their arguments into Kotlin or Swift
+initializer bodies, and Kotlin class-level property initializers are not
+analyzed. Native field summaries can accumulate duplicate traces of one source
+with re-derived origins, so whether non-convergence is reported as `limited`
+(`field summary fixed point unresolved`) or as a `partial` budget gap can depend
+on the round cap. A trace cap that is hit is always a budget gap; a round cap
+that is hit is a budget gap unless the field contents stopped changing in the
+last round. QuayGate checks legacy devices separately only when a network
+security configuration is referenced; without one, cleartext is judged by the
+manifest value and the targetSdk default, although devices below API 28 permit
+cleartext by default and API 21-22 ignore an explicit `false`. Hermes bytecode
+is not decoded, and the hybrid engine is not a complete
+JavaScript/TypeScript/Dart grammar. Static candidates do not establish runtime
+reachability or exploitability. This release does not include a GUI installer.
 
 Publication is performed by the existing immutable-tag workflow after review and
 hosted checks. PyPI/MCP/GitHub publication and Linux/macOS public installation

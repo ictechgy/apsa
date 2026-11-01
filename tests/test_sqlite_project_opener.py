@@ -138,3 +138,53 @@ SAME_CLASS_OVERRIDE = ACTIVITY.replace(
 def test_framework_opener_keeps_sdk_identity_when_call_site_cannot_reach_project_code(files):
     report = analyze_sources(files)
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+TOP_LEVEL_FILE_OPENER = """package com.example.app
+import java.io.File
+fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): File = File(name)
+"""
+SDK_ACTIVITY = """package com.example.app
+import android.app.Activity
+class Main : Activity() {
+    fun run() {
+        val db = openOrCreateDatabase("app.db", 0, null)
+        db.execSQL("DELETE FROM t WHERE id = " + (intent.getStringExtra("q") ?: ""))
+    }
+}
+"""
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        [("app/Main.kt", SDK_ACTIVITY), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)],
+        [("app/Main.kt", SDK_ACTIVITY + TOP_LEVEL_FILE_OPENER.split("\n", 2)[2])],
+    ],
+    ids=["same-package", "same-file"],
+)
+def test_inherited_member_hides_a_top_level_opener(files):
+    report = analyze_sources(files)
+    assert {item["rule_id"] for item in report["findings"]} == {"AST-SQL-CONCAT"}
+    assert report["metadata"]["native_flow"]["state"] == "checked"
+
+
+def test_top_level_opener_is_followed_from_a_class_without_supertypes():
+    top_level = """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+fun openDatabase(db: SQLiteDatabase, n: String?) {
+    db.execSQL("ATTACH DATABASE '" + n + "' AS extra")
+}
+"""
+    caller = """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class Handler(private val db: SQLiteDatabase) {
+    fun run(intent: Intent) {
+        openDatabase(db, intent.getStringExtra("q"))
+    }
+}
+"""
+    report = analyze_sources([("app/Db.kt", top_level), ("app/Handler.kt", caller)])
+    assert {item["rule_id"] for item in report["findings"]} == {"AST-SQL-CONCAT"}
+    assert report["metadata"]["native_flow"]["state"] == "checked"

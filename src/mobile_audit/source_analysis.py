@@ -63,17 +63,20 @@ URI_REFERENCE = "https://developer.android.com/privacy-and-security/risks/unsafe
 # is no allowlist. WEBVIEW-HOST-MATCH in data/rules.json uses the same list.
 SHARED_HOSTING_SUFFIXES = (
     r"(?:[\w-]+\.)*amazonaws\.com|github\.io|githubusercontent\.com|gitlab\.io"
-    r"|firebaseapp\.com|firebaseio\.com|web\.app|herokuapp\.com|appspot\.com|run\.app"
-    r"|cloudfunctions\.net|cloudfront\.net|elasticbeanstalk\.com|azurewebsites\.net"
-    r"|azurestaticapps\.net|azureedge\.net|cloudapp\.net|blob\.core\.windows\.net"
+    r"|firebaseapp\.com|firebaseio\.com|web\.app|herokuapp\.com"
+    r"|(?:(?:[\w-]+\.)?r\.)?appspot\.com|(?:[\w-]+\.)?run\.app|cloudfunctions\.net"
+    r"|cloudfront\.net|(?:[\w-]+\.)?elasticbeanstalk\.com"
+    r"|(?:[a-z0-9]+-\d\d\.)?azurewebsites\.net|(?:[\w-]+\.)?azurestaticapps\.net"
+    r"|azureedge\.net|cloudapp\.net|(?:[\w-]+\.)?cloudapp\.azure\.com|blob\.core\.windows\.net"
     r"|trafficmanager\.net|netlify\.app|vercel\.app|now\.sh|pages\.dev|workers\.dev"
     r"|blogspot\.com|wordpress\.com|wixsite\.com|glitch\.me|onrender\.com|fly\.dev|surge\.sh"
-    r"|ngrok\.io|ngrok-free\.app|storage\.googleapis\.com|firebasestorage\.app"
-    r"|(?:[\w-]+\.)?web\.core\.windows\.net|(?:[\w-]+\.)?digitaloceanspaces\.com"
-    r"|ondigitalocean\.app|r2\.dev|up\.railway\.app|deno\.dev|pythonanywhere\.com|repl\.co"
-    r"|(?:[\w-]+\.)?azurefd\.net"
-    r"|(?:co|org|ac|gov|me)\.uk|(?:com|net|org)\.au|(?:co|ne|or)\.jp|co\.kr"
-    r"|com\.(?:br|cn|hk|sg|tw|mx|tr|ar)|co\.(?:in|nz|za|id)"
+    r"|(?:(?:eu|ap|au|sa|jp|in|us)\.)?ngrok\.io|ngrok-free\.app|storage\.googleapis\.com"
+    r"|firebasestorage\.app|(?:[\w-]+\.)?web\.core\.windows\.net"
+    r"|(?:[\w-]+\.)?digitaloceanspaces\.com|ondigitalocean\.app|r2\.dev|up\.railway\.app"
+    r"|deno\.dev|pythonanywhere\.com|repl\.co|(?:[\w-]+\.)?azurefd\.net"
+    r"|(?:co|org|ac|gov|me)\.uk|(?:com|net|org)\.au|(?:co|ne|or)\.jp"
+    r"|(?:co|pe|or|ne|go|ac|re)\.kr|com\.(?:br|cn|hk|sg|tw|mx|tr|ar|vn|my|ph)"
+    r"|co\.(?:in|nz|za|id|th)"
 )
 SHARED_HOSTING = re.compile(SHARED_HOSTING_SUFFIXES, re.I)
 # Framework flag values a PendingIntent flags expression may contain. Intent activity flags
@@ -976,12 +979,19 @@ class Analyzer:
         the same file, Kotlin package or an import qualifies: the calls the bounded flow
         can follow. An override returns the framework type and a same-named method of an
         unrelated class or an inherited base is not followed, so those keep the SDK identity.
+        Kotlin resolves an unqualified call to inherited members before top-level functions,
+        so inside a class with any supertype only the class's own method qualifies.
         """
         flow = self.native_flow
         if flow is None or self.function is None:
             return False
         owner = flow.owner(self, self.function)
         namespace = flow.namespaces[id(self)]
+        top_level = True
+        scope = flow.enclosing_scope(self.function)
+        while scope is not None and top_level:
+            top_level = scope.kind == "callable" or flow.supertype_references(self, scope.node) == []
+            scope = flow.enclosing_scope(scope.node)
         for target in flow.by_name.get(call.name, []):
             source = target.analyzer
             if source.language != self.language or not flow.signature_visible(self, target, call):
@@ -998,13 +1008,17 @@ class Analyzer:
                     return True
                 continue
             package = flow.namespaces[id(source)]
-            if not flow.lexical_function(target.node) and (
-                source.path == self.path
-                or self.language == "kotlin"
+            if (
+                top_level
+                and not flow.lexical_function(target.node)
                 and (
-                    package == namespace
-                    or f"{package}.{call.name}" in self.imports
-                    or f"{package}.*" in self.imports
+                    source.path == self.path
+                    or self.language == "kotlin"
+                    and (
+                        package == namespace
+                        or f"{package}.{call.name}" in self.imports
+                        or f"{package}.*" in self.imports
+                    )
                 )
             ):
                 return True
