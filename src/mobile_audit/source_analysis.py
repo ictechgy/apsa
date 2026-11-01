@@ -1073,33 +1073,35 @@ class Analyzer:
         if flow is None:
             return True
         targets, relevant = flow.resolve(self, call, receiver, frame)
+        arity = self.call_arity(call)
+        # Every source callable of that name (either language) that could take this many
+        # arguments may be the callee: name resolution through inheritance, receivers
+        # and imports is not modelled completely, so certainty needs all of them resolved.
+        candidates = [
+            target for target in flow.by_name.get(call.name, []) if self.accepts_arity(target, arity)
+        ]
+        framework_import = any(
+            symbol.startswith(("android.", "androidx.")) for symbol in flow.imported_symbols(self, call.name)
+        )
+        bound = flow.value_binding(self, call, frame) is not None or flow.module_value_present(
+            self, call.name, aliases=True
+        )
         if not targets:
-            # A same-named source callable the call may reach (a value binding, this file
-            # or package, a base class or receiver's member, a project import, or one in
-            # the other source language) is followed when the flow can, and the guess is
-            # recorded; framework imports and unrelated classes' methods are not.
-            reachable = self.opener_reachable(call, frame)
-            self.opener_follow = relevant and reachable
-            self.opener_record = reachable or self.other_language_homonym(call)
+            if not candidates and not bound and not (relevant and self.opener_reachable(call, frame)):
+                return True  # the framework opener: no source callable could run instead
+            self.opener_follow = relevant and (bound or self.opener_reachable(call, frame))
+            self.opener_record = True
             return True
         self.opener_follow = True
         self.opener_returns = all(self.declared_return(target) for target in targets)
-        if all(self.declares_database(target) for target in targets):
+        resolved = {id(target.node) for target in targets}
+        complete = not framework_import and all(id(target.node) in resolved for target in candidates)
+        if complete and all(self.declares_database(target) for target in targets):
             self.opener_certain = True
             return True
-        if call.name == "openDatabase":
-            # Context declares no openDatabase; only another receiver's member could differ.
-            self.opener_certain = not self.receiver_in_scope(call.node)
-            return False
-        # A trailing lambda (a SAM CursorFactory) is an argument too.
-        arity = len(call.args) + sum(
-            1
-            for child in call.node.children
-            for part in (child.children if child.type == "call_suffix" else [child])
-            if part.type == "annotated_lambda"
-        )
-        if arity not in {3, 4}:
-            # Context's openOrCreateDatabase takes three or four arguments.
+        if complete and (call.name == "openDatabase" or arity not in {3, 4}):
+            # Context declares no openDatabase, and its openOrCreateDatabase takes three or
+            # four arguments; every other candidate is a resolved target.
             self.opener_certain = True
             return False
         # The receiver walk and the arguments only pick the more likely result type.
@@ -1107,41 +1109,39 @@ class Analyzer:
         self.opener_prefers_framework = kind == "yes" and self.context_arguments(call, frame)
         return True
 
-    def other_language_homonym(self, call: Call) -> bool:
-        """Whether a same-named callable of the other source language may be the callee:
-        a member of a class named among the enclosing classes' supertypes, or any such
-        callable when an extension or scope receiver is in scope."""
-        from .native_flow import NativeFlow
+    def call_arity(self, call: Call) -> int:
+        """Argument count of a call, counting a trailing lambda (a SAM argument)."""
+        return len(call.args) + sum(
+            1
+            for child in call.node.children
+            for part in (child.children if child.type == "call_suffix" else [child])
+            if part.type == "annotated_lambda"
+        )
 
-        flow = self.native_flow
-        if flow is None:
-            return False
-        others = [
-            target for target in flow.by_name.get(call.name, []) if target.analyzer.language != self.language
-        ]
-        if not others:
-            return False
-        if self.receiver_in_scope(call.node):
+    @staticmethod
+    def accepts_arity(target: Any, arity: int) -> bool:
+        """Whether a source callable's parameter list may take `arity` arguments."""
+        parameters = next(
+            (
+                child
+                for child in target.node.named_children
+                if child.type in {"function_value_parameters", "formal_parameters"}
+            ),
+            None,
+        )
+        if parameters is None:
             return True
-        bases: set[str] = set()
-        current = call.node.parent
-        while current is not None:
-            if current.type in {
-                "class_declaration",
-                "object_declaration",
-                "companion_object",
-                "object_literal",
-            }:
-                references = NativeFlow.supertype_references(self, current)
-                if references is None:
-                    return True
-                bases.update(reference.rsplit(".", 1)[-1] for reference in references)
-            elif current.type == "object_creation_expression":
-                kind = next((child for child in current.named_children if "type" in child.type), None)
-                if kind is not None:
-                    bases.add(re.sub(r"<.*", "", self.text(kind)).rsplit(".", 1)[-1])
-            current = current.parent
-        return any(target.owner and target.owner.rsplit(".", 1)[-1] in bases for target in others)
+        declared = [
+            part
+            for part in parameters.named_children
+            if part.type in {"parameter", "formal_parameter", "spread_parameter", "receiver_parameter"}
+        ]
+        text = target.analyzer.text(parameters)
+        if "..." in text or "vararg" in text:
+            return arity >= len(declared) - 1
+        if "=" in text:
+            return arity <= len(declared)  # default values make trailing parameters optional
+        return arity == len(declared)
 
     def opener_reachable(self, call: Call, frame: Frame) -> bool:
         """Whether an unresolved receiverless opener may still reach project code."""
@@ -1154,6 +1154,7 @@ class Analyzer:
             return True
         namespace = flow.namespaces[id(self)]
         ancestors: set[str] | None = None
+        receiver_scoped: bool | None = None
         for target in flow.by_name.get(call.name, []):
             source = target.analyzer
             if source.language != self.language:
@@ -1166,7 +1167,9 @@ class Analyzer:
                 # A method of a scope-function or extension receiver's class, or one
                 # inherited from an in-source base class (in any file), is reachable;
                 # unreadable ancestry is treated as possibly reaching it.
-                if self.receiver_in_scope(call.node):
+                if receiver_scoped is None:
+                    receiver_scoped = self.receiver_in_scope(call.node)
+                if receiver_scoped:
                     return True
                 if ancestors is None:
                     ancestors = self.source_ancestors(call.node)

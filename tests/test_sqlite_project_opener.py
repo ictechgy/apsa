@@ -1156,3 +1156,121 @@ def test_round_eight_opener_shapes_never_claim_checked_without_a_finding(name):
     report = analyze_sources(R8_CASES[name])
     sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
+
+
+# Round-9 review shapes: a call is certain only when resolution covers every source
+# callable of that name that could take its arguments; otherwise the guess is recorded.
+R9_REPO = """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+import java.io.File
+class Repo {
+    fun openDatabase(name: String): SQLiteDatabase {
+        val db = SQLiteDatabase.openOrCreateDatabase(File("x.db"), null)
+        db.execSQL("ATTACH DATABASE '" + name + "' AS extra")
+        return db
+    }
+}
+"""
+R9_CASES = {
+    "1-with-repo-plus-top-level": [
+        ("app/Repo.kt", R9_REPO),
+        (
+            "app/Main.kt",
+            """package com.example.app
+import android.content.Intent
+class Main { fun q(intent: Intent, repo: Repo) { with(repo) { openDatabase(intent.dataString ?: "") } } }
+""",
+        ),
+        (
+            "app/Db.kt",
+            """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+import java.io.File
+fun openDatabase(name: String): SQLiteDatabase = SQLiteDatabase.openOrCreateDatabase(File("x.db"), null)
+""",
+        ),
+    ],
+    "1-java-base-plus-static-import": [
+        (
+            "app/BaseRepo.java",
+            """package com.example;
+import android.database.sqlite.SQLiteDatabase;
+public class BaseRepo { protected SQLiteDatabase db; protected void openDatabase(String n) { db.execSQL("ATTACH DATABASE '" + n + "' AS extra"); } }
+""",
+        ),
+        (
+            "app/Db.java",
+            """package com.example;
+public final class Db { public static Object openDatabase(String n) { return null; } }
+""",
+        ),
+        (
+            "app/Main.java",
+            """package com.example;
+import static com.example.Db.openDatabase;
+import android.content.Intent;
+public class Main extends BaseRepo { void go(Intent i) { String q = i.getStringExtra("q"); openDatabase(q); } }
+""",
+        ),
+    ],
+    "2-java-on-demand-static": [
+        (
+            "app/Db.java",
+            """package com.example;
+import android.database.sqlite.SQLiteDatabase;
+public final class Db { static SQLiteDatabase db; public static void openDatabase(String n) { db.execSQL("ATTACH DATABASE '" + n + "' AS extra"); } }
+""",
+        ),
+        (
+            "app/Main.java",
+            """package com.example;
+import static com.example.Db.*;
+import android.content.Intent;
+public class Main { void go(Intent intent) { openDatabase(intent.getStringExtra("q")); } }
+""",
+        ),
+    ],
+    "3-jbase-kbase-main": [
+        (
+            "app/JBase.java",
+            """package com.example.app;
+import android.database.sqlite.SQLiteDatabase;
+public class JBase { protected SQLiteDatabase db; protected void openDatabase(String n) { db.execSQL("ATTACH DATABASE '" + n + "' AS extra"); } }
+""",
+        ),
+        ("app/KBase.kt", "package com.example.app\nopen class KBase : JBase()\n"),
+        (
+            "app/Main.kt",
+            """package com.example.app
+import android.content.Intent
+class Main : KBase() { fun q(intent: Intent) { openDatabase(intent.dataString ?: "") } }
+""",
+        ),
+    ],
+    "4-typed-receiver-lambda": [
+        ("app/Repo.kt", R9_REPO),
+        (
+            "app/R.kt",
+            """package com.example.app
+import android.content.Intent
+class Repository { fun load(intent: Intent) { val q = intent.getStringExtra("q") ?: ""; val attach: Repo.() -> Unit = { openDatabase(q) } } }
+""",
+        ),
+    ],
+    "control-activity-plain": [
+        (
+            "app/Main.kt",
+            """package com.example.app
+import android.app.Activity
+class Main : Activity() { fun go() { openOrCreateDatabase("a.db", 0, null).execSQL("DELETE FROM t WHERE id = " + intent.getStringExtra("q")) } }
+""",
+        )
+    ],
+}
+
+
+@pytest.mark.parametrize("name", sorted(R9_CASES))
+def test_round_nine_opener_shapes_never_claim_checked_without_a_finding(name):
+    report = analyze_sources(R9_CASES[name])
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"

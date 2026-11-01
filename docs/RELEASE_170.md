@@ -136,16 +136,16 @@ device or credential service was contacted.
   bodies are analyzed and counted as functions (they were skipped without a
   coverage gap), while initializers of local or anonymous classes stay part of
   their enclosing function; early exits in Java constructors guard later
-  statements; a receiverless `openDatabase`/`openOrCreateDatabase` that may
-  reach a source callable of that name (a value binding, a callable of the
-  same file or package, a member of an in-source base class or of an extension
-  or scope receiver, a project import, or a member of a base class written in
-  the other source language) is followed as project code where the flow can.
-  Which callee runs is treated as certain only when every target declares a
-  `SQLiteDatabase` return, when the call's arity cannot fit
-  `Context.openOrCreateDatabase(name, mode, factory[, handler])`, or for
-  `openDatabase` (which Context does not declare) when no extension or scope
-  receiver is in scope. Otherwise the receiver and the arguments only pick the
+  statements; a receiverless `openDatabase`/`openOrCreateDatabase` is the
+  framework opener unless a source callable of that name (in either language)
+  could take its arguments, or a value binding of that name is in scope.
+  Otherwise it is followed as project code where the flow can resolve it, and
+  which callee runs is treated as certain only when the flow's resolution
+  covers every such source callable and no framework static import shares the
+  name, and then only when every target declares a `SQLiteDatabase` return,
+  the call's arity cannot fit `Context.openOrCreateDatabase(name, mode,
+  factory[, handler])`, or the name is `openDatabase` (which Context does not
+  declare). In every other case the receiver and the arguments only pick the
   more likely result type, and the guess is recorded (`opener receiver
   identity unresolved`, so coverage is `limited`);
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
@@ -227,7 +227,8 @@ owner-specific provider hostnames that look like provider zones (an App Service
 name ending in `-NN`, a default Static Web Apps or legacy Elastic Beanstalk
 host) are reported conservatively. Trailing lambdas of calls other than Kotlin
 scope functions (click listeners, coroutine builders, `runOnUiThread`, Swift
-trailing closures) are not analyzed, as in 1.6.x, and coverage does not mark
+trailing closures) are not analyzed unless they contain a non-local `return` (or
+are a SwiftUI `.onOpenURL` handler), as in 1.6.x, and coverage does not mark
 them. Calls to Kotlin extension functions on a value (`x.go()` with `fun
 String.go()`) are not followed. Constructor calls such as `Foo(x)` do not pass
 their arguments into Kotlin or Swift initializer bodies, and Kotlin class-level
