@@ -721,6 +721,9 @@ class Analyzer:
         self.aliases: dict[str, Any] = {}
         # A framework-typed opener whose project target is also followed (receiver unknown).
         self.opener_follow = False
+        # A followed project opener declared to return a SQLiteDatabase.
+        self.opener_database = False
+        self.class_context_cache: dict[tuple[int, int], str] = {}
         self.package_name = _package_name(text)
         parts = self.package_name.split(".") if self.package_name else []
         # Actions an app defines share its package namespace; other prefixes belong to other apps.
@@ -992,6 +995,7 @@ class Analyzer:
     def sqlite_database_call(self, call: Call, receiver: Value, frame: Frame) -> bool:
         """SDK calls that return a SQLiteDatabase: helper getters and Context/SQLiteDatabase openers."""
         self.opener_follow = False
+        self.opener_database = False
         if self.language not in {"java", "kotlin"}:
             return False
         if call.name in SQLITE_GETTERS:
@@ -1040,8 +1044,30 @@ class Analyzer:
             kind = self.receiver_context(call.node, frame, classes=not own)
             if kind == "maybe":
                 self.opener_follow = True
-            return kind == "no"
+            if kind != "no":
+                return False
+        # A project opener declared to return a SQLiteDatabase keeps that type even when
+        # the bounded flow abstains on the call.
+        self.opener_database = all(self.declares_database(target) for target in targets)
         return True
+
+    @staticmethod
+    def declares_database(target: Any) -> bool:
+        """Whether a project function's declared return type is SQLiteDatabase."""
+        node = target.node
+        declared = node.child_by_field_name("type") if target.analyzer.language == "java" else None
+        if declared is None:
+            after = False
+            for child in node.children:
+                if child.type in {"function_value_parameters", "formal_parameters"}:
+                    after = True
+                elif after and child.type in {"user_type", "nullable_type"}:
+                    declared = child
+                    break
+                elif after and child.type in {"function_body", "block", "="}:
+                    break
+        text = target.analyzer.text(declared) if declared is not None else ""
+        return re.sub(r"\s+|\?$", "", text).rsplit(".", 1)[-1] == "SQLiteDatabase"
 
     @staticmethod
     def context_opener_shape(target: Any) -> bool:
@@ -1110,7 +1136,8 @@ class Analyzer:
         kotlin = self.language == "kotlin"
         answers: set[str] = set()
         if kotlin and "this" in self.aliases:
-            bound = self.value(self.aliases["this"], frame)
+            # The scope lambda bound its receiver value; re-evaluating it could re-run calls.
+            bound = frame.values.get("this") or self.value(self.aliases["this"], frame)
             answers.add(
                 "no"
                 if bound.category in {"text", "url", "intent", "request", "host", "scheme"}
@@ -1194,11 +1221,17 @@ class Analyzer:
         """Whether a class-like declaration is a Context through its supertypes."""
         from .native_flow import NativeFlow
 
+        key = (nominal.id, depth)
+        if key in self.class_context_cache:
+            return self.class_context_cache[key]
+        self.class_context_cache[key] = "maybe"  # a cycle stays open
         references = NativeFlow.supertype_references(self, nominal)
         if references is None or depth >= 8:
             return "maybe"
         answers = {self.context_type(reference, nominal, depth + 1) for reference in references}
-        return "yes" if "yes" in answers else "maybe" if "maybe" in answers else "no"
+        answer = "yes" if "yes" in answers else "maybe" if "maybe" in answers else "no"
+        self.class_context_cache[key] = answer
+        return answer
 
     def context_type(self, spelling: str, node: Any, depth: int = 0) -> str:
         """Whether a type spelling names a Context: a source class by its ancestry, a
@@ -1628,14 +1661,23 @@ class Analyzer:
         if call:
             receiver = self.value(call.receiver, frame)
             args = [self.value(arg, frame) for arg in call.args]
-            if self.sqlite_database_call(call, receiver, frame):
-                if self.opener_follow and self.native_flow is not None:
+            database = self.sqlite_database_call(call, receiver, frame)
+            follow, declared = self.opener_follow, self.opener_database
+            self.opener_follow = self.opener_database = False
+            if database:
+                if follow and self.native_flow is not None:
                     # The implicit receiver may or may not be a Context: follow the
                     # project function too, so either reading keeps its sinks.
                     self.native_flow.call(self, call, frame, receiver, args)
                 return Value(type_name=SQLITE_DATABASE)
             if self.native_flow is not None:
                 result = self.native_flow.call(self, call, frame, receiver, args)
+                if declared:
+                    return (
+                        Value(result.traces, result.category, SQLITE_DATABASE, result.identity)
+                        if result is not None
+                        else Value(type_name=SQLITE_DATABASE)
+                    )
                 if result is not None:
                     return result
             if call.name == "getIntent" and (call.receiver is None or self.text(call.receiver) == "this"):

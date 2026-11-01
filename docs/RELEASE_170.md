@@ -145,7 +145,8 @@ device or credential service was contacted.
   scope-function receiver; a method of the enclosing class itself is followed
   unless an extension or scope-function receiver comes between); when a
   receiver's type is unknown, the project function is followed as well and
-  the result keeps the framework type;
+  the result keeps the framework type, and a followed project opener declared
+  to return `SQLiteDatabase` keeps that type even when the flow abstains;
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies

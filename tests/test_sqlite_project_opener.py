@@ -498,3 +498,28 @@ def test_an_unknown_receiver_follows_the_project_opener_without_claiming_checked
         "inherited overload signature unresolved" in flow["reasons"]
     )
     assert flow["state"] != "checked"
+
+
+DATABASE_RETURNING_OPENER = """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+fun openOrCreateDatabase(name: String, mode: Int, factory: SQLiteDatabase.CursorFactory?): SQLiteDatabase =
+    SQLiteDatabase.openOrCreateDatabase(name, factory)
+"""
+NON_CONTEXT_SUPERTYPE_CALLER = """package com.example.app
+import android.content.Intent
+class Repo : Runnable {
+    override fun run() {}
+    fun q(intent: Intent) {
+        openOrCreateDatabase("app.db", 0, null).rawQuery("SELECT * FROM t WHERE id = " + intent.dataString, null)
+    }
+}
+"""
+
+
+def test_a_followed_opener_declared_to_return_a_database_keeps_that_type():
+    # Runnable is no Context, so the project function is followed; when the bounded flow
+    # abstains on the call, its declared SQLiteDatabase return still types the sink.
+    report = analyze_sources(
+        [("app/Db.kt", DATABASE_RETURNING_OPENER), ("app/Repo.kt", NON_CONTEXT_SUPERTYPE_CALLER)]
+    )
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
