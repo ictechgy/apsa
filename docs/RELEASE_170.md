@@ -138,19 +138,16 @@ device or credential service was contacted.
   their enclosing function; early exits in Java constructors guard later
   statements; a receiverless `openDatabase`/`openOrCreateDatabase` that may
   reach a project callable (a value binding, a callable of the same file or
-  package, or a project import) is always followed as project code (one the
-  flow cannot resolve records why), and its result is typed as the framework
-  `SQLiteDatabase` when the target is an override or is declared to return
-  `SQLiteDatabase`, or when the call's arguments fit
-  `Context.openOrCreateDatabase(String, int, CursorFactory[,
-  DatabaseErrorHandler])` and an implicit receiver in scope (an enclosing
-  class, extension or scope-function receiver such as
-  `with(requireContext())`, but not a Java static method) is a Context whose
-  inherited member wins; a receiver that may be a Context adds the type only
-  when the project function declares no return type, and otherwise the guess
-  is recorded and coverage is `limited`. Following such a project function can
-  also make a caller that reaches the framework member `limited` rather than
-  `checked`;
+  package, a method of an in-source base class, or a project import) is always
+  followed as project code (one the flow cannot resolve records why). Its
+  result is typed as the framework `SQLiteDatabase` with certainty when the
+  target is an override or is declared to return `SQLiteDatabase`. When the
+  call's arguments also fit `Context.openOrCreateDatabase(String, int,
+  CursorFactory[, DatabaseErrorHandler])` and an implicit receiver in scope
+  may be a Context (an enclosing class, extension or scope-function receiver
+  such as `with(requireContext())`), which callee runs is uncertain: the
+  result type follows the more likely reading, and the guess is always
+  recorded (`opener receiver identity unresolved`, so coverage is `limited`);
   `NSUserActivity.webpageURL` and SwiftUI `.onOpenURL`
   are URL sources; archive entry names (`ZipEntry.getName()` and Kotlin
   `ZipInputStream`) are path-traversal sources; one-line Kotlin class bodies

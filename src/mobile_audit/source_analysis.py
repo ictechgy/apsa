@@ -759,6 +759,8 @@ class Analyzer:
         self.opener_certain = False
         # Every followed project opener declares its return type.
         self.opener_returns = False
+        # The best guess for an uncertain opener is the framework member.
+        self.opener_prefers_framework = False
         self.class_context_cache: dict[tuple[int, int], str] = {}
         self.package_name = _package_name(text)
         parts = self.package_name.split(".") if self.package_name else []
@@ -1033,6 +1035,7 @@ class Analyzer:
         self.opener_follow = False
         self.opener_certain = False
         self.opener_returns = False
+        self.opener_prefers_framework = False
         if self.language not in {"java", "kotlin"}:
             return False
         if call.name in SQLITE_GETTERS:
@@ -1085,10 +1088,18 @@ class Analyzer:
             self.opener_certain = True
             return True
         if call.name != "openOrCreateDatabase" or not self.context_arguments(call, frame):
+            # No inherited framework member can take this call: the project function runs.
+            self.opener_certain = True
             return False
         kind = self.receiver_context(call.node, frame, classes=True)
-        self.opener_certain = kind == "yes"
-        return kind != "no"
+        if kind == "no":
+            # No implicit receiver in scope is a Context: the project function runs.
+            self.opener_certain = True
+            return False
+        # Context's member may run instead. The receiver walk only picks the more likely
+        # result type; the call stays uncertain and the guess is recorded.
+        self.opener_prefers_framework = kind == "yes"
+        return True
 
     def opener_reachable(self, call: Call, frame: Frame) -> bool:
         """Whether an unresolved receiverless opener may still reach project code."""
@@ -1100,6 +1111,7 @@ class Analyzer:
         ):
             return True
         namespace = flow.namespaces[id(self)]
+        ancestors: set[str] | None = None
         for target in flow.by_name.get(call.name, []):
             source = target.analyzer
             if source.language != self.language:
@@ -1108,30 +1120,102 @@ class Analyzer:
                 not target.owner and namespace and flow.namespaces[id(source)] == namespace
             ):
                 return True
+            if target.owner:
+                # A method inherited from an in-source base class (in any file) is
+                # reachable; unreadable ancestry is treated as possibly reaching it.
+                if ancestors is None:
+                    ancestors = self.source_ancestors(call.node)
+                if ancestors is None or target.owner in ancestors:
+                    return True
+                ancestors = ancestors or set()
         return any(
             not symbol.startswith(("android.", "androidx."))
             for symbol in flow.imported_symbols(self, call.name)
         )
+
+    def has_modifier(self, declaration: Any, keyword: str) -> bool:
+        """Whether a declaration carries a modifier keyword (annotations excluded)."""
+        for modifiers in declaration.named_children:
+            if modifiers.type != "modifiers":
+                continue
+            for child in modifiers.children:
+                if "annotation" in child.type:
+                    continue
+                if child.type == keyword or self.text(child).strip() == keyword:
+                    return True
+        return False
+
+    def source_ancestors(self, node: Any) -> set[str] | None:
+        """Owner identities of the in-source base classes of the classes enclosing `node`.
+
+        None when a supertype list cannot be read, so callers stay conservative.
+        """
+        from .native_flow import NativeFlow
+
+        flow = self.native_flow
+        owners: set[str] = set()
+        if flow is None:
+            return owners
+        pending: list[tuple[Analyzer, Any, int]] = []
+        current = node.parent
+        while current is not None:
+            if current.type in {
+                "class_declaration",
+                "object_declaration",
+                "companion_object",
+                "object_literal",
+            }:
+                pending.append((self, current, 0))
+            current = current.parent
+        seen: set[int] = set()
+        while pending:
+            analyzer, nominal, depth = pending.pop()
+            if nominal.id in seen or depth >= 8:
+                continue
+            seen.add(nominal.id)
+            references = NativeFlow.supertype_references(analyzer, nominal)
+            if references is None:
+                return None
+            for reference in references:
+                for owner in flow.class_owners(analyzer, reference, nominal):
+                    owners.add(owner)
+                    for source, base in flow.class_definitions.get(owner, []):
+                        pending.append((source, base, depth + 1))
+        return owners
 
     def context_arguments(self, call: Call, frame: Frame) -> bool:
         """Whether Context.openOrCreateDatabase(String, int, CursorFactory[, handler]) can
         take this call's arguments, so an implicit Context receiver's member would apply."""
         if len(call.args) not in {3, 4}:
             return False
+        integers = {"integer_literal", "decimal_integer_literal", "number_literal"}
+        incompatible = {
+            "String",
+            "CharSequence",
+            "Int",
+            "Integer",
+            "Long",
+            "Boolean",
+            "Double",
+            "Float",
+            "File",
+        }
         for index, argument in enumerate(call.args):
             text = self.text(argument).strip()
             value = frame.values.get(self.symbol_name(text)) if argument.type in IDENTIFIERS else None
-            kind = value.type_name.rsplit(".", 1)[-1] if value is not None and value.type_name else ""
-            if index == 0 and (
-                argument.type in {"integer_literal", "decimal_integer_literal"} or kind in {"Int", "int"}
-            ):
+            spelling = value.type_name if value is not None and value.type_name else ""
+            kind = re.sub(r"<.*|\?$|\s+", "", spelling).rsplit(".", 1)[-1]
+            if index == 0 and (argument.type in integers or kind in {"Int", "int"}):
                 return False
-            if index == 1 and (argument.type in STRINGS or kind in {"String"}):
+            if index == 1 and (argument.type in STRINGS or kind == "String"):
                 return False
+            # A factory or handler argument rules Context's member out only when its type
+            # cannot be a CursorFactory/DatabaseErrorHandler; unknown or project types can.
             if index >= 2 and (
                 argument.type in STRINGS
-                or argument.type in {"integer_literal", "decimal_integer_literal", "boolean_literal"}
-                or (kind and kind not in {"CursorFactory", "DatabaseErrorHandler", "Any", "Object"})
+                or argument.type in integers
+                or argument.type == "boolean_literal"
+                or kind in incompatible
             ):
                 return False
         return True
@@ -1228,9 +1312,14 @@ class Analyzer:
                 expression.type == "unary_expression" and self.text(expression).endswith("!!")
             ):
                 expression = expression.named_children[0] if expression.named_children else None
-            elif expression.type == "navigation_expression" and self.text(expression).startswith("this."):
-                expression = expression.named_children[-1] if expression.named_children else None
-                if expression is not None and expression.type == "navigation_suffix":
+            elif (
+                expression.type == "navigation_expression"
+                and expression.named_children
+                and expression.named_children[0].type == "this_expression"
+            ):
+                # Only `this.x`; a longer chain names another object's member.
+                expression = expression.named_children[-1]
+                if expression.type == "navigation_suffix":
                     expression = expression.named_children[-1] if expression.named_children else None
             else:
                 break
@@ -1295,14 +1384,7 @@ class Analyzer:
                 answers.add(answer)
         current = node.parent
         while current is not None and "yes" not in answers:
-            if (
-                not kotlin
-                and current.type == "method_declaration"
-                and any(
-                    child.type == "modifiers" and re.search(r"\bstatic\b", self.text(child))
-                    for child in current.named_children
-                )
-            ):
+            if not kotlin and current.type == "method_declaration" and self.has_modifier(current, "static"):
                 break  # a static method has no instance receiver
             if (
                 kotlin
@@ -1348,9 +1430,6 @@ class Analyzer:
                 if not classes:
                     break
                 answers.add(self.class_context(current))
-                modifiers = " ".join(
-                    self.text(child) for child in current.named_children if child.type == "modifiers"
-                )
                 # A local class (declared in a function body) sees the enclosing
                 # class's members, like an inner class.
                 local = current.parent is not None and current.parent.type not in {
@@ -1363,13 +1442,12 @@ class Analyzer:
                 }
                 if kotlin:
                     defers = current.type == "object_literal" or (
-                        current.type == "class_declaration"
-                        and (local or bool(re.search(r"\binner\b", modifiers)))
+                        current.type == "class_declaration" and (local or self.has_modifier(current, "inner"))
                     )
                 else:
                     defers = (
                         current.type == "class_declaration"
-                        and (local or not re.search(r"\bstatic\b", modifiers))
+                        and (local or not self.has_modifier(current, "static"))
                         and current.parent is not None
                         and current.parent.type != "program"
                     )
@@ -1421,9 +1499,7 @@ class Analyzer:
         if imported.startswith(("java.", "javax.", "kotlin.", "kotlinx.")) or name in NON_CONTEXT_TYPES:
             return "no"
         android = imported.startswith(("android.", "androidx.", "com.google.firebase."))
-        if (imported and not android) or (
-            flow is not None and not imported and flow.class_name_present(self, name)
-        ):
+        if (imported and not android) or (flow is not None and not imported and bool(flow.classes.get(name))):
             # A library type of another package (io.grpc.Context) or a source class the
             # flow cannot resolve (a nested class) is not known to be a Context by name.
             return "maybe"
@@ -1839,24 +1915,29 @@ class Analyzer:
             receiver = self.value(call.receiver, frame)
             args = [self.value(arg, frame) for arg in call.args]
             database = self.sqlite_database_call(call, receiver, frame)
-            follow, certain, returns = self.opener_follow, self.opener_certain, self.opener_returns
+            follow, certain, returns, prefers = (
+                self.opener_follow,
+                self.opener_certain,
+                self.opener_returns,
+                self.opener_prefers_framework,
+            )
             self.opener_follow = self.opener_certain = self.opener_returns = False
+            self.opener_prefers_framework = False
             if follow and self.native_flow is not None:
-                # A project opener is always followed; the framework type is only added,
-                # and a possible (not certain) Context member never replaces a known
-                # project return type.
+                # A project opener is always followed. Unless the framework type is certain
+                # (an override or a declared SQLiteDatabase return), which callee runs is a
+                # guess between the project function and an inherited framework member:
+                # the guess picks the result type and is always recorded (limited).
                 result = self.native_flow.call(self, call, frame, receiver, args)
+                if not certain:
+                    self.native_flow.partial("opener receiver identity unresolved", self, call=call)
                 known = returns or (result is not None and bool(result.type_name))
-                if database and (certain or not known):
+                if database and (certain or prefers or not known):
                     return (
                         Value(result.traces, result.category, SQLITE_DATABASE, result.identity)
                         if result is not None
                         else Value(type_name=SQLITE_DATABASE)
                     )
-                if database:
-                    # A receiver that may be a Context could make the inherited framework
-                    # member run instead; keeping the project type is a recorded guess.
-                    self.native_flow.partial("opener receiver identity unresolved", self, call=call)
                 if result is not None:
                     return result
             elif database:

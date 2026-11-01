@@ -440,11 +440,12 @@ def test_receiver_precedence_follows_kotlin_and_java_resolution(files):
 )
 def test_receiver_typing_does_not_depend_on_a_top_level_opener(path, caller):
     # A local function inside `activity.run { }` sees the Activity receiver, so a
-    # same-package top-level opener must not change the findings.
+    # same-package top-level opener must not change the findings; which callee runs
+    # stays a recorded guess.
     alone = analyze_sources([(path, caller)])
     both = analyze_sources([(path, caller), ("app/Db.kt", TOP_LEVEL_FILE_OPENER)])
     assert [item["rule_id"] for item in both["findings"]] == [item["rule_id"] for item in alone["findings"]]
-    assert both["metadata"]["native_flow"]["reasons"] == alone["metadata"]["native_flow"]["reasons"]
+    assert "opener receiver identity unresolved" in both["metadata"]["native_flow"]["reasons"]
 
 
 # Only a receiver that is a Context supplies the inherited member: a known non-Context
@@ -921,3 +922,82 @@ def test_an_unrelated_class_method_does_not_make_framework_openers_limited():
     sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
     assert sql["state"] == "checked"
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    ["val factory: SQLiteDatabase.CursorFactory? = null", "val factory: MyFactory? = null"],
+    ids=["framework-factory", "project-factory"],
+)
+def test_a_typed_factory_argument_lets_the_context_receiver_decide(declaration):
+    # Only Context's member takes a CursorFactory argument, so it runs, not the helper.
+    caller = (
+        "package com.example.app\nimport android.app.Activity\nimport android.content.Intent\n"
+        "import android.database.sqlite.SQLiteDatabase\n"
+        "abstract class MyFactory : SQLiteDatabase.CursorFactory\n"
+        'fun Activity.go(i: Intent) {\n    val q = i.getStringExtra("q") ?: ""\n    '
+        + declaration
+        + '\n    val db = openOrCreateDatabase("app.db", 0, factory)\n'
+        + '    db.execSQL("DELETE FROM t WHERE id = " + q)\n}\n'
+    )
+    report = analyze_sources([("app/Go.kt", caller), ("app/Db.kt", FILE_PARAMETER_OPENER)])
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+INHERITED_BASE_REPO = """package com.example.app
+import android.database.sqlite.SQLiteDatabase
+import java.io.File
+open class BaseRepo {
+    fun openDatabase(name: String): SQLiteDatabase {
+        val db = SQLiteDatabase.openOrCreateDatabase(File("x.db"), null)
+        db.execSQL("ATTACH DATABASE '" + name + "' AS extra")
+        return db
+    }
+}
+"""
+INHERITING_CALLER = """package com.example.app
+import android.content.Intent
+class Main : BaseRepo() {
+    fun q(intent: Intent) { openDatabase(intent.dataString ?: "") }
+}
+"""
+
+
+def test_an_opener_inherited_from_a_source_base_in_another_file_is_followed():
+    # Kotlin resolves the call to BaseRepo.openDatabase; the flow follows it or says why.
+    report = analyze_sources([("app/Base.kt", INHERITED_BASE_REPO), ("app/Main.kt", INHERITING_CALLER)])
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
+
+
+def test_an_annotation_mentioning_static_does_not_make_a_java_method_static():
+    files = dict(JAVA_STATIC_IMPORT)
+    files["app/Main.java"] = files["app/Main.java"].replace(
+        "    void purge(", '    @SuppressWarnings("static-access")\n    void purge('
+    )
+    report = analyze_sources(list(files.items()))
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
+
+
+SAME_PACKAGE_JAVA_ACTIVITY_NAME = [
+    ("app/SyncActivity.java", "package com.example.app;\npublic class SyncActivity {}\n"),
+    (
+        "app/O.kt",
+        """package com.example.app
+import android.content.Intent
+import android.database.sqlite.SQLiteQueryBuilder
+fun openOrCreateDatabase(name: String, mode: Int, factory: Any?): SQLiteQueryBuilder = SQLiteQueryBuilder()
+fun SyncActivity.run(intent: Intent) {
+    val qb = openOrCreateDatabase("app.db", 0, null)
+    qb.appendWhere("id = " + intent.getStringExtra("q"))
+}
+""",
+    ),
+]
+
+
+def test_a_source_class_of_another_language_is_not_a_context_by_name():
+    # SyncActivity is a plain Java class, so the project opener's query builder is kept.
+    report = analyze_sources(SAME_PACKAGE_JAVA_ACTIVITY_NAME)
+    sql = next(item for item in report["coverage"] if item["rule_id"] == "AST-SQL-CONCAT")
+    assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]} or sql["state"] != "checked"
