@@ -335,7 +335,7 @@ CONTEXT = (
     "reuse_visited",
     "evaluated_inputs",
     "closure_effects",
-    "closure_writes",
+    "assigned_values",
     "closure_written",
     "guarded_paths",
     "unguarded_paths",
