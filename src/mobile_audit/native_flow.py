@@ -387,6 +387,7 @@ class NativeFlow:
         self.evaluations = 0
         self.reasons: set[str] = set()
         self.partial_events = 0
+        self._string_members: set[tuple[str, str]] | None = None
         # Above zero while Analyzer re-reads visited code to classify it (content results);
         # what that re-read would record was recorded, or not, where the visit read it.
         self.muted = 0
@@ -585,6 +586,12 @@ class NativeFlow:
             )
         self.owner_cache[key] = owner
         return owner
+
+    def string_members(self) -> set[tuple[str, str]]:
+        """The String members (owner, name) every analyzed file declares (Analyzer.prepare)."""
+        if self._string_members is None:
+            self._string_members = {pair for analyzer, _, _ in self.files for pair in analyzer.string_members}
+        return self._string_members
 
     def partial(
         self,

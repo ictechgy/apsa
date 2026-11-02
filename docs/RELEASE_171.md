@@ -46,8 +46,9 @@ credential service was contacted.
   stored there (also an alias of the value from before, `u = requested`, but
   not that value where a branch does not assign), since the callback may run
   later, unless a local of that name declared before it in the callback (also
-  in a nested block or lambda, a destructuring declaration or a Swift
-  `if var`/`guard var` binding) is what it assigns; the closure of a standard
+  in a nested block or lambda, a destructuring declaration, a Swift
+  `guard var` binding, or an `if var` binding in its then-block) is what it
+  assigns; the closure of a standard
   function that runs it before returning (`also`, `let`, `map`, `withContext`,
   ...) and a lambda invoked where it is written (`{ .. }()`) write before the
   assignment stores.
@@ -119,15 +120,16 @@ credential service was contacted.
   one, so `val ok = if (c) allowed(q) else true` writes nothing; the result of
   a mapping lambda (`map`, `associateBy`, `groupBy`, `fold`, `sumOf`,
   `maxOfOrNull`, `joinToString`, ...) is a statement where the call is, of a
-  `*To` function (`mapTo`, `groupByTo`, ...) never, as its destination stores
-  it, and of a `runCatching` block where its Result chain is
+  `*To` function (`mapTo`, `associateByTo`, `groupByTo`, ...) never, as its
+  destination stores it, and of a `runCatching` block where its Result chain
+  of `also`, `map`, `fold`, `onSuccess`, `onFailure`, `getOrNull`, ... ends
   (`runCatching { text(q) }.onFailure { .. }` writes,
   `val r = runCatching { parse(q) }.getOrNull()` does not); an elvis chain's scope blocks
   (`a?.let { .. } ?: b?.let { .. } ?: c`) run where the chain is, but a plain
   fallback an outer elvis tests is a value (`cached ?: load(q) ?: return`, also
   parenthesized, `(cached ?: load(q)) ?: return`); a loop
   without a body, `while (advance(q));`, has none; a predicate's result,
-  `filter { }` or `takeIf { }`, is none; a known builder's writing member
+  `filter { }`, `filterTo { }` or `takeIf { }`, is none; a known builder's writing member
   writes wherever it stands, `val added = add(q)`): a receiverless call that
   is no constructor (`File(q)`,
   `IllegalStateException(q)`), no standard top-level function (`println`,
@@ -187,33 +189,48 @@ credential service was contacted.
   literal, a value class such as `String`, a local the closure (or the braced
   branch it ends in) declares from data, also by assigning it later
   (`{ val t = q.trim(); t.uppercase() }`, `String label; .. label = q.trim();`),
-  a value factory or a source call itself (`listOf(title, q)`,
-  `StringBuilder(q)`, `getIntent()`; another call's result is data only
-  through a String transform, below, and an object built from input is none,
-  `Uploader(q).start()`, `File(dir, q).delete()`), a local or
+  a value factory, a source call itself, or an own function declared to
+  return a String (`listOf(title, q)`, `StringBuilder(q)`, `getIntent()`,
+  `displayName()`; another call's result is data only through a String
+  transform, below, and an object built from input is none, also from a
+  closure's own local, `Uploader(q).start()`, `File(dir, t).delete()`), a
+  computed expression over data, or over a closure's call result joined with
+  input from outside it (`(col + " = '" + q + "'").escapeSql()`), a local or
   parameter holding input (`q.substring(0, q.length - 1)`), or a field or other reference holding an
   input value (`field = q`, `this.field`, never a local of the member's name,
-  `intent` in `intent.getStringExtra("q")`, a String property or Java String
-  field holding a value derived from input, `query = q.trim()`), also a
-  qualified value class (`java.net.URLEncoder.encode(q, ..)`), or a String
+  `intent` in `intent.getStringExtra("q")`, a String property, primary-
+  constructor property or Java String field holding a value derived from
+  input, `query = q.trim()`, also through its class or object from another
+  file, `Session.query`), also a qualified value class
+  (`java.net.URLEncoder.encode(q, ..)`, `Optional.ofNullable(q)`), or a String
   that the String transforms starting the chain fill with input, held in a
   name declared as a String or initialized from a string literal (also `+`
   with one, a raw string's `trimIndent()`, `getString(..)`), a property, a
-  companion, object or top-level constant, also qualified
-  (`template.format(q)`, `prefix.plus(q)`, `this.template.replace("{q}", q)`,
-  `Notes.WHERE.format(q)`, `q.let { tpl.format(it) }`,
-  `tpl.replace(Regex("x")) { q }`); a String
+  companion, object or top-level constant (the enclosing class's own property
+  of that name decides, not a same-named String elsewhere in the file), also
+  qualified and from another file, filled through its new text
+  (`template.format(q)`, `prefix.plus(q)`, Java `TPL.formatted(q)`,
+  `this.template.replace("{q}", q)`, `Sql.BY_NAME.format(q)`,
+  `q.let { tpl.format(it) }`, `tpl.replace(Regex("x")) { q }`; not
+  `template.replace(q, "x")`); a String
   transform of a call's result over input, also through a closure local
-  (`repo.lookup(q).trim()`, `{ val t = repo.lookup(q); t.trim() }`, but not
-  `t.track("open")`); a value class or standard collection built in the
+  (Kotlin, Java or Swift, also a Swift `guard let`) and its `run`/`with`
+  blocks, `ifBlank { }`, `also { }` or `takeIf { }` (`repo.lookup(q).trim()`,
+  `{ val t = repo.lookup(q); t.trim() }`, `t.run { trim() }`,
+  `with(t) { uppercase() }`, but not `t.track("open")`); a value class or standard collection built in the
   closure (`String(format: "%@", q)`, `URL(string: q)`, `listOf(title, q)`,
   `Pair(title, q)`, `requireNotNull(q)`); a `let`/`run`/`with` block's result,
   also a receiverless `run { }`'s (`q.let { it.trim() }`,
   `title?.let { "$it: $q" }`, `q.run { trim().lowercase() }`,
   `q.run { split(",").first() }`, `with(q) { val t = trim(); t.uppercase() }`,
   `run { "$prefix/$q" }`); not a flag or a number (a comparison or logical
-  operation, `q == "x"`, or a member such as `q.isNotEmpty()`, `q.length` or
-  `template.contains(q)`), `Unit` or `null`;
+  operation, `q == "x"`, `q in xs`, a member such as `q.isNotEmpty()`,
+  `q.length` or `template.contains(q)`, arithmetic and elvis fallbacks on
+  them, `q.length + 1`, `q.toIntOrNull() ?: 0`, their text,
+  `q.length.toString()`, or a string that only interpolates them,
+  `"${q.length} results"`), `Unit` or `null`, nor a
+  closure's local holding another call's result, an object or a flag as the
+  value itself (`{ val row = repo.find(q); row }`);
   also for a helper handed the object,
   `Fill.into(b) { q }`; not a callback whose result is a side-effect call,
   `b.onClick { log(q) }`, `b.button { analytics.track(q) }` (also a tracker
@@ -237,14 +254,20 @@ credential service was contacted.
   `doc.attr("id")`, a reading member such as `b.contains(q)` or
   `b.contentEquals(q)`, a helper in a condition, and a logging or analytics
   call (on a receiver named `log`, `timber`, `tracker`, `metrics`, `sentry`,
-  ..., ending in `Logger`, `Analytics`, `Crashlytics` or `Telemetry` as a
+  ..., also snake-cased (`_logger`, `app_logger`, `firebase_analytics`),
+  ending in `Logger`, `Analytics`, `Crashlytics` or `Telemetry` as a
   camel-case word (`appLogger`, `LOGGER`; not `blogger`), a
   tracker or tracking named by a camel-case word for analytics, events,
-  screens, usage, users, the app, errors, crashes or an analytics vendor
-  (`screenViewTracker`, `userTracking`, `mixpanelTracker`; not
-  `selectionTracker`, `appStateTracker` or `orderTracking`), a logging
-  wrapper that starts with a `Log` word (`LogUtils`, `AppLogHelper`; not
-  `CallLogHelper` or `ChangeLogUtils`), or `System.out`/`err`: `Log.d(TAG, b.body)`,
+  screens, usage, users, the app, errors, crashes or an analytics vendor,
+  with at most a view, event, action, click, activity, session or engagement
+  word between (`screenViewTracker`, `userSessionTracker`, `userTracking`,
+  `AppsFlyerTracker`; not `selectionTracker`, `appStateTracker` or
+  `orderTracking`), a logging wrapper named `Log` + `Utils`, `Helper` or
+  `Wrapper`, also after `m`, `s` or `_` or an `App`, `My`, `Debug`, `Base`,
+  `Common`, `File`, `Remote`, `Crash` or `Error` word (`LogUtils`,
+  `mLogHelper`, `AppLogHelper`, `appLogHelper`; not `CallLogHelper` or
+  `ChangeLogUtils`), or
+  `System.out`/`err`: `Log.d(TAG, b.body)`,
   `Timber.d("%s", this)`, `mFirebaseAnalytics.logEvent(..)`,
   `analyticsTracker.track(b.text, q)`), write nothing;
   `b.label`, `b.tag` and `b.code` may be parts), an index
@@ -336,15 +359,18 @@ member extension declared in a companion object is not found; a receiverless
 `also { it.append(q) }` in a builder is not tracked; a chain of 256 or more
 calls or getters is cut (`limited`); a content lambda whose result is a call on
 an object that carries no input itself is a side effect
-(`b.section { Json.encodeToString(q) }`); logging is recognized by the
+(`b.section { Json.encodeToString(q) }`); a branching content result
+whose branches mix a value and a side-effect call writes every branch's value
+(`if (a) "x" else audit.record(q)`); logging is recognized by the
 receiver's name, so a writer held in a logger-like name
 (`mLog.append(b.body, q)`, `metrics.fill(b.body, q)`) writes nothing and an
 unlisted logging wrapper (`L.d(b.body, q)`) is a helper that writes; tree-sitter-kotlin 1.1.0 reads a
 `where(..)` (also `by(..)`, `constructor(..)`) call on the line after another
 statement, also a declaration or assignment, as an infix call of that name,
 which in a followed lambda still writes, after the line before it declares or
-assigns its name (`val c = "..$q"` then `where(c)`), as does a call on the line
-before it, but elsewhere is not followed; a
+assigns its name (`val c = "..$q"` then `where(c)`; glued onto the last
+operand of an elvis, comparison or if/else value it reads that name unbound),
+as does a call on the line before it, but elsewhere is not followed; a
 member read through a labeled `this` (`this@Screen.field`) has no value of its
 own; a capitalized DSL entry
 point (`Sql.Query { }`) is taken as a SAM constructor, so its writes are not
