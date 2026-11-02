@@ -3209,6 +3209,21 @@ def test_flow_operator_block_emits_into_the_flow(operator: str) -> None:
         ("dialogUtils.fill(b.body, q)", True),
         ("userTracking.event(b.body, q)", False),
         ("appTracker.track(b.body, q)", False),
+        ("appointmentTracker.fill(b.body, q)", True),
+        ("happinessTracker.fill(b.body, q)", True),
+        ("mixpanelTracker.track(b.body, q)", False),
+        ("firebaseTracker.logEvent(b.body, q)", False),
+        ("screenViewTracker.track(b.body, q)", False),
+        ("mAnalyticsTracker.track(b.body, q)", False),
+        ("workoutLogHelper.fill(b.body, q)", True),
+        ("CallLogHelper.fill(b.body, q)", True),
+        ("ChangeLogUtils.fill(b.body, q)", True),
+        ("orderTracking.fill(b.body, q)", True),
+        ("appStateTracker.fill(b.body, q)", True),
+        ("blogger.fill(b.body, q)", True),
+        ("flogger.atInfo(b.body, q)", False),
+        ("bugsnag.notify(b.body, q)", False),
+        ("screenTracker.track(b.body, q)", False),
         ('LogUtils.d("t", b.body, q)', False),
         ("AppLogHelper.debug(b.body, q)", False),
         ("Sentry.captureMessage(b.body, q)", False),
@@ -3335,7 +3350,7 @@ def test_lazy_loggers_by_import_and_imported_dsl_content(imports: str, build: st
         ('Markup.render { b -> b.section { java.net.URLEncoder.encode(q, "UTF-8") }; Unit }', True),
         ("Markup.render { b -> b.section { q.let { val t = it.trim(); t.uppercase() } }; Unit }", True),
         ('Markup.render { b -> b.section { q.let { toString() } }; b.append("SELECT 1"); Unit }', False),
-        ('Markup.render { b -> b.section { q.run { listOf(this) } }; b.append("SELECT 1"); Unit }', False),
+        ('Markup.render { b -> b.section { q.run { println(this) } }; b.append("SELECT 1"); Unit }', False),
         ('Markup.render { b -> b.section { this.audit.log(q) }; b.append("SELECT 1"); Unit }', False),
         (
             'Markup.render { b -> b.button { Analytics.shared.track(q); Analytics.shared.flush() }; b.append("SELECT 1"); Unit }',
@@ -3366,6 +3381,30 @@ def test_lazy_loggers_by_import_and_imported_dsl_content(imports: str, build: st
             False,
         ),
         ("Markup.render { b -> b.section { repo.lookup(q).trim() }; Unit }", True),
+        ("Markup.render { b -> field = q.trim(); b.section { field.escapeSql() }; Unit }", True),
+        (
+            "Markup.render { b -> field = \"name = '$q'\"; b.section { field?.let { it.escapeSql() } }; Unit }",
+            True,
+        ),
+        ("Markup.render { b -> b.section { run { \"name = '$q'\" } }; Unit }", True),
+        ('Markup.render { b -> b.section { template.contains(q) }; b.append("SELECT 1"); Unit }', False),
+        ('Markup.render { b -> b.section { prefix.equals(q) }; b.append("SELECT 1"); Unit }', False),
+        (
+            'Markup.render { b -> b.section { template.substringBefore(q) }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
+        ('Markup.render { b -> b.section { q.isNotEmpty() }; b.append("SELECT 1"); Unit }', False),
+        ('Markup.render { b -> b.section { q.length }; b.append("SELECT 1"); Unit }', False),
+        ('Markup.render { b -> b.section { q == "x" }; b.append("SELECT 1"); Unit }', False),
+        (
+            'Markup.render { b -> b.section { !q.isEmpty() && q.length > 2 }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
+        ('Markup.render { b -> b.section { q.isValid() }; b.append("SELECT 1"); Unit }', False),
+        ("Markup.render { b -> b.section { template.format(q).trim() }; Unit }", True),
+        ("Markup.render { b -> b.section { listOf(title, q) }; Unit }", True),
+        ("Markup.render { b -> b.section { Pair(title, q) }; Unit }", True),
+        ("Markup.render { b -> b.section { requireNotNull(q) }; Unit }", True),
         ("Markup.render { b -> b.section { val t = repo.lookup(q); t.trim().lowercase() }; Unit }", True),
         (
             "Markup.render { b -> b.section { val t = repo.lookup(q); val u = t.trim(); u.uppercase() }; Unit }",
@@ -3709,7 +3748,10 @@ def test_dsl_writes_in_a_long_branch_chain_cost_linear_calls() -> None:
     # tree-sitter's parent walk costs the depth, which call counts do not see: the class
     # bodies around each node are found once (about 9 times for 4 times the branches, the
     # n^1.6 of the walk itself; walking to the root for every write took about 50 times).
-    assert elapsed(800) < 16 * max(elapsed(200), 0.05)
+    # The bound catches that walk, not a quadratic term (16 times), which load alone can
+    # reach; quadratic Python work shows in the call count above. elapsed(200) is about
+    # 0.04 s, so the floor stays below it and the bound is a ratio, not an absolute time.
+    assert elapsed(800) < 16 * max(elapsed(200), 0.01)
 
 
 def test_member_extension_after_a_misparsed_where_line_still_writes() -> None:
@@ -3854,6 +3896,11 @@ def test_swift_initializers_and_print_hand_nothing_over(stmt: str, expected: boo
         ("URL(string: query)", True),
         ('String(format: "%d", 1)', False),
         ("self.lookup(query).trimmingCharacters(in: .whitespaces)", True),
+        ('self.lookup(query).components(separatedBy: ",")', False),
+        ('"https://docs.example.test/".hasPrefix(query)', False),
+        ("query.isEmpty", False),
+        ('query == "x"', False),
+        ("query.count > 2", False),
         ("self.track(query)", False),
     ],
 )
@@ -4156,3 +4203,496 @@ def test_standard_builder_through_a_field_named_like_a_package_root_is_a_dsl() -
     helpers = "private val android = Ext.dsl"
     build = 'android.repo.flow { param("q", q); limit(10) }.toString()'
     assert _hit(_kotlin(OWN_HELPER.format(supertype="", helpers=helpers, build=build)), SQL)
+
+
+def test_swift_string_property_holding_derived_input_is_content() -> None:
+    report = _swift(
+        """import UIKit
+import WebKit
+final class V {
+    let web = WKWebView()
+    var query = ""
+    func application(_ app: UIApplication, open url: URL, options: [String: Any]) {
+        query = url.query ?? ""
+        let page = Markup.render({ b in b.section { self.query.components(separatedBy: "&") }; b.add("x") })
+        web.loadHTMLString(page, baseURL: nil)
+    }
+}
+"""
+    )
+    assert _hit(report, URL), report["findings"]
+
+
+def test_java_string_field_holding_derived_input_is_content() -> None:
+    report = analyze_sources(
+        [
+            (
+                "app/R.java",
+                """package com.example.app;
+import android.content.Intent;
+import android.webkit.WebView;
+class R {
+    String query;
+    WebView web;
+    void go(Intent i) {
+        query = i.getStringExtra("q").trim();
+        String page = Markup.render(m -> { m.section(() -> query.intern()); m.put("h", "x"); });
+        web.loadUrl(page);
+    }
+}
+""",
+            )
+        ]
+    )
+    assert _hit(report, URL), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        "b.section { val t = Ext.repo.lookup(q); t.trim() }",
+        'b.button { val t = Ext.repo.lookup(q); t.track("x") }; b.append("x")',
+        'b.section { audit.let { it.track(q) } }; b.append("x")',
+    ],
+)
+def test_content_checks_in_a_followed_callee_record_no_reasons_of_their_own(section: str) -> None:
+    def reasons(body: str) -> set[str]:
+        report = _kotlin(
+            f"""class Pages(private val web: WebView) {{
+    private val audit = Ext.audit
+    fun open(intent: Intent) {{ val q = intent.getStringExtra("q") ?: ""; web.loadUrl(render(q)) }}
+    private fun render(q: String): String = Markup.render {{ b -> {body}; Unit }}
+}}
+"""
+        )
+        return set(_reasons(report))
+
+    # A closure's names read from the enclosing frame, or a visited initializer read again
+    # later, would record `receiver field inventory unavailable` or `object storage alias
+    # unavailable` that the same calls written directly do not.
+    assert reasons(section) <= reasons("b.section(Ext.repo.lookup(q).trim()); audit.track(q)")
+
+
+def test_assignments_in_a_deferred_callback_cost_linear_calls() -> None:
+    def calls(count: int) -> int:
+        locals_ = "; ".join(f"var v{index} = 0" for index in range(count))
+        assignments = "; ".join(f"v{index} = {index}" for index in range(count))
+        source = f"""class S(private val web: WebView) {{
+    fun go(intent: Intent) {{
+        {locals_}
+        var url = intent.getStringExtra("q") ?: ""
+        url = Ext.configure {{ {assignments}; url = "https://docs.example.test/" }}
+        web.loadUrl(url)
+    }}
+}}
+"""
+        total = 0
+
+        def profile(frame, event, arg) -> None:
+            nonlocal total
+            if event in {"call", "c_call"}:
+                total += 1
+
+        sys.setprofile(profile)
+        try:
+            _kotlin(source)
+        finally:
+            sys.setprofile(None)
+        return total
+
+    # Only an assignment to the target name is checked for a shadowing local.
+    assert calls(800) < 6 * calls(200)
+
+
+@pytest.mark.parametrize(
+    "build, expected",
+    [
+        ('Ext.page { runCatching { text(q) }.onFailure { println(it) }; "SELECT 1" }', True),
+        ('Ext.page { runCatching { text(q) }.exceptionOrNull(); "SELECT 1" }', True),
+        ('Ext.page { val ok = runCatching { text(q) }.isSuccess; "SELECT 1" }', True),
+        ('Ext.page { val r = runCatching { parse(q) }.getOrNull(); "SELECT 1" }', False),
+        (
+            'Ext.page { val r = runCatching { parse(q) }.onFailure { println(it) }.getOrNull(); "SELECT 1" }',
+            False,
+        ),
+    ],
+)
+def test_runcatching_block_value_goes_through_its_result_chain(build: str, expected: bool) -> None:
+    assert _hit(_kotlin(OWN_HELPER.format(supertype="", helpers="", build=build)), SQL) is expected
+
+
+@pytest.mark.parametrize(
+    "build, expected",
+    [
+        ('Ext.page {\n            text(q)\n            where("x")\n            "SELECT 1"\n        }', True),
+        (
+            'Ext.page {\n            val t = text(q)\n            where("x")\n            "SELECT 1"\n        }',
+            False,
+        ),
+    ],
+)
+def test_call_on_the_line_before_a_misparsed_where_line_stands_where_the_pair_does(
+    build: str, expected: bool
+) -> None:
+    assert _hit(_kotlin(OWN_HELPER.format(supertype="", helpers="", build=build)), SQL) is expected
+
+
+def test_string_locals_concatenate_and_char_locals_dispatch() -> None:
+    def report(declaration: str, update: str) -> dict:
+        return _kotlin(
+            f"""class R(private val db: SQLiteDatabase) {{
+    fun q(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+        {declaration}
+        {update}
+        db.execSQL("SELECT " + q + s)
+    }}
+}}
+"""
+        )
+
+    # A local initialized from a string literal is a String: `+=` concatenates.
+    assert _state(report('var s = ""', "s += q"), SQL) == "checked"
+    # A character literal is no String: `+=` is an operator call the flow does not resolve.
+    assert "compound assignment operator dispatch unavailable" in _reasons(report("var s = 'a'", "s += 1"))
+
+
+NOTES = """package com.example.notes
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+import android.webkit.WebView
+{imports}
+class Notes(private val db: SQLiteDatabase, private val web: WebView, private val strict: Boolean) {{
+    private val audit = Ext.audit
+    private val prefs = Ext.prefs
+    private val template = "name = {{q}}"
+{members}
+    fun open(intent: Intent, items: List<String>) {{
+        val q = intent.getStringExtra("q") ?: ""
+{body}
+    }}
+}}
+"""
+
+
+def _notes(body: str, members: str = "", imports: str = "") -> dict:
+    source = NOTES.format(body=body, members=members, imports=imports)
+    return analyze_sources([("app/src/main/java/com/example/notes/Notes.kt", source)])
+
+
+def _section(expr: str, host: str = "section", pre: str = "") -> str:
+    return f'{pre}        val s = Markup.render {{ b -> b.{host} {{ {expr} }}; b.append("SELECT 1"); Unit }}\n        db.execSQL(s)'
+
+
+def _page(stmt: str) -> str:
+    return (
+        f"        val page = Ext.page {{\n            {stmt}\n"
+        '            "https://docs.example.test/"\n        }\n        web.loadUrl(page)'
+    )
+
+
+@pytest.mark.parametrize(
+    "body, rule, expected, members, imports",
+    [
+        # values computed from input and closure locals
+        (_section("u.encodeForWeb()", pre='        val u = "p/" + q\n'), SQL, True, "", ""),
+        (_section("val t = q.trim(); val u = t.lowercase(); u.encodeForWeb()"), SQL, True, "", ""),
+        (
+            _section(
+                'val label: String; if (q.isEmpty()) label = "none" else label = q.trim(); label.encodeForWeb()'
+            ),
+            SQL,
+            True,
+            "",
+            "",
+        ),
+        (_section("\"name = '%s'\".format(q)"), SQL, True, "", ""),
+        (_section('"name = ".plus(q)'), SQL, True, "", ""),
+        (_section('if (q.isEmpty()) "1" else { val t = q.trim(); t.encodeForWeb() }'), SQL, True, "", ""),
+        (_section("val t = q.trim(); template.format(t)"), SQL, True, "", ""),
+        (_section("Ext.repo.lookup(q).let { it.trim() }"), SQL, True, "", ""),
+        (
+            _section('if (q.isEmpty()) audit.track("x") else { val t = Ext.repo.lookup(q); t.trim() }'),
+            SQL,
+            True,
+            "",
+            "",
+        ),
+        (
+            _section('if (q.isEmpty()) audit.track("x") else { val t = q.trim(); t.encodeForWeb() }'),
+            SQL,
+            True,
+            "",
+            "",
+        ),
+        (_section('val t = q.trim(); (t + "x").encodeForWeb()'), SQL, True, "", ""),
+        (
+            _section("tpl.format(q)"),
+            SQL,
+            True,
+            '    private val base = Ext.base\n    private val tpl = base + "?q=%s"',
+            "",
+        ),
+        (_section("tpl.format(q)", pre="        val tpl = getString(R.string.where)\n"), SQL, True, "", ""),
+        (_section('template.encodeForWeb(q).replace("a", "b").escape()'), SQL, False, "", ""),
+        (_section("this.items.track(q)", host="button"), SQL, False, "    private val items = Ext.items", ""),
+        (
+            _section('val t = audit.make(q); t.track("x")', host="button", pre="        val t = q\n"),
+            SQL,
+            False,
+            "",
+            "",
+        ),
+        (
+            _section(
+                'this.holder.track("x")',
+                host="button",
+                pre="        holder = Wrapper(q)\n        val holder = q\n",
+            ),
+            SQL,
+            False,
+            "    private var holder: Any = Ext.h",
+            "",
+        ),
+        (
+            "        q.let { val s = Markup.render { b -> b.section { audit.let { it.track(q) } }; "
+            'b.append("SELECT 1"); Unit }; db.execSQL(s) }',
+            SQL,
+            False,
+            "",
+            "",
+        ),
+        # side effects: services, built objects, a member named like a local, a nested block's local
+        (
+            _section('prefs.edit().putString("k", q).putInt("n", 1).apply()', host="button"),
+            SQL,
+            False,
+            "",
+            "",
+        ),
+        (_section("q.run { describe().uppercase() }", host="button"), SQL, False, "", ""),
+        (_section("with(audit) { toString() }", host="button"), SQL, False, "", ""),
+        (_section("audit.run { toString() }", host="button"), SQL, False, "", ""),
+        (_section("ShareDialog(audit, q).show()", host="button"), SQL, False, "", ""),
+        (_section("Uploader(q).start()", host="button"), SQL, False, "", ""),
+        (_section("val u = Uploader(q); u.start()", host="button"), SQL, False, "", ""),
+        (_section("Uploader(q).let { it.start() }", host="button"), SQL, False, "", ""),
+        (_section('java.io.File(q, "x").delete()', host="button"), SQL, False, "", ""),
+        (_section("val audit = q.trim(); this.audit.record(audit)", host="button"), SQL, False, "", ""),
+        (
+            _section('if (strict) { val audit = "x"; println(audit) }; audit.track(q)', host="button"),
+            SQL,
+            False,
+            "",
+            "",
+        ),
+        (_section("q.let { audit.track(it); Unit }", host="button"), SQL, False, "", ""),
+        # templates by name, also qualified, in a companion object, at the top level, raw
+        (_section('template.replace("{q}", q).encodeForWeb()'), SQL, True, "", ""),
+        (_section('this.template.replace("{q}", q)'), SQL, True, "", ""),
+        (
+            _section("WHERE.format(q)"),
+            SQL,
+            True,
+            "    companion object { const val WHERE = \"name = '%s'\" }",
+            "",
+        ),
+        (
+            _section("Notes.WHERE.format(q)"),
+            SQL,
+            True,
+            "    companion object { const val WHERE = \"name = '%s'\" }",
+            "",
+        ),
+        (_section("TOP.format(q)"), SQL, True, "", "const val TOP = \"name = '%s'\""),
+        (
+            _section("raw.format(q)"),
+            SQL,
+            True,
+            '    private val raw = """\n        name = \'%s\'\n    """.trimIndent()',
+            "",
+        ),
+        # deferred writes and their shadows
+        (
+            '        var u = "https://docs.example.test/"\n'
+            '        u = Ext.fetch { u = q; val u = ""; println(u); "https://docs.example.test/" }\n'
+            "        web.loadUrl(u)",
+            URL,
+            True,
+            "",
+            "",
+        ),
+        (
+            '        var u = "https://docs.example.test/"\n'
+            '        u = Ext.fetch { var (a, u) = Pair("x", "y"); u = q; println(a + u); "https://docs.example.test/" }\n'
+            "        web.loadUrl(u)",
+            URL,
+            False,
+            "",
+            "",
+        ),
+        # statement positions: elvis chains, packages, mapping lambdas, misparsed lines
+        (
+            _page("items.firstOrNull()?.let { h1(it) } ?: q.takeIf { strict }?.let { text(it) } ?: footer()"),
+            URL,
+            True,
+            "",
+            "",
+        ),
+        (_page("(items.firstOrNull() ?: load(q)) ?: footer()"), URL, False, "", ""),
+        (
+            '        val s = io.myapp.db.flow { param("q", q); limit(10) }.toString()\n        db.execSQL(s)',
+            SQL,
+            True,
+            "",
+            "",
+        ),
+        (_page('info { "https://docs.example.test/$q" }'), URL, True, "", "import com.example.app.login.*"),
+        (
+            _page("val out = items.mapTo(mutableListOf()) { describe(it, q) }\n            println(out)"),
+            URL,
+            False,
+            "",
+            "",
+        ),
+        (_page("items.mapTo(mutableListOf()) { describe(it, q) }"), URL, False, "", ""),
+        (_page("val mn = items.minOfOrNull { weigh(it, q) }\n            println(mn)"), URL, False, "", ""),
+        (_page("val s = items.joinToString { describe(it, q) }\n            println(s)"), URL, False, "", ""),
+        (
+            _page("val z = items.zip(items) { a, x -> describe(a, q) }\n            println(z)"),
+            URL,
+            False,
+            "",
+            "",
+        ),
+        (_page('val c = "https://x.test/$q"\n            where(c)'), URL, True, "", ""),
+        (_page('var c = ""\n            c = "https://x.test/$q"\n            where(c)'), URL, True, "", ""),
+        (_page('val m = mapOf("k"\n                to(q))\n            println(m)'), URL, False, "", ""),
+    ],
+)
+def test_round_ten_content_names_and_statements(
+    body: str, rule: str, expected: bool, members: str, imports: str
+) -> None:
+    report = _notes(body, members=members, imports=imports)
+    assert _hit(report, rule) is expected, report["findings"]
+
+
+def test_swift_member_named_like_a_local_and_guard_binding_shadow() -> None:
+    def report(body: str) -> dict:
+        return _swift(
+            f"""import UIKit
+import WebKit
+final class V {{
+    let web = WKWebView()
+    let analytics = Analytics()
+    let template = "https://docs.example.test/?q={{q}}"
+    func application(_ app: UIApplication, open url: URL, options: [String: Any]) {{
+        let query = url.absoluteString
+{body}
+    }}
+}}
+"""
+        )
+
+    member = report(
+        '        let page = Markup.render({ b in b.button { let analytics = "open"; return self.analytics.track(analytics, query) }; b.add("x") })\n'
+        "        web.loadHTMLString(page, baseURL: nil)"
+    )
+    assert not _hit(member, URL), member["findings"]
+    template = report(
+        '        let page = Markup.render({ b in b.section { self.template.replacingOccurrences(of: "{q}", with: query) }; b.add("x") })\n'
+        "        web.loadHTMLString(page, baseURL: nil)"
+    )
+    assert _hit(template, URL), template["findings"]
+    shadow = report(
+        '        var page = "https://docs.example.test/"\n'
+        '        page = Ext.fetch { guard var page = Optional(query) else { return "x" }; page = page.lowercased(); print(page); return "y" }\n'
+        "        web.load(URLRequest(url: URL(string: page)!))"
+    )
+    assert not _hit(shadow, URL), shadow["findings"]
+
+
+def test_java_uninitialized_local_and_this_template_are_content() -> None:
+    def report(members: str, section: str) -> dict:
+        return analyze_sources(
+            [
+                (
+                    "app/R.java",
+                    f"""package com.example.app;
+import android.content.Intent;
+import android.webkit.WebView;
+class R {{
+    WebView web;
+{members}
+    void go(Intent i) {{
+        String q = i.getStringExtra("q");
+        String page = Markup.render(m -> {{ m.section({section}); m.put("h", "x"); }});
+        web.loadUrl(page);
+    }}
+}}
+""",
+                )
+            ]
+        )
+
+    local = report(
+        "",
+        '() -> { String label; if (q.isEmpty()) label = "none"; else label = q.trim(); return label.intern(); }',
+    )
+    assert _hit(local, URL), local["findings"]
+    template = report(
+        '    private final String template = "https://docs.example.test/?q={q}";',
+        '() -> this.template.replace("{q}", q)',
+    )
+    assert _hit(template, URL), template["findings"]
+
+
+def test_a_source_call_starts_a_content_chain() -> None:
+    report = _kotlin(
+        """class HelpActivity : Activity() {
+    private lateinit var web: WebView
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        val page = Markup.render { b -> b.section { getIntent().getStringExtra("t").encodeForWeb() }; Unit }
+        web.loadUrl(page)
+    }
+}
+"""
+    )
+    assert _hit(report, URL), report["findings"]
+
+
+def test_string_typed_locals_in_deep_dsls_cost_no_scope_walk() -> None:
+    def calls(depth: int) -> int:
+        expr = "text(q)"
+        for level in range(depth):
+            expr = f'div{level % 3} {{ val v{level} = "x{level}"; s = v{level}; section {{ "c{level}" }}; {expr} }}'
+        source = f"""class P(private val web: WebView) {{
+    fun go(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+        var s = ""
+        val page = Ext.page {{
+            {expr}
+            footer()
+        }}
+        web.loadUrl(page + s)
+    }}
+}}
+"""
+        total = 0
+
+        def profile(frame, event, arg) -> None:
+            nonlocal total
+            if event in {"call", "c_call"}:
+                total += 1
+
+        sys.setprofile(profile)
+        try:
+            _kotlin(source)
+        finally:
+            sys.setprofile(None)
+        return total
+
+    # A local typed String by its literal takes the builtin String; resolving the spelling
+    # through every enclosing scope grew about 4.9 times for 4 times the depth (3.4 now).
+    assert calls(200) < 4.2 * calls(50)

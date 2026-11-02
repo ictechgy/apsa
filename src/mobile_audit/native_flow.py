@@ -387,6 +387,9 @@ class NativeFlow:
         self.evaluations = 0
         self.reasons: set[str] = set()
         self.partial_events = 0
+        # Above zero while Analyzer re-reads visited code to classify it (content results);
+        # what that re-read would record was recorded, or not, where the visit read it.
+        self.muted = 0
         self.namespace_names: set[str] = set()
         self.owners_with_constructor: set[str] = set()
         self.partial_details: set[tuple] = set()
@@ -597,6 +600,8 @@ class NativeFlow:
         stays partial); a precision reason is a limit of the bounded model
         (coverage limited).
         """
+        if self.muted:
+            return
         self.partial_events += 1
         self.reasons.add(reason)
         budget = reason_kind(reason) == "budget"
@@ -2645,6 +2650,9 @@ class NativeFlow:
         declared = declared.strip()
         if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", declared):
             return None
+        if declared == "String" and analyzer.language in SCALAR_STRING_TYPES and "String" not in self.classes:
+            # No source type named String: the builtin, without walking every scope to the root.
+            return ("nominal", SCALAR_STRING_TYPES[analyzer.language])
         binding = self.lexical_type(analyzer, declared, use)
         if binding is not None:
             # An inherited type can be unavailable nominally yet both

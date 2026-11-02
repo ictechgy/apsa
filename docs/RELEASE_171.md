@@ -45,10 +45,12 @@ credential service was contacted.
   (`u = wrap(u) { u = ... }`), the assigned value keeps what its assignments
   stored there (also an alias of the value from before, `u = requested`, but
   not that value where a branch does not assign), since the callback may run
-  later; the closure of a standard function that
-  runs it before returning (`also`, `let`, `map`, `withContext`, ...) and a
-  lambda invoked where it is written (`{ .. }()`) write before the assignment
-  stores.
+  later, unless a local of that name declared before it in the callback (also
+  in a nested block or lambda, a destructuring declaration or a Swift
+  `if var`/`guard var` binding) is what it assigns; the closure of a standard
+  function that runs it before returning (`also`, `let`, `map`, `withContext`,
+  ...) and a lambda invoked where it is written (`{ .. }()`) write before the
+  assignment stores.
 - Declared closure parameters are locals that shadow outer names; they carry no
   value. This removes false findings where a parameter had the name of a
   tainted local or of `intent`, also for closures in parentheses. A lambda that
@@ -116,10 +118,14 @@ credential service was contacted.
   are statements only where the `if`, `when`, block or expression itself is
   one, so `val ok = if (c) allowed(q) else true` writes nothing; the result of
   a mapping lambda (`map`, `associateBy`, `groupBy`, `fold`, `sumOf`,
-  `maxOfOrNull`, `runCatching`, `joinToString`, `mapTo`, ...) is a
-  statement where the call is; an elvis chain's scope blocks
+  `maxOfOrNull`, `joinToString`, ...) is a statement where the call is, of a
+  `*To` function (`mapTo`, `groupByTo`, ...) never, as its destination stores
+  it, and of a `runCatching` block where its Result chain is
+  (`runCatching { text(q) }.onFailure { .. }` writes,
+  `val r = runCatching { parse(q) }.getOrNull()` does not); an elvis chain's scope blocks
   (`a?.let { .. } ?: b?.let { .. } ?: c`) run where the chain is, but a plain
-  fallback an outer elvis tests is a value (`cached ?: load(q) ?: return`); a loop
+  fallback an outer elvis tests is a value (`cached ?: load(q) ?: return`, also
+  parenthesized, `(cached ?: load(q)) ?: return`); a loop
   without a body, `while (advance(q));`, has none; a predicate's result,
   `filter { }` or `takeIf { }`, is none; a known builder's writing member
   writes wherever it stands, `val added = add(q)`): a receiverless call that
@@ -178,22 +184,36 @@ credential service was contacted.
   `b.section { return@section q }`, `b.title { q.uppercase() }`, a DSL's
   `title { q }`, also one this file imports, a Java supplier
   `m.section(() -> q)`: a value, or a call whose call chain starts at data: a
-  literal, a value class such as `String`, a local the closure declares from
-  data (`{ val t = q.trim(); t.uppercase() }`), a receiverless call or
-  constructor that took input (`listOf(title, q)`, `StringBuilder(q)`), a local
-  or parameter holding input (`q.substring(0, q.length - 1)`), or a field or
-  other reference holding an input value (`field = q`, `this.field`, `intent` in
-  `intent.getStringExtra("q")`), also a qualified value class
-  (`java.net.URLEncoder.encode(q, ..)`), or a String held in a name that a
-  call fills with input (`template.format(q)`, `prefix.plus(q)`,
-  `q.let { tpl.format(it) }`, `tpl.replace(Regex("x")) { q }`); a String
+  literal, a value class such as `String`, a local the closure (or the braced
+  branch it ends in) declares from data, also by assigning it later
+  (`{ val t = q.trim(); t.uppercase() }`, `String label; .. label = q.trim();`),
+  a value factory or a source call itself (`listOf(title, q)`,
+  `StringBuilder(q)`, `getIntent()`; another call's result is data only
+  through a String transform, below, and an object built from input is none,
+  `Uploader(q).start()`, `File(dir, q).delete()`), a local or
+  parameter holding input (`q.substring(0, q.length - 1)`), or a field or other reference holding an
+  input value (`field = q`, `this.field`, never a local of the member's name,
+  `intent` in `intent.getStringExtra("q")`, a String property or Java String
+  field holding a value derived from input, `query = q.trim()`), also a
+  qualified value class (`java.net.URLEncoder.encode(q, ..)`), or a String
+  that the String transforms starting the chain fill with input, held in a
+  name declared as a String or initialized from a string literal (also `+`
+  with one, a raw string's `trimIndent()`, `getString(..)`), a property, a
+  companion, object or top-level constant, also qualified
+  (`template.format(q)`, `prefix.plus(q)`, `this.template.replace("{q}", q)`,
+  `Notes.WHERE.format(q)`, `q.let { tpl.format(it) }`,
+  `tpl.replace(Regex("x")) { q }`); a String
   transform of a call's result over input, also through a closure local
   (`repo.lookup(q).trim()`, `{ val t = repo.lookup(q); t.trim() }`, but not
-  `t.track("open")`); a value class constructed in the closure
-  (`String(format: "%@", q)`, `URL(string: q)`); a
-  `let`/`run`/`with` block's result (`q.let { it.trim() }`,
+  `t.track("open")`); a value class or standard collection built in the
+  closure (`String(format: "%@", q)`, `URL(string: q)`, `listOf(title, q)`,
+  `Pair(title, q)`, `requireNotNull(q)`); a `let`/`run`/`with` block's result,
+  also a receiverless `run { }`'s (`q.let { it.trim() }`,
   `title?.let { "$it: $q" }`, `q.run { trim().lowercase() }`,
-  `q.run { split(",").first() }`, `with(q) { val t = trim(); t.uppercase() }`);
+  `q.run { split(",").first() }`, `with(q) { val t = trim(); t.uppercase() }`,
+  `run { "$prefix/$q" }`); not a flag or a number (a comparison or logical
+  operation, `q == "x"`, or a member such as `q.isNotEmpty()`, `q.length` or
+  `template.contains(q)`), `Unit` or `null`;
   also for a helper handed the object,
   `Fill.into(b) { q }`; not a callback whose result is a side-effect call,
   `b.onClick { log(q) }`, `b.button { analytics.track(q) }` (also a tracker
@@ -217,12 +237,16 @@ credential service was contacted.
   `doc.attr("id")`, a reading member such as `b.contains(q)` or
   `b.contentEquals(q)`, a helper in a condition, and a logging or analytics
   call (on a receiver named `log`, `timber`, `tracker`, `metrics`, `sentry`,
-  ..., ending in `Logger`, `Analytics`, `Crashlytics`, `Telemetry` or
-  `Tracking`, an analytics, event, screen, usage, user or app tracker, a
-  logging wrapper such as `LogUtils` or `AppLogHelper` (not `catalogHelper`),
-  or `System.out`/`err`: `Log.d(TAG, b.body)`,
+  ..., ending in `Logger`, `Analytics`, `Crashlytics` or `Telemetry` as a
+  camel-case word (`appLogger`, `LOGGER`; not `blogger`), a
+  tracker or tracking named by a camel-case word for analytics, events,
+  screens, usage, users, the app, errors, crashes or an analytics vendor
+  (`screenViewTracker`, `userTracking`, `mixpanelTracker`; not
+  `selectionTracker`, `appStateTracker` or `orderTracking`), a logging
+  wrapper that starts with a `Log` word (`LogUtils`, `AppLogHelper`; not
+  `CallLogHelper` or `ChangeLogUtils`), or `System.out`/`err`: `Log.d(TAG, b.body)`,
   `Timber.d("%s", this)`, `mFirebaseAnalytics.logEvent(..)`,
-  `analyticsTracker.track(b.text, q)`; not `selectionTracker`), write nothing;
+  `analyticsTracker.track(b.text, q)`), write nothing;
   `b.label`, `b.tag` and `b.code` may be parts), an index
   (`b.items[0].text = q`, Swift `m["q"] = q`) or a nested builder on it
   (`b.group { g -> g.append(q) }`) count too, and so does the builder call
@@ -276,7 +300,9 @@ closure may fill (passed to a call or written element by element) is treated
 as filled. A closure result over the trace cap that a call's value includes
 (`Ext.io({ big })` with more than eight sources, or a `run { }` block's) is
 `limited` (`source trace abstention`), where 1.7.0 reported the parenthesized
-form `partial`. Kotlin `x!!` is the value of `x` for literal key and IV
+form `partial`. A local initialized from a string literal is a String, so
+`var s = ""; s += q` concatenates where 1.7.0 recorded `compound assignment
+operator dispatch unavailable`. Kotlin `x!!` is the value of `x` for literal key and IV
 tracking, filled buffers and intent-target checks:
 `SecretKeySpec(key!!.toByteArray(), ..)` with a literal key is reported,
 `nextBytes(raw!!)` fills `raw`, and a component check on `nested!!` is
@@ -316,7 +342,9 @@ receiver's name, so a writer held in a logger-like name
 unlisted logging wrapper (`L.d(b.body, q)`) is a helper that writes; tree-sitter-kotlin 1.1.0 reads a
 `where(..)` (also `by(..)`, `constructor(..)`) call on the line after another
 statement, also a declaration or assignment, as an infix call of that name,
-which in a followed lambda still writes, but elsewhere is not followed; a
+which in a followed lambda still writes, after the line before it declares or
+assigns its name (`val c = "..$q"` then `where(c)`), as does a call on the line
+before it, but elsewhere is not followed; a
 member read through a labeled `this` (`this@Screen.field`) has no value of its
 own; a capitalized DSL entry
 point (`Sql.Query { }`) is taken as a SAM constructor, so its writes are not
