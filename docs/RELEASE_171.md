@@ -100,8 +100,10 @@ credential service was contacted.
   app-owned allowlist picked with untrusted input is not reported.
   Lambda bodies are no longer re-evaluated by every enclosing call, so nested
   closures cost one evaluation per call instead of growing with the nesting
-  depth, and a long `if`/`else if` or `when` chain in a closure is decided in
-  linear time.
+  depth, and a long `if`/`else if` or `when` chain or a long flat builder body
+  in a closure is decided in a linear number of steps (tree-sitter's parent
+  walk still costs more on deep nesting: about n^1.6 in wall time for an
+  `else if` chain).
 - When a call's value is used, what its closure writes into the objects the
   callee supplies is part of that value: the closure's parameters
   (`Html.build { b -> b.append(q) }`, Java `render(m -> { m.put("q", q); })`,
@@ -112,10 +114,14 @@ credential service was contacted.
   block, an elvis fallback, a scope block before `?:`
   (`x?.let { text(it) } ?: footer()`) and a labeled or parenthesized expression
   are statements only where the `if`, `when`, block or expression itself is
-  one, so `val ok = if (c) allowed(q) else true` writes nothing; a loop without
-  a body, `while (advance(q));`, has none; a predicate's result, `filter { }`
-  or `takeIf { }`, is none; a known builder's writing member writes wherever it
-  stands, `val added = add(q)`): a receiverless call that is no constructor (`File(q)`,
+  one, so `val ok = if (c) allowed(q) else true` writes nothing; the result of
+  a mapping lambda (`map`, `associateBy`, `groupBy`, `fold`, ...) is a
+  statement where the call is; an elvis chain's scope blocks
+  (`a?.let { .. } ?: b?.let { .. } ?: c`) run where the chain is; a loop
+  without a body, `while (advance(q));`, has none; a predicate's result,
+  `filter { }` or `takeIf { }`, is none; a known builder's writing member
+  writes wherever it stands, `val added = add(q)`): a receiverless call that
+  is no constructor (`File(q)`,
   `IllegalStateException(q)`), no standard top-level function (`println`,
   `require`, `listOf`, ...) and no project function of a class, companion
   object or object around it, of a class it extends (also an extension of
@@ -144,10 +150,13 @@ credential service was contacted.
   `fun Appendable.appendQuoted(..)`, `fun MutableCollection<String>.addTagged(..)`, also
   through a type parameter's bound or a project typealias). Such a lambda
   returns `Unit`: the builder's value is what it writes and its final
-  statement unless that is a call on an object or a non-writing function (a
-  final receiverless call chain may be a library extension of its receiver,
-  `buildString { appendHTML().html { } }`); `buildString { ..; Log.d(t, q) }`
-  adds nothing. The lambdas of `withContext`,
+  statement (each branch of a final `if`/`when`) unless that is a call on an
+  object, a constructor's chain or a non-writing function (a final
+  receiverless call chain may be a library extension of its receiver,
+  `buildString { appendHTML().html { } }`);
+  `buildString { ..; Log.d(t, q) }` and `.. else Log.d(t, q)` add nothing. Only
+  another `build…` callee takes these member names; `repo.flow { append(q) }`
+  is another object's DSL, where a project `append` binds. The lambdas of `withContext`,
   `runCatching`, `lazy`, `launch`, `async`, `launchWhenStarted`,
   `repeatOnLifecycle`, `synchronized`, `repeat`,
   `thread`, `remember`, ..., of SAM constructors and of composables
@@ -158,20 +167,27 @@ credential service was contacted.
   runners; not a constructor or factory call such as `Handler(..).post { }`)
   such a runner name is that object's DSL; coroutine builders have a scope
   receiver on any object. The standard builders take their member table
-  only without a receiver, through their package or (`produce`) on a scope;
-  `repo.flow { }` is another DSL. What a call writes is
+  only without a receiver, through their package (`kotlinx.coroutines.flow.flow { }`)
+  or (`produce`) on a scope; `repo.flow { }` and `repo.store.flow { }` are other
+  DSLs. What a call writes is
   its data, whichever callee runs, and the result of a closure the receiver
   stores or takes as content (`m.getOrPut(k) { q }`, `b.section { q }`,
   `b.section { return@section q }`, `b.title { q.uppercase() }`, a DSL's
   `title { q }`, also one this file imports, a Java supplier
-  `m.section(() -> q)`: a value, or a call on a local, a parameter, a literal
-  or a value class such as `String`, and a `let`/`run` block's result
-  (`q.let { it.trim() }`); also for a helper handed the object, `Fill.into(b) { q }`;
-  not a callback whose result is a side-effect call, `b.onClick { log(q) }`,
-  `b.button { analytics.track(q) }`, `b.section { q.let { audit.log(it) } }`,
-  `forEach`, Swift `b.onTap { [weak self] in self?.log(q) }`, nor the lazy
-  message of a logging function imported by name or through a star import,
-  `logcat { "msg $q" }`).
+  `m.section(() -> q)`: a value, or a call on data: a literal, a value class
+  such as `String`, a local the closure declares (`{ val t = q.trim();
+  t.uppercase() }`), or a receiver whose value carries input (a local, a
+  parameter or a field holding q, `(q as CharSequence)`, `intent` in
+  `intent.getStringExtra("q")`), not counting what the call itself passes it;
+  a `let`/`run`/`with` block's result (`q.let { it.trim() }`, `q.run { trim() }`);
+  also for a helper handed the object,
+  `Fill.into(b) { q }`; not a callback whose result is a side-effect call,
+  `b.onClick { log(q) }`, `b.button { analytics.track(q) }` (also a tracker
+  held in a local or parameter),
+  `b.section { q.let { audit.log(it) } }`, `forEach`, Swift
+  `b.onTap { [weak self] in self?.log(q) }`, nor the lazy message of a
+  logging function imported by name or through a star import of a logging
+  package, `logcat { "msg $q" }`).
   Writes through a local alias (`val c = b`), a force-unwrap (`b!!`, Swift
   `b!`), a `let`/`also`/`use` block on it (`b.let { it.append(q) }`), a
   helper call written as a statement (also under Swift `try`, `await`, `_ =`
@@ -180,14 +196,17 @@ credential service was contacted.
   `Fill.into(m.getBody(), q)`, `m.getText()`, a getter with literal or
   constant keys, `m.getChild("body")`, `b.child(0)`, `b.child(MAIN)`, either
   branch of a conditional, also a Java `switch` expression, `parts.joinTo(b)`,
-  `parts.joinTo(this)`, through a chain of up to 64 getters; assumed to write
+  `parts.joinTo(this)`, through a chain of up to 255 getters; assumed to write
   its other arguments and its receiver into it; a value read from it,
   `b.length`, `b.id`, `m.getName()`, a flag, `b.isReady`, `m.hasBody()`,
   `b.enabled`, a keyed scalar read, `b.getInt("rows")`, `m.optString("k")`,
   `doc.attr("id")`, a reading member such as `b.contains(q)` or
   `b.contentEquals(q)`, a helper in a condition, and a logging or analytics
-  call, `Log.d(TAG, b.body)`, `Timber.d("%s", this)`, `Analytics.track(b.text, q)`,
-  write nothing), an index
+  call (on a receiver named like a logger or ending in `Logger`, `Analytics`,
+  `Tracker`, `Crashlytics`, `Telemetry` or `Metrics`, or `System.out`/`err`:
+  `Log.d(TAG, b.body)`, `Timber.d("%s", this)`, `mFirebaseAnalytics.logEvent(..)`,
+  `analyticsTracker.track(b.text, q)`), write nothing; `b.label` and `b.tag`
+  may be parts), an index
   (`b.items[0].text = q`, Swift `m["q"] = q`) or a nested builder on it
   (`b.group { g -> g.append(q) }`) count too, and so does the builder call
   that is the single expression of a Swift function or getter. This restores
@@ -271,8 +290,13 @@ DSL's `text(q)`, although Kotlin finds the lambda's receiver member first;
 extension of a known builder's receiver (`buildString { appendXyz(q) }`) is
 no write unless a call chain it starts is the lambda's last expression, and a
 member extension declared in a companion object is not found; a receiverless
-`also { it.append(q) }` in a builder is not tracked; a chain of more than 64
-calls or getters is cut (`limited`); a capitalized DSL entry
+`also { it.append(q) }` in a builder is not tracked; a chain of 256 or more
+calls or getters is cut (`limited`); a content lambda whose result is a call on
+an object that carries no input itself is a side effect
+(`b.section { Json.encodeToString(q) }`); tree-sitter-kotlin 1.1.0 reads a
+`where(..)` (also `by(..)`, `constructor(..)`) call on the line after another
+statement as an infix call of that name, which in a builder lambda still
+writes, but elsewhere is not followed; a capitalized DSL entry
 point (`Sql.Query { }`) is taken as a SAM constructor, so its writes are not
 followed; a Swift tuple held in a variable (`let pair = (safe, link); switch
 pair`) binds each element to the whole tuple. An
