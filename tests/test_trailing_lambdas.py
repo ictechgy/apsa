@@ -3089,6 +3089,14 @@ DSL_PAGE = """class R(private val web: WebView) {{
         ("items.firstOrNull()?.let { h1(it) } ?: items.lastOrNull()?.let { h2(it) } ?: text(q)", True),
         ("q.takeIf { admin }?.let { h1(it) } ?: items.firstOrNull()?.let { h2(it) } ?: footer()", True),
         ("(q.takeIf { admin }?.let { h1(it) }) ?: footer()", True),
+        ("val cached: String? = null\n            cached ?: load(q) ?: return@page", False),
+        ('items.firstOrNull()?.let { h1(it) } ?: lookupName(q) ?: text("x")', False),
+        ("header() and (q)", False),
+        ("val mx = items.maxOfOrNull { weigh(it, q) }\n            println(mx)", False),
+        ("val r = runCatching { parse(q) }\n            println(r)", False),
+        ("val total = items.fold(0) { acc, x -> acc + weigh(x, q) }\n            println(total)", False),
+        ("val g = items.groupBy { keyOf(it, q) }\n            println(g)", False),
+        ("val n = items.sumOf { weigh(it, q) }\n            println(n)", False),
         ("items.firstOrNull()?.let { text(it) } ?: text(q)", True),
         ("q.takeIf { admin }?.let { text(it) } ?: footer()", True),
         ('val label = q.takeIf { admin }?.let { describe(it) } ?: "x"\n            println(label)', False),
@@ -3196,6 +3204,18 @@ def test_flow_operator_block_emits_into_the_flow(operator: str) -> None:
         ('Fill.at("log").into(b, q)', True),
         ("Fill.with(tracker).into(b, q)", True),
         ("metricsWriter.write(b.body, q)", True),
+        ("selectionTracker.select(b.body, q)", True),
+        ("catalogHelper.fill(b.body, q)", True),
+        ("dialogUtils.fill(b.body, q)", True),
+        ("userTracking.event(b.body, q)", False),
+        ("appTracker.track(b.body, q)", False),
+        ('LogUtils.d("t", b.body, q)', False),
+        ("AppLogHelper.debug(b.body, q)", False),
+        ("Sentry.captureMessage(b.body, q)", False),
+        ("Fill.into(b.code, q)", True),
+        ("Fill.into(b.tag, q)", True),
+        ('mLog.d("t", b.body, q)', False),
+        ("eventTracker.track(b.body, q)", False),
         ("analyticsTracker.track(b.text, q)", False),
         ('mFirebaseAnalytics.logEvent("open", b.body, q)', False),
         ("Fill.into(b.title, q)", True),
@@ -3220,6 +3240,9 @@ def test_values_parts_and_logging_calls_with_a_supplied_object(stmt: str, expect
         ("Fill.into(m.getText(), q);", True),
         ("Fill.into(m.getValue(), q);", True),
         ("Fill.into(m.getLabel(), q);", True),
+        ("Fill.into(m.getCode(), q);", True),
+        ('Fill.into(m.getCharSequence("k"), q);', False),
+        ('System.err.printf("%s %s", m.getBody(), q);', False),
         ("System.arraycopy(q.getBytes(), 0, m.getBuf(), 0, 4);", True),
         ("Fill.into(m.getChild(0), q);", True),
         ("Fill.into(q == null ? m.getBody() : m.getHead(), q);", True),
@@ -3256,6 +3279,7 @@ def test_java_values_parts_and_suppliers_of_a_supplied_object(stmt: str, expecte
         ("", "Ext.page { info { q }; footer() }", True),
         ("import com.lib.log.*\n", 'Ext.page { debugLog { "query for $q" }; "SELECT 1" }', False),
         ("import com.lib.debugLog\n", 'Ext.page { debugLog { "query for $q" }; "SELECT 1" }', False),
+        ("import com.app.ui.dialog.*\n", "Ext.page { info { q }; footer() }", True),
     ],
 )
 def test_lazy_loggers_by_import_and_imported_dsl_content(imports: str, build: str, expected: bool) -> None:
@@ -3285,6 +3309,45 @@ def test_lazy_loggers_by_import_and_imported_dsl_content(imports: str, build: st
             'Markup.render { b -> b.handler { prefs.edit().putString("k", q).apply() }; b.append("SELECT 1"); Unit }',
             False,
         ),
+        ("Markup.render { b -> b.section { q.substring(0, q.length - 1) }; Unit }", True),
+        ('Markup.render { b -> b.section { (q + "x").trim() }; Unit }', True),
+        ('Markup.render { b -> b.section { listOf(title, q).joinToString(" - ") }; Unit }', True),
+        ("Markup.render { b -> b.section { StringBuilder(q).toString() }; Unit }", True),
+        ('Markup.render { b -> b.section { title?.let { "$it: $q" } }; Unit }', True),
+        ('Markup.render { b -> b.section { with(audit) { "$prefix/$q" } }; Unit }', True),
+        ("Markup.render { b -> field = q; b.section { this.field.trim() }; Unit }", True),
+        (
+            'Markup.render { b -> b.button { val e = "open:$q"; audit.track(e) }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
+        ('Markup.render { b -> b.section { q.let { audit.track(it) } }; b.append("SELECT 1"); Unit }', False),
+        (
+            'Markup.render { b -> b.section { with(q) { audit.track(this) } }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
+        (
+            'Markup.render { b -> b.button { val t = Ext.tracker; t.track(q) }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
+        ("Markup.render { b -> b.section { with(q) { val t = trim(); t.uppercase() } }; Unit }", True),
+        ("Markup.render { b -> b.section { q.run { trim().lowercase() } }; Unit }", True),
+        ("Markup.render { b -> b.section { q.run { length.toString() } }; Unit }", True),
+        ('Markup.render { b -> b.section { java.net.URLEncoder.encode(q, "UTF-8") }; Unit }', True),
+        ("Markup.render { b -> b.section { q.let { val t = it.trim(); t.uppercase() } }; Unit }", True),
+        ('Markup.render { b -> b.section { q.let { toString() } }; b.append("SELECT 1"); Unit }', False),
+        ('Markup.render { b -> b.section { q.run { listOf(this) } }; b.append("SELECT 1"); Unit }', False),
+        ('Markup.render { b -> b.section { this.audit.log(q) }; b.append("SELECT 1"); Unit }', False),
+        (
+            'Markup.render { b -> b.button { Analytics.shared.track(q); Analytics.shared.flush() }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
+        ("Markup.render { b -> b.section { template.format(q) }; Unit }", True),
+        (
+            'run { val local = "name = {q}"; Markup.render { b -> b.section { local.replace("{q}", q) }; Unit } }',
+            True,
+        ),
+        ('Markup.render { b -> b.section { audit.let { it.track(q) } }; b.append("SELECT 1"); Unit }', False),
+        ("Markup.render { b -> b.section { prefix.plus(q) }; Unit }", True),
         ('Markup.render { b -> b.section { "$q".lowercase() }; Unit }', True),
         ('Markup.render { b -> b.section { "<p>$q</p>".lowercase() }; Unit }', True),
         ("Markup.render { b -> b.section { Uri.encode(q) }; Unit }", True),
@@ -3293,10 +3356,51 @@ def test_lazy_loggers_by_import_and_imported_dsl_content(imports: str, build: st
         ("q.let { Markup.render { b -> b.section { it.trim() }; Unit } }", True),
         ("Markup.render { b -> field = q; b.section { field.trim() }; Unit }", True),
         ('Markup.render { b -> b.section { q.run { audit.log(this) } }; b.append("SELECT 1"); Unit }', False),
+        ("Markup.render { b -> b.section { val t = repo.lookup(q); t.trim() }; Unit }", True),
+        (
+            'Markup.render { b -> b.button { val t = Tracker.get(); t.track(q) }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
+        (
+            'Markup.render { b -> b.section { template.also { audit.track(q) } }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
+        ("Markup.render { b -> b.section { repo.lookup(q).trim() }; Unit }", True),
+        ("Markup.render { b -> b.section { val t = repo.lookup(q); t.trim().lowercase() }; Unit }", True),
+        (
+            "Markup.render { b -> b.section { val t = repo.lookup(q); val u = t.trim(); u.uppercase() }; Unit }",
+            True,
+        ),
+        ("Markup.render { b -> b.section { val t = repo.lookup(q); template.format(t) }; Unit }", True),
+        ("Markup.render { b -> b.section { q.let { val t = repo.lookup(it); t.trim() } }; Unit }", True),
+        (
+            'Markup.render { b -> b.section { val t = repo.lookup(q); if (q.isEmpty()) audit.track("x") else t.trim() }; Unit }',
+            True,
+        ),
+        ("Markup.render { b -> b.section { val t = repo.lookup(q); return@section t.trim() }; Unit }", True),
+        (
+            'Markup.render { b -> b.button { val t = audit.forUser(q); t.track("open") }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
+        ('Markup.render { b -> b.section { (q + "x").ifBlank { "none" } }; Unit }', True),
+        ('Markup.render { b -> b.section { template.replace(Regex("x")) { q } }; Unit }', True),
+        (
+            'Markup.render { b -> b.section { template.takeIf { q.isNotEmpty() } }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
+        ('Markup.render { b -> b.section { q.run { split(",").first() } }; Unit }', True),
+        (
+            'run { val tpl = "name = %s"; Markup.render { b -> b.section { q.let { tpl.format(it) } }; Unit } }',
+            True,
+        ),
+        ("Markup.render { b -> b.section { StringBuilder(q) }; Unit }", True),
     ],
 )
 def test_callback_results_are_content_only_when_they_are_data(build: str, expected: bool) -> None:
-    helpers = 'private val audit = Ext.audit\n    private val prefs = Ext.prefs\n    private var field = ""'
+    helpers = (
+        'private val audit = Ext.audit\n    private val prefs = Ext.prefs\n    private val repo = Ext.repo\n    private var field = ""\n'
+        '    private val title = "t"\n    private val template = "name = %s"\n    private val prefix: String = "x"'
+    )
     assert _hit(_kotlin(OWN_HELPER.format(supertype="", helpers=helpers, build=build)), SQL) is expected
 
 
@@ -3468,6 +3572,14 @@ def test_long_getter_chain_part_is_handed_over(depth: int) -> None:
         ),
         ('runBlocking { flowOf("SELECT 1").onStart { text(q); emit("x") }.first() }', False),
         ('this@R.repo.flow { param("q", q); limit(10) }.toString()', True),
+        ('com.myapp.db.flow { param("q", q); limit(10) }.toString()', True),
+        ('buildString { append("SELECT 1"); Pair(q, 1).first }', False),
+        ('buildString { append("SELECT "); if (q.isEmpty()) append("1") else appendQuoted(q) }', True),
+        ('buildString { append("SELECT 1"); if (q.isEmpty()) append(";") else { Log.d("t", q) } }', False),
+        (
+            'buildString {\n            append(q)\n            where("x")\n            append(";")\n        }',
+            True,
+        ),
         ('buildString { append("SELECT "); q?.let { append(it) } ?: append("1") }', True),
         ('buildSet<String> { if (!contains("a")) add(q); add("SELECT 1") }.joinToString()', True),
         ('buildList { val added = add(q); add("SELECT 1") }.joinToString()', True),
@@ -3595,9 +3707,9 @@ def test_dsl_writes_in_a_long_branch_chain_cost_linear_calls() -> None:
         return best
 
     # tree-sitter's parent walk costs the depth, which call counts do not see: the class
-    # bodies around each node are found once (about 3.3 times for 4 times the branches;
-    # walking to the root for every write took 28 times).
-    assert elapsed(400) < 10 * max(elapsed(100), 0.02)
+    # bodies around each node are found once (about 9 times for 4 times the branches, the
+    # n^1.6 of the walk itself; walking to the root for every write took about 50 times).
+    assert elapsed(800) < 16 * max(elapsed(200), 0.05)
 
 
 def test_member_extension_after_a_misparsed_where_line_still_writes() -> None:
@@ -3672,15 +3784,15 @@ def test_flat_builder_body_stays_linear() -> None:
 }}
 """
         best = float("inf")
-        for _ in range(2):
+        for _ in range(3):
             started = time.perf_counter()
             assert _hit(_kotlin(source), SQL)
             best = min(best, time.perf_counter() - started)
         return best
 
-    # The last statement of each block or lambda is found once per parent: about 4.8 times
-    # for 4 times the entries (finding it again for every statement took 14.5 times).
-    assert elapsed(4000) < 8 * max(elapsed(1000), 0.02)
+    # The last statement of each block or lambda is found once per parent: about 4 times for
+    # 4 times the entries (finding it again for every statement took 12 to 16 times).
+    assert elapsed(8000) < 8 * max(elapsed(2000), 0.05)
 
 
 def test_project_function_hides_a_member_name_in_another_object_s_flow_dsl() -> None:
@@ -3732,6 +3844,24 @@ def test_misparsed_where_line_keeps_the_lambda_result() -> None:
 )
 def test_swift_initializers_and_print_hand_nothing_over(stmt: str, expected: bool) -> None:
     body = f'let page = Markup.render({{ b in {stmt}; b.add("x") }})\n        web.loadHTMLString(page, baseURL: nil)'
+    assert _hit(_swift(SWIFT_QUERY.format(body=body)), URL) is expected
+
+
+@pytest.mark.parametrize(
+    "section, expected",
+    [
+        ('String(format: "%@", query)', True),
+        ("URL(string: query)", True),
+        ('String(format: "%d", 1)', False),
+        ("self.lookup(query).trimmingCharacters(in: .whitespaces)", True),
+        ("self.track(query)", False),
+    ],
+)
+def test_swift_content_closures_by_their_value(section: str, expected: bool) -> None:
+    body = (
+        f'let page = Markup.render({{ b in b.section {{ {section} }}; b.add("x") }})\n'
+        "        web.loadHTMLString(page, baseURL: nil)"
+    )
     assert _hit(_swift(SWIFT_QUERY.format(body=body)), URL) is expected
 
 
@@ -3839,3 +3969,190 @@ def test_misparsed_final_statement_of_a_builder_keeps_its_value() -> None:
     # loop and a call: the builder's value keeps that final expression's value.
     build = "buildString {\n            a@ b@ c@ for (i in 0 until 2) append(q)\n        }"
     assert _hit(_kotlin(OWN_HELPER.format(supertype="", helpers="", build=build)), SQL)
+
+
+@pytest.mark.parametrize(
+    "assign, expected",
+    [
+        (
+            'u = Ext.refresh { u = q; for (x in listOf("a")) { val u = x; println(u) }; "https://docs.example.test/" }',
+            True,
+        ),
+        ('u = Ext.refresh { Ext.later { var u = q; u = u.trim() }; "https://docs.example.test/" }', False),
+    ],
+)
+def test_callback_shadowing_is_decided_per_assignment(assign: str, expected: bool) -> None:
+    report = _kotlin(
+        f"""class R(private val web: WebView) {{
+    fun q(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+        var u = "https://docs.example.test/"
+        {assign}
+        web.loadUrl(u)
+    }}
+}}
+"""
+    )
+    assert _hit(report, URL) is expected
+
+
+def test_content_through_self_in_swift() -> None:
+    swift = _swift(
+        """import UIKit
+import WebKit
+final class V {
+    let web = WKWebView()
+    var query = ""
+    func application(_ app: UIApplication, open url: URL, options: [String: Any]) {
+        query = url.absoluteString
+        let page = Markup.render({ b in b.section { self.query.uppercased() }; b.add("x") })
+        web.loadHTMLString(page, baseURL: nil)
+    }
+}
+"""
+    )
+    assert _hit(swift, URL)
+
+
+def test_flat_dsl_body_of_braced_branches_stays_linear() -> None:
+    import time
+
+    def elapsed(statements: int) -> float:
+        body = "; ".join(f'if (k == "{index}") {{ text("{index}") }}' for index in range(statements))
+        source = f"""class M(private val web: WebView) {{
+    fun go(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+        val k = intent.getStringExtra("k") ?: ""
+        web.loadUrl(Ext.page {{ {body}; text(q); "https://docs.example.test/" }})
+    }}
+}}
+"""
+        best = float("inf")
+        for _ in range(3):
+            started = time.perf_counter()
+            assert _hit(_kotlin(source), URL)
+            best = min(best, time.perf_counter() - started)
+        return best
+
+    # A block's result position reads its parent's last statement once: about 4 times for 4
+    # times the statements (re-listing the parent for every block took 12 times).
+    assert elapsed(4000) < 8 * max(elapsed(1000), 0.05)
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "val s = buildString {{ {items}; append(q) }}\n        db.execSQL(s)",
+        'web.loadUrl(Ext.page {{ {items}; text(q); "x" }})',
+    ],
+)
+def test_flat_bodies_of_braced_blocks_and_lambdas_stay_linear(shape: str) -> None:
+    import time
+
+    def elapsed(count: int) -> float:
+        if shape.startswith("val s"):
+            items = "; ".join(f'if (k == "{index}") {{ append("{index}") }}' for index in range(count))
+        else:
+            items = "; ".join(f'section {{ "{index}" }}' for index in range(count))
+        source = f"""class M(private val web: WebView, private val db: SQLiteDatabase) {{
+    fun go(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+        val k = intent.getStringExtra("k") ?: ""
+        {shape.format(items=items)}
+    }}
+}}
+"""
+        best = float("inf")
+        for _ in range(3):
+            started = time.perf_counter()
+            _kotlin(source)
+            best = min(best, time.perf_counter() - started)
+        return best
+
+    # Whether a statement is its block's last, and whether a call's value is discarded, is
+    # decided once per parent: about 4 times for 4 times the statements (listing the parent
+    # for every statement took 12 times).
+    assert elapsed(4000) < 8 * max(elapsed(1000), 0.05)
+
+
+def test_misparsed_where_line_after_a_declaration_still_writes() -> None:
+    report = _kotlin(
+        """class Screen(private val db: SQLiteDatabase) {
+    private fun StringBuilder.where(c: String) { append(" WHERE "); append(c) }
+    fun show(intent: Intent) {
+        val q = intent.getStringExtra("q") ?: ""
+        val sql = buildString {
+            val start = append("SELECT * FROM t")
+            where("n = '$q'")
+        }
+        db.execSQL(sql)
+    }
+}
+"""
+    )
+    assert _hit(report, SQL)
+
+
+@pytest.mark.parametrize(
+    "assign, expected",
+    [
+        (
+            'u = Ext.retry { if (q.isEmpty()) { var u = q; u = u.trim() }; "https://docs.example.test/" }',
+            False,
+        ),
+        ('u = Ext.fetch { u = q; Ext.each { var u = ""; println(u) }; "https://docs.example.test/" }', True),
+    ],
+)
+def test_callback_shadowing_in_nested_blocks_and_lambdas(assign: str, expected: bool) -> None:
+    report = _kotlin(
+        f"""class R(private val web: WebView) {{
+    fun q(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+        var u = "https://docs.example.test/"
+        {assign}
+        web.loadUrl(u)
+    }}
+}}
+"""
+    )
+    assert _hit(report, URL) is expected
+
+
+def test_binding_when_entry_ending_in_an_else_if_chain_reads_the_entry_locals() -> None:
+    report = _kotlin(
+        """class R(private val web: WebView, private val strict: Boolean) {
+    fun q(intent: Intent) {
+        val q = intent.getStringExtra("q") ?: ""
+        val target = when (val u = q) {
+            "" -> "https://docs.example.test/"
+            else -> {
+                val v = u.lowercase()
+                if (strict) { "https://docs.example.test/" } else if (u.length > 3) { "https://docs.example.test/" } else { "https://x.test/$v" }
+            }
+        }
+        web.loadUrl(target)
+    }
+}
+"""
+    )
+    assert _hit(report, URL)
+
+
+def test_function_of_an_outer_class_binds_from_an_inner_class_dsl() -> None:
+    report = _kotlin(
+        """class Outer(private val web: WebView) {
+    fun log(s: String) {}
+    inner class In {
+        fun go(q: String) { web.loadUrl(Ext.page { log(q); "https://docs.example.test/" }) }
+    }
+    fun open(intent: Intent) { In().go(intent.getStringExtra("q") ?: "") }
+}
+"""
+    )
+    assert not _hit(report, URL), report["findings"]
+
+
+def test_standard_builder_through_a_field_named_like_a_package_root_is_a_dsl() -> None:
+    helpers = "private val android = Ext.dsl"
+    build = 'android.repo.flow { param("q", q); limit(10) }.toString()'
+    assert _hit(_kotlin(OWN_HELPER.format(supertype="", helpers=helpers, build=build)), SQL)

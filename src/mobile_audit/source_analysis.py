@@ -31,19 +31,7 @@ MAX_PATH_ROUTE_EVIDENCE = 32
 # Links of a call or getter chain followed to the object it is rooted at.
 MAX_CHAIN = 256
 # First segments of package paths a standard builder is called through (`kotlinx.coroutines.flow.flow { }`).
-PACKAGE_ROOTS = {
-    "kotlin",
-    "kotlinx",
-    "java",
-    "javax",
-    "android",
-    "androidx",
-    "com",
-    "org",
-    "io",
-    "net",
-    "dev",
-}
+PACKAGE_ROOTS = {"kotlin", "kotlinx", "java", "javax", "android", "androidx"}
 LANGUAGES = {".java": "java", ".kt": "kotlin", ".kts": "kotlin", ".swift": "swift", ".m": "objc"}
 UNSUPPORTED_SOURCE = {".mm", ".dart", ".js", ".jsx", ".ts", ".tsx", ".cs"}
 # Property accessor bodies (Swift computed get/set/modify and willSet/didSet, Kotlin
@@ -599,7 +587,6 @@ VALUE_MEMBERS = {
     "type",
     "index",
     "status",
-    "code",
     "version",
     "ordinal",
     "enabled",
@@ -658,17 +645,27 @@ STRING_TRANSFORMS = {
     "reversed",
     "toString",
     "orEmpty",
+    "split",
+    "lines",
 }
+# Value classes whose constructor builds a value from its arguments (`String(format: "%@", q)`,
+# `StringBuilder(q)`, `URL(string: q)`).
+VALUE_CONSTRUCTORS = {"String", "StringBuilder", "URL", "URLComponents"}
 # Logging and analytics calls write into none of their arguments (`Log.d(TAG, b.body)`,
 # `Timber.d("%s", this)`, `Analytics.track(b.text, q)`).
 LOGGING_NAME = re.compile(
-    r"(?i)(?:m_?|_)?(?:log|timber|napier|kermit)"
-    r"|\w*(?:logger|analytics|tracker|tracking|crashlytics|telemetry|metrics)"
+    r"(?i)(?:m_?|_)?(?:log|timber|napier|kermit|tracker|tracking|metrics|sentry|bugsnag)"
+    r"|\w*(?:logger|analytics|crashlytics|telemetry|tracking)|\w*(?:analytics|event|screen|usage|user|app)\w*tracker"
+    # Logging wrappers: `LogUtils`, `AppLogHelper`, `logUtil`, by a capitalized `Log` word
+    # (not `catalogHelper` or `dialogUtils`).
+    r"|(?-i:(?:\w*Log|log)(?:Utils?|Helper|Wrapper))"
 )
 LOGGING_FUNCTIONS = {"println", "print", "debugPrint", "NSLog", "os_log", "dump"}
 # A receiverless logging function whose lambda builds a lazy message (`logcat { "msg $q" }`).
 # A star-imported package that can supply such a function (`import logcat.*`, `com.lib.log.*`).
-LOGGING_PACKAGE = re.compile(r"(?i)(?:^|\.)\w*log")
+LOGGING_PACKAGE = re.compile(
+    r"(?i)(?:^|\.)(?:log|logs|logging|logger|loggers|logcat|timber|napier|kermit)(?:\.|$)"
+)
 LAZY_LOGGERS = re.compile(r"log(?:cat|[A-Z]\w*)?|[a-z]\w*Log|verbose|debug|info|warn(?:ing)?|trace")
 # Calls whose lambda's implicit receiver is a builder they create and return, with the
 # members (and standard extensions) that write data into it. A receiverless call by one
@@ -894,6 +891,20 @@ MAPPING_FUNCTIONS = {
     "reduceIndexed",
     "runningFold",
     "scan",
+    "maxOfOrNull",
+    "minOfOrNull",
+    "runCatching",
+    "joinToString",
+    "mapValues",
+    "mapKeys",
+    "mapTo",
+    "mapNotNullTo",
+    "flatMapTo",
+    "associateTo",
+    "groupByTo",
+    "firstNotNullOfOrNull",
+    "sumBy",
+    "zip",
 }
 # Callee spellings that name the called function; any other callee expression is evaluated first.
 # Builders whose lambda runs later, when their result is iterated or collected.
@@ -4281,8 +4292,13 @@ class Analyzer:
                 value = self.native_flow.local_value(
                     self, node, type_name, value, frame, initialized=expression is not None
                 )
+            unwrapped = self.unwrap(expression) if expression is not None else None
+            literal = unwrapped is not None and unwrapped.type in STRINGS
             frame.values[name] = Value(
-                value.traces, value.category, type_name or value.type_name, value.identity
+                value.traces,
+                value.category,
+                type_name or value.type_name or ("String" if literal else ""),
+                value.identity,
             )
             if type_name:
                 frame.types[name] = type_name
@@ -4654,7 +4670,9 @@ class Analyzer:
             # `append(..)` and a `where(..)` line read as one infix expression: two statements.
             for child in node.named_children:
                 self.visit(child, frame, guards, conditions)
-            # The expression keeps its value (a closure's result may be it); the call writes.
+            # The expression keeps its value (a closure's result may be it); the call writes,
+            # also where tree-sitter glued it to a declaration or assignment line before it.
+            self.statement_positions[(node.start_byte, node.end_byte, node.type)] = True
             self.record_visited(misparsed, frame, self.reused(node, frame))
             return
         call = self.call(node)
@@ -5356,25 +5374,19 @@ class Analyzer:
                 result = _field(parent, "body") == current
                 break
             if parent.type == "lambda_literal":
-                statements = [
-                    part
-                    for part in parent.named_children
-                    if part.type not in COMMENTS
-                    and part.type
-                    not in {"lambda_parameters", "label", "lambda_function_type", "capture_list"}
-                ]
-                result = bool(statements) and statements[-1] == current
+                result = self.last_part(parent) == key
                 break
             if parent.type in {"block", "statements", "control_structure_body"}:
-                statements = [part for part in parent.named_children if part.type not in COMMENTS]
-                if not statements or statements[-1] != current:
+                # The last statement of each parent is found once (a flat lambda of n braced
+                # statements stays linear).
+                if self.last_part(parent) != key:
                     break
                 if (
                     parent.type == "statements"
                     and parent.parent is not None
                     and parent.parent.type in CLOSURES
                 ):
-                    result = len(statements) == 1
+                    result = len([part for part in parent.named_children if part.type not in COMMENTS]) == 1
                     break
             elif parent.type not in BRANCHING | {"when_entry", "switch_entry", "catch_block"}:
                 break
@@ -5414,11 +5426,12 @@ class Analyzer:
         """A closure whose result is a value (`{ q }`, `{ "a" + q }`, `{ q.trim() }`, also on its
         own locals, `{ val t = q.trim(); t.uppercase() }`), not the result of a call it makes
         (`{ analytics.track(q) }`, `{ [weak self] in self?.log(q) }`)."""
-        return self.value_result(self.last_statement(closure), frame, data=self.closure_locals(closure))
+        data, results = self.closure_data_locals(closure, frame, frozenset())
+        return self.value_result(self.last_statement(closure), frame, data=data, results=results)
 
-    def closure_locals(self, closure: Any) -> frozenset[str]:
-        """The names a closure body declares (`val t = ..`, Java `String t = ..`), not nested closures'."""
-        names: set[str] = set()
+    def closure_declarations(self, closure: Any) -> list[tuple[str, Any]]:
+        """The locals a closure body declares, with their initializers, in source order."""
+        found: list[tuple[int, str, Any]] = []
         pending = [part for part in closure.named_children]
         while pending:
             node = pending.pop()
@@ -5427,10 +5440,43 @@ class Analyzer:
             for item in node.named_children if node.type == "local_variable_declaration" else [node]:
                 declared = self.declaration(item)
                 if declared:
-                    names.add(declared[0])
+                    found.append((item.start_byte, declared[0], declared[1]))
             if node.type not in STRINGS:
                 pending.extend(node.named_children)
-        return frozenset(names)
+        return [(name, initializer) for _, name, initializer in sorted(found, key=lambda row: row[0])]
+
+    def closure_data_locals(
+        self, closure: Any, frame: Frame, data: frozenset[str], on_receiver: bool = False
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        """The locals a closure declares from data (`val t = q.trim()`, in `with(q) { }` also
+        `val t = trim()`), not a service it holds (`val t = Ext.tracker`); and apart from them
+        its other initialized locals (`val t = repo.lookup(q)`), which only a String transform
+        reads as data, as on a call's result itself (`result_transform`)."""
+        names = set(data)
+        results: set[str] = set()
+        for name, initializer in self.closure_declarations(closure):
+            is_data = initializer is not None and self.data_expression(
+                initializer, frame, frozenset(names), on_receiver
+            )
+            names.discard(name)
+            results.discard(name)
+            if is_data:
+                names.add(name)
+            elif initializer is not None:
+                results.add(name)
+        return frozenset(names - data), frozenset(results)
+
+    def result_transform(self, call: Call, frame: Frame, results: frozenset[str]) -> bool:
+        """A String transform of a value that is not data itself: a call's result over input,
+        which an unresolved callee may return (`repo.lookup(q).trim()`), or a closure's other
+        local (`t.trim()` on `val t = repo.lookup(q)`; `results`). Another call on such a local
+        (`t.track("open")`) is a side effect."""
+        if call.receiver is None or call.name.rsplit(".", 1)[-1] not in STRING_TRANSFORMS:
+            return False
+        if self.reused(call.receiver, frame).traces:
+            return True
+        base = self.chain_base(call.receiver)
+        return base is not None and base.type in IDENTIFIERS and self.symbol_name(self.text(base)) in results
 
     def last_statement(self, node: Any) -> Any:
         """The last statement of a closure or block body, past signatures and capture lists."""
@@ -5455,12 +5501,14 @@ class Analyzer:
         depth: int = 0,
         data: frozenset[str] = frozenset(),
         on_receiver: bool = False,
+        results: frozenset[str] = frozenset(),
     ) -> bool:
         """Whether an expression's value can be a value it holds rather than only a call's result.
 
         `data` names a closure's own locals and a scope block's parameters over data
         (`q.let { it.trim() }`); `on_receiver` marks a `run`/`with` block on data, whose
-        receiverless string transforms are calls on it (`q.run { trim() }`).
+        receiverless string transforms are calls on it (`q.run { trim() }`); `results` names
+        a closure's locals holding a call's result over input (`val t = repo.lookup(q)`).
         """
         node = self.unwrap(node)
         if node is None or depth > 16:
@@ -5479,12 +5527,14 @@ class Analyzer:
                 and re.match(r"return\s*@", self.text(node).lstrip())
             ):
                 values = values[1:]  # tree-sitter-kotlin 1.1.0: `return@section q` names its label first
-            return bool(values) and self.value_result(values[-1], frame, depth + 1, data, on_receiver)
+            return bool(values) and self.value_result(
+                values[-1], frame, depth + 1, data, on_receiver, results
+            )
         if node.type in STATEMENT_ONLY:
             return False
         if self.branching(node):
             return any(
-                self.value_result(self.last_statement(branch), frame, depth + 1, data, on_receiver)
+                self.value_result(self.last_statement(branch), frame, depth + 1, data, on_receiver, results)
                 for branch in self.branch_bodies(node) or []
                 if branch is not None
             )
@@ -5494,71 +5544,167 @@ class Analyzer:
         name = call.name.rsplit(".", 1)[-1]
         block = self.closure_argument(call.args[-1]) if call.args else None
         if call.receiver is None and name == "with" and block is not None and len(call.args) == 2:
-            # `with(q) { trim() }` is its block's result, on q.
-            if self.data_expression(call.args[0], frame, data):
-                return self.value_result(self.last_statement(block), frame, depth + 1, data, True)
-            return False
-        # A transform of data (`q.trim()`, `"$q".lowercase()`, `String.format(..)`) is a value:
-        # a call on a local, a parameter, a literal or a value utility class. A receiverless
-        # call or one on a field or another object (`analytics.track(q)`) is a side effect.
-        if call.receiver is None:
-            return on_receiver and name in STRING_TRANSFORMS
-        if not self.data_expression(
-            call.receiver, frame, data | ({"this"} if on_receiver else set()), self.chain_arguments(call)
-        ):
-            return False
-        if name in {"forEach", "forEachIndexed"}:
-            return False
-        if name in {"let", "run", "use"} and block is not None:
-            # `q.let { log(it) }` is its block's result: data only where the block returns one.
-            names = {"it", *(declared for declared, _, _ in self.closure_parameters(block))}
+            # `with(config) { "$host/$q" }` is its block's result; on data (`with(q) { trim() }`)
+            # its receiverless string transforms are calls on that data.
+            subject = self.data_expression(call.args[0], frame, data)
+            block_data, block_results = self.closure_data_locals(block, frame, data, subject)
             return self.value_result(
                 self.last_statement(block),
                 frame,
                 depth + 1,
-                data | names | self.closure_locals(block),
-                name == "run",
+                data | block_data,
+                subject,
+                results | block_results,
             )
+        # A transform of data (`q.trim()`, `"$q".lowercase()`, `String.format(..)`) is a value:
+        # a call whose chain starts at data. A receiverless call or one on a service
+        # (`analytics.track(q)`, `prefs.edit().putString("k", q).apply()`) is a side effect.
+        if call.receiver is None:
+            # `String(format: "%@", q)`: a value built from its arguments.
+            return name in VALUE_CONSTRUCTORS or on_receiver and name in STRING_TRANSFORMS
+        receiver_data = self.data_expression(
+            call.receiver, frame, data | ({"this"} if on_receiver else set()), on_receiver
+        ) or self.result_transform(call, frame, results)
+        if (
+            not receiver_data
+            and name not in {"let", "run", "use"}
+            and self.string_template(call, frame, data | results)
+        ):
+            return True
+        if name in {"let", "run", "use"} and block is not None:
+            # `title?.let { "$it: $q" }` is its block's result; over data (`q.let { it.trim() }`)
+            # its parameter is data too; `q.let { log(it) }` is a call's result.
+            names = (
+                {"it", *(declared for declared, _, _ in self.closure_parameters(block))}
+                if receiver_data
+                else set()
+            )
+            scope = data | names
+            block_data, block_results = self.closure_data_locals(
+                block, frame, frozenset(scope), name == "run" and receiver_data
+            )
+            return self.value_result(
+                self.last_statement(block),
+                frame,
+                depth + 1,
+                scope | block_data,
+                name == "run" and receiver_data,
+                results | block_results,
+            )
+        if not receiver_data or name in {"forEach", "forEachIndexed"}:
+            return False
         return True
 
-    def chain_arguments(self, call: Call) -> tuple[Any, ...]:
-        """The arguments of a call and of every call of its receiver chain
-        (`prefs.edit().putString("k", q).apply()` passes q)."""
+    def string_template(self, call: Call, frame: Frame, data: frozenset[str] = frozenset()) -> bool:
+        """A transform of a String held in a name that inserts input (`tpl.format(q)`,
+        `tpl.replace("{q}", q)`, `prefix.plus(q)`): the template's root is a String constant
+        or a String-typed parameter, and an argument of the chain carries input."""
+        base = self.unwrap(call.receiver) if call.receiver is not None else None
         arguments = list(call.args)
-        current = call
         for _ in range(MAX_CHAIN):
-            inner = self.call(self.unwrap(current.receiver)) if current.receiver is not None else None
-            if inner is None:
+            inner = self.call(base) if base is not None else None
+            if inner is None or inner.receiver is None:
                 break
             arguments.extend(inner.args)
-            current = inner
-        return tuple(arguments)
+            base = self.unwrap(inner.receiver)
+        if base is None or base.type not in IDENTIFIERS:
+            return False
+        root = self.symbol_name(self.text(base))
+        declared = (
+            self.parameter_types.get(root, "")
+            or frame.types.get(root, "")
+            or self.reused(base, frame).type_name
+        )
+        if declared.rstrip("?") not in {
+            "String",
+            "CharSequence",
+            "java.lang.String",
+            "kotlin.String",
+            "Swift.String",
+        } and not self.string_field(base, root):
+            return False
+        return any(self.argument_data(argument, frame, data) for argument in arguments)
+
+    def argument_data(self, argument: Any, frame: Frame, data: frozenset[str]) -> bool:
+        """An argument that carries input: its value has traces (also a lambda's result,
+        `tpl.replace(Regex("x")) { q }`), or it names data (`it` in `q.let { tpl.format(it) }`)."""
+        target = self.unwrap(argument)
+        if target is not None and target.type in IDENTIFIERS and self.symbol_name(self.text(target)) in data:
+            return True
+        return bool(self.reused(argument, frame).traces)
+
+    def string_field(self, node: Any, name: str) -> bool:
+        """A property of a class around the node declared as a String or from a string literal
+        (`private val template = "name = %s"`)."""
+        for body in self.class_bodies(node):
+            for member in body.named_children:
+                declared = self.declaration(member) if member.type == "property_declaration" else None
+                if not declared or declared[0] != name:
+                    continue
+                expression = self.unwrap(declared[1]) if declared[1] is not None else None
+                return declared[2].rstrip("?") in {"String", "CharSequence"} or (
+                    expression is not None and expression.type in STRINGS
+                )
+        return False
 
     def data_expression(
-        self, node: Any, frame: Frame, data: frozenset[str], arguments: tuple[Any, ...] = ()
+        self, node: Any, frame: Frame, data: frozenset[str], on_receiver: bool = False
     ) -> bool:
-        """An expression that is data: a literal, a value class (`String.format`), a name in
-        `data`, or a value that carries input (`q`, `(q as CharSequence)`, a field assigned q).
-        A service held in a field, a local or a parameter (`tracker`, `analytics`) carries none,
-        but for what a call on it passed it (`tracker.track(q)` weak-writes q into tracker,
-        `prefs.edit().putString("k", q)` returns an editor that carries q): input that came
-        through the `arguments` of the call or of its receiver chain does not count."""
-        target = self.unwrap(node)
-        if target is not None and target.type in STRINGS:
+        """An expression whose call chain starts at data: a literal, a value class
+        (`String.format`), a name in `data`, a receiverless call or constructor that took input
+        (`listOf(title, q)`, `StringBuilder(q)`, `requireNotNull(q)`), a local or parameter
+        holding input, or a field or other reference holding an input value (`field = q`,
+        `intent`). A service in a field, local or parameter (`tracker`, `prefs`) holds none;
+        one an earlier call weak-wrote input into keeps no input value of its own."""
+        base = self.chain_base(node)
+        if base is None:
+            return False
+        if base.type in STRINGS:
             return True
         # `+String.format(..)` parses with `+String` as the receiver: the unaryPlus of a call.
-        root = re.split(r"[.?!(\[]", self.text(node).strip().lstrip("+-"), maxsplit=1)[0]
-        if root in VALUE_CLASSES or root in data:
+        path = self.text(base).strip().lstrip("+-")
+        root = re.split(r"[.?!(\[]", path, maxsplit=1)[0]
+        if root in {"this", "self", "super"} and "." in path and root not in data:
+            root = re.split(r"[.?!(\[]", path.split(".", 1)[1], maxsplit=1)[0]  # `this.field`, `self.query`
+        # `java.net.URLEncoder.encode(..)`: the class a qualified path names.
+        named = next((segment for segment in path.split(".") if segment[:1].isupper()), "")
+        if re.split(r"[?!(\[]", named, maxsplit=1)[0] in VALUE_CLASSES or root in data:
             return True
         if root in {"this", "self", "super"}:
             return False
-        passed = {
-            self.source_key(trace)
-            for argument in arguments
-            if self.closure_argument(argument) is None
-            for trace in self.reused(argument, frame).traces
-        }
-        return any(self.source_key(trace) not in passed for trace in self.reused(node, frame).traces)
+        receiverless = self.call(base)
+        if on_receiver and (
+            receiverless is not None
+            and receiverless.receiver is None
+            and receiverless.name in STRING_TRANSFORMS
+            or base.type in IDENTIFIERS
+            and root in {"length", "lastIndex", "indices"}
+            and root not in frame.local_names
+        ):
+            return True  # in `q.run { trim().lowercase() }` or `q.run { length.toString() }`, on q
+        value = self.reused(base, frame)
+        if not value.traces:
+            return False
+        if base.type not in IDENTIFIERS and not self.navigation(base):
+            return True  # a call or an expression computed from input (`(q + "x").trim()`)
+        if root in frame.local_names or root in self.parameter_types:
+            return True
+        return value.category != "unknown"
+
+    def chain_base(self, node: Any) -> Any:
+        """The receiver a call chain starts at (`repo` in `repo.lookup(q).trim()`), or the node
+        itself when it is no call on a receiver. A call on `this`, `self` or `super`
+        (`self.lookup(q)`) is its own base, like `lookup(q)`."""
+        base = self.unwrap(node)
+        for _ in range(MAX_CHAIN):
+            call = self.call(base) if base is not None else None
+            if call is None or call.receiver is None:
+                break
+            receiver = self.unwrap(call.receiver)
+            if receiver is not None and self.text(receiver).strip() in {"this", "self", "super"}:
+                break
+            base = receiver
+        return base
 
     def implicit_chain(self, call: Call, frame: Frame) -> list[Call]:
         """The calls of a chain written into a Kotlin lambda's implicit receiver.
@@ -5719,18 +5865,25 @@ class Analyzer:
         if parent.type in {"labeled_expression", "parenthesized_expression"}:
             return parent
         if parent.type == "binary_expression" and self.elvis(parent):
-            if position == 1:
-                return parent  # `x ?: append(q)`
             operand = node
             while operand.type == "parenthesized_expression" and operand.named_children:
                 operand = operand.named_children[0]
             scope = self.call(operand)
-            if (
-                scope is not None
-                and scope.name.rsplit(".", 1)[-1] in SCOPE_FUNCTIONS
-                or operand.type == "binary_expression"
-                and self.elvis(operand)
-            ):
+            scoped = scope is not None and scope.name.rsplit(".", 1)[-1] in SCOPE_FUNCTIONS
+            if position == 1:
+                outer = parent.parent
+                if (
+                    not scoped
+                    and outer is not None
+                    and outer.type == "binary_expression"
+                    and self.elvis(outer)
+                    and _same_node(
+                        next(part for part in outer.named_children if part.type not in COMMENTS), parent
+                    )
+                ):
+                    return False  # `cached ?: load(q) ?: return@page`: the outer elvis tests load(q)
+                return parent  # `x ?: append(q)`
+            if scoped or operand.type == "binary_expression" and self.elvis(operand):
                 # `x?.let { text(it) } ?: footer()` runs the block for its effects, also in a
                 # chain (`a?.let { .. } ?: b?.let { .. } ?: c`, read as `(a ?: b) ?: c`).
                 return parent
@@ -5990,13 +6143,13 @@ class Analyzer:
             return True
         if parent.type not in {"statements", "block", "lambda_literal", "control_structure_body"}:
             return False
+        if self.last_part(parent) != (node.start_byte, node.end_byte, node.type):
+            return True  # the last statement of each parent is found once
         statements = [
             part
             for part in parent.named_children
             if part.type not in COMMENTS and part.type != "lambda_parameters"
         ]
-        if not statements or statements[-1] != node:
-            return True
         # A last statement is the value of a closure or of an if/when/try branch.
         owner = parent if parent.type == "lambda_literal" else parent.parent
         if (
@@ -6096,11 +6249,11 @@ class Analyzer:
                 == (closure.start_byte, closure.end_byte)
             ):
                 continue  # `{ .. }()` runs where it is written
-            if target in self.closure_locals(closure):
-                continue  # `refresh { var url = requested; url = url.trim() }` shadows the target
             for part in _walk(closure):
                 if part.type not in {"assignment", "assignment_expression"}:
                     continue
+                if self.shadowed(part, closure, target):
+                    continue  # `refresh { var url = requested; url = url.trim() }` writes its own url
                 left = self.assignment_target(
                     _field(part, "left") or _field(part, "target") or next(iter(part.named_children), None)
                 )
@@ -6115,6 +6268,25 @@ class Analyzer:
                     # value from before, but not that value itself where it did not assign.
                     written.append(stored)
         return _union(written) if written else None
+
+    def shadowed(self, node: Any, closure: Any, name: str) -> bool:
+        """Whether a block or lambda between a node and a closure (also a nested closure)
+        declares `name` before the node, so the node's `name` is that local."""
+        child, current = node, node.parent
+        while current is not None:
+            if current.type in BLOCKS | CLOSURES | {"control_structure_body"}:
+                for sibling in current.named_children:
+                    if sibling.start_byte >= child.start_byte:
+                        break
+                    items = (
+                        sibling.named_children if sibling.type == "local_variable_declaration" else [sibling]
+                    )
+                    if any((declared := self.declaration(item)) and declared[0] == name for item in items):
+                        return True
+            if _same_node(current, closure):
+                return False
+            child, current = current, current.parent
+        return False
 
     def closure_owner(self, closure: Any) -> Call | None:
         """The call a closure literal is an argument (or the trailing lambda) of."""
@@ -6454,8 +6626,14 @@ class Analyzer:
             return self.builder_result(statements[-1], frame) if statements else None
         branches = self.branch_bodies(node)
         if branches is None:
-            if self.call(node) is not None:
-                root = self.chain_root(node)
+            target = self.unwrap(node)
+            for _ in range(MAX_CHAIN):
+                navigation = self.navigation(target) if target is not None else None
+                if not navigation:
+                    break
+                target = self.unwrap(navigation[0])  # `Pair(q, 1).first`: the call it reads from
+            if target is not None and self.call(target) is not None:
+                root = self.chain_root(target)
                 if (
                     root is None
                     or root.name in NON_WRITERS
