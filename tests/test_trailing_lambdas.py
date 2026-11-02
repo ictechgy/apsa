@@ -2241,21 +2241,21 @@ def test_long_branch_chain_in_a_closure_stays_fast() -> None:
     }}
 }}
 """
-        best = float("inf")
-        found = True
-        for _ in range(2):
-            started = time.perf_counter()
-            found = _hit(_kotlin(source), URL) and found
-            best = min(best, time.perf_counter() - started)
-        assert found
-        return best
+        started = time.process_time()
+        assert _hit(_kotlin(source), URL)
+        return time.process_time() - started
 
     # Each node's result and statement position is decided once. The time still grows about
     # n^1.6 here, from tree-sitter's parent walk on deep nesting (about 10 times for 4 times
     # the branches; the uncached walk grew about 50 times), so the time bound is loose; the
     # Python and C calls the analysis makes are counted exactly and grow linearly (3.8
-    # times; uncached 6.6 times).
-    assert elapsed(800) < 20 * max(elapsed(200), 0.01)
+    # times; uncached 6.6 times). The process's own CPU time is compared, the two sizes in
+    # turn and each by its best run, so other processes' load does not decide the ratio.
+    small = large = float("inf")
+    for _ in range(3):
+        small = min(small, elapsed(200))
+        large = min(large, elapsed(800))
+    assert large < 20 * max(small, 0.01)
 
     def calls(branches: int) -> int:
         chain = " else ".join(
@@ -3240,6 +3240,25 @@ def test_flow_operator_block_emits_into_the_flow(operator: str) -> None:
         ('LogUtils.d("t", b.body, q)', False),
         ("AppLogHelper.debug(b.body, q)", False),
         ("Sentry.captureMessage(b.body, q)", False),
+        ("selection_tracker.select(b.body, q)", True),
+        ("userEngagementTracker.d(b.body, q)", False),
+        ("debugLog.d(b.body, q)", False),
+        ("app_log.d(b.body, q)", False),
+        ("eventLog.fill(b.body, q)", True),
+        ("audit_log.fill(b.body, q)", True),
+        ("appsflyerTracker.track(b.body, q)", False),
+        ("AppsflyerTracker.track(b.body, q)", False),
+        ("slog.fill(b.body, q)", True),
+        ("sLog.d(b.body, q)", False),
+        ("change_log.fill(b.body, q)", True),
+        ("call_log.fill(b.body, q)", True),
+        ("order_tracking.fill(b.body, q)", True),
+        ("app_state_tracker.fill(b.body, q)", True),
+        ("app_metrics.write(b.body, q)", True),
+        ("event_tracker.track(b.body, q)", False),
+        ("screen_view_tracker.track(b.body, q)", False),
+        ("m_log.d(b.body, q)", False),
+        ("crash_logger.d(b.body, q)", False),
         ("Fill.into(b.code, q)", True),
         ("Fill.into(b.tag, q)", True),
         ('mLog.d("t", b.body, q)', False),
@@ -3359,7 +3378,10 @@ def test_lazy_loggers_by_import_and_imported_dsl_content(imports: str, build: st
         ),
         ("Markup.render { b -> b.section { with(q) { val t = trim(); t.uppercase() } }; Unit }", True),
         ("Markup.render { b -> b.section { q.run { trim().lowercase() } }; Unit }", True),
-        ("Markup.render { b -> b.section { q.run { length.toString() } }; Unit }", True),
+        (
+            'Markup.render { b -> b.section { q.run { length.toString() } }; b.append("SELECT 1"); Unit }',
+            False,
+        ),
         ('Markup.render { b -> b.section { java.net.URLEncoder.encode(q, "UTF-8") }; Unit }', True),
         ("Markup.render { b -> b.section { q.let { val t = it.trim(); t.uppercase() } }; Unit }", True),
         ('Markup.render { b -> b.section { q.let { toString() } }; b.append("SELECT 1"); Unit }', False),
@@ -4893,8 +4915,13 @@ def test_string_constants_and_fields_of_other_files_are_templates_and_data() -> 
         return analyze_sources([("app/src/main/java/com/example/notes/Notes.kt", source), sql])
 
     assert _hit(report("Sql.BY_NAME.format(q)"), SQL)
+    assert _hit(report("com.example.notes.Sql.BY_NAME.uppercase().format(q)"), SQL)
     assert _hit(report("TOP.format(q)"), SQL)
     assert _hit(report("Session.query.encodeForWeb()", pre="        Session.query = q.trim()\n"), SQL)
+    assert _hit(
+        report("com.example.notes.Session.query.encodeForWeb()", pre="        Session.query = q.trim()\n"),
+        SQL,
+    )
     java = analyze_sources(
         [
             (
@@ -4944,6 +4971,11 @@ def test_primary_constructor_string_property_holding_input_is_data() -> None:
         ("() -> PREFIX.concat(q)", True),
         ('() -> { String t = Ext.lookup(q); return t.formatted("x"); }', True),
         ("() -> q instanceof String", False),
+        ("() -> String.valueOf(q.length())", False),
+        ("() -> { int n = q.length(); return String.valueOf(n); }", False),
+        ("() -> String.valueOf(q)", True),
+        ("() -> Integer.toString(Integer.parseInt(q))", False),
+        ("() -> q.isEmpty() ? 0 : q.length()", False),
     ],
 )
 def test_java_content_values(section: str, expected: bool) -> None:
@@ -5025,9 +5057,10 @@ def test_deferred_writes_cost_linear_calls_in_nested_and_wide_callbacks() -> Non
 
         sys.setprofile(profile)
         try:
-            _kotlin(source)
+            report = _kotlin(source)
         finally:
             sys.setprofile(None)
+        assert _hit(report, URL)  # the deferred writes are found, not only cheap
         return total
 
     def nested(depth: int) -> str:
@@ -5040,8 +5073,11 @@ def test_deferred_writes_cost_linear_calls_in_nested_and_wide_callbacks() -> Non
         return "        u = Ext.fetch { " + "; ".join("u = q" for _ in range(count)) + '; "x" }'
 
     # Each callback is read once: nested callbacks cost about linear calls (each nested one was
-    # walked again for every enclosing callback, and every assignment walked to the root).
-    assert calls(nested(60)) < 8 * calls(nested(15))
+    # walked again for every enclosing callback, and every assignment walked to the root). The
+    # first analysis warms per-process caches, so both sizes are counted after it (5 times the
+    # calls for 4 times the depth; walking each nested callback again made it 7 times).
+    calls(nested(15))
+    assert calls(nested(60)) < 6 * calls(nested(15))
     assert calls(wide(2000)) < 6 * calls(wide(500))
 
 
@@ -5079,3 +5115,548 @@ def test_glued_destructuring_lines_cost_linear_calls() -> None:
     # A glued destructuring declaration is no glued line of its own: re-entering it visited
     # the glued call's arguments twice, so nested ones doubled the work per level.
     assert calls(12) < 3 * calls(8)
+
+
+@pytest.mark.parametrize(
+    "body, rule, expected",
+    [
+        # numbers and flags held in a closure's names, a let parameter or a number's text
+        (_section("val n = q.length; n.toString()"), SQL, False),
+        (_section('val n = q.length; "$n results"'), SQL, False),
+        (_section('val n = q.length; "${n + 1} results"'), SQL, False),
+        (_section("val ok = q.isNotEmpty(); ok.toString()"), SQL, False),
+        (_section("val n = q.length; (n * 2).toString()"), SQL, False),
+        (_section("val n = q.length; val m = n + 1; m.toString()"), SQL, False),
+        (_section("val n = q.toIntOrNull() ?: 0; n.toString()"), SQL, False),
+        (_section('val n = q.length; val s = n.toString(); "$s items"'), SQL, False),
+        (_section("val s = q.length.toString(); s.padStart(3)"), SQL, False),
+        (_section('val n: Long? = q.toLongOrNull(); "$n"'), SQL, False),
+        (_section('val n: Int = Ext.lookup(q); "$n results"'), SQL, False),
+        (_section('val n: Long? = Ext.lookup(q); "$n"'), SQL, False),
+        (_section('val n = q.length; val s = n.toString(16); "$s"'), SQL, False),
+        (_section("val n = q.length; (n + q.length).coerceAtLeast(1)"), SQL, False),
+        (_section('var n: Any = "${q.length} rows"; n = audit.find(q); n'), SQL, False),
+        (_section("val n = q.length; n.toString(16)"), SQL, False),
+        (_section("var n: Int; n = q.length; n.toString()"), SQL, False),
+        (_section('val ok = q.isEmpty(); "flag=$ok"'), SQL, False),
+        (_section('q.length.let { n -> "$n results" }'), SQL, False),
+        (_section("q.length.let { it.toString() }"), SQL, False),
+        (_section("with(q) { length.toString() }"), SQL, False),
+        (_section("Integer.parseInt(q).toString()"), SQL, False),
+        (_section("Math.max(1, q.length).toString()"), SQL, False),
+        (_section("java.lang.Long.parseLong(q).toString()"), SQL, False),
+        (
+            _section(
+                "val n = q.trim(); if (strict) { val n = q.length; n.toString() } else { audit.clear() }"
+            ),
+            SQL,
+            False,
+        ),
+        (_section('val t = q.trim(); "$t results"'), SQL, True),
+        (_section('val n = q.length; "$n $q"'), SQL, True),
+        (_section('val n = q.length; "$n ${q.trim()}"'), SQL, True),
+        (_section("val t = q.trim(); t.toString()"), SQL, True),
+        (_section("var n: Any = q.length; n = q; n.toString()"), SQL, True),
+        (_section("var n: Any; n = q.trim(); n.toString()"), SQL, True),
+        (_section("val n = q.length; q.let { n -> n.trim() }"), SQL, True),
+        (_section("val n = q.length; run { val n = q.trim(); n.uppercase() }"), SQL, True),
+        (_section('val n = q.length; q.trim().let { n -> "$n" }'), SQL, True),
+        (
+            _section(
+                "val n = q.length; if (strict) { val n = q.trim(); n.uppercase() } else { audit.clear() }"
+            ),
+            SQL,
+            True,
+        ),
+        # a branch's own locals replace the closure's
+        (
+            _section("val t = q.trim(); if (strict) { val t = audit.find(q); t } else { audit.clear() }"),
+            SQL,
+            False,
+        ),
+        (_section("val t = q.trim(); if (strict) { t } else { audit.clear() }"), SQL, True),
+        (_section("val n = q.length; if (strict) { n.toString() } else { audit.clear() }"), SQL, False),
+        (_section('val n = q.length; return@section "$n results"'), SQL, False),
+        (_section("val n = q.length; n.toString().also { println(it) }"), SQL, False),
+        (_section('val n = q.length; with(audit) { "$n" }'), SQL, False),
+        (_section('val n = q.length; run { "$n" }'), SQL, False),
+        # `*To` mapping lambdas of maps store their result
+        (_page("items.associateWith { it }.mapKeysTo(mutableMapOf()) { describe(it.key, q) }"), URL, False),
+        (
+            _page("items.associateWith { it }.mapValuesTo(mutableMapOf()) { describe(it.value, q) }"),
+            URL,
+            False,
+        ),
+    ],
+)
+def test_round_twelve_numbers_branches_and_mappings(body: str, rule: str, expected: bool) -> None:
+    report = _notes(body)
+    assert _hit(report, rule) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "own, expr, expected",
+    [
+        ("    fun record(q: String): Int = q.length\n", "record(q)", False),
+        ("    fun record(q: String): Int = q.length\n", "this.record(q)", False),
+        ("    fun record(q: String): String = q.trim()\n", "record(q)", True),
+    ],
+)
+def test_own_string_functions_are_read_by_their_class(own: str, expr: str, expected: bool) -> None:
+    report = _kotlin(
+        f"""class R(private val db: SQLiteDatabase) {{
+{own}    fun go(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+        val s = Markup.render {{ b -> b.section {{ {expr} }}; b.append("SELECT 1"); Unit }}
+        db.execSQL(s)
+    }}
+}}
+class Other {{
+    fun record(q: String): String = q
+}}
+"""
+    )
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+def test_constructor_properties_and_inherited_templates() -> None:
+    nullable = _kotlin(
+        """class R(private val db: SQLiteDatabase, private var query: String?) {
+    fun go(intent: Intent) {
+        query = intent.getStringExtra("q")?.trim()
+        val s = Markup.render { b -> b.section { query!!.escapeSql() }; b.append("SELECT 1"); Unit }
+        db.execSQL(s)
+    }
+}
+"""
+    )
+    assert _hit(nullable, SQL), nullable["findings"]
+    for qualifier in ["this.", "super."]:
+        inherited = _kotlin(
+            f"""abstract class BaseDao {{ protected val byName = "name = '%s'" }}
+class NotesDao(private val db: SQLiteDatabase) : BaseDao() {{
+    fun go(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+        val s = Markup.render {{ b -> b.section {{ {qualifier}byName.format(q) }}; b.append("SELECT 1"); Unit }}
+        db.execSQL(s)
+    }}
+}}
+"""
+        )
+        assert _hit(inherited, SQL), (qualifier, inherited["findings"])
+    enum = _kotlin(
+        """enum class Query(private val unused: Int) {
+    BY_NAME(0);
+    val tpl = "name = '%s'"
+    fun go(intent: Intent, db: SQLiteDatabase) {
+        val q = intent.getStringExtra("q") ?: ""
+        val s = Markup.render { b -> b.section { this.tpl.format(q) }; b.append("SELECT 1"); Unit }
+        db.execSQL(s)
+    }
+}
+"""
+    )
+    assert _hit(enum, SQL), enum["findings"]
+    # A plain constructor parameter is no property: the top-level template of that name is read.
+    plain = _kotlin(
+        """const val template = "name = '%s'"
+class R(private val db: SQLiteDatabase, template: Int = Ext.default("var")) {
+    fun go(intent: Intent) {
+        val q = intent.getStringExtra("q") ?: ""
+        val s = Markup.render { b -> b.section { template.format(q) }; b.append("SELECT 1"); Unit }
+        db.execSQL(s)
+    }
+}
+"""
+    )
+    assert _hit(plain, SQL), plain["findings"]
+
+
+@pytest.mark.parametrize(
+    "section, members, expected",
+    [
+        (
+            'guard let q2 = Optional(query) else { return "" }; guard let q2 else { return "" }; return q2',
+            "",
+            True,
+        ),
+        ('guard let t: String = Optional(query) else { return "" }; return t', "", True),
+        (
+            "return self.title()",
+            '    var saved = ""\n    func title() throws -> String { return saved }\n',
+            True,
+        ),
+        (
+            "return try! self.title()",
+            '    var saved = ""\n    func title() async throws -> String { return saved }\n',
+            True,
+        ),
+        (
+            "return self.maker()()",
+            '    var saved = ""\n    func maker() -> () -> String { return { "x" } }\n',
+            False,
+        ),
+        ('let n = query.count; return "\\(n) results"', "", False),
+        ("let n = query.count; return n.description", "", False),
+        ("let n = query.count; return String(n)", "", False),
+        ('let n = Int(query) ?? 0; return "\\(n) results"', "", False),
+        ('let n: Int = Int(query) ?? 0; return "\\(n) results"', "", False),
+        ('let n: Int = self.lookup(query); return "\\(n) results"', "", False),
+        ('let t = self.lookup(query); guard let t else { return "" }; return t', "", False),
+        ('return "\\(query.count + 1) results"', "", False),
+        ('let t = query.lowercased(); return "\\(t) results"', "", True),
+        ("let t = query.lowercased(); return String(t)", "", True),
+        ("let t = query.lowercased(); return t.description", "", True),
+    ],
+)
+def test_swift_round_twelve_content(section: str, members: str, expected: bool) -> None:
+    body = ("saved = query\n" if members else "") + (
+        f'        let page = Markup.render({{ b in b.section {{ {section} }}; b.add("x") }})\n'
+        "        web.loadHTMLString(page, baseURL: nil)"
+    )
+    source = SWIFT_QUERY.format(body=body).replace(
+        "    let web = WKWebView()\n", "    let web = WKWebView()\n" + members
+    )
+    assert _hit(_swift(source), URL) is expected
+
+
+@pytest.mark.parametrize(
+    "own, expected", [("int record(String q) { return q.length(); }", False), ("", True)]
+)
+def test_java_own_string_methods_are_read_by_their_class(own: str, expected: bool) -> None:
+    report = analyze_sources(
+        [
+            (
+                "app/R.java",
+                f"""package com.example.app;
+import android.content.Intent;
+import android.webkit.WebView;
+class R {{
+    WebView web;
+    {own}
+    void go(Intent i) {{
+        String q = i.getStringExtra("q");
+        String page = Markup.render(m -> {{ m.section(() -> record(q)); m.put("h", "x"); }});
+        web.loadUrl(page);
+    }}
+}}
+class Other {{
+    String record(String q) {{ return q; }}
+}}
+""",
+            )
+        ]
+    )
+    assert _hit(report, URL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "expr, declaration",
+    [
+        ("displayName()!!.escapeSql()", "private fun displayName(): String? = saved"),
+        ("displayName().escapeSql()", "private fun displayName() : kotlin.String = saved"),
+    ],
+)
+def test_own_functions_by_their_declared_return_type(expr: str, declaration: str) -> None:
+    report = _notes(
+        _section(expr, pre="        saved = q\n"), members=f'    private var saved = ""\n    {declaration}'
+    )
+    assert _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, rule, expected",
+    [
+        # glued lines after `in`, and two glued lines with the input on the first
+        (_page("val known = q in items\n            where(\"t = '$q'\")"), URL, True),
+        (
+            _page('val n = Ext.size() ?: 20\n            where("t = \'$q\'")\n            where("1 = 1")'),
+            URL,
+            True,
+        ),
+        (
+            _page('val (k, v) = Pair(1, 2)\n            where("t = \'$q\'")\n            where("1 = 1")'),
+            URL,
+            True,
+        ),
+        (
+            _page('val big = q.length > 5\n            where("t = \'$q\'")\n            where("1 = 1")'),
+            URL,
+            True,
+        ),
+        # computed roots over a closure's call result joined with input
+        (_section('val col = Ext.sortColumn(); ("$col = \'$q\'" + " LIMIT 1").escapeSql()'), SQL, True),
+        (_section("val col = Ext.sortColumn(); (col + \" = '$q'\").escapeSql()"), SQL, True),
+        (_section('val col = Ext.sortColumn(); (col + " = " + q.trim()).escapeSql()'), SQL, True),
+        (_section('val col = Ext.sortColumn(); (col + intent.getStringExtra("x")).escapeSql()'), SQL, True),
+        (_section('val col = Ext.sortColumn(); (Ext.quote(col, q) + " ASC").escapeSql()'), SQL, True),
+        (_section("val t = q.trim(); val r = Ext.lookup(q); (Ext.wrap(t) + r).escapeSql()"), SQL, True),
+        (_section('val r = Ext.lookup(q); (Ext.wrap(r) + "x").escapeSql()'), SQL, False),
+        # String transforms of a call's result in with/run, and a nested block rebinding `this`
+        (_section("with(Ext.lookup(q)) { uppercase() }"), SQL, True),
+        (_section("Ext.lookup(q).run { trim() }"), SQL, True),
+        (_section("with(Ext.lookup(q)) { with(Formatters.date) { format(createdAt) } }"), SQL, False),
+        (_section("Ext.lookup(q).run { Formatters.date.run { format(createdAt) } }"), SQL, False),
+        # a closure's local returned bare is the value its initializer or a later assignment is
+        (_section("val t = Ext.lookup(q).trim(); t"), SQL, True),
+        (_section("val sql = template.format(q); sql"), SQL, True),
+        (_section("val r = Ext.lookup(q); val u = r.trim(); u"), SQL, True),
+        (_section('val label = Ext.title.let { "$it: $q" }; label'), SQL, True),
+        (_section("val t = Ext.lookup(q); return@section t"), SQL, False),
+        (_section("val t = Ext.lookup(q).trim(); return@section t"), SQL, True),
+        (_section("var clause: String? = null; if (strict) clause = \"tag = '$q'\"; clause"), SQL, True),
+        (_section("var u = Ext.home(); if (strict) u = \"n = '$q'\"; u"), SQL, True),
+        (_section('val sb = StringBuilder("n = \'").append(q).append("\'").toString(); sb'), SQL, True),
+        (_section("val row = Ext.find(q); row"), SQL, False),
+        # numbers in a branch, a number's operation, Java-style empty-text concatenation
+        (_section("if (strict) 0 else q.length"), SQL, False),
+        (_section("q.length.plus(1).toString()"), SQL, False),
+        (_section('"" + q.length'), SQL, False),
+        (_section('"size = " + q'), SQL, True),
+        (_section("q.length * 2"), SQL, False),
+        (_section("q.length /* rows */ + 1"), SQL, False),
+        (_section("val n = q.length; (n + q.length).let { it.toString() }"), SQL, False),
+        (_section('val n = if (strict) 0 else q.length; "$n"'), SQL, False),
+        (_section("template.format(q.length)"), SQL, False),
+        (_section("template.format(q)"), SQL, True),
+        (_section('val t = q.trim(); val r = Ext.lookup(q); (Ext.join(t, r) + "x").escapeSql()'), SQL, True),
+        (
+            _section(
+                'val t = q.trim(); val r = Ext.lookup(q); (Ext.join(r, "n = \'$t\'") + "x").escapeSql()'
+            ),
+            SQL,
+            True,
+        ),
+        # template fills by argument name
+        (_section('template.replace(newValue = q, oldValue = "{q}")'), SQL, True),
+        (_section('template.replace(newValue = "x", oldValue = q)'), SQL, False),
+        # String.format templates outside the closure
+        (
+            _section(
+                'tpl.replace("{q}", q)', pre='        val tpl = String.format("%s = \'{q}\'", "name")\n'
+            ),
+            SQL,
+            True,
+        ),
+    ],
+)
+def test_round_twelve_internal_review_fixtures(body: str, rule: str, expected: bool) -> None:
+    report = _notes(body)
+    assert _hit(report, rule) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "callback, expected",
+    [
+        ('Ext.later { u = q }; "x"', True),
+        ('Ext.later { Ext.after { u = q } }; "x"', True),
+        ('var u = ""; if (c) { u = q }; u.length; "x"', False),
+        ('var u = ""; Ext.later { u = q }; "x"', False),
+    ],
+)
+def test_writes_in_nested_callbacks(callback: str, expected: bool) -> None:
+    report = _kotlin(
+        f"""class S(private val web: WebView) {{
+    fun go(intent: Intent, c: Boolean) {{
+        val q = intent.getStringExtra("q") ?: ""
+        var u = "https://docs.example.test/"
+        u = Ext.fetch {{ {callback} }}
+        web.loadUrl(u)
+    }}
+}}
+"""
+    )
+    assert _hit(report, URL) is expected, report["findings"]
+
+
+def test_swift_multi_binding_shadows_only_its_then_block() -> None:
+    body = (
+        'var page = "https://docs.example.test/"\n'
+        '        page = Ext.fetch { if let a = Ext.a(), var page = Ext.cached() { page = query; print(a, page) }; return "x" }\n'
+        "        web.load(URLRequest(url: URL(string: page)!))"
+    )
+    assert not _hit(_swift(SWIFT_QUERY.format(body=body)), URL)
+
+
+def test_string_members_through_supertypes_interfaces_and_companions() -> None:
+    def report(files: list[tuple[str, str]]) -> dict:
+        return analyze_sources(files)
+
+    holder = (
+        "app/src/main/java/com/example/notes/Sql.kt",
+        "package com.example.notes\nclass Holder { companion object { const val COMP = \"name = '%s'\" } }\n",
+    )
+    notes = NOTES.format(body=_section("Holder.COMP.format(q)"), members="", imports="")
+    assert _hit(report([("app/src/main/java/com/example/notes/Notes.kt", notes), holder]), SQL)
+    base = (
+        "app/src/main/java/com/example/notes/BaseRepo.kt",
+        "package com.example.notes\nopen class BaseRepo { protected val byTitle = \"title = '%s'\" }\n",
+    )
+    for expr in ["byTitle.format(q)", "this.byTitle.format(q)"]:
+        source = f"""package com.example.notes
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class Notes(private val db: SQLiteDatabase) : BaseRepo() {{
+    fun open(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+{_section(expr)}
+    }}
+}}
+"""
+        assert _hit(report([("app/src/main/java/com/example/notes/Notes.kt", source), base]), SQL), expr
+    urls = (
+        "app/src/main/java/com/example/app/Urls.java",
+        'package com.example.app;\npublic interface Urls { String SEARCH = "https://docs.example.test/?q={q}"; }\n',
+    )
+    for section, supertype in [
+        ('() -> Urls.SEARCH.replace("{q}", q)', ""),
+        ('() -> SEARCH.replace("{q}", q)', " implements Urls"),
+        ("() -> SEARCH.concat(q)", " implements Urls"),
+    ]:
+        page = f"""package com.example.app;
+import android.content.Intent;
+import android.webkit.WebView;
+class Page{supertype} {{
+    WebView web;
+    void go(Intent i) {{
+        String q = i.getStringExtra("q");
+        String page = Markup.render(m -> {{ m.section({section}); m.put("h", "x"); }});
+        web.loadUrl(page);
+    }}
+}}
+"""
+        assert _hit(report([("app/src/main/java/com/example/app/Page.java", page), urls]), URL), section
+    # A class's own member of that name decides, also over a String elsewhere.
+    collision = _kotlin(
+        """class R(private val db: SQLiteDatabase, private val template2: java.text.MessageFormat) {
+    fun go(intent: Intent) {
+        val q = intent.getStringExtra("q") ?: ""
+        val s = Markup.render { b -> b.section { template2.format(q) }; b.append("SELECT 1"); Unit }
+        db.execSQL(s)
+    }
+}
+class Other { val template2 = "x = %s" }
+"""
+    )
+    assert not _hit(collision, SQL), collision["findings"]
+
+
+@pytest.mark.parametrize(
+    "section, expected",
+    [
+        ("return displayName().escaped()", True),
+        ("return displayName()", True),
+        ("return self.displayName().escaped()", True),
+        ('return "size=\\(self.size)"', True),
+    ],
+)
+def test_swift_own_string_functions_and_string_members_named_like_numbers(
+    section: str, expected: bool
+) -> None:
+    source = f"""import UIKit
+import WebKit
+final class V {{
+    let web = WKWebView()
+    var saved = ""
+    var size: String = "M"
+    func displayName() -> String {{ return saved }}
+    func application(_ app: UIApplication, open url: URL, options: [String: Any]) {{
+        let query = url.absoluteString
+        saved = query
+        size = query
+        let page = Markup.render {{ b in b.section {{ {section} }}; b.add("x"); return b.html }}
+        web.loadHTMLString(page, baseURL: nil)
+    }}
+}}
+"""
+    assert _hit(_swift(source), URL) is expected
+
+
+@pytest.mark.parametrize(
+    "section, expected",
+    [
+        ("() -> getTitle()", True),
+        ("() -> this.getTitle().intern()", True),
+        ("() -> Ext.wrap(getTitle())", False),
+    ],
+)
+def test_java_own_string_getters(section: str, expected: bool) -> None:
+    source = f"""package com.example.app;
+import android.content.Intent;
+import android.webkit.WebView;
+class R {{
+    String title = "";
+    WebView web;
+    String getTitle() {{ return title; }}
+    void go(Intent i) {{
+        String q = i.getStringExtra("q");
+        title = q;
+        String page = Markup.render(m -> {{ m.section({section}); m.put("h", "x"); }});
+        web.loadUrl(page);
+    }}
+}}
+"""
+    report = analyze_sources([("app/R.java", source)])
+    assert _hit(report, URL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "expr, members, pre",
+    [
+        ("this.size.escapeSql()", '    private var size: String = "M"', "        size = q\n"),
+        ("\"size = '${this.size}'\"", '    private var size: String = "M"', "        size = q\n"),
+        (
+            "profileUrl().escapeSql()",
+            '    private var handle = ""\n    private fun profileUrl() = "https://docs.example.test/" + handle',
+            "        handle = q\n",
+        ),
+        (
+            "this.displayName().escapeSql()",
+            '    private var saved = ""\n    private fun displayName(): String = saved',
+            "        saved = q\n",
+        ),
+        (
+            "label().escapeSql()",
+            '    private var saved = ""\n    private fun label() = saved',
+            "        saved = q\n",
+        ),
+    ],
+)
+def test_own_string_members_and_functions_through_this(expr: str, members: str, pre: str) -> None:
+    report = _notes(_section(expr, pre=pre), members=members)
+    assert _hit(report, SQL), report["findings"]
+
+
+def test_constructor_string_properties_cost_linear_calls() -> None:
+    def calls(count: int) -> int:
+        params = ", ".join(f"private var c{i}: String" for i in range(count))
+        assigns = "\n".join(f"        c{i} = q.trim()" for i in range(count))
+        reads = "; ".join(f"b.where {{ c{i}.escapeSql() }}" for i in range(count))
+        source = f"""class R(private val db: SQLiteDatabase, {params}) {{
+    fun go(intent: Intent) {{
+        val q = intent.getStringExtra("q") ?: ""
+{assigns}
+        val s = Markup.render {{ b -> {reads}; Unit }}
+        db.execSQL(s)
+    }}
+}}
+"""
+        total = 0
+
+        def profile(frame, event, arg) -> None:
+            nonlocal total
+            if event in {"call", "c_call"}:
+                total += 1
+
+        sys.setprofile(profile)
+        try:
+            report = _kotlin(source)
+        finally:
+            sys.setprofile(None)
+        assert _hit(report, SQL)
+        return total
+
+    # Each class body's members are read once: 4 times the properties cost about 4 times the
+    # calls (reading the body on every lookup cost about 8 times).
+    calls(10)
+    assert calls(200) < 6 * calls(50)
