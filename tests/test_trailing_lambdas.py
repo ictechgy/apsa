@@ -6035,3 +6035,403 @@ def test_review13_numeric_replace_fill_is_no_content() -> None:
     body = 'val n = q.length; template.replace("%s", n.toString())'
     report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
     assert not _hit(report, SQL), report["findings"]
+
+
+# Round 14: lexical binding, supplier value and bounded-classification regressions.
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        pytest.param("val q = q.toString(); q", True, id="shadow_string"),
+        pytest.param('val q = "$q"; q', True, id="shadow_short"),
+        pytest.param('val q = "${q}"; q', True, id="shadow_long"),
+        pytest.param('val q = q + 1; "$q"', True, id="shadow_plus"),
+        pytest.param("val t = q.trim(); val q = t.length; t", True, id="later_shadow"),
+        pytest.param("val q = q.length; q.toString()", False, id="shadow_number_control"),
+        pytest.param("var row = q.length; val alias = row; row = alias; row", False, id="scalar_alias_cycle"),
+        pytest.param(
+            'var row = q.length; val alias = row; row = alias; "$row rows"', False, id="scalar_alias_template"
+        ),
+        pytest.param(
+            "var row = repo.find(q); val alias = row; row = alias; row", False, id="object_alias_cycle"
+        ),
+        pytest.param("var row = repo.find(q); row = row; row", False, id="object_self_alias"),
+        pytest.param("var row = q.trim(); val alias = row; row = alias; row", True, id="data_alias_cycle"),
+        pytest.param(
+            "val n = q.length; val text = q.trim(); template.format(n).plus(text)",
+            True,
+            id="format_local_fill",
+        ),
+        pytest.param("q.let { x -> template.format(q.length).plus(x) }", True, id="format_scope_fill"),
+        pytest.param("q.let { template.format(q.length).plus(it) }", True, id="format_implicit_fill"),
+        pytest.param("q.run { template.format(q.length).plus(this) }", True, id="format_receiver_fill"),
+        pytest.param("with(q) { template.format(q.length).plus(this) }", True, id="format_with_fill"),
+        pytest.param(
+            "val text = q.trim(); q.length.toString().plus(text)", True, id="number_text_local_fill"
+        ),
+        pytest.param(
+            'val text = "safe"; q.length.toString().plus(text)', False, id="number_text_constant_control"
+        ),
+        pytest.param(
+            'val text = q.trim(); template.format(q.length).replace("x", text)',
+            True,
+            id="format_replace_fill",
+        ),
+        pytest.param(
+            "var c: String? = null; q.let { c = it.trim() }; c", True, id="let_assignment_transform"
+        ),
+        pytest.param(
+            "var c: String? = null; q.let { x -> c = x.uppercase() }; c", True, id="let_assignment_named"
+        ),
+        pytest.param(
+            "var c: String? = null; q.let { x -> val text = x.trim(); c = text }; c",
+            True,
+            id="let_assignment_local",
+        ),
+        pytest.param("var c: String? = null; q.run { c = trim() }; c", True, id="run_assignment_transform"),
+        pytest.param(
+            "var c: String? = null; with(q) { c = trim() }; c", True, id="with_assignment_transform"
+        ),
+        pytest.param(
+            "var c: String? = null; q.run { c = this.trim() }; c", True, id="run_assignment_explicit"
+        ),
+        pytest.param(
+            "var c: String? = null; repo.find(q).let { c = it }; c", False, id="result_scope_alias_control"
+        ),
+        pytest.param(
+            "var c: String? = null; repo.find(q).let { c = it.trim() }; c", True, id="result_scope_transform"
+        ),
+        pytest.param(
+            'var c: String? = null; q.length.let { c = it.toString() }; "$c rows"',
+            False,
+            id="numeric_scope_assignment",
+        ),
+        pytest.param(
+            "var c: String? = null; listOf(q).forEach { c = it.trim() }; c",
+            True,
+            id="foreach_assignment_transform",
+        ),
+        pytest.param(
+            'var c: String? = null; val x = q.trim(); listOf("safe").forEach { x -> c = x }; c',
+            False,
+            id="foreach_shadow_control",
+        ),
+        pytest.param(
+            'val row = repo.find(q); (Ext.or(row, { row + q }) + "x").escapeSql()', True, id="supplier_mixed"
+        ),
+        pytest.param(
+            'val row = repo.find(q); (Ext.page(row, { q.length }) + "x").escapeSql()',
+            False,
+            id="supplier_number_control",
+        ),
+        pytest.param(
+            'val row = repo.find(q); (Ext.page(row, { val n = q.length; n }) + "x").escapeSql()',
+            False,
+            id="supplier_number_local_control",
+        ),
+        pytest.param(
+            'val row = repo.find(q); (Ext.or(row, { row }) + "x").escapeSql()',
+            False,
+            id="supplier_row_control",
+        ),
+        pytest.param(
+            'val row = repo.find(q); (row.takeIf { q.isNotBlank() } ?: "-").escapeSql()',
+            False,
+            id="predicate_control",
+        ),
+        pytest.param("q.length.run { toString().padStart(3, '0') }", False, id="numeric_run_chain_control"),
+        pytest.param("q.toInt().run { this.toString().trim() }", False, id="numeric_explicit_this_control"),
+        pytest.param("with(q.length) { this.toString().trim() }", False, id="numeric_with_this_control"),
+        pytest.param("template.format(q.length).run { trim() }", False, id="numeric_format_run_control"),
+        pytest.param("with(template.format(q.length)) { trim() }", False, id="numeric_format_with_control"),
+        pytest.param(
+            'String.format(java.util.Locale.US, "LIMIT %d", q.length)', False, id="locale_number_control"
+        ),
+        pytest.param('String.format(java.util.Locale.US, "name = %s", q)', True, id="locale_input_fill"),
+    ],
+)
+def test_review14_kotlin(body: str, expected: bool) -> None:
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        pytest.param(
+            '() -> { int n = q.length(); return String.valueOf(n).concat("x"); }',
+            False,
+            id="valueof_local_constant",
+        ),
+        pytest.param(
+            "() -> { int n = q.length(); return String.valueOf(n).trim(); }", False, id="valueof_local_trim"
+        ),
+        pytest.param(
+            '() -> { int n = q.length(); return String.valueOf(n).replace("0", "x"); }',
+            False,
+            id="valueof_local_replace",
+        ),
+        pytest.param(
+            "() -> { int n = q.length(); return String.valueOf(n).concat(q); }",
+            True,
+            id="valueof_local_input",
+        ),
+        pytest.param(
+            "() -> { int n = q.length(); String text = q.trim(); return String.format(TPL, n).concat(text); }",
+            True,
+            id="format_local_fill",
+        ),
+        pytest.param(
+            "() -> { String text = q.trim(); return Integer.toString(q.length()).concat(text); }",
+            True,
+            id="integer_local_fill",
+        ),
+        pytest.param(
+            "() -> { String row = Ext.find(q); String alias = row; row = alias; return row; }",
+            False,
+            id="object_alias_cycle",
+        ),
+        pytest.param(
+            "() -> { int row = q.length(); int alias = row; row = alias; return String.valueOf(row); }",
+            False,
+            id="scalar_alias_cycle",
+        ),
+        pytest.param(
+            '() -> { String row = Ext.find(q); return (Ext.or(row, () -> row + q) + "x").intern(); }',
+            True,
+            id="supplier_mixed",
+        ),
+        pytest.param(
+            '() -> { String row = Ext.find(q); return (Ext.or(row, () -> q.isEmpty() ? row : q) + "x").intern(); }',
+            True,
+            id="supplier_mixed_branch",
+        ),
+        pytest.param(
+            '() -> { String row = Ext.find(q); return (Ext.page(row, () -> q.length()) + "x").intern(); }',
+            False,
+            id="supplier_number_control",
+        ),
+        pytest.param(
+            '() -> { String row = Ext.find(q); return (Ext.page(row, () -> { int n=q.length(); return n; }) + "x").intern(); }',
+            False,
+            id="supplier_number_local_control",
+        ),
+        pytest.param(
+            '() -> { String row = Ext.find(q); return (Ext.or(row, () -> { System.out.println(q); return row; }) + "x").intern(); }',
+            False,
+            id="supplier_log_control",
+        ),
+        pytest.param(
+            '() -> { String row = Ext.find(q); return (Ext.or(row, () -> Ext.test(q) ? row : "safe") + "x").intern(); }',
+            False,
+            id="supplier_condition_control",
+        ),
+        pytest.param(
+            '() -> String.format(java.util.Locale.US, "LIMIT %d", q.length())',
+            False,
+            id="locale_number_control",
+        ),
+        pytest.param('() -> String.format(java.util.Locale.US, "name = %s", q)', True, id="locale_input"),
+        pytest.param(
+            '() -> { java.util.Locale locale=java.util.Locale.US; return String.format(locale, "LIMIT %d", q.length()); }',
+            False,
+            id="locale_local_control",
+        ),
+    ],
+)
+def test_review14_java(body: str, expected: bool) -> None:
+    report = analyze_sources([("app/Page.java", REVIEW13_JAVA.replace("REVIEW_BODY", body))])
+    assert _hit(report, URL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        pytest.param("let query = String(query); return query", True, id="shadow_string"),
+        pytest.param('let query = "\\(query)"; return query', True, id="shadow_template"),
+        pytest.param("let query = query.description; return query", True, id="shadow_description"),
+        pytest.param("let query = query.count; return String(query)", False, id="scalar_shadow_control"),
+        pytest.param(
+            "let text = query.lowercased(); return String(format: template, query.count).appending(text)",
+            True,
+            id="format_local_fill",
+        ),
+        pytest.param(
+            "let text = query.lowercased(); return String(query.count).appending(text)",
+            True,
+            id="number_local_fill",
+        ),
+        pytest.param(
+            "var row = Store.find(query); let alias = row; row = alias; return row",
+            False,
+            id="object_alias_cycle",
+        ),
+    ],
+)
+def test_review14_swift(body: str, expected: bool) -> None:
+    report = analyze_sources([("App/Router.swift", REVIEW13_SWIFT.replace("REVIEW_BODY", body))])
+    assert _hit(report, URL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "tail, expected",
+    [
+        ('val clause = prefix ?: quote(q)\n            where("kept")\n            where("1 = 1")', False),
+        ('val clause = prefix ?: quote("kept")\n            where(q)\n            where("1 = 1")', True),
+    ],
+)
+def test_review14_multiple_glued_lines_keep_the_initializer(tail: str, expected: bool) -> None:
+    source = (
+        '        val sql = Db.query {\n            select("*")\n            '
+        + tail
+        + "\n        }\n        db.execSQL(sql)"
+    )
+    report = _notes(source, members="    private val prefix: String? = null")
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+def test_review14_locale_named_like_an_input_string_remains_input() -> None:
+    source = REVIEW13_KOTLIN.replace(
+        'val q = intent.getStringExtra("q") ?: ""',
+        'val q = intent.getStringExtra("q") ?: ""\n        Locale.US = q',
+    )
+    source += '\nobject Locale { var US: String = "" }\n'
+    source = source.replace("REVIEW_BODY", 'String.format(Locale.US, "suffix", q.length)')
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL), report["findings"]
+
+
+def test_review14_classifier_work_cut_is_an_execution_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = importlib.import_module("mobile_audit.source_analysis")
+    monkeypatch.setattr(module, "MAX_CLOSURE_CLASSIFICATIONS", 5)
+    body = "var out: String? = null; q.let { out = it.trim() }; out"
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert _state(report, SQL) == "partial", report["coverage"]
+    assert "closure value classification budget" in _reasons(report)
+    assert "closure value classification budget" in report["metadata"]["native_flow"]["budget_reasons"]
+
+
+def test_review14_nested_assignment_scopes_are_classified_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    count = 0
+    original = Analyzer.closure_data_locals
+
+    def counted(self, *args, **kwargs):
+        nonlocal count
+        count += 1
+        assert count <= 100, "nested assignment classification recursively rescanned scopes"
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Analyzer, "closure_data_locals", counted)
+    depth = 13
+    body = "; ".join(f"v{i} = q.trim()" for i in range(depth))
+    for i in reversed(range(depth)):
+        body = f"var v{i}: String? = null; if (strict) {{ {body} }}"
+    body += "; v0"
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL), report["findings"]
+    assert _state(report, SQL) == "checked"
+    assert count <= 4 * depth
+
+
+def test_review14_reverse_numeric_aliases_cost_linear_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = Analyzer.closure_work
+    calls = 0
+
+    def counted(self):
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(Analyzer, "closure_work", counted)
+
+    def work(size: int) -> int:
+        nonlocal calls
+        calls = 0
+        declarations = "; ".join(f"var v{i}: Any = 0" for i in range(size))
+        writes = f"v{size - 1} = q.length; " + "; ".join(
+            f"v{i} = v{i + 1}" for i in reversed(range(size - 1))
+        )
+        body = declarations + "; " + writes + '; "$v0 rows"'
+        report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+        assert not _hit(report, SQL), report["findings"]
+        assert _state(report, SQL) != "partial"
+        return calls
+
+    assert work(160) < 6 * work(40)
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ('var row: Any = 0; row = q; val alias = row; "$alias"', True),
+        ('var row: Any = q.length; row = repo.find(q); "$row"', True),
+        ("q.length.let { n -> val n = n.toString(); n }", False),
+        ("var c: String? = null; repo.find(q).run { c = this }; c", False),
+        ("var c: String? = null; q.run { c = this }; c", True),
+        ("var c: String? = null; c?.record(q)", False),
+    ],
+)
+def test_review14_binding_kinds_follow_real_lexical_values(body: str, expected: bool) -> None:
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ('var c: String? = null; val r=repo.find(q); c=r + "x"; c', True),
+        ('if(strict) String.format("LIMIT %d", q.length) else "0"', False),
+        ('val n=q.length; if(strict) n.plus(1) else "0"', False),
+        ("q.length.toString().escapeSql()", False),
+        ('val row=repo.find(q); (row.takeIf { Ext.accept(q) } ?: "-").escapeSql()', False),
+        ('val row=repo.find(q); (Ext.page(row, { val n=q.length; n.toString() }) + "x").escapeSql()', False),
+        ('var row: Any? = null; row=q.length; val alias=row; "$alias rows"', False),
+    ],
+)
+def test_review14_survivor_kotlin_boundaries(body: str, expected: bool) -> None:
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("() -> { int n=q.length(); return String.valueOf(n).intern(); }", False),
+        ("() -> { int n=q.length(); return Integer.toString(n).intern(); }", False),
+        ("() -> String.valueOf(q).intern()", True),
+        (
+            '() -> { String row=Ext.find(q); return (Ext.or(row, () -> { String text=q.trim(); return text; }) + "x").intern(); }',
+            True,
+        ),
+    ],
+)
+def test_review14_survivor_java_boundaries(body: str, expected: bool) -> None:
+    report = analyze_sources([("app/Page.java", REVIEW13_JAVA.replace("REVIEW_BODY", body))])
+    assert _hit(report, URL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize("expression", ["q", "q.trim()", '"$q"'])
+def test_review14_format_overload_uses_the_shadowing_string(expression: str) -> None:
+    source = REVIEW13_KOTLIN.replace(
+        "    private val audit",
+        "    private val locale: java.util.Locale = java.util.Locale.US\n    private val audit",
+    )
+    body = f'val locale={expression}; String.format(locale, "suffix", q.length)'
+    report = analyze_sources([("app/Notes.kt", source.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize("subject", ["q", "q.trim()"])
+def test_review14_format_overload_uses_the_bound_scope_parameter(subject: str) -> None:
+    source = REVIEW13_KOTLIN.replace(
+        "    private val audit",
+        "    private val locale: java.util.Locale = java.util.Locale.US\n    private val audit",
+    )
+    body = f'{subject}.let {{ locale -> String.format(locale, "suffix", q.length) }}'
+    report = analyze_sources([("app/Notes.kt", source.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL), report["findings"]
+
+
+def test_review14_format_overload_keeps_a_bound_locale() -> None:
+    body = 'java.util.Locale.US.let { loc -> String.format(loc, "LIMIT %d", q.length) }'
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert not _hit(report, SQL), report["findings"]

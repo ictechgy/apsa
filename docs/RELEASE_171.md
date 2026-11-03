@@ -194,7 +194,9 @@ credential service was contacted.
   `{ val t = repo.lookup(q).trim(); t }`, Java
   `{ String u = TPL.concat(q); return u; }`, `String label; .. label = q.trim();`,
   `var c: String? = null; if (..) c = "n = '$q'"; c`). All of a local's
-  values are classified until references to later locals and self updates stabilize;
+  values are classified by lexical binding and source position with a dependency
+  worklist; kinds accumulate until aliases and self updates stabilize. A bounded
+  classification-work cut records `partial` (`closure value classification budget`);
   nested blocks use their own locals, and assignments in inline scope lambdas
   also count (`q.let { c = "n = '$it'" }`), except to a shadowing local or parameter;
   a local can hold a computed call-result expression (`val r = repo.find(q);
@@ -412,8 +414,8 @@ whose branches mix a value and a side-effect call or a call's result held in
 a local writes every branch's value (`if (a) "x" else audit.record(q)`,
 `if (a) { val t = repo.find(q); t } else "-"`); a `let` parameter over a
 value that is neither data nor a call's result is read as another call's
-result, so a String transform on it is content (`fmt.let { it.format(d) }`,
-`limited`); a template a call returns is not filled
+result, so a String transform on it is content (`fmt.let { it.format(d) }`;
+coverage can be `checked` for a formatter field or object); a template a call returns is not filled
 (`Store.base().concat(q)`), and a member of another object named like a
 number (`filter.size`) is a number; a number held in a name declared
 outside a content lambda is read like any value, as a direct sink reads it
