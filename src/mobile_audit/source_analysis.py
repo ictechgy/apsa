@@ -1512,7 +1512,6 @@ class ClosureScope:
     node: Any
     parent: int | None
     names: dict[str, list[int]] = field(default_factory=dict)
-    receiver: int | None = None
 
 
 @dataclass
@@ -1837,6 +1836,7 @@ class Analyzer:
         self.class_members: dict[tuple[int, int], dict[str, bool]] = {}
         self.closure_classification_work: int | None = None
         self.closure_classification_cut = False
+        self.closure_contexts: list[tuple[Frame, Any]] = []
         self.class_string_functions: dict[tuple[int, int], dict[str, bool]] = {}
         self.guarded_paths: set[tuple[int, str]] = set()
         self.unguarded_paths: set[tuple[int, str]] = set()
@@ -3379,7 +3379,18 @@ class Analyzer:
             ):
                 # Project callees were resolved above. An unresolved String transform in
                 # a bound run/with/apply scope reads that scope's implicit receiver.
-                receiver = frame.values.get("this", receiver)
+                bound = frame.values.get("this", receiver)
+                builder = next(
+                    (effects for effects in reversed(self.closure_effects) if effects.implicit), None
+                )
+                if (
+                    builder is not None
+                    and "StringBuilder" in builder.receiver_types
+                    and bound is builder.outer_this
+                ):
+                    receiver = _union(builder.values)  # the nearer builder owns CharSequence transforms
+                else:
+                    receiver = bound
             if call.name == "getIntent" and (call.receiver is None or self.text(call.receiver) == "this"):
                 return self.source(node, "Activity Intent", "intent")
             if call.name in {"getData", "getDataString"} and receiver.category == "intent":
@@ -5761,6 +5772,7 @@ class Analyzer:
         if outer:
             self.closure_classification_work = 0
             self.closure_classification_cut = False
+            self.closure_contexts = []
         if self.native_flow is not None:
             self.native_flow.muted += 1
         try:
@@ -5773,6 +5785,7 @@ class Analyzer:
                 self.native_flow.muted -= 1
             if outer:
                 self.closure_classification_work = None
+                self.closure_contexts = []
                 if self.closure_classification_cut and self.native_flow is not None:
                     self.native_flow.partial("closure value classification budget", self, node=closure)
 
@@ -5797,11 +5810,11 @@ class Analyzer:
                 for clause in self.swift_clauses(node)[0]:
                     for name, bound in clause.names:
                         value = clause.initializer if clause.initializer is not None else bound
-                        found.append((bound.start_byte, name, value, ""))
+                        found.append((node.end_byte, name, value, ""))
             for item in node.named_children if node.type == "local_variable_declaration" else [node]:
                 declared = self.declaration(item)
                 if declared:
-                    found.append((item.start_byte, declared[0], declared[1], declared[2]))
+                    found.append((item.end_byte, declared[0], declared[1], declared[2]))
             if node.type not in STRINGS:
                 pending.extend(node.named_children)
         return sorted(found, key=lambda row: row[0])
@@ -5827,9 +5840,34 @@ class Analyzer:
         depth: int = 0,
         at: Any = None,
     ) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+        """Read a compatible lexical graph during one content-closure classification."""
+        active = self.closure_classification_work is not None
+        if depth > 16:
+            return data, results, scalars
+        if active:
+            for owner, query in reversed(self.closure_contexts):
+                if owner is frame:
+                    classified = query(closure, data, on_receiver, results, scalars, at)
+                    if classified is not None:
+                        return classified
+        return self.classify_closure_locals(closure, frame, data, on_receiver, results, scalars, depth, at)
+
+    def classify_closure_locals(
+        self,
+        closure: Any,
+        frame: Frame,
+        data: frozenset[str],
+        on_receiver: bool = False,
+        results: frozenset[str] = frozenset(),
+        scalars: frozenset[str] = frozenset(),
+        depth: int = 0,
+        at: Any = None,
+    ) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
         """Classify lexical bindings by all their values, using a finite dependency worklist.
 
-        Scope/assignment ownership is collected once. Each value is read at its source
+        Scope/assignment ownership is collected once per context. Contained scopes query
+        that graph's current kind bits rather than rebuilding or caching partial results.
+        Each value is read at its source
         position, with an initializer's own binding excluded. Kinds only accumulate:
         scalar, data, or another result. A binding is scalar only when scalar is its sole
         possible kind; data takes precedence over mixed kinds. This handles aliases and
@@ -5841,7 +5879,10 @@ class Analyzer:
         scopes = [ClosureScope(closure, None)]
         bindings: list[ClosureLocal] = []
         values: list[ClosureValue] = []
-        node_scopes: dict[tuple[int, int, str], int] = {}
+        receivers: dict[int, int] = {}
+        node_scopes: dict[tuple[int, int, str], int] = {
+            (closure.start_byte, closure.end_byte, closure.type): 0
+        }
         declarations: set[tuple[int, str]] = set()
 
         def span(node: Any) -> tuple[int, int, str]:
@@ -5857,19 +5898,26 @@ class Analyzer:
             return index
 
         def declare(scope: int) -> None:
+            subject = self.when_binding(scopes[scope].node)
+            if subject is not None:
+                name, variable, value = subject
+                key = value.end_byte, name
+                if key not in declarations:
+                    declarations.add(key)
+                    bind(scope, value.end_byte, name, "", value, scope)
             for position, name, value, kind in self.closure_declaration_rows(scopes[scope].node):
                 key = position, name
                 if key not in declarations:
                     declarations.add(key)
                     bind(scope, position, name, kind, value, scope)
 
-        def lookup(name: str, scope: int, position: int, initializing: int | None = None) -> int | None:
+        def lookup(name: str, scope: int, position: int) -> int | None:
             current: int | None = scope
             while current is not None:
                 if not self.closure_work():
                     return None
                 for index in reversed(scopes[current].names.get(name, [])):
-                    if bindings[index].position <= position and index != initializing:
+                    if bindings[index].position <= position:
                         return index
                 current = scopes[current].parent
             return None
@@ -5881,7 +5929,12 @@ class Analyzer:
             node, scope = pending.pop()
             if node.type in FUNCTIONS:
                 continue
-            if node.type in CLOSURES:
+            if self.when_binding(node) is not None:
+                parent = scope
+                scope = len(scopes)
+                scopes.append(ClosureScope(node, parent))
+                declare(scope)
+            elif node.type in CLOSURES:
                 owner = self.closure_owner(node)
                 name = owner.name.rsplit(".", 1)[-1] if owner is not None else ""
                 if owner is None or name not in SCOPE_FUNCTIONS | {
@@ -5902,7 +5955,8 @@ class Analyzer:
                 )
                 parameters = self.closure_parameters(node)
                 if name in {"with", "apply", "run"} and subject is not None:
-                    scopes[scope].receiver = bind(scope, -1, "this", "", subject, parent)
+                    index = bind(scope, -1, "this", "", subject, parent)
+                    receivers[index] = len(values) - 1
                 else:
                     if not parameters and name in {
                         "let",
@@ -5919,7 +5973,11 @@ class Analyzer:
                             kind = "Int"
                         bind(scope, -1, parameter, kind, subject, parent)
                 declare(scope)
-            elif node.type in BLOCKS | {"control_structure_body"} and node.parent != closure:
+            elif node.type in BLOCKS | {"control_structure_body"} and (
+                node.parent != closure
+                or self.branching(closure)
+                or closure.type in {"ternary_expression", "switch_expression"}
+            ):
                 parent = scope
                 scope = len(scopes)
                 scopes.append(ClosureScope(node, parent))
@@ -5970,7 +6028,6 @@ class Analyzer:
         for number, record in enumerate(values):
             names = {"this"}
             needed: set[int] = set()
-            initializing = record.owner if record.initializer else None
             for part in _walk(record.node, descend_functions=False):
                 if not self.closure_work():
                     break
@@ -5989,12 +6046,10 @@ class Analyzer:
                     read = list(self.template_names(part))
                 for name in read:
                     names.add(name)
-                    found = lookup(
-                        name, node_scopes.get(span(part), record.scope), part.start_byte, initializing
-                    )
+                    found = lookup(name, node_scopes.get(span(part), record.scope), part.start_byte)
                     if found is not None:
                         needed.add(found)
-            receiver = lookup("this", record.scope, record.node.start_byte, initializing)
+            receiver = lookup("this", record.scope, record.node.start_byte)
             if receiver is not None:
                 needed.add(receiver)
             references.append(names)
@@ -6003,14 +6058,14 @@ class Analyzer:
                 dependents.setdefault(index, set()).add(number)
 
         def context(
-            scope: int, position: int, names: set[str], initializing: int | None = None
+            scope: int, position: int, names: set[str]
         ) -> tuple[frozenset[str], frozenset[str], frozenset[str], bool]:
             local_data = set(data & names)
             local_results = set(results & names)
             local_scalars = set(scalars & names)
             receiver_data = on_receiver
             for name in names:
-                index = lookup(name, scope, position, initializing)
+                index = lookup(name, scope, position)
                 if index is None:
                     continue
                 local_data.discard(name)
@@ -6020,12 +6075,52 @@ class Analyzer:
                 if kinds & data_kind:
                     local_data.add(name)
                 else:
+                    if name == "this" and index in receivers and kinds != scalar_kind:
+                        number = receivers[index]
+                        subject = values[number]
+                        _, subject_results, _, _ = context(
+                            subject.scope, subject.node.start_byte, references[number]
+                        )
+                        if not self.call_result(subject.node, frame, subject_results):
+                            receiver_data = False
+                            continue  # an input-free receiver is neither data nor a traced call result
                     local_results.add(name)
                     if kinds == scalar_kind:
                         local_scalars.add(name)
                 if name == "this":
                     receiver_data = bool(kinds & data_kind)
             return frozenset(local_data), frozenset(local_results), frozenset(local_scalars), receiver_data
+
+        def classified_at(node: Any, at: Any) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+            target_scope = node_scopes.get(span(at if at is not None else node), 0)
+            names = set(data | results | scalars)
+            current: int | None = target_scope
+            while current is not None:
+                names.update(scopes[current].names)
+                current = scopes[current].parent
+            classified = context(target_scope, at.start_byte if at is not None else node.end_byte, names)
+            return classified[0], classified[1], classified[2]
+
+        def reuse_context(
+            node: Any,
+            incoming_data: frozenset[str],
+            incoming_receiver: bool,
+            incoming_results: frozenset[str],
+            incoming_scalars: frozenset[str],
+            at: Any,
+        ) -> tuple[frozenset[str], frozenset[str], frozenset[str]] | None:
+            scope = node_scopes.get(span(node))
+            if scope is None or at is not None and span(at) not in node_scopes:
+                return None  # a skipped callback needs its own bindings
+            if incoming_receiver != on_receiver and lookup("this", scope, node.start_byte) is None:
+                return None
+            changed = (incoming_data ^ data) | (incoming_results ^ results) | (incoming_scalars ^ scalars)
+            if any(lookup(name, scope, node.start_byte) is None for name in changed):
+                return None  # an outer binding's kind changed: build a separate context
+            return classified_at(node, at)
+
+        if self.closure_classification_work is not None:
+            self.closure_contexts.append((frame, reuse_context))
 
         queue = list(range(len(values)))
         queued = set(queue)
@@ -6058,7 +6153,6 @@ class Analyzer:
                 record.scope,
                 record.node.start_byte,
                 references[number],
-                record.owner if record.initializer else None,
             )
             if binding.typed_scalar:
                 continue  # declared numeric locals and inline indices remain numeric
@@ -6094,14 +6188,7 @@ class Analyzer:
                         queue.append(dependent)
                         queued.add(dependent)
 
-        target_scope = node_scopes.get(span(at), 0) if at is not None else 0
-        names = set(data | results | scalars)
-        current: int | None = target_scope
-        while current is not None:
-            names.update(scopes[current].names)
-            current = scopes[current].parent
-        classified = context(target_scope, at.start_byte if at is not None else closure.end_byte, names)
-        return classified[0], classified[1], classified[2]
+        return classified_at(closure, at)
 
     def call_result(self, node: Any, frame: Frame, results: frozenset[str]) -> bool:
         """Whether an expression is another call's result: a closure's local holding one
@@ -6460,7 +6547,7 @@ class Analyzer:
         return None
 
     def scalar_format(self, node: Any, frame: Frame, scalars: frozenset[str]) -> bool:
-        """Numeric fills of an input-free format, also through String transforms. The visit
+        """Numeric or input-free fills of an input-free format, also through String transforms. The visit
         preserves the template's value in its own scope, so a named or local format can be
         read here without hiding input in the template itself (`String.format(saved, n)`).
         A later transform that inserts input makes it text again (`tpl.format(n).plus(q)`)."""
@@ -6473,6 +6560,8 @@ class Analyzer:
                 return False
             name = call.name.rsplit(".", 1)[-1]
             if call.receiver is None and "this" in scalars and name in STRING_TRANSFORMS:
+                if self.native_flow is not None and self.native_flow.resolve(self, call, Value(), frame)[0]:
+                    return False  # a resolved project helper does not transform numeric this
                 return not (
                     name in TEMPLATE_FILLS
                     and any(
@@ -6484,7 +6573,8 @@ class Analyzer:
             if formatted is not None:
                 template, arguments = formatted
                 return not self.reused(template, frame).traces and all(
-                    self.scalar_result(argument, scalars) for argument in arguments
+                    self.scalar_result(argument, scalars) or not self.reused(argument, frame).traces
+                    for argument in arguments
                 )
             if call.receiver is None or name not in STRING_TRANSFORMS:
                 return False
@@ -6524,6 +6614,8 @@ class Analyzer:
                 if first is not None and first.type in IDENTIFIERS and frame is not None:
                     name = self.symbol_name(text)
                     alias = self.aliases.get(name)
+                    if alias is not None and first_value != self.reused(alias, frame):
+                        alias = None  # a later local replaced the scope parameter's value
                     # A local or scope parameter can shadow a Locale field of the same
                     # name. Its actual bound value takes precedence over file/type indexes.
                     if not declared and name not in frame.local_names and alias is None:
@@ -6771,9 +6863,13 @@ class Analyzer:
         return ""
 
     def argument_data(self, argument: Any, frame: Frame, data: frozenset[str]) -> bool:
-        """An argument that carries input: it reads data or a closure's own name (`it` in
+        """An argument that carries input: its visited value wins over a name's content kind.
+        Otherwise it reads data or a closure's own name (`it` in
         `q.let { tpl.format(it) }`, `"$t"`), or its value has traces (also a lambda's result,
         `tpl.replace(Regex("x")) { q }`)."""
+        visited = self.visited_values.get((argument.start_byte, argument.end_byte, argument.type))
+        if visited is not None:
+            return bool(visited.traces)  # a content-kind name may still hold input-free text
         if self.mentions(self.unwrap(argument), data):
             return True
         return bool(self.reused(argument, frame).traces)
@@ -7149,7 +7245,13 @@ class Analyzer:
         returned = []
         jumps = {"jump_expression", "control_transfer_statement", "return_statement", "return_expression"}
         last = self.last_statement(closure)
-        if self.language == "kotlin" and last is not None and last.type not in jumps:
+        if (
+            self.language == "kotlin"
+            and last is not None
+            and last.type not in STATEMENT_ONLY
+            and not self.declaration(last)
+            and self.conditional_branches(last) != []
+        ):
             returned.append(last)
         elif closure.type == "lambda_expression":
             body = _field(closure, "body")
@@ -7162,7 +7264,12 @@ class Analyzer:
                 if body is not None
                 else []
             )
-            if len(statements) == 1 and statements[0].type not in jumps:
+            if (
+                len(statements) == 1
+                and statements[0].type not in STATEMENT_ONLY
+                and not self.declaration(statements[0])
+                and self.conditional_branches(statements[0]) != []
+            ):
                 returned.append(statements[0])
         pending = list(closure.named_children)
         while pending and self.closure_work():
@@ -7274,6 +7381,9 @@ class Analyzer:
                     pending.append(call.receiver)
                 continue
             if current.type in CLOSURES:
+                written = self.closure_written.get((current.start_byte, current.end_byte))
+                if written is not None and written.traces:
+                    return True  # explicit writes into the objects supplied to this closure
                 if self.reused(current, frame).traces:
                     for expression in self.closure_value_expressions(current):
                         local_data, local_results, local_scalars = self.closure_value_context(
@@ -7282,11 +7392,8 @@ class Analyzer:
                         if self.outer_input(expression, frame, local_data, local_results, local_scalars):
                             return True
                 continue
-            if current.type == "ternary_expression" or self.branching(current):
-                parts = [part for part in current.named_children if part.type not in COMMENTS]
-                branches = (
-                    parts[1:] if current.type == "ternary_expression" else self.branch_bodies(current) or []
-                )
+            branches = self.conditional_branches(current)
+            if branches is not None:
                 for branch in branches:
                     if branch is None:
                         continue
@@ -7294,7 +7401,7 @@ class Analyzer:
                     if expression is None:
                         continue
                     local_data, local_results, local_scalars = self.closure_data_locals(
-                        branch, frame, data, results=results, scalars=scalars, at=expression
+                        current, frame, data, results=results, scalars=scalars, at=expression
                     )
                     if self.outer_input(expression, frame, local_data, local_results, local_scalars):
                         return True
@@ -7635,7 +7742,7 @@ class Analyzer:
         """
         name = call.name.rsplit(".", 1)[-1]
         owner = next((effects for effects in reversed(self.closure_effects) if effects.implicit), None)
-        if owner is not None and self.language == "kotlin" and name.startswith("+") and name[1:2].isalpha():
+        if owner is not None and self.language == "kotlin" and name.startswith("+"):
             # tree-sitter-kotlin reads `+format(q)` as a call of `+format`: a DSL unaryPlus of its result.
             return self.statement_position(position if position is not None else call.node)
         if owner is None or name in NON_WRITERS or not (name[:1].islower() or name[:1] == "_"):

@@ -35,6 +35,10 @@ credential service was contacted.
   guards the statements after it and code after an unconditional
   `return@label` or `throw` is not visited. A closure marker no longer makes
   the whole closure body a condition of `AST-WEBVIEW-HOST-ALLOWLIST`.
+- Receiverless String transforms in Kotlin `run`/`with`/`apply` scopes read the
+  bound receiver after project-callee resolution, including ordinary sinks
+  (`q.run { db.execSQL(trim()) }`). A nested `buildString` supplies the nearer
+  CharSequence receiver; a nested scope can rebind it again.
 - A call's receiver and data arguments are bound before its closures run: a
   callback that assigns an argument variable (`evaluateJavascript(js) { js = ... }`,
   `val r = attach(name) { name = ... }`) does not change that call's argument,
@@ -139,7 +143,7 @@ credential service was contacted.
   that class), or of the top level
   that this file can name, also through an import alias
   (`buildString { append(q) }`, `div { text(q) }`, `div { +q }`,
-  `div { +format(q) }`, `request { parameter("q", q) }`; also in an unbraced
+  `div { +format(q) }`, `div { +_format(q) }`, `request { parameter("q", q) }`; also in an unbraced
   `if`/`else`/`when`/`for`/`while`/`do`-`while` or labeled body and as an
   elvis fallback, `n ?: append(q)`), a chain it starts or a
   `this.` call (`append("<p>").append(q)`, `this.append(q)`; not a `this` an
@@ -199,6 +203,11 @@ credential service was contacted.
   classification-work cut records `partial` (`closure value classification budget`);
   nested blocks use their own locals, and assignments in inline scope lambdas
   also count (`q.let { c = "n = '$it'" }`), except to a shadowing local or parameter;
+  supplier branches contribute their returned values, including Java switch
+  arms and yields and Kotlin `when (val x = ..)` subject bindings, not their
+  selectors, predicates or logging statements; explicit writes into a supplier's
+  provided objects also contribute (`Ext.wrap(row) { sb -> sb.append(q) }`),
+  while a trailing assignment, declaration or `if` without `else` returns no value;
   a local can hold a computed call-result expression (`val r = repo.find(q);
   val t = r + "x"; t`),
   a value factory, a source call itself, or an own function this file
@@ -274,6 +283,13 @@ credential service was contacted.
   whose values are only other calls' results, objects or flags, as the value
   itself (`{ val row = repo.find(q); row }`). A fill that inserts input after
   number text is content (`n.toString().plus(q)`, Swift `String(n).appending(q)`);
+  constant or input-free fills beside a number add no input text
+  (`val safe = "fixed"; template.format(safe, q.length)`). A resolved own
+  String helper keeps its value inside a numeric scope
+  (`q.length.run { trim(q) }` with an own `trim(String): String`);
+  static Java/Kotlin formats also recognize an explicit or typed first Locale
+  argument (`String.format(Locale.US, "%d", n)`), preserving the actual template
+  when a String local or scope parameter shadows a Locale field;
   also for a helper handed the object,
   `Fill.into(b) { q }`; not a callback whose result is a side-effect call,
   `b.onClick { log(q) }`, `b.button { analytics.track(q) }` (also a tracker

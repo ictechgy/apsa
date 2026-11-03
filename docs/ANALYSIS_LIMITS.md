@@ -88,6 +88,10 @@ callables and four field-summary rounds. Parser, trace, route and finding limits
 apply independently. Closures, lifecycle callbacks and dynamic dispatch are not
 a complete application call graph.
 
+Content-closure value classification shares a 65,536-unit work limit across its
+nested contexts. An exhausted limit records `closure value classification budget`
+as a budget reason and leaves native-rule coverage `partial`.
+
 ## Hybrid source and compiled artifacts
 
 JS, TS and Dart use token/block flow, not full compiler semantics. Analysis covers
