@@ -5660,3 +5660,378 @@ def test_constructor_string_properties_cost_linear_calls() -> None:
     # calls (reading the body on every lookup cost about 8 times).
     calls(10)
     assert calls(200) < 6 * calls(50)
+
+
+# Round 13: independently reproduced review findings and their no-input controls.
+REVIEW13_KOTLIN = """package com.example.notes
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+import android.webkit.WebView
+class Notes(private val db: SQLiteDatabase, private val web: WebView, private val strict: Boolean) {
+    private val audit = Ext.audit
+    private val repo = Ext.repo
+    private val template = "name = '%s'"
+
+    fun open(intent: Intent, items: List<String>) {
+        val q = intent.getStringExtra("q") ?: ""
+        val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }
+        db.execSQL(s)
+    }
+}
+"""
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        pytest.param('"${q.length}: ".plus(q)', True, id="plus_interpolation"),
+        pytest.param("q.length.toString().plus(q)", True, id="plus_length"),
+        pytest.param("val n = q.length; n.toString().plus(q)", True, id="plus_local"),
+        pytest.param('val n = q.length; n.toString().plus(" for ").plus(q)', True, id="plus_chain"),
+        pytest.param("q.length.plus(1).toString()", False, id="plus_numbers"),
+        pytest.param(
+            "val n = q.length; if (strict) { val n = q.trim(); n } else n.toString()",
+            True,
+            id="branch_shadow",
+        ),
+        pytest.param(
+            "val n = q.length; val m = if (strict) { val n = q.trim(); n } else n.toString(); m",
+            True,
+            id="branch_local_value",
+        ),
+        pytest.param(
+            'val n = q.length; if (strict) n.toString() else "0"', False, id="branch_number_fallback"
+        ),
+        pytest.param('"LIMIT %d".format(q.length)', False, id="format_literal"),
+        pytest.param('String.format("LIMIT %d", q.length)', False, id="format_static"),
+        pytest.param("val n = q.length; template.format(n)", False, id="format_local"),
+        pytest.param(
+            'val n = q.length; val s = String.format("LIMIT %d", n); s.trim()',
+            False,
+            id="format_local_then_trim",
+        ),
+        pytest.param("q.length.let { template.format(it) }", False, id="format_let"),
+        pytest.param('"name = %s".format(q)', True, id="format_text"),
+        pytest.param('String.format("name = %s", q)', True, id="format_static_text"),
+        pytest.param('var n = q.length; n = n + 1; "$n rows"', False, id="counter"),
+        pytest.param('var n: Any = q.length; n = n.toString() + q; "$n rows"', True, id="counter_text"),
+        pytest.param('val n = q.length.coerceIn(1, 50); "$n rows"', False, id="coerce_bounds"),
+        pytest.param('val n = q.length.coerceIn(1..50); "$n rows"', False, id="coerce_range"),
+        pytest.param("q.length.toString().plus(q).trim()", True, id="coerce_text"),
+        pytest.param('q.toInt().let { n -> "LIMIT $n" }', False, id="toint_let"),
+        pytest.param("val n = q.length; with(n) { toString() }", False, id="with_count"),
+        pytest.param("q.toInt().run { toString() }", False, id="run_count"),
+        pytest.param("var c: String? = null; val t = q.trim(); if (strict) c = t; c", True, id="late_local"),
+        pytest.param(
+            "var c: String? = null; val r = repo.find(q); if (strict) c = r.trim(); c", True, id="late_result"
+        ),
+        pytest.param("var t = repo.find(q); t = t.trim(); t", True, id="self_result"),
+        pytest.param(
+            "var c: String? = null; if (strict) { val u = q.trim(); c = u }; c", True, id="branch_local"
+        ),
+        pytest.param(
+            "var c: String? = null; if (strict) { val u = repo.find(q); c = u }; c",
+            False,
+            id="branch_result_control",
+        ),
+        pytest.param(
+            'var c: String? = null; if (strict) { val u = q.trim(); c = "name = " + u }; c',
+            True,
+            id="branch_concat",
+        ),
+        pytest.param('val r = repo.find(q); val s = "name = " + r; s', True, id="concat_result"),
+        pytest.param("val r = repo.find(q); val s = r; s", False, id="result_alias_control"),
+        pytest.param("val r = repo.find(q); r", False, id="result_only_control"),
+        pytest.param("val t = Ext.tracker; t.record(q)", False, id="service_property_control"),
+        pytest.param("val a = requireNotNull(audit); a.record(q)", False, id="factory_control"),
+        pytest.param("val a = checkNotNull(repo); a.record(q)", False, id="factory_check_control"),
+        pytest.param("val xs = mutableListOf<String>(); xs.add(q)", False, id="collection_control"),
+        pytest.param("val a = run { audit }; a.record(q)", False, id="service_run_control"),
+        pytest.param("val a = with(repo) { audit }; a.record(q)", False, id="service_with_control"),
+        pytest.param("val a = audit.also { it.enable() }; a.record(q)", False, id="service_also_control"),
+        pytest.param("val a = audit.apply { enable() }; a.record(q)", False, id="service_apply_control"),
+        pytest.param("val a = audit.takeIf { strict }; a.record(q)", False, id="service_select_control"),
+        pytest.param(
+            "var c: String? = null; q.takeIf { it.isNotBlank() }?.let { c = \"title = '$it'\" }; c",
+            True,
+            id="let_assignment",
+        ),
+        pytest.param(
+            'var c: String? = null; q.trim().also { c = "title = " + it }; c', True, id="also_assignment"
+        ),
+        pytest.param('var c: String? = null; run { c = "title = " + q }; c', True, id="run_assignment"),
+        pytest.param(
+            'var c: String? = null; listOf(q).forEach { c = "title = " + it }; c',
+            True,
+            id="foreach_assignment",
+        ),
+        pytest.param(
+            'val t = repo.find(q); if (strict) { var t = ""; t = q; println(t) }; t', False, id="block_shadow"
+        ),
+        pytest.param(
+            'val t = repo.find(q); q.let { var t = ""; t = q; println(t) }; t', False, id="lambda_shadow"
+        ),
+        pytest.param('val r = repo.find(q); (r.ifBlank { q } + " x").escapeSql()', True, id="outer_lambda"),
+        pytest.param(
+            'val r = repo.find(q); (r.ifBlank { "none" } + " x").escapeSql()',
+            False,
+            id="outer_lambda_control",
+        ),
+        pytest.param(
+            'val r = repo.find(q); (Ext.wrap(r, { q }) + "x").escapeSql()', True, id="outer_lambda_argument"
+        ),
+        pytest.param(
+            'val t = q.trim(); val r = repo.find(q); (Ext.page(r, t.length) + "x").escapeSql()',
+            False,
+            id="outer_number",
+        ),
+    ],
+)
+def test_review13_kotlin(body: str, expected: bool) -> None:
+    report = analyze_sources(
+        [("app/src/main/java/com/example/notes/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))]
+    )
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+REVIEW13_JAVA = """package com.example.notes;
+import android.content.Intent;
+import android.webkit.WebView;
+class Page {
+    static final String TPL = "https://docs.example.test/?q=%s";
+    WebView web;
+
+    void go(Intent i) {
+        String q = i.getStringExtra("q");
+        String page = Markup.render(m -> { m.section(REVIEW_BODY); m.put("h", "x"); });
+        web.loadUrl(page);
+    }
+}
+"""
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        pytest.param(
+            "() -> { String url = null; String t = q.trim(); if (!t.isEmpty()) url = t; return url; }",
+            True,
+            id="forward",
+        ),
+        pytest.param(
+            "() -> { String url; String t = q.trim(); if (q != null) { url = TPL + t; } else { url = TPL; } return url; }",
+            True,
+            id="forward_uninitialized",
+        ),
+        pytest.param(
+            "() -> { String url = null; if (q != null) { String u = q.trim(); url = u; } return url; }",
+            True,
+            id="branch_local",
+        ),
+        pytest.param(
+            "() -> { String url = null; if (q != null) { String u = Ext.find(q); url = u; } return url; }",
+            False,
+            id="branch_result_control",
+        ),
+        pytest.param(
+            "() -> { String url = null; if (q != null) { String u = q.trim(); url = TPL + u; } return url; }",
+            True,
+            id="branch_concat",
+        ),
+        pytest.param(
+            "() -> { String id = Ext.find(q); String url = TPL + id; return url; }", True, id="result_concat"
+        ),
+        pytest.param(
+            "() -> { String id = Ext.find(q); String url = id; return url; }",
+            False,
+            id="result_alias_control",
+        ),
+        pytest.param("() -> Integer.toString(q.length()).concat(q)", True, id="integer_concat"),
+        pytest.param('() -> Integer.toString(q.length()).concat("x")', False, id="integer_control"),
+        pytest.param('() -> String.format("LIMIT %d", q.length())', False, id="format_literal"),
+        pytest.param("() -> String.format(TPL, q.length())", False, id="format_named"),
+        pytest.param("() -> { int n = q.length(); return TPL.formatted(n); }", False, id="format_local"),
+        pytest.param(
+            "() -> { String n = String.format(TPL, q.length()); return n.trim(); }",
+            False,
+            id="format_named_then_trim",
+        ),
+        pytest.param(
+            '() -> { String r = Ext.find(q); return (Ext.or(r, () -> q) + "x").intern(); }',
+            True,
+            id="supplier_input",
+        ),
+        pytest.param(
+            '() -> { String r = Ext.find(q); return (Ext.or(r, () -> "none") + "x").intern(); }',
+            False,
+            id="supplier_control",
+        ),
+        pytest.param("() -> q.isEmpty() ? q : String.valueOf(0)", True, id="ternary_then"),
+        pytest.param(
+            "() -> q.isEmpty() ? String.valueOf(q.length()) : String.valueOf(0)", False, id="ternary_number"
+        ),
+    ],
+)
+def test_review13_java(body: str, expected: bool) -> None:
+    report = analyze_sources(
+        [("app/src/main/java/com/example/notes/Page.java", REVIEW13_JAVA.replace("REVIEW_BODY", body))]
+    )
+    assert _hit(report, URL) is expected, report["findings"]
+
+
+REVIEW13_SWIFT = """import UIKit
+import WebKit
+import Foundation
+final class Router {
+    let web = WKWebView()
+    let template = "https://docs.example.org/search?q={q}"
+    var saved = ""
+
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        let query = url.absoluteString
+        let page = Markup.render({ b in b.section { REVIEW_BODY }; b.add("x") })
+        web.loadHTMLString(page, baseURL: nil)
+        return true
+    }
+}
+"""
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        pytest.param('return String(format: "%d", query.count)', False, id="format_count"),
+        pytest.param('return String(format: "%@", query)', True, id="format_text"),
+        pytest.param("return String(query.count).appending(query)", True, id="append_count"),
+        pytest.param('return String(query.count).appending("x")', False, id="append_count_control"),
+        pytest.param("var u: String? = nil; let t = query.lowercased(); u = t; return u", True, id="forward"),
+        pytest.param(
+            'let r = Store.find(query); let s = "https://docs.example.test/" + r; return s',
+            True,
+            id="result_concat",
+        ),
+        pytest.param("var t = Store.find(query); t = t.lowercased(); return t", True, id="self_result"),
+        pytest.param(
+            'let t = Store.find(query); if true { var t = ""; t = query; print(t) }; return t',
+            False,
+            id="shadow_control",
+        ),
+        pytest.param(
+            'guard let t = Optional(query) else { return "" }; guard let t else { return "" }; return t',
+            True,
+            id="guard_alias",
+        ),
+    ],
+)
+def test_review13_swift(body: str, expected: bool) -> None:
+    report = analyze_sources([("App/Router.swift", REVIEW13_SWIFT.replace("REVIEW_BODY", body))])
+    assert _hit(report, URL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "tail, expected",
+    [
+        ('val clause = "title = \'$q\'"\n            where(clause)\n            where("1 = 1")', True),
+        ('val clause = prefix ?: quote(q)\n            where("kept")', False),
+        ('val clause = prefix ?: quote("kept")\n            where(q)\n            where("1 = 1")', True),
+    ],
+)
+def test_review13_glued_initializers_and_every_write(tail: str, expected: bool) -> None:
+    body = (
+        '        val sql = Db.query {\n            select("*")\n            '
+        + tail
+        + "\n        }\n        db.execSQL(sql)"
+    )
+    report = _notes(body, members="    private val prefix: String? = null")
+    assert _hit(report, SQL) is expected, report["findings"]
+    assert _state(report, SQL) != "partial"
+
+
+def test_review13_qualified_nullable_constructor_string() -> None:
+    source = REVIEW13_KOTLIN.replace(
+        "private val strict: Boolean)", "private val strict: Boolean, private var title: kotlin.String?)"
+    )
+    source = source.replace(
+        'val q = intent.getStringExtra("q") ?: ""',
+        'val q = intent.getStringExtra("q") ?: ""\n        title = q.trim()',
+    )
+    report = analyze_sources([("app/Notes.kt", source.replace("REVIEW_BODY", "title!!.escapeSql()"))])
+    assert _hit(report, SQL), report["findings"]
+
+
+def test_review13_own_java_string_function_lookup_costs_linear_calls() -> None:
+    def lookup_calls(count: int) -> int:
+        methods = "\n".join(
+            f'String title{i}(String q) {{ return "https://docs.example.test/" + q; }}' for i in range(count)
+        )
+        sections = "; ".join(f"m.section(() -> title{i}(q))" for i in range(count))
+        source = REVIEW13_JAVA.replace("REVIEW_BODY", '() -> "safe"')
+        source = source.replace("    WebView web;", "    WebView web;\n" + methods)
+        source = source.replace('m.section(() -> "safe")', sections)
+        total, active = 0, 0
+
+        def profile(frame, event, arg) -> None:
+            nonlocal total, active
+            target = frame.f_code.co_name in {"string_function", "body_string_functions"}
+            if event == "call":
+                if target:
+                    active += 1
+                if active:
+                    total += 1
+            elif event == "return" and target:
+                active -= 1
+
+        sys.setprofile(profile)
+        try:
+            report = analyze_sources([("app/Page.java", source)])
+        finally:
+            sys.setprofile(None)
+        assert _hit(report, URL)
+        return total
+
+    lookup_calls(5)
+    assert lookup_calls(120) < 6 * lookup_calls(30)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "() -> String.format(q, q.length())",
+        "() -> { String saved = q; return String.format(saved, q.length()); }",
+    ],
+)
+def test_review13_numeric_fills_keep_input_from_the_template(body: str) -> None:
+    report = analyze_sources([("app/Page.java", REVIEW13_JAVA.replace("REVIEW_BODY", body))])
+    assert _hit(report, URL), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("val n = q.length; template.format(n).trim()", False),
+        ("val n = q.length; template.format(n).plus(q)", True),
+        ('val n = q.length; val tpl = "LIMIT %d"; tpl.format(n).trim()', False),
+        ('val n = q.length; String.format("LIMIT %d", n).trim()', False),
+    ],
+)
+def test_review13_numeric_formats_through_transforms(body: str, expected: bool) -> None:
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("let n = query.count; return String(format: template, n).lowercased()", False),
+        ("let tpl = query; return String(format: tpl, query.count)", True),
+    ],
+)
+def test_review13_swift_named_formats(body: str, expected: bool) -> None:
+    report = analyze_sources([("App/Router.swift", REVIEW13_SWIFT.replace("REVIEW_BODY", body))])
+    assert _hit(report, URL) is expected, report["findings"]
+
+
+def test_review13_numeric_replace_fill_is_no_content() -> None:
+    body = 'val n = q.length; template.replace("%s", n.toString())'
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert not _hit(report, SQL), report["findings"]

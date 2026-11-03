@@ -1808,6 +1808,7 @@ class Analyzer:
         # Functions declared in each class body (and its companion), by name.
         self.class_functions: dict[tuple[int, int], dict[str, list[Any]]] = {}
         self.class_members: dict[tuple[int, int], dict[str, bool]] = {}
+        self.class_string_functions: dict[tuple[int, int], dict[str, bool]] = {}
         self.guarded_paths: set[tuple[int, str]] = set()
         self.unguarded_paths: set[tuple[int, str]] = set()
         self.finding_start = 0
@@ -4551,7 +4552,12 @@ class Analyzer:
                 frame.constants[name] = described
             else:
                 frame.constants.pop(name, None)
-            value = self.reused(expression, frame).bind(self.point(node))
+            value = self.reused(expression, frame)
+            if self.closure_depth and expression is not None:
+                # Content classification happens later in the enclosing frame. Preserve
+                # computed initializers while this closure's own names are still bound.
+                self.visited_values[(expression.start_byte, expression.end_byte, expression.type)] = value
+            value = value.bind(self.point(node))
             if self.native_flow is not None:
                 value = self.native_flow.local_value(
                     self, node, type_name, value, frame, initialized=expression is not None
@@ -4598,7 +4604,10 @@ class Analyzer:
                     base = next((part for part in _walk(left) if part.type in IDENTIFIERS), None)
                     if base is not None:
                         frame.constants.pop(self.symbol_name(self.text(base)), None)
-                value = self.reused(right, frame).bind(self.point(node))
+                value = self.reused(right, frame)
+                if self.closure_depth:
+                    self.visited_values[(right.start_byte, right.end_byte, right.type)] = value
+                value = value.bind(self.point(node))
                 if deferred is not None:
                     value = _union([value, deferred], "unknown", value.type_name)
                 if previous is not None:
@@ -4992,6 +5001,11 @@ class Analyzer:
                     lambdas.append(argument)
                 else:
                     closures.append((index, argument))
+            if self.closure_depth and (formatted := self.format_parts(call)) is not None:
+                template = formatted[0]
+                self.visited_values[(template.start_byte, template.end_byte, template.type)] = self.reused(
+                    template, frame
+                )
             # The receiver and data arguments are bound before a closure can run. They are
             # computed once here and shared with the closures' element parameters, the
             # call's value and its sink checks.
@@ -5761,46 +5775,116 @@ class Analyzer:
         names = set(data)
         held = set(results)
         numbers = set(scalars)
+        if depth > 16:
+            return data, results, scalars
         declarations = self.closure_declarations(closure)
         assigned = self.closure_assignments(closure) if declarations else {}
-        for name, initializer, kind in declarations:
-            values = ([initializer] if initializer is not None else []) + assigned.get(name, [])
-            known = frozenset(numbers)
-            # A number or a flag, unless the body also assigns it another value
-            # (`var n: Any = q.length; n = q`).
-            scalar = re.sub(r"\s+", "", kind).rstrip("?!") in NUMBER_TYPES or (
-                bool(values) and all(self.scalar_result(value, known) for value in values)
-            )
-            is_data = not scalar and any(
-                not self.scalar_result(value, known)
-                and (
-                    self.data_expression(value, frame, frozenset(names), on_receiver, frozenset(held), known)
-                    or self.call(self.unwrap(value) or value) is not None
-                    and self.value_result(
-                        value, frame, depth + 1, frozenset(names), on_receiver, frozenset(held), known
+        # A value assigned early can read a name declared later, or its own prior result
+        # (`t = t.trim()`). Reclassify until those dependencies stop changing. The source-
+        # order pass resolves ordinary chains immediately; each further pass resolves at
+        # least one dependency, so the declaration count bounds the fixed point.
+        for _ in range(len(declarations) + 1):
+            previous = (names.copy(), held.copy(), numbers.copy())
+            for name, initializer, kind in declarations:
+                contexts = {}
+                entries = ([(initializer, ())] if initializer is not None else []) + assigned.get(name, [])
+                values = []
+                for value, scopes in entries:
+                    if scopes not in contexts:
+                        scoped = (frozenset(names), frozenset(held), frozenset(numbers))
+                        for scope in scopes:
+                            scoped = self.closure_data_locals(
+                                scope, frame, scoped[0], on_receiver, scoped[1], scoped[2], depth + 1
+                            )
+                        contexts[scopes] = scoped
+                    values.append((value, *contexts[scopes]))
+                # A bare self binding (`guard let q else { .. }`) reads the outer value;
+                # arithmetic updates may assume their own number (`n = n + 1`).
+                scalar = re.sub(r"\s+", "", kind).rstrip("?!") in NUMBER_TYPES or (
+                    bool(values)
+                    and all(
+                        self.scalar_result(
+                            value,
+                            local_numbers
+                            if value.type in IDENTIFIERS and self.symbol_name(self.text(value)) == name
+                            else local_numbers | {name},
+                        )
+                        or self.scalar_format(value, frame, local_numbers)
+                        for value, local_data, _, local_numbers in values
                     )
                 )
-                for value in values
-            )
-            names.discard(name)
-            held.discard(name)
-            numbers.discard(name)
-            if is_data:
-                names.add(name)
-            elif values:
-                held.add(name)
-                if scalar:
-                    numbers.add(name)
+                is_data = not scalar and any(
+                    not self.scalar_result(value, local_numbers)
+                    and (
+                        self.data_expression(
+                            value, frame, local_data, on_receiver, local_results, local_numbers
+                        )
+                        # Computed values and aliases are judged in their own block, using
+                        # values kept by the visit. Objects without input stay objects.
+                        or (target := self.unwrap(value)) is not None
+                        and self.navigation(target) is None
+                        and self.reused(value, frame).traces
+                        and self.value_result(
+                            value, frame, depth + 1, local_data, on_receiver, local_results, local_numbers
+                        )
+                    )
+                    for value, local_data, local_results, local_numbers in values
+                )
+                names.discard(name)
+                held.discard(name)
+                numbers.discard(name)
+                if is_data:
+                    names.add(name)
+                elif values:
+                    held.add(name)
+                    if scalar:
+                        numbers.add(name)
+            if previous == (names, held, numbers):
+                break
         return frozenset(names), frozenset(held), frozenset(numbers)
 
-    def closure_assignments(self, closure: Any) -> dict[str, list[Any]]:
-        """What a closure body (not a nested closure) assigns to each plain name."""
-        assigned: dict[str, list[Any]] = {}
-        pending = [part for part in closure.named_children]
+    def closure_assignments(self, closure: Any) -> dict[str, list[tuple[Any, tuple[Any, ...]]]]:
+        """What a body's names are assigned, also in nested inline scopes. A block's or
+        lambda's own declarations and parameters hide outer names of the same spelling."""
+        assigned: dict[str, list[tuple[Any, tuple[Any, ...]]]] = {}
+        pending: list[tuple[Any, frozenset[str], tuple[Any, ...]]] = [
+            (part, frozenset(), ()) for part in closure.named_children
+        ]
         while pending:
-            node = pending.pop()
-            if node.type in CLOSURES or node.type in FUNCTIONS:
+            node, shadowed, scopes = pending.pop()
+            if node.type in FUNCTIONS:
                 continue
+            if node.type in CLOSURES:
+                owner = self.closure_owner(node)
+                name = owner.name.rsplit(".", 1)[-1] if owner is not None else ""
+                if name not in SCOPE_FUNCTIONS | {
+                    "takeIf",
+                    "takeUnless",
+                    "forEach",
+                    "forEachIndexed",
+                    "onEach",
+                }:
+                    continue
+                parameters = {name for name, _, _ in self.closure_parameters(node)}
+                if not parameters and name in {
+                    "let",
+                    "also",
+                    "use",
+                    "takeIf",
+                    "takeUnless",
+                    "forEach",
+                    "onEach",
+                }:
+                    parameters = {"it"}
+                declared = {name for name, _, _ in self.closure_declarations(node)}
+                shadowed = shadowed | parameters | declared
+                if declared:
+                    scopes = (*scopes, node)
+            elif node.type in BLOCKS | {"control_structure_body"} and not _same_node(node.parent, closure):
+                declared = {name for name, _, _ in self.closure_declarations(node)}
+                shadowed = shadowed | declared
+                if declared:
+                    scopes = (*scopes, node)
             if node.type in {"assignment", "assignment_expression"}:
                 left = self.assignment_target(
                     _field(node, "left") or _field(node, "target") or next(iter(node.named_children), None)
@@ -5811,8 +5895,10 @@ class Analyzer:
                     or (node.named_children[-1] if len(node.named_children) > 1 else None)
                 )
                 if left is not None and left.type in IDENTIFIERS and right is not None and right != left:
-                    assigned.setdefault(self.symbol_name(self.text(left)), []).append(right)
-            pending.extend(node.named_children)
+                    name = self.symbol_name(self.text(left))
+                    if name not in shadowed:
+                        assigned.setdefault(name, []).append((right, scopes))
+            pending.extend((part, shadowed, scopes) for part in node.named_children)
         return assigned
 
     def call_result(self, node: Any, frame: Frame, results: frozenset[str]) -> bool:
@@ -5834,8 +5920,14 @@ class Analyzer:
         (`t.track("open")`) is a side effect."""
         if call.receiver is None or call.name.rsplit(".", 1)[-1] not in STRING_TRANSFORMS:
             return False
-        if self.scalar_result(self.unwrap(call.receiver) or call.receiver, scalars):
-            return False  # the text of a number (`q.length.toString()`, `n.toString()`)
+        if self.scalar_result(self.unwrap(call.receiver) or call.receiver, scalars) or self.scalar_format(
+            call.receiver, frame, scalars
+        ):
+            # A number's text can still be filled with input (`n.toString().plus(q)`).
+            return call.name.rsplit(".", 1)[-1] in TEMPLATE_FILLS and any(
+                not self.scalar_result(argument, scalars) and self.argument_data(argument, frame, results)
+                for argument in self.inserted_arguments(call)
+            )
         if self.mentions(self.chain_base(call.receiver), results):
             return True  # read by name: the enclosing frame does not bind a closure's names
         return bool(self.reused(call.receiver, frame).traces)
@@ -5928,6 +6020,8 @@ class Analyzer:
         if call is None:
             return True
         name = call.name.rsplit(".", 1)[-1]
+        if self.scalar_format(node, frame, scalars):
+            return False
         block = self.closure_argument(call.args[-1]) if call.args else None
         if call.receiver is None and name == "with" and block is not None and len(call.args) == 2:
             # `with(config) { "$host/$q" }` is its block's result; on data (`with(q) { trim() }`)
@@ -5942,7 +6036,7 @@ class Analyzer:
                 data,
                 subject,
                 results - {"this"} | ({"this"} if other else set()),
-                scalars,
+                scalars - {"this"} | ({"this"} if self.scalar_result(call.args[0], scalars) else set()),
                 depth + 1,
             )
             return self.value_result(
@@ -5972,6 +6066,12 @@ class Analyzer:
                 block_scalars,
             )
         if call.receiver is None:
+            if "this" in scalars and name in NUMBER_OPERATIONS:
+                return name in TEMPLATE_FILLS and any(
+                    not self.scalar_result(argument, scalars)
+                    and self.argument_data(argument, frame, data | results)
+                    for argument in self.inserted_arguments(call)
+                )
             # `String(format: "%@", q)`: a value built from its arguments; an own function
             # declared to return a String (`displayName()`); in a run/with block, a String
             # transform of its receiver (data, or another call's result).
@@ -5992,7 +6092,9 @@ class Analyzer:
         if (
             not receiver_data
             and name not in {"let", "run", "use"}
-            and self.string_template(call, frame, data | results | ({"this"} if on_receiver else set()))
+            and self.string_template(
+                call, frame, data | results | ({"this"} if on_receiver else set()), scalars
+            )
         ):
             return True
         if name in {"let", "run", "use"} and block is not None:
@@ -6006,12 +6108,13 @@ class Analyzer:
             numbers = scalars - names
             # `run` rebinds `this`: an outer block's receiver is no longer read.
             outer = results - {"this"} if name == "run" else results
-            if receiver_data:
+            scalar_receiver = self.scalar_result(call.receiver, scalars)
+            if receiver_data and not scalar_receiver:
                 scope, held = data | names, outer - names
             else:
                 scope, held = data - names, outer | names
-                if self.scalar_result(call.receiver, scalars):
-                    numbers = numbers | names  # `q.length.let { n -> "$n results" }`
+                if scalar_receiver:
+                    numbers = numbers | (names if name != "run" else {"this"})
                 if name == "run" and self.call_result(call.receiver, frame, results):
                     held = held | {"this"}  # `t.run { trim() }` over another call's result
             block_data, block_results, block_scalars = self.closure_data_locals(
@@ -6040,10 +6143,13 @@ class Analyzer:
         """An expression whose value is a flag or a number, not text: a comparison or a logical
         operation (`q == "x"`, `!ok`, `q in xs`, `q is String`), a member read or call by such a
         name (`q.isNotEmpty()`, `q.length`, `template.contains(q)`), a closure's name holding
-        one (`scalars`), arithmetic on numbers (`q.length + 1`), a number's text
-        (`n.toString()`, Swift `n.description` and `String(n)`, Java `String.valueOf(n)`) or a
-        string that only interpolates them (`"${q.length} results"`, `"$n results"`). Up to
-        MAX_CHAIN nodes are read; beyond that the expression counts as text."""
+        one (`scalars`), arithmetic on numbers (`q.length + 1`), a number's text or operation
+        (`n.toString()`, `n.plus(1)`, Swift `n.description` and `String(n)`, Java
+        `String.valueOf(n)`), a constant format they fill (`"LIMIT %d".format(n)`), branches of
+        them (a constant text branch aside; a branch declaring its own locals is left to the
+        value check), or a string that only interpolates them (`"${q.length} results"`,
+        `"$n results"`). Up to MAX_CHAIN nodes are read; beyond that the expression counts as
+        text."""
         pending, seen = [node], 0
         while pending:
             current = pending.pop()
@@ -6071,7 +6177,19 @@ class Analyzer:
                 bodies = parts[1:] if current.type == "ternary_expression" else self.branch_bodies(current)
                 if not bodies or len(bodies) < 2:
                     return False
-                pending.extend(self.last_statement(body) for body in bodies)
+                if any(
+                    body is not None
+                    and body.type in BLOCKS | {"control_structure_body"}
+                    and self.closure_declarations(body)
+                    for body in bodies
+                ):
+                    return False  # `if (c) { val n = q.trim(); n } else ..`: the branch's own names
+                # A constant text branch only makes the others' numbers text (`if (c) n.toString() else "0"`).
+                results = [self.last_statement(body) for body in bodies]
+                results = [result for result in results if result is None or not self.constant_text(result)]
+                if not results:
+                    return False
+                pending.extend(results)
                 continue
             interpolated = self.interpolated_parts(current)
             if interpolated is not None:
@@ -6080,38 +6198,113 @@ class Analyzer:
                     return False  # a constant or `$t` text
                 pending.extend(parts)
                 continue
-            number = self.number_text(current)
-            if number is not None:
-                pending.append(number)
+            if self.flag_or_number(current):
+                continue
+            numbers = self.number_values(current)
+            if numbers is not None:
+                pending.extend(numbers)
                 continue
             if not self.flag_or_number(current):
                 return False
         return True
 
-    def number_text(self, node: Any) -> Any:
-        """The value a conversion to text or a number's operation reads (`n.toString()`,
+    def number_values(self, node: Any) -> list[Any] | None:
+        """What a number's text or operation reads, its receiver and arguments (`n.toString()`,
         `n.toString(16)`, `n.plus(1)`, `n.coerceAtLeast(1)`, Swift `n.description` and
-        `String(n)`, Java `String.valueOf(n)`), or None."""
+        `String(n)`, Java `String.valueOf(n)`), or the values a constant format inserts
+        (`"LIMIT %d".format(n)`, `String.format("%d", n)`, Swift `String(format: "%d", n)`,
+        Java `"%d".formatted(n)`); None for another node."""
         call = self.call(node)
         if call is not None:
             member = call.name.rsplit(".", 1)[-1]
-            if member in NUMBER_OPERATIONS and call.receiver is not None and len(call.args) <= 1:
-                return call.receiver
-            if len(call.args) == 1 and (
-                self.language == "swift"
-                and call.receiver is None
-                and member == "String"
-                or member == "valueOf"
+            on_string = call.receiver is not None and self.key(call.receiver) == "String"
+            swift_string = self.language == "swift" and call.receiver is None and member == "String"
+            if (
+                member in NUMBER_OPERATIONS
                 and call.receiver is not None
-                and self.key(call.receiver) == "String"
+                and len(call.args) <= (2 if member == "coerceIn" else 1)
             ):
-                return call.args[0]
+                return [call.receiver, *call.args]
+            if (
+                member in {"format", "formatted"}
+                and call.receiver is not None
+                and self.constant_text(call.receiver)
+            ):
+                return list(call.args) or None
+            if (
+                (
+                    (
+                        member == "format"
+                        and on_string
+                        or swift_string
+                        and self.argument_label(call.args[0]) == "format"
+                    )
+                    if call.args
+                    else False
+                )
+                and len(call.args) > 1
+                and self.constant_text(call.args[0])
+            ):
+                return list(call.args[1:])
+            if len(call.args) == 1 and (swift_string or member == "valueOf" and on_string):
+                return [call.args[0]]
             return None
         if self.language == "swift" and node.type == "navigation_expression":
             navigation = self.navigation(node)
             if navigation is not None and navigation[0] is not None and navigation[1] == "description":
-                return navigation[0]
+                return [navigation[0]]
         return None
+
+    def scalar_format(self, node: Any, frame: Frame, scalars: frozenset[str]) -> bool:
+        """Numeric fills of an input-free format, also through String transforms. The visit
+        preserves the template's value in its own scope, so a named or local format can be
+        read here without hiding input in the template itself (`String.format(saved, n)`).
+        A later transform that inserts input makes it text again (`tpl.format(n).plus(q)`)."""
+        current = self.unwrap(node)
+        for _ in range(MAX_CHAIN):
+            call = self.call(current) if current is not None else None
+            if call is None:
+                return False
+            name = call.name.rsplit(".", 1)[-1]
+            formatted = self.format_parts(call)
+            if formatted is not None:
+                template, arguments = formatted
+                return not self.reused(template, frame).traces and all(
+                    self.scalar_result(argument, scalars) for argument in arguments
+                )
+            if call.receiver is None or name not in STRING_TRANSFORMS:
+                return False
+            if name in TEMPLATE_FILLS and any(
+                not self.scalar_result(argument, scalars) and self.reused(argument, frame).traces
+                for argument in self.inserted_arguments(call)
+            ):
+                return False
+            current = self.unwrap(call.receiver)
+        return False
+
+    def format_parts(self, call: Call) -> tuple[Any, list[Any]] | None:
+        """A format's template and inserted values, including static and Swift spellings."""
+        name = call.name.rsplit(".", 1)[-1]
+        if (
+            name == "format"
+            and call.receiver is not None
+            and self.key(call.receiver) in {"String", "java.lang.String"}
+            or self.language == "swift"
+            and call.receiver is None
+            and name == "String"
+            and call.args
+            and self.argument_label(call.args[0]) == "format"
+        ):
+            return (call.args[0], list(call.args[1:])) if len(call.args) > 1 else None
+        if name in {"format", "formatted"} and call.receiver is not None and call.args:
+            return call.receiver, list(call.args)
+        return None
+
+    def constant_text(self, node: Any) -> bool:
+        """A string literal that inserts nothing (`"0"`, `"LIMIT %d"`)."""
+        literal = self.unwrap(node)
+        parts = self.interpolated_parts(literal) if literal is not None else None
+        return parts is not None and not parts[0] and not parts[1]
 
     def arithmetic_operands(self, node: Any) -> list[Any] | None:
         """The operands of `+ - * / %` (`q.length + 1`), or None."""
@@ -6120,6 +6313,7 @@ class Analyzer:
             "additive_expression",
             "multiplicative_expression",
             "nil_coalescing_expression",
+            "range_expression",
         }:
             return None
         parts = [part for part in node.named_children if part.type not in COMMENTS]
@@ -6127,7 +6321,7 @@ class Analyzer:
             return None
         operator = self.operator_between(parts[0], parts[1])
         # Also a number's elvis fallback (`q.toIntOrNull() ?: 0`, Swift `Int(q) ?? 0`).
-        return parts if operator in {b"+", b"-", b"*", b"/", b"%", b"?:", b"??"} else None
+        return parts if operator in {b"+", b"-", b"*", b"/", b"%", b"?:", b"??", b"..", b"..<"} else None
 
     def operator_between(self, left: Any, right: Any) -> bytes:
         """The operator between two operands, without comments (`q.length /* c */ + 1`)."""
@@ -6212,7 +6406,13 @@ class Analyzer:
             return False
         return member in SCALAR_RESULTS or bool(re.fullmatch(r"(?:is|has|can|should)[A-Z]\w*", member))
 
-    def string_template(self, call: Call, frame: Frame, data: frozenset[str] = frozenset()) -> bool:
+    def string_template(
+        self,
+        call: Call,
+        frame: Frame,
+        data: frozenset[str] = frozenset(),
+        scalars: frozenset[str] = frozenset(),
+    ) -> bool:
         """A transform of a String held in a name that inserts input (`tpl.format(q)`,
         `tpl.replace("{q}", q)`, `prefix.plus(q)`): the template's root is a String constant
         or a String-typed parameter, the String transforms that start the chain fill it
@@ -6281,7 +6481,7 @@ class Analyzer:
             )
         # A fill of numbers only is a number's text (`"LIMIT %d".format(q.length)`).
         return bool(template) and any(
-            self.argument_data(argument, frame, data) and not self.scalar_result(argument)
+            self.argument_data(argument, frame, data) and not self.scalar_result(argument, scalars)
             for argument in arguments
         )
 
@@ -6325,17 +6525,28 @@ class Analyzer:
         around the node that declares a function of that name decides; without one, a function
         of that name elsewhere in the file (top level, a base class) does."""
         for body in self.class_bodies(node):
-            declared = [
-                *self.body_functions(body).get(name, []),
-                *(
-                    member
-                    for member in body.named_children
-                    if member.type == "method_declaration" and self.text(_field(member, "name")) == name
-                ),
-            ]
-            if declared:
-                return any(self.string_function_header(member) for member in declared)
+            functions = self.body_string_functions(body)
+            if name in functions:
+                return functions[name]
         return name in self.string_functions
+
+    def body_string_functions(self, body: Any) -> dict[str, bool]:
+        """Whether a class body's functions and Java methods (and its companion object's) return a
+        String, by name, an overload returning one counting; read once per body."""
+        key = (body.start_byte, body.end_byte)
+        cached = self.class_string_functions.get(key)
+        if cached is not None:
+            return cached
+        found = {
+            name: any(self.string_function_header(member) for member in members)
+            for name, members in self.body_functions(body).items()
+        }
+        for member in body.named_children:
+            if member.type == "method_declaration":
+                name = self.text(_field(member, "name"))
+                found[name] = found.get(name, False) or self.string_function_header(member)
+        self.class_string_functions[key] = found
+        return found
 
     def string_function_header(self, node: Any) -> bool:
         """A function or method declared to return a String (`fun name(): String`, Swift
@@ -6534,10 +6745,14 @@ class Analyzer:
         base = self.chain_base(node)
         if base is None:
             return False
+        if (
+            self.scalar_result(node, scalars)
+            or self.scalar_result(base, scalars)
+            or self.scalar_format(node, frame, scalars)
+        ):
+            return False  # a flag or a number (`q.length.toString()`, `n` on `val n = q.length`)
         if base.type in STRINGS | TEXT_LITERALS:
             return True
-        if self.scalar_result(base, scalars):
-            return False  # a flag or a number (`q.length.toString()`, `n` on `val n = q.length`)
         # `+String.format(..)` parses with `+String` as the receiver: the unaryPlus of a call.
         path = self.text(base).strip().lstrip("+-")
         root = re.split(r"[.?!(\[]", path, maxsplit=1)[0]
@@ -6588,7 +6803,7 @@ class Analyzer:
             # A closure's other local (`val t = repo.lookup(q)`) or its `it`, also inside a call
             # (`Ext.wrap(r) + "x"`), unless the expression joins input from outside
             # (`(col + " = '" + q + "'")`).
-            return self.outer_input(base, frame, data, results)
+            return self.outer_input(base, frame, data, results, scalars)
         value = self.reused(base, frame)
         if not value.traces:
             return False
@@ -6671,7 +6886,14 @@ class Analyzer:
                 text = text.replace(self.text(part), "")
         return {match for match in re.findall(r"\$([^\W\d]\w*)", text)}
 
-    def outer_input(self, node: Any, frame: Frame, data: frozenset[str], results: frozenset[str]) -> bool:
+    def outer_input(
+        self,
+        node: Any,
+        frame: Frame,
+        data: frozenset[str],
+        results: frozenset[str],
+        scalars: frozenset[str] = frozenset(),
+    ) -> bool:
         """Whether an expression that reads a closure's call-result names (`results`) also reads
         input: a closure data name, a name of the enclosing frame or a call over neither that
         carries input (`(col + " = '" + q + "'")` on `val col = settings.sortColumn()`,
@@ -6681,6 +6903,8 @@ class Analyzer:
         pending = [node]
         while pending:
             current = pending.pop()
+            if self.scalar_result(current, scalars):
+                continue
             if current.type in IDENTIFIERS:
                 name = self.symbol_name(self.text(current))
                 if name in data or name not in results and self.reused(current, frame).traces:
@@ -6697,6 +6921,8 @@ class Analyzer:
                     pending.append(call.receiver)
                 continue
             if current.type in CLOSURES:
+                if not self.reads_names(current, results) and self.reused(current, frame).traces:
+                    return True
                 continue
             if current.type in TEXT_LITERALS and self.language == "kotlin":
                 for name in self.template_names(current) - results:
@@ -6855,8 +7081,11 @@ class Analyzer:
             owner = parent.parent
             return (
                 False
-                if owner is not None
-                and owner.type in {"property_declaration", "assignment"}
+                if (
+                    owner is not None
+                    and owner.type in {"property_declaration", "assignment"}
+                    or self.glued_operand(parent)
+                )
                 and self.misparsed_call(node) is None
                 else parent
             )

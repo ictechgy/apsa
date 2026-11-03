@@ -189,11 +189,16 @@ credential service was contacted.
   `m.section(() -> q)`: a value, or a call whose call chain starts at data: a
   literal, a value class such as `String`, a local the closure (or the braced
   branch it ends in, whose own locals hide the closure's of that name)
-  declares from data or from a call that would be content as the closure's
-  result, also by assigning it later (`{ val t = q.trim(); t.uppercase() }`,
+  declares from data or from an expression that would be content as the closure's
+  result and carries input, also by assigning it later (`{ val t = q.trim(); t.uppercase() }`,
   `{ val t = repo.lookup(q).trim(); t }`, Java
   `{ String u = TPL.concat(q); return u; }`, `String label; .. label = q.trim();`,
-  `var c: String? = null; if (..) c = "n = '$q'"; c`),
+  `var c: String? = null; if (..) c = "n = '$q'"; c`). All of a local's
+  values are classified until references to later locals and self updates stabilize;
+  nested blocks use their own locals, and assignments in inline scope lambdas
+  also count (`q.let { c = "n = '$it'" }`), except to a shadowing local or parameter;
+  a local can hold a computed call-result expression (`val r = repo.find(q);
+  val t = r + "x"; t`),
   a value factory, a source call itself, or an own function this file
   declares to return a String, also a Swift `throws` or `async` one and a
   Kotlin expression body that is a String initializer or a String property
@@ -223,7 +228,8 @@ credential service was contacted.
   of that name decides, not a same-named String elsewhere in the file;
   without one, a bare name or `this.`, `self.` or `super.` reads a String of
   that name in the file or one a source supertype declares, also in another
-  file, Java `class Page implements Urls` reading `SEARCH`), also qualified,
+  file for Kotlin and Java (Swift source supertypes are read within the same
+  file), Java `class Page implements Urls` reading `SEARCH`), also qualified,
   also by its package (`com.example.Sql.BY_NAME`), and from another file, a
   Java interface's constants included, filled through its new text (by its
   name in `replace(newValue = q, oldValue = "{q}")`)
@@ -252,15 +258,20 @@ credential service was contacted.
   Swift `Int(q)`, a closure's local or `let` parameter that holds one or is
   declared as one, `val n = q.length`, `val ok: Boolean = check(q)`,
   `q.length.let { n -> .. }`, arithmetic, operations (`n.plus(1)`,
-  `n.coerceAtLeast(1)`) and elvis fallbacks on them, `q.length + 1`,
+  `n.coerceAtLeast(1)`, `n.coerceIn(1, 100)`), self updates (`n = n + 1`)
+  and elvis fallbacks on them, `q.length + 1`,
   `q.toIntOrNull() ?: 0`, Swift `Int(q) ?? 0`, branches or a ternary of
   them (`if (c) 0 else q.length`), their text, `q.length.toString()`,
   `n.toString()`, `"" + q.length()`, Swift `n.description` or `String(n)`,
   Java `String.valueOf(n)`, or a string that only interpolates them or a
   template that only they fill, `"${q.length} results"`, `"$n results"`,
-  `"LIMIT %d".format(q.length)`), `Unit` or `null`, nor a closure's local
+  `"LIMIT %d".format(q.length)`, `val n = q.length; template.format(n)`,
+  Java `String.format("LIMIT %d", n)` and `"LIMIT %d".formatted(n)`, Swift
+  `String(format: "%d", n)`, or a numeric branch with a constant-text fallback,
+  `if (c) n.toString() else "0"`), `Unit` or `null`, nor a closure's local
   whose values are only other calls' results, objects or flags, as the value
-  itself (`{ val row = repo.find(q); row }`);
+  itself (`{ val row = repo.find(q); row }`). A fill that inserts input after
+  number text is content (`n.toString().plus(q)`, Swift `String(n).appending(q)`);
   also for a helper handed the object,
   `Fill.into(b) { q }`; not a callback whose result is a side-effect call,
   `b.onClick { log(q) }`, `b.button { analytics.track(q) }` (also a tracker
