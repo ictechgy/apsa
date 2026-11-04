@@ -748,6 +748,33 @@ NUMBER_TYPES = {
     "float",
     "boolean",
 }
+MODELED_NOMINAL_TYPES = NUMBER_TYPES | {"String", "Regex"}
+KOTLIN_MODEL_TYPES = {
+    "String": ("kotlin.String", "java.lang.String"),
+    "Regex": ("kotlin.text.Regex",),
+    "Int": ("kotlin.Int", "java.lang.Integer"),
+    "Integer": ("java.lang.Integer",),
+    "Long": ("kotlin.Long", "java.lang.Long"),
+    "Short": ("kotlin.Short", "java.lang.Short"),
+    "Byte": ("kotlin.Byte", "java.lang.Byte"),
+    "Float": ("kotlin.Float", "java.lang.Float"),
+    "Double": ("kotlin.Double", "java.lang.Double"),
+    "Boolean": ("kotlin.Boolean", "java.lang.Boolean"),
+    "UInt": ("kotlin.UInt",),
+    "ULong": ("kotlin.ULong",),
+}
+KOTLIN_CALLBACK_TYPES = {
+    **{name: types[0] for name, types in KOTLIN_MODEL_TYPES.items()},
+    "CharSequence": "kotlin.CharSequence",
+    "Any": "kotlin.Any",
+    "Object": "java.lang.Object",
+    "Array": "kotlin.Array",
+    "List": "kotlin.collections.List",
+    "MutableList": "kotlin.collections.MutableList",
+    "Set": "kotlin.collections.Set",
+    "Map": "kotlin.collections.Map",
+    "Collection": "kotlin.collections.Collection",
+}
 # Members whose result is a flag or a number, not text (`b.visible { q.isNotEmpty() }`,
 # `q.length`, `template.contains(q)`).
 SCALAR_RESULTS = {
@@ -1466,15 +1493,23 @@ def _union(values: list[Value], category: str = "unknown", type_name: str = "") 
     if len(kept) > 8:
         # Collapsing origins beyond the trace cap is a budget cut.
         last = kept[-1]
-        sources = {
-            (trace.source.location.get("path"), trace.source.location.get("offset"))
-            if isinstance(trace.source, SourceNode)
-            else ("@node", trace.source.id if trace.source is not None else None)
+        locations = {
+            trace.source.node.id: (trace.source.location.get("path"), trace.source.location.get("offset"))
             for trace in kept
+            if isinstance(trace.source, SourceNode)
         }
+
+        def source_key(trace: Trace) -> tuple:
+            if isinstance(trace.source, SourceNode):
+                return trace.source.location.get("path"), trace.source.location.get("offset")
+            key = trace.source.id if trace.source is not None else None
+            return locations.get(key, ("@node", key))
+
+        sources = {source_key(trace) for trace in kept}
+        retained_sources = {source_key(trace) for trace in (*kept[:7], last)}
         description = last.description
         if TRACE_SOURCE_LOSS not in description and (
-            len(sources) > 8 or any(TRACE_SOURCE_LOSS in trace.description for trace in kept)
+            sources - retained_sources or any(TRACE_SOURCE_LOSS in trace.description for trace in kept)
         ):
             description += TRACE_SOURCE_LOSS
         description += TRACE_PARTIAL
@@ -1867,6 +1902,9 @@ class Analyzer:
         self.class_functions: dict[tuple[int, int], dict[str, list[Any]]] = {}
         self.class_members: dict[tuple[int, int], dict[str, bool]] = {}
         self.callback_result_nodes: dict[int, tuple[Any, ...]] = {}
+        self.reference_write_positions: dict[int, tuple[int, ...]] | None = None
+        self.callback_shape_facts: dict[tuple[int, int], bool | None] | None = None
+        self.callback_shape_empty_frame: Frame | None = None
         self.closure_classification_work: int | None = None
         self.closure_classification_cut = False
         self.closure_contexts: dict[tuple[int, int, int, str], list[tuple[Frame, Any]]] = {}
@@ -5941,15 +5979,15 @@ class Analyzer:
                     self.native_flow.partial("closure value classification budget", self, node=closure)
 
     def closure_declarations(self, closure: Any) -> list[tuple[str, Any, str]]:
-        return [(name, value, kind) for _, name, value, kind, _ in self.closure_declaration_rows(closure)]
+        return [(name, value, kind) for _, name, value, kind, _, _ in self.closure_declaration_rows(closure)]
 
     def closure_declaration_rows(
         self, closure: Any
-    ) -> list[tuple[int, str, Any, str, tuple[int, int] | None]]:
+    ) -> list[tuple[int, str, Any, str, tuple[int, int] | None, Any]]:
         """The locals a closure or block body declares in its own statements (not in a nested
         block, whose locals that block's last statement reads), with their initializers and
         declared types, in source order."""
-        found: list[tuple[int, str, Any, str, tuple[int, int] | None]] = []
+        found: list[tuple[int, str, Any, str, tuple[int, int] | None, Any]] = []
         pending = [part for part in closure.named_children]
         while pending:
             node = pending.pop()
@@ -5965,11 +6003,11 @@ class Analyzer:
                 for clause in clauses:
                     for name, bound in clause.names:
                         value = clause.initializer if clause.initializer is not None else bound
-                        found.append((value.end_byte, name, value, "", excluded))
+                        found.append((value.end_byte, name, value, "", excluded, bound))
             for item in node.named_children if node.type == "local_variable_declaration" else [node]:
                 declared = self.declaration(item)
                 if declared:
-                    found.append((item.end_byte, declared[0], declared[1], declared[2], None))
+                    found.append((item.end_byte, declared[0], declared[1], declared[2], None, item))
             if node.type not in STRINGS:
                 pending.extend(node.named_children)
         return sorted(found, key=lambda row: row[0])
@@ -6054,9 +6092,16 @@ class Analyzer:
             value: Any,
             value_scope: int,
             excluded: tuple[int, int] | None = None,
+            origin: Any = None,
         ) -> int:
             index = len(bindings)
-            numeric = re.sub(r"\s+", "", kind).rstrip("?!") in NUMBER_TYPES
+            numeric = (
+                bool(kind)
+                and self.declared_modeled_type(
+                    kind, origin if origin is not None else scopes[scope].node, allow_nullable=True
+                )
+                in NUMBER_TYPES
+            )
             bindings.append(
                 ClosureLocal(name, scope, position, scalar_kind if numeric else 0, numeric, excluded)
             )
@@ -6073,11 +6118,13 @@ class Analyzer:
                 if key not in declarations:
                     declarations.add(key)
                     bind(scope, value.end_byte, name, "", value, scope)
-            for position, name, value, kind, excluded in self.closure_declaration_rows(scopes[scope].node):
+            for position, name, value, kind, excluded, origin in self.closure_declaration_rows(
+                scopes[scope].node
+            ):
                 key = position, name
                 if key not in declarations:
                     declarations.add(key)
-                    bind(scope, position, name, kind, value, scope, excluded)
+                    bind(scope, position, name, kind, value, scope, excluded, origin)
 
         def lookup(name: str, scope: int, position: int) -> int | None:
             current: int | None = scope
@@ -6141,8 +6188,8 @@ class Analyzer:
                         parameters = [("$0" if self.language == "swift" else "it", "", 0)]
                     for parameter, kind, index in parameters:
                         if name == "forEachIndexed" and index == 0:
-                            kind = "Int"
-                        bind(scope, -1, parameter, kind, subject, parent)
+                            kind = "kotlin.Int" if self.language == "kotlin" else "Int"
+                        bind(scope, -1, parameter, kind, subject, parent, origin=node)
                 declare(scope)
             elif node.type in BLOCKS | {"control_structure_body"} and (
                 node.parent != closure
@@ -6638,7 +6685,7 @@ class Analyzer:
         receiver_kinds: dict[tuple[int, int, int], str] | None = None,
     ) -> str:
         """Memoize one bounded type query without recording unused hint failures."""
-        node = self.unwrap(node)
+        node = self.unwrap(node, preserve_cast=True)
         if node is None or depth > 8:
             return ""
         if self.opaque_implicit_it(node, frame):
@@ -6652,14 +6699,23 @@ class Analyzer:
         if key not in receiver_kinds:
             receiver_kinds[key] = ""
             receiver_kinds[key] = self.known_value_type_result(node, frame, depth, receiver_kinds)
-            if self.language == "kotlin" and receiver_kinds[key] in NUMBER_TYPES and node.type in IDENTIFIERS:
+            if (
+                self.language == "kotlin"
+                and receiver_kinds[key] in MODELED_NOMINAL_TYPES
+                and node.type in IDENTIFIERS
+            ):
                 binding = self.reference_binding(node, self.symbol_name(self.text(node)), frame=frame)
                 if binding is not None:
                     origin, declared, expression = binding
                     if declared:
                         receiver_kinds[key] = self.declared_modeled_type(declared, origin)
                     elif expression is not None and (
-                        expression.type in IDENTIFIERS or self.call(expression) is not None
+                        expression.type in IDENTIFIERS
+                        or self.call(expression) is not None
+                        or (
+                            (unwrapped := self.unwrap(expression, preserve_cast=True)) is not None
+                            and unwrapped.type in {"as_expression", "cast_expression"}
+                        )
                     ):
                         receiver_kinds[key] = self.known_value_type(
                             expression, frame, depth + 1, receiver_kinds=receiver_kinds
@@ -6668,24 +6724,34 @@ class Analyzer:
                 receiver_kinds[established] = receiver_kinds[key]
         return receiver_kinds[key]
 
-    def declared_modeled_type(self, spelling: str, use: Any, *, context: Analyzer | None = None) -> str:
-        """Numeric precedence needs a standard identity at the declaration's origin."""
+    def declared_modeled_type(
+        self, spelling: str, use: Any, *, context: Analyzer | None = None, allow_nullable: bool = False
+    ) -> str:
+        """Modeled precedence needs a standard identity at the declaration's origin."""
         context = context or self
         kind = self.modeled_type_name(spelling)
         flow = self.native_flow
-        if context.language != "kotlin" or kind not in NUMBER_TYPES or flow is None:
+        if context.language != "kotlin" or kind not in MODELED_NOMINAL_TYPES or flow is None:
             return kind
-        if spelling.rstrip().endswith("?"):
+        if spelling.rstrip().endswith("?") and not allow_nullable:
             return ""
-        java = {"Int": "Integer", "Bool": "Boolean"}.get(kind, kind)
+        qualified_types = KOTLIN_MODEL_TYPES.get(kind, ())
+        if (
+            spelling.rstrip("?!") == kind
+            and kind in KOTLIN_MODEL_TYPES
+            and kind not in flow.type_spelling_shadows
+            and not flow.imported_symbols(context, kind, classes=True)
+        ):
+            return kind
         if any(
             self.library_reference_type(spelling, use, qualified, default_import=True, context=context)
-            for qualified in {"kotlin." + kind, "java.lang." + java}
+            for qualified in qualified_types
         ):
             return kind
         owners = flow.class_owners(context, spelling.rstrip("?!"), use)
         if len(owners) == 1:
-            return owners.pop()
+            owner = owners.pop()
+            return "@source:" + owner if owner in MODELED_NOMINAL_TYPES else owner
         imported = flow.imported_symbols(context, spelling.rstrip("?!"), classes=True)
         if len(imported) == 1 and not next(iter(imported)).startswith(("kotlin.", "java.lang.")):
             return imported.pop()
@@ -6695,9 +6761,12 @@ class Analyzer:
         self, node: Any, frame: Frame, depth: int, receiver_kinds: dict[tuple[int, int, int], str]
     ) -> str:
         """Small type facts used by modeled overloads, retaining visited local kinds."""
-        node = self.unwrap(node)
+        node = self.unwrap(node, preserve_cast=True)
         if node is None:
             return ""
+        if self.language == "kotlin" and node.type in {"as_expression", "cast_expression"}:
+            target = node.named_children[-1] if node.named_children else None
+            return self.declared_modeled_type(self.text(target), node) if target is not None else ""
         text = self.text(node).strip()
         if node.type in TEXT_LITERALS:
             return "String"
@@ -7179,7 +7248,11 @@ class Analyzer:
         value = self.reused(call.node, frame)
         text = any(target.analyzer.string_function_header(target.node) for target in targets)
         numeric = all(
-            self.modeled_type_name(self.declared_return(target)) in NUMBER_TYPES for target in targets
+            self.declared_modeled_type(
+                self.declared_return(target), target.node, context=target.analyzer, allow_nullable=True
+            )
+            in NUMBER_TYPES
+            for target in targets
         )
         return bool(text and value.traces), numeric or not value.traces
 
@@ -8478,19 +8551,62 @@ class Analyzer:
         """Only established no-parameter/receiver callbacks leave an outer it visible."""
         if owner is None:
             return False
+        outer = self.callback_shape_facts is None
+        if outer:
+            self.callback_shape_facts = {}
+            self.callback_shape_empty_frame = Frame()
+        facts = self.callback_shape_facts
+        assert facts is not None
+        key = owner.node.id, id(frame) if frame is not None else 0
+        if key in facts:
+            return bool(facts[key])
+        facts[key] = None
+        try:
+            facts[key] = self.kotlin_parameterless_callback_result(
+                owner, frame if frame is not None else self.callback_shape_empty_frame or Frame()
+            )
+            return bool(facts[key])
+        finally:
+            if outer:
+                self.callback_shape_facts = None
+                self.callback_shape_empty_frame = None
+
+    @staticmethod
+    def parameterless_callback_type(kind: str) -> bool:
+        return bool(re.match(r"^(?:suspend\s+)?(?:[^()]+\.)?\(\s*\)\s*->", kind.strip()))
+
+    def kotlin_parameterless_callback_result(self, owner: Call, frame: Frame) -> bool:
         name = owner.name.rsplit(".", 1)[-1]
-        subject = self.unwrap(owner.receiver)
+        subject = self.unwrap(owner.receiver, preserve_cast=True)
         raw = "kotlin.String" if subject is not None and subject.type in TEXT_LITERALS else ""
+        if subject is not None and subject.type in {"as_expression", "cast_expression"}:
+            target = subject.named_children[-1] if subject.named_children else None
+            raw = self.text(target) if target is not None else ""
         if subject is not None and subject.type in IDENTIFIERS:
             symbol = self.symbol_name(self.text(subject))
+            binding = self.reference_binding(subject, symbol, frame=frame) if symbol != "it" else None
             retained = (frame.values.get(symbol) if frame is not None else None) or Value()
-            raw = (
-                retained.type_name
-                or (frame.types.get(symbol, "") if frame is not None else "")
-                or self.parameter_types.get(symbol, "")
-            )
+            raw = retained.type_name or (frame.types.get(symbol, "") if frame is not None else "")
+            if binding is not None and binding[1]:
+                raw = binding[1]
+            if not raw and binding is None and (frame is None or symbol not in frame.local_names):
+                raw = self.parameter_types.get(symbol, "")
             if not raw and retained.category == "text":
                 raw = "kotlin.String"
+            tests = self.tested_reference_types(subject, subject)
+            if tests is None:
+                return False
+            for tested in tests:
+                condition = tested[0].parent
+                if (
+                    binding is None
+                    or condition is None
+                    or self.reference_written_between(binding[0], condition.end_byte, subject.start_byte)
+                    or self.reference_type_head_shadow(
+                        owner.node, name, self, tested[0], tested[1], callback_shape=True
+                    )
+                ):
+                    return False
         if (
             len(owner.args) == 1
             and self.native_flow is not None
@@ -8499,10 +8615,15 @@ class Analyzer:
             targets = self.native_flow.resolve(self, owner, Value(type_name=raw), frame or Frame())[0]
             if targets:
                 signatures = [target.analyzer.parameters(target.node) for target in targets]
-                return all(
-                    len(parameters) == 1
-                    and re.match(r"^(?:suspend\s+)?(?:[^()]+\.)?\(\s*\)\s*->", parameters[0][1].strip())
+                zero = all(
+                    len(parameters) == 1 and self.parameterless_callback_type(parameters[0][1])
                     for parameters in signatures
+                )
+                return zero and not (
+                    owner.receiver is None
+                    and self.implicit_reference_head_shadow(
+                        owner.node, name, frame, callback_shape=True, lexical=False
+                    )
                 )
         if name not in {
             "run",
@@ -8526,22 +8647,15 @@ class Analyzer:
             return False
         if self.reference_binding(owner.node, name) is not None:
             return False
+        if owner.receiver is None and self.implicit_reference_head_shadow(
+            owner.node, name, frame, callback_shape=True
+        ):
+            return False
         if owner.receiver is not None:
             if subject is None:
                 return False
             root = self.modeled_type_name(raw).partition("<")[0]
-            qualified = {
-                "String": "kotlin.String",
-                "Any": "kotlin.Any",
-                "Object": "java.lang.Object",
-                "Array": "kotlin.Array",
-                "List": "kotlin.collections.List",
-                "MutableList": "kotlin.collections.MutableList",
-                "Set": "kotlin.collections.Set",
-                "Map": "kotlin.collections.Map",
-                "Collection": "kotlin.collections.Collection",
-                **{kind: "kotlin." + kind for kind in NUMBER_TYPES},
-            }.get(root)
+            qualified = KOTLIN_CALLBACK_TYPES.get(root)
             proven = qualified is not None and self.library_reference_type(
                 raw.rstrip("?"), subject, qualified, default_import=True
             )
@@ -8910,7 +9024,9 @@ class Analyzer:
             return None
         return context, origin, element.removeprefix("out ").strip()
 
-    def nominal_reference_head_shadow(self, use: Any, name: str, owners: set[str]) -> bool:
+    def nominal_reference_head_shadow(
+        self, use: Any, name: str, owners: set[str], *, callback_shape: bool = False
+    ) -> bool:
         """A bounded source hierarchy must not hide a value behind a standard head."""
         flow = self.native_flow
         if flow is None:
@@ -8932,24 +9048,104 @@ class Analyzer:
                     body = next(
                         (part for part in nominal.named_children if part.type == "class_body"), nominal
                     )
-                    binding = source.reference_binding(use, name, scope=body, stop=nominal)
-                    if binding is None:
-                        continue
-                    if source.has_modifier(binding[0], "private"):
-                        current = use if source is self else None
-                        while current is not None and current.id != nominal.id:
-                            current = current.parent
-                        if current is None:
+                    bodies = [body]
+                    bodies.extend(
+                        next((part for part in child.named_children if part.type == "class_body"), child)
+                        for child in body.named_children
+                        if child.type == "companion_object"
+                    )
+                    for scope in bodies:
+                        if callback_shape:
+                            for function in source.body_functions(scope).get(name, []):
+                                if source.accepts_arguments(function, 1):
+                                    parameters = source.parameters(function)
+                                    if len(parameters) != 1 or not self.parameterless_callback_type(
+                                        parameters[0][1]
+                                    ):
+                                        return True
+                        binding = source.reference_binding(use, name, scope=scope, stop=nominal)
+                        declared = (
+                            binding[0]
+                            if binding is not None
+                            else next(
+                                (
+                                    child
+                                    for child in scope.named_children
+                                    if child.type in {"class_declaration", "object_declaration"}
+                                    and any(
+                                        part.type in IDENTIFIERS and source.text(part) == name
+                                        for part in child.named_children
+                                    )
+                                ),
+                                None,
+                            )
+                        )
+                        if declared is None:
                             continue
-                    return True
+                        if source.has_modifier(declared, "private"):
+                            current = use if source is self else None
+                            while current is not None and current.id != nominal.id:
+                                current = current.parent
+                            if current is None:
+                                continue
+                        return True
         return False
 
-    def tested_reference_type(self, subject: Any, use: Any) -> tuple[Any, str] | None:
-        """A simple positive is-test narrows the same binding only in its true arm."""
+    def reference_type_head_shadow(
+        self, use: Any, name: str, context: Analyzer, origin: Any, kind: str, *, callback_shape: bool = False
+    ) -> bool:
+        """Every component of an intersection must preserve its own head evidence."""
+        flow = self.native_flow
+        if flow is None:
+            return True
+        owners = flow.class_owners(context, kind.rstrip("?!"), origin) if kind else set()
+        if owners:
+            return self.nominal_reference_head_shadow(use, name, owners, callback_shape=callback_shape)
+        primitive = self.modeled_type_name(kind)
+        if primitive not in NUMBER_TYPES | {"String", "CharSequence", "Any", "Object", "Unit"}:
+            return True
+        java = {"Int": "Integer", "Bool": "Boolean", "Any": "Object"}.get(primitive, primitive)
+        return not any(
+            self.library_reference_type(kind, origin, qualified, default_import=True, context=context)
+            for qualified in {"kotlin." + primitive, "java.lang." + java}
+        )
+
+    def reference_written_between(self, origin: Any, start: int, end: int) -> bool:
+        """Index immutable write positions by declaration; no mutable frame facts persist."""
+        flow = self.native_flow
+        if flow is None:
+            return True
+        if self.reference_write_positions is None:
+            positions: dict[int, list[int]] = {}
+            for source, _root, nodes in flow.files:
+                if source is not self:
+                    continue
+                for node in nodes:
+                    if node.type not in {"assignment", "assignment_expression"}:
+                        continue
+                    left = self.assignment_target(
+                        _field(node, "left")
+                        or _field(node, "target")
+                        or next(iter(node.named_children), None)
+                    )
+                    if left is None or left.type not in IDENTIFIERS:
+                        continue
+                    binding = self.reference_binding(left, self.symbol_name(self.text(left)))
+                    if binding is not None:
+                        positions.setdefault(binding[0].id, []).append(node.start_byte)
+            self.reference_write_positions = {
+                key: tuple(sorted(set(sites))) for key, sites in positions.items()
+            }
+        sites = self.reference_write_positions.get(origin.id, ())
+        return bisect_left(sites, start) < bisect_left(sites, end)
+
+    def tested_reference_types(self, subject: Any, use: Any) -> tuple[tuple[Any, str], ...] | None:
+        """Simple positive is-tests add intersection facts without erasing the original type."""
         if subject.type not in IDENTIFIERS:
-            return None
+            return ()
         symbol = self.symbol_name(self.text(subject))
         binding = self.reference_binding(subject, symbol)
+        found = []
         current = use.parent
         for _ in range(64):
             if current is None or current.type in FUNCTIONS:
@@ -8974,11 +9170,15 @@ class Analyzer:
                         if (binding is None and tested is None) or (
                             binding is not None and tested is not None and binding[0].id == tested[0].id
                         ):
-                            return parts[1], self.text(parts[1])
+                            found.append((parts[1], self.text(parts[1])))
             current = current.parent
-        return None
+        if current is not None and current.type not in FUNCTIONS:
+            return None
+        return tuple(found)
 
-    def implicit_reference_head_shadow(self, use: Any, name: str, frame: Frame) -> bool:
+    def implicit_reference_head_shadow(
+        self, use: Any, name: str, frame: Frame, *, callback_shape: bool = False, lexical: bool = True
+    ) -> bool:
         """Veto a class/package spelling when a represented receiver may supply the value."""
         flow = self.native_flow
         if flow is None:
@@ -8989,10 +9189,12 @@ class Analyzer:
                 return False
             boundary = flow.scope_boundary(current)
             if boundary is not None and boundary.kind == "nominal":
+                if not lexical:
+                    return False
                 if boundary.name is None:
                     return True
                 owner = flow.owner(self, boundary.name)
-                if self.nominal_reference_head_shadow(use, name, {owner}):
+                if self.nominal_reference_head_shadow(use, name, {owner}, callback_shape=callback_shape):
                     return True
                 if not self.has_modifier(current, "inner"):
                     return False
@@ -9014,12 +9216,35 @@ class Analyzer:
                         kind = context.text(target) if target is not None else ""
                         break
                     if origin.type in IDENTIFIERS:
-                        tested = context.tested_reference_type(origin, use) if context is self else None
-                        if tested is not None:
-                            origin, kind = tested
-                            break
                         symbol = context.symbol_name(context.text(origin))
                         binding = context.reference_binding(origin, symbol)
+                        tests = context.tested_reference_types(origin, subject) if context is self else ()
+                        if tests is None:
+                            return True
+                        if tests:
+                            if binding is None:
+                                return True
+                            if binding[1] and self.reference_type_head_shadow(
+                                use, name, context, binding[0], binding[1], callback_shape=callback_shape
+                            ):
+                                return True
+                            for tested in tests:
+                                condition = tested[0].parent
+                                if (
+                                    condition is None
+                                    or self.reference_written_between(
+                                        binding[0], condition.end_byte, subject.start_byte
+                                    )
+                                    or self.reference_type_head_shadow(
+                                        use,
+                                        name,
+                                        context,
+                                        tested[0],
+                                        tested[1],
+                                        callback_shape=callback_shape,
+                                    )
+                                ):
+                                    return True
                         retained = frame.values.get(symbol)
                         fallback_kind = (
                             retained.type_name
@@ -9073,21 +9298,10 @@ class Analyzer:
                     break
                 if not kind and fallback_allowed and fallback_kind:
                     context, origin, kind = self, fallback_origin, fallback_kind
-                owners = flow.class_owners(context, kind, origin) if kind else set()
-                if self.nominal_reference_head_shadow(use, name, owners):
+                if self.reference_type_head_shadow(
+                    use, name, context, origin, kind, callback_shape=callback_shape
+                ):
                     return True
-                if not owners:
-                    primitive = self.modeled_type_name(kind)
-                    if primitive not in NUMBER_TYPES | {"String", "CharSequence", "Any", "Object", "Unit"}:
-                        return True
-                    java = {"Int": "Integer", "Bool": "Boolean", "Any": "Object"}.get(primitive, primitive)
-                    if not any(
-                        self.library_reference_type(
-                            kind, origin, qualified, default_import=True, context=context
-                        )
-                        for qualified in {"kotlin." + primitive, "java.lang." + java}
-                    ):
-                        return True
             current = current.parent
         return True
 

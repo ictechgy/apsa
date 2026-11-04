@@ -192,6 +192,41 @@ lambda parameters are not fully modeled. The documented branching-mix content
 limit also applies to supplied writes; a nested callback returning only a bare
 call result does not become new content merely because its closure carries traces.
 
+## Kotlin type origins and retained source locations
+
+Standard String, Regex and numeric facts now retain lexical declaration/import
+identity, including source types with an unqualified default-package name.
+Content-result and closure-local numeric classification checks the declaring
+type before discarding input. Nullable standard numeric content remains scalar;
+a nullable receiver still needs its own callable proof. The String signature
+shortcut is used only after an immutable source-name/import inventory excludes
+a shadow, preserving bounded lookup work in deep builder closures. A standard
+typealias can retain its proven standard identity; unrelated aliases or lexical
+type parameters cannot erase inherited overloads.
+
+Kotlin receiver queries preserve explicit cast targets. Simple positive
+\`is\` tests contribute intersection evidence at the receiver expression's
+capture position: a supertype/marker test cannot erase an existing source type,
+and a later test cannot retroactively narrow an already captured receiver.
+A write between a test and that capture prevents the test from proving a
+standard head. This is bounded lexical evidence, not general control-flow,
+assignability or smart-cast analysis; reassignment can still produce a
+conservative input result with a precision reason.
+
+Class and inherited companion values participate in implicit head checks with
+private visibility retained. Callback arity checks use the same implicit
+receiver evidence; a local receiver declaration also blocks an unrelated
+parameter's old type. Reentrant callback-shape queries share a per-query memo
+that is cleared when that query returns, including cycles. No mutable Frame
+facts are retained across queries. Unknown dependency callbacks and anonymous
+callable scopes remain explicit precision limits.
+
+A capped source trace compares source locations before and after retention,
+rather than just counting unique locations. Dropping one of eight locations
+still stays \`partial\` if a duplicate route occupies the final retained slot.
+Raw and located forms of the same syntax node count as one source location;
+duplicate-route-only collapse can remain \`limited\`.
+
 ## Hybrid source and compiled artifacts
 
 JS, TS and Dart use token/block flow, not full compiler semantics. Analysis covers

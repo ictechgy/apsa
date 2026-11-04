@@ -486,6 +486,24 @@ share immutable result syntax; frame-dependent resolution is not retained across
 queries. Typed destructuring that the bundled grammar cannot parse remains an
 explicit parser execution gap, even when a Kotlin compiler accepts the source.
 
+Standard String/Regex/numeric facts also retain declaration/import identity for
+default-package names, content results, closure locals and overload signatures.
+String and numeric spellings from source cannot suppress captured input. Nullable
+numeric content is still scalar, while nullable callable receivers require a
+separate proof. Explicit casts survive receiver queries. Positive `is` tests add
+intersection evidence at receiver capture; a supertype test cannot erase a
+source member, and a write or later guard cannot supply a stale type proof.
+Companion values participate in implicit receiver lookup with private visibility
+preserved. Callback shape checks reject a shadowed implicit receiver or stale
+parameter type and clear their query-local memo on return. General smart-cast
+control flow, exact reassignment recovery and anonymous callable scopes remain
+bounded precision limits.
+
+The trace cap now compares actual source locations before and after retention:
+losing even one of eight locations stays `partial` when a duplicate route takes
+the last retained slot. Raw and located forms of the same syntax node denote one
+location. A duplicate-route-only cut can remain `limited`.
+
 ## Remaining limits
 
 A callee does not bind a lambda's parameters when it calls the lambda, and a

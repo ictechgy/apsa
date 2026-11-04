@@ -425,6 +425,27 @@ class NativeFlow:
         self.active_guards: dict[int | tuple[int, str], set[str]] = {}
         self.active_conditions: list[Any] = []
         self.files = sorted(files, key=lambda item: item[0].path)
+        self.type_spelling_shadows = {
+            analyzer.text(name)
+            for analyzer, _root, nodes in self.files
+            for node in nodes
+            if node.type
+            in NOMINAL_DECLARATIONS
+            | UNAVAILABLE_NOMINAL_DECLARATIONS
+            | {"type_alias", "typealias_declaration", "type_parameter", "associatedtype_declaration"}
+            for name in [
+                _field(node, "name")
+                or next(
+                    (
+                        child
+                        for child in node.named_children
+                        if child.type in IDENTIFIERS | {"type_identifier"}
+                    ),
+                    None,
+                )
+            ]
+            if name is not None
+        }
         count = 0
         extension_type_count = 0
         for analyzer, root, nodes in self.files:
@@ -2676,11 +2697,23 @@ class NativeFlow:
         declared = declared.strip()
         if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", declared):
             return None
-        if declared == "String" and analyzer.language in SCALAR_STRING_TYPES and "String" not in self.classes:
-            # No source type named String: the builtin, without walking every scope to the root.
+        if (
+            declared == "String"
+            and analyzer.language in SCALAR_STRING_TYPES
+            and declared not in self.type_spelling_shadows
+            and not self.imported_symbols(analyzer, declared, classes=True)
+        ):
             return ("nominal", SCALAR_STRING_TYPES[analyzer.language])
         binding = self.lexical_type(analyzer, declared, use)
         if binding is not None:
+            if (
+                binding.type in {"type_alias", "typealias_declaration"}
+                and analyzer.language in SCALAR_STRING_TYPES
+                and analyzer.library_reference_type(
+                    declared, use, SCALAR_STRING_TYPES[analyzer.language], default_import=True
+                )
+            ):
+                return ("nominal", SCALAR_STRING_TYPES[analyzer.language])
             # An inherited type can be unavailable nominally yet both
             # declarations can refer to the identical lexical binding. A
             # caller's method type parameter/local type is a different node.
