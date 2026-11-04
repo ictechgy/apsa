@@ -51,7 +51,13 @@ credential service was contacted.
   operands, min/max bounds, adaptive integral literals and radix receivers.
   Identified String no-argument reads,
   `plus` and `format` precede outer class and top-level helpers, while lexical
-  local functions and project extensions retain their own dispatch.
+  local functions retain their own dispatch. String signatures check argument
+  labels, Locale and named-vararg array kinds before overriding project helpers.
+  Visible project extensions on compatible receiver types prevent the standard
+  extension shortcut; incomplete project extension receiver flow is `limited`.
+  String members `plus` and `toString` still precede extensions. Retained local
+  kinds follow the selected modeled result, and untyped callback parameters
+  clear inherited kinds. Proven non-receiver scope functions preserve outer `this`.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and

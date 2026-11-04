@@ -100,6 +100,13 @@ distinguish known primitive operands and integral literal adaptation, but are
 not a compiler type system. Non-stdlib type qualifiers remain distinct in
 these hints; unknown types and arbitrary external overloads are not proven.
 
+Project extension visibility checks package/import, owner and lexical access;
+incomplete receiver binding records `Kotlin project extension receiver flow unavailable`
+and leaves coverage `limited`. Unknown DSL receiver signatures with explicit
+lambda parameters are not fully modeled. The documented branching-mix content
+limit also applies to supplied writes; a nested callback returning only a bare
+call result does not become new content merely because its closure carries traces.
+
 ## Hybrid source and compiled artifacts
 
 JS, TS and Dart use token/block flow, not full compiler semantics. Analysis covers

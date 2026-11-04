@@ -7475,3 +7475,355 @@ def test_review17_project_regex_named_helpers_keep_their_string_return(
         source += "\nprivate fun Regex(v:String):String=v\n"
     report = analyze_sources([("app/Notes.kt", source)])
     assert _hit(report, SQL) is not inner_input, report["findings"]
+
+
+REVIEW18_KOTLIN = """package app
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class Notes(private val db: SQLiteDatabase) {
+    MEMBER
+    fun open(intent: Intent) {
+        val q = intent.getStringExtra("q") ?: ""
+        BODY
+    }
+}
+"""
+
+
+def _review18_cases() -> list[dict]:
+    SOURCE = REVIEW18_KOTLIN
+    S = 'private fun trim(): String = "safe"'
+    INTEGER_HELPER = "private fun trim(): Int = 7"
+    DIRECT = "q.run { db.execSQL(trim()) }"
+    EXTRA = ("other/Util.kt", 'package unrelated\nprivate fun String.trim(): String = "unused"\n')
+    CASES = []
+    for label, member, body, extra in [
+        ("F1/control", S, DIRECT, []),
+        ("F1/invisible-extension", S, DIRECT, [EXTRA]),
+        ("F2/direct", INTEGER_HELPER, DIRECT, []),
+        ("F2/inferred", INTEGER_HELPER, "q.run { val s=trim(); s.run { db.execSQL(trim()) } }", []),
+        ("F2/typed", INTEGER_HELPER, "q.run { val s:String=trim(); s.run { db.execSQL(trim()) } }", []),
+        ("F3/run", S, "q.run { run { db.execSQL(trim()) } }", []),
+        ("F3/let-implicit", S, 'q.run { "safe".let { db.execSQL(trim()) } }', []),
+        ("F3/let-explicit", S, 'q.run { "safe".let { unused -> db.execSQL(trim()) } }', []),
+    ]:
+        source = SOURCE.replace("MEMBER", member).replace("BODY", body)
+        CASES.append(
+            dict(id=label, files=[("app/Notes.kt", source), *extra], rule="AST-SQL-CONCAT", expect=True)
+        )
+    for method in ["plus", "format"]:
+        for scope in ["with(RECEIVER) { CALL }", "RECEIVER.run { CALL }"]:
+            for input_receiver in [False, True]:
+                for named in [False, True]:
+                    receiver = "q" if input_receiver else '"fixed"'
+                    result = '"fixed"' if input_receiver else "captured"
+                    member = (
+                        'private var captured=""\n    private fun ' + method + "(value:Int):String=" + result
+                    )
+                    call = method + "(" + ("value=" if named else "") + "0)"
+                    body = "captured=q; " + scope.replace("RECEIVER", receiver).replace(
+                        "CALL", "db.execSQL(" + call + ")"
+                    )
+                    source = SOURCE.replace("MEMBER", member).replace("BODY", body)
+                    CASES.append(
+                        dict(
+                            id=f"CODE/{method}/{scope}/{input_receiver}/{named}",
+                            files=[("app/Notes.kt", source)],
+                            rule="AST-SQL-CONCAT",
+                            expect=(not input_receiver if named else input_receiver),
+                        )
+                    )
+    for label in ["locale", "args"]:
+        member = 'private var captured=""\n    private fun format(' + label + ":Int):String=captured"
+        body = 'captured=q; with("fixed") { db.execSQL(format(' + label + "=0)) }"
+        CASES.append(
+            dict(
+                id="CODE/format/" + label + "-kind",
+                files=[("app/Notes.kt", SOURCE.replace("MEMBER", member).replace("BODY", body))],
+                rule="AST-SQL-CONCAT",
+                expect=True,
+            )
+        )
+
+    for method in ["plus", "format"]:
+        for helper_tainted in [False, True]:
+            receiver = '"fixed"' if helper_tainted else "q"
+            result = "captured" if helper_tainted else '"fixed"'
+            member = 'private var captured=""\n    private fun ' + method + "(value:Int):String=" + result
+            expression = receiver + ".run { " + method + "(value=0) }"
+            body = (
+                "captured=q; val s=Markup.render { b -> b.section { "
+                + expression
+                + ' }; b.append("SELECT 1"); Unit }; db.execSQL(s)'
+            )
+            CASES.append(
+                dict(
+                    id=f"CODE/content/{method}/{helper_tainted}",
+                    files=[("app/Notes.kt", SOURCE.replace("MEMBER", member).replace("BODY", body))],
+                    rule="AST-SQL-CONCAT",
+                    expect=helper_tainted,
+                )
+            )
+
+    K = REVIEW13_KOTLIN
+    for tainted in [False, True]:
+        method = (
+            ('private var captured=""\n    ' if tainted else "")
+            + "private fun Any.trim():String="
+            + ("captured" if tainted else '"safe"')
+        )
+        body = (
+            ("captured=q; " if tainted else "")
+            + ('"safe"' if tainted else "q")
+            + ".run { db.execSQL(trim()) }"
+        )
+        CASES.append(
+            dict(
+                id=f"ADV/Any-extension/{tainted}",
+                files=[("app/Notes.kt", SOURCE.replace("MEMBER", method).replace("BODY", body))],
+                rule="AST-SQL-CONCAT",
+                expect=tainted,
+            )
+        )
+    for inner in [False, True]:
+        outer, inside = ('"safe"', "q") if inner else ("q", '"safe"')
+        body = f'val sep=Regex("x"); with({outer}) {{ buildString {{ append({inside}); listOf("x").forEach {{ sep -> db.execSQL(replace(sep,"y")) }} }} }}'
+        CASES.append(
+            dict(
+                id=f"ADV/Regex-shadow/{inner}",
+                files=[("app/Notes.kt", SOURCE.replace("MEMBER", "").replace("BODY", body))],
+                rule="AST-SQL-CONCAT",
+                expect=not inner,
+            )
+        )
+    for outer in ["local", "parameter", "field"]:
+        source = K.replace("REVIEW_BODY", "q.length.run { val n=q; toString(n) }").replace(
+            "    fun open(", "    private fun toString(v:String):String=v\n    fun open("
+        )
+        if outer == "local":
+            source = source.replace("val s = Markup.render", "val n=0; val s = Markup.render")
+        elif outer == "field":
+            source = source.replace("    fun open(", "    private val n:Int=0\n    fun open(")
+        else:
+            source = source.replace("fun open(", "fun open(n:Int, ")
+        CASES.append(
+            dict(id="CLAUDE/1/" + outer, files=[("app/Notes.kt", source)], rule="AST-SQL-CONCAT", expect=True)
+        )
+    for write in ["sb.section { VALUE }", 'sb.append(VALUE ?: "")', "sb.group { g -> g.append(VALUE) }"]:
+        for transformed in [False, True]:
+            body = (
+                "val row=repo.find(q); (Ext.wrap(row) { sb -> "
+                + write.replace("VALUE", "row.trim()" if transformed else "row")
+                + ' }+"x").escapeSql()'
+            )
+            CASES.append(
+                dict(
+                    id=f"CLAUDE/2/{write}/{transformed}",
+                    files=[("app/Notes.kt", K.replace("REVIEW_BODY", body))],
+                    rule="AST-SQL-CONCAT",
+                    expect=transformed,
+                )
+            )
+    for id_, body, member, expected in [
+        (
+            "parseInt",
+            'Integer.parseInt("5").run { coerceAtLeast(0) }',
+            "private fun coerceAtLeast(minimumValue:Int):String=captured",
+            False,
+        ),
+        ("Math", 'q.length.run { "${plus(Math.max(1,2))} rows" }', "", False),
+        (
+            "String-other",
+            "q.length.run { plus(q.length.toString()) }",
+            "private fun plus(other:String):String=captured",
+            True,
+        ),
+    ]:
+        source = (
+            K.replace("REVIEW_BODY", body)
+            .replace("    fun open(", '    private var captured=""\n    ' + member + "\n    fun open(")
+            .replace("val s = Markup.render", "captured=q; val s = Markup.render")
+        )
+        CASES.append(
+            dict(
+                id="CLAUDE/3-4/" + id_,
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=expected,
+            )
+        )
+
+    for scope in [
+        "run { CALL }",
+        '"safe".let { CALL }',
+        '"safe".let { unused -> CALL }',
+        '"safe".also { CALL }',
+        '"safe".takeIf { CALL; true }',
+        '"safe".takeUnless { CALL; false }',
+    ]:
+        source = SOURCE.replace("MEMBER", S).replace(
+            "BODY", "q.run { " + scope.replace("CALL", "db.execSQL(trim())") + " }"
+        )
+        CASES.append(dict(id="scope/" + scope, files=[("app/Notes.kt", source)], rule=SQL, expect=True))
+    for receiver in ["Any", "T"]:
+        for tainted in [False, True]:
+            member = (
+                ('private var captured=""\n    ' if tainted else "")
+                + "private fun "
+                + ("<T> T" if receiver == "T" else receiver)
+                + ".trim():String="
+                + ("captured" if tainted else '"safe"')
+            )
+            body = (
+                ("captured=q; " if tainted else "")
+                + ('"safe"' if tainted else "q")
+                + ".run { db.execSQL(trim()) }"
+            )
+            CASES.append(
+                dict(
+                    id=f"extension/{receiver}/{tainted}",
+                    files=[("app/Notes.kt", SOURCE.replace("MEMBER", member).replace("BODY", body))],
+                    rule=SQL,
+                    expect=tainted,
+                )
+            )
+    for method in ["plus", "toString"]:
+        for input_receiver in [False, True]:
+            member = (
+                'private var captured=""\n    private fun Any.'
+                + method
+                + ("():String=" if method == "toString" else "(other:Int):String=")
+                + ('"safe"' if input_receiver else "captured")
+            )
+            body = (
+                "captured=q; "
+                + ("q" if input_receiver else '"safe"')
+                + ".run { db.execSQL("
+                + method
+                + ("()" if method == "toString" else "(0)")
+                + ") }"
+            )
+            CASES.append(
+                dict(
+                    id=f"String-member/{method}/{input_receiver}",
+                    files=[("app/Notes.kt", SOURCE.replace("MEMBER", member).replace("BODY", body))],
+                    rule=SQL,
+                    expect=input_receiver,
+                )
+            )
+    for private in [False, True]:
+        other = (
+            "open class Parent { " + ("private " if private else "") + 'fun String.trim():String="fixed" }'
+        )
+        source = (
+            SOURCE.replace(
+                "class Notes(private val db: SQLiteDatabase) {",
+                "class Notes(private val db: SQLiteDatabase):Parent() {",
+            )
+            .replace("MEMBER", S)
+            .replace("BODY", DIRECT)
+            + other
+        )
+        CASES.append(
+            dict(
+                id=f"inherited-extension/{private}",
+                files=[("app/Notes.kt", source)],
+                rule=SQL,
+                expect=private,
+            )
+        )
+    for label, source_extra, files, expected in [
+        (
+            "public-unimported",
+            "",
+            [("other/Public.kt", 'package elsewhere\nfun String.trim():String="fixed"')],
+            True,
+        ),
+        (
+            "private-other-file",
+            "",
+            [("app/Private.kt", 'package app\nprivate fun String.trim():String="fixed"')],
+            True,
+        ),
+        ("unrelated-owner", '\nclass Other { fun String.trim():String="fixed" }', [], True),
+        (
+            "import-alias",
+            "",
+            [("helper/Clip.kt", 'package helpers\nfun String.clip():String="fixed"')],
+            False,
+        ),
+    ]:
+        source = SOURCE.replace("MEMBER", S).replace("BODY", DIRECT) + source_extra
+        if label == "import-alias":
+            source = source.replace(
+                "import android.content.Intent", "import helpers.clip as trim\nimport android.content.Intent"
+            )
+        CASES.append(
+            dict(
+                id="visibility/" + label, files=[("app/Notes.kt", source), *files], rule=SQL, expect=expected
+            )
+        )
+    for body, expected in [
+        ('val r=repo.find(q); (r.substring(0,q.length)+"x").escapeSql()', False),
+        (
+            'val row=repo.find(q); (Ext.wrap(row) { sb -> sb.section { row.substring(0,q.length) } }+"x").escapeSql()',
+            True,
+        ),
+    ]:
+        CASES.append(
+            dict(
+                id="written-transform/" + str(expected),
+                files=[("app/Notes.kt", K.replace("REVIEW_BODY", body))],
+                rule=SQL,
+                expect=expected,
+            )
+        )
+    return CASES
+
+
+@pytest.mark.parametrize("case", _review18_cases(), ids=lambda case: case["id"])
+def test_review18_string_dispatch_and_lexical_facts(case: dict) -> None:
+    report = analyze_sources(case["files"])
+    assert _hit(report, case["rule"]) is case["expect"], report["findings"]
+    reason = "Kotlin project extension receiver flow unavailable"
+    if case["id"].startswith(("ADV/Any-extension", "extension/")):
+        assert reason in _reasons(report)
+        assert _state(report, SQL) == "limited"
+    if case["id"].startswith("String-member/"):
+        assert reason not in _reasons(report)
+
+
+@pytest.mark.parametrize(
+    "kind,imports,initializer,nominal,label,expected",
+    [
+        ("Array<String>", "", 'arrayOf("fixed")', "", "args", False),
+        ("kotlin.Array<kotlin.String>", "", 'arrayOf("fixed")', "", "args", False),
+        ("Values<String>", "import kotlin.Array as Values", 'arrayOf("fixed")', "", "args", False),
+        ("java.util.Locale", "", "java.util.Locale.US", "", "locale", False),
+        ("Locale", "import java.util.Locale", "java.util.Locale.US", "", "locale", False),
+        ("L", "import java.util.Locale as L", "java.util.Locale.US", "", "locale", False),
+        ("Array<String>", "", "Array<String>()", "class Array<T>", "args", True),
+        ("Locale", "", "Locale()", "class Locale", "locale", True),
+    ],
+)
+def test_review18_named_format_reference_identity(
+    kind: str, imports: str, initializer: str, nominal: str, label: str, expected: bool
+) -> None:
+    source = f"""package synthetic
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+{imports}
+{nominal}
+class Notes(private val db:SQLiteDatabase) {{
+    private var captured=""
+    private fun format({label}:{kind}):String=captured
+    fun open(intent:Intent) {{
+        val q=intent.getStringExtra("q") ?: ""
+        captured=q
+        val values: {kind} = {initializer}
+        with("fixed") {{ db.execSQL(format({label}=values)) }}
+    }}
+}}
+"""
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is expected, report["findings"]

@@ -4631,7 +4631,19 @@ class Analyzer:
             inferred = self.known_value_type(expression, frame) if self.language == "kotlin" else ""
             inferred = (
                 inferred
-                if inferred in {"Int", "Long", "UInt", "ULong", "Float", "Double", "Boolean", "Regex"}
+                if inferred
+                in {
+                    "Int",
+                    "Long",
+                    "UInt",
+                    "ULong",
+                    "Float",
+                    "Double",
+                    "Boolean",
+                    "Regex",
+                    "String",
+                    "List<String>",
+                }
                 else ""
             )
             if self.closure_depth and expression is not None:
@@ -5097,7 +5109,7 @@ class Analyzer:
                     and not (
                         self.native_flow is not None
                         and self.native_flow.resolve(self, call, Value(), frame)[0]
-                        and self.implicit_string_receiver(call, frame) is None
+                        and self.implicit_string_subject(call, frame) is None
                     )
                 ):
                     template = self.aliases["this"]
@@ -6607,6 +6619,11 @@ class Analyzer:
         if text in {"true", "false"}:
             return "Boolean"
         if node.type in IDENTIFIERS:
+            retained = self.visited_values.get((node.start_byte, node.end_byte, node.type))
+            if retained is not None:
+                return self.modeled_type_name(retained.type_name) or (
+                    "String" if retained.category == "text" else ""
+                )
             name = self.symbol_name(text)
             declared = frame.types.get(name, "") or self.parameter_types.get(name, "")
             if not declared and name not in frame.local_names:
@@ -6615,6 +6632,8 @@ class Analyzer:
                 return self.modeled_type_name(declared)
         call = self.call(node)
         if call is not None:
+            if self.implicit_string_subject(call, frame) is not None:
+                return "List<String>" if call.name.rsplit(".", 1)[-1] == "lines" else "String"
             targets = []
             if self.native_flow is not None:
                 targets = self.native_flow.resolve(self, call, Value(), frame)[0]
@@ -6623,6 +6642,8 @@ class Analyzer:
                     return returns.pop()
                 if targets and all(target.analyzer.string_function_header(target.node) for target in targets):
                     return "String"
+                if targets:
+                    return ""  # a resolved project's unknown result cannot borrow a stdlib name hint
                 if (
                     not targets
                     and call.receiver is None
@@ -6675,6 +6696,39 @@ class Analyzer:
             }.get(name)
             if conversion:
                 return conversion
+            receiver = self.key(call.receiver) if call is not None else ""
+            numeric_class = receiver.rsplit(".", 1)[-1]
+            if call is not None and numeric_class in NUMERIC_CLASSES:
+                if name in {"toString", "toHexString", "toBinaryString", "toOctalString"}:
+                    return "String"
+                if name in {"parseInt", "compare", "compareUnsigned", "bitCount", "signum"}:
+                    return "Int"
+                if name in {"parseLong", "parseUnsignedLong"}:
+                    return "Long"
+                if name == "parseUnsignedInt":
+                    return "Int"
+                if name in {"parseDouble", "parseFloat", "parseBoolean"}:
+                    return {"parseDouble": "Double", "parseFloat": "Float", "parseBoolean": "Boolean"}[name]
+                if name == "valueOf" and numeric_class != "Math":
+                    return {"Integer": "Int"}.get(numeric_class, numeric_class)
+                if numeric_class == "Math" and name in {
+                    "max",
+                    "min",
+                    "abs",
+                    "addExact",
+                    "subtractExact",
+                    "multiplyExact",
+                }:
+                    kinds = {self.known_value_type(argument, frame, depth + 1) for argument in call.args}
+                    if len(kinds) == 1 and kinds <= {"Int", "Long", "Float", "Double"}:
+                        return kinds.pop()
+                return ""  # a numeric-class name alone does not establish a Boolean result
+            if (
+                call is not None
+                and name == "length"
+                and self.known_value_type(call.receiver, frame, depth + 1) in {"File", "java.io.File"}
+            ):
+                return "Long"
             return (
                 "Int"
                 if name
@@ -6767,6 +6821,14 @@ class Analyzer:
                     matched = False
                     break
                 if (
+                    slot not in {"range", "radix"}
+                    and kind
+                    and kind not in NUMBER_TYPES - {"Boolean", "Bool"}
+                    and not (receiver_kind == "String" and name == "plus")
+                ):
+                    matched = False
+                    break
+                if (
                     name in {"coerceAtLeast", "coerceAtMost", "coerceIn"}
                     and slot != "range"
                     and receiver_kind in {"Byte", "Short", "Int", "Long", "UInt", "ULong", "Float", "Double"}
@@ -6841,7 +6903,7 @@ class Analyzer:
             or call.name.rsplit(".", 1)[-1] not in STRING_TRANSFORMS | NUMBER_OPERATIONS
         ):
             return None
-        if self.implicit_string_receiver(call, frame) is not None:
+        if self.implicit_string_subject(call, frame) is not None:
             return None
         if "this" in scalars and self.numeric_operation_applicable(call, frame, scalars):
             return None  # keep an applicable numeric receiver operation ahead of an outer helper
@@ -6989,7 +7051,7 @@ class Analyzer:
                 if (
                     self.native_flow is not None
                     and self.native_flow.resolve(self, call, Value(), frame)[0]
-                    and self.implicit_string_receiver(call, frame) is None
+                    and self.implicit_string_subject(call, frame) is None
                 ):
                     return False  # a resolved project helper does not transform numeric this
                 return not (
@@ -7783,6 +7845,8 @@ class Analyzer:
         data: frozenset[str],
         results: frozenset[str],
         scalars: frozenset[str] = frozenset(),
+        *,
+        written: bool = False,
     ) -> bool:
         """Whether an expression that reads a closure's call-result names (`results`) also reads
         input: a closure data name, a name of the enclosing frame or a call over neither that
@@ -7819,9 +7883,19 @@ class Analyzer:
                             local_data, local_results, local_scalars = self.closure_value_context(
                                 closure, frame, data, results, scalars, expression
                             )
-                            if self.outer_input(expression, frame, local_data, local_results, local_scalars):
+                            if self.outer_input(
+                                expression, frame, local_data, local_results, local_scalars, written=written
+                            ):
                                 return True
                     continue  # buildString returns its written text, not append's receiver or capacity
+                if (
+                    written
+                    and self.reads_names(current, results)
+                    and call.name.rsplit(".", 1)[-1] not in SELECTING_FUNCTIONS | {"ifBlank", "ifEmpty"}
+                    and not CALLBACK_REGISTRATIONS.match(call.name.rsplit(".", 1)[-1])
+                    and self.result_transform(call, frame, results, scalars)
+                ):
+                    return True
                 implicit_result = (
                     call.receiver is None
                     and "this" in results
@@ -7850,7 +7924,9 @@ class Analyzer:
                         local_data, local_results, local_scalars = self.closure_value_context(
                             current, frame, data, results, scalars, expression
                         )
-                        if self.outer_input(expression, frame, local_data, local_results, local_scalars):
+                        if self.outer_input(
+                            expression, frame, local_data, local_results, local_scalars, written=written
+                        ):
                             return True
                 continue
             branches = self.conditional_branches(current)
@@ -7864,7 +7940,9 @@ class Analyzer:
                     local_data, local_results, local_scalars = self.closure_data_locals(
                         current, frame, data, results=results, scalars=scalars, at=expression
                     )
-                    if self.outer_input(expression, frame, local_data, local_results, local_scalars):
+                    if self.outer_input(
+                        expression, frame, local_data, local_results, local_scalars, written=written
+                    ):
                         return True
                 continue
             if current.type in TEXT_LITERALS and self.language == "kotlin":
@@ -7893,11 +7971,15 @@ class Analyzer:
             local_data, local_results, local_scalars = self.closure_value_context(
                 closure, frame, data, results, scalars, expression
             )
-            if self.reused(expression, frame).traces and self.value_result(
-                expression, frame, data=local_data, results=local_results, scalars=local_scalars
+            if (
+                self.closure_argument(expression) is None
+                and self.reused(expression, frame).traces
+                and self.value_result(
+                    expression, frame, data=local_data, results=local_results, scalars=local_scalars
+                )
             ):
                 return True
-            if self.outer_input(expression, frame, local_data, local_results, local_scalars):
+            if self.outer_input(expression, frame, local_data, local_results, local_scalars, written=True):
                 return True
         return False
 
@@ -7963,37 +8045,90 @@ class Analyzer:
             and self.builder_transform(call, frozenset({"StringBuilder"}), frame)
         )
 
-    def implicit_string_receiver(self, call: Call, frame: Frame) -> Value | None:
+    def library_reference_type(
+        self, kind: str, use: Any, qualified: str, *, default_import: bool = False
+    ) -> bool:
+        """A known nominal root, including a generic root or an imported type alias."""
+        if not kind:
+            return True  # no type fact; leave the existing unknown-argument model intact
+        root = kind.partition("<")[0]
+        if root == qualified:
+            return True
+        simple = qualified.rsplit(".", 1)[-1]
+        if self.native_flow is None:
+            return default_import and root == simple
+        imported = self.native_flow.imported_symbols(self, root, classes=True)
+        if imported:
+            return imported == {qualified}
+        return default_import and root == simple and not self.native_flow.class_owners(self, root, use)
+
+    def string_operation_applicable(self, call: Call, frame: Frame) -> bool:
+        """The modeled String signature must accept labels and known argument kinds."""
+        name, count = call.name.rsplit(".", 1)[-1], len(call.args)
+        if name == "plus":
+            return count == 1 and self.argument_label(call.args[0]) in {"", "other"}
+        if name != "format":
+            return count == 0 and name in {
+                "toString",
+                "trim",
+                "trimStart",
+                "trimEnd",
+                "lowercase",
+                "uppercase",
+                "trimIndent",
+                "trimMargin",
+                "reversed",
+                "orEmpty",
+                "lines",
+            }
+        for with_locale in (False, True):
+            locale_bound = vararg_bound = named_array = False
+            matched = True
+            for argument in call.args:
+                label = self.argument_label(argument)
+                if label == "locale" or not label and with_locale and not locale_bound:
+                    kind = self.known_value_type(argument, frame)
+                    if (
+                        not with_locale
+                        or locale_bound
+                        or not self.library_reference_type(kind, argument, "java.util.Locale")
+                    ):
+                        matched = False
+                        break
+                    locale_bound = True
+                elif label == "args":
+                    kind = self.known_value_type(argument, frame)
+                    if (
+                        vararg_bound
+                        or self.text(self.unwrap(argument)).strip() == "null"
+                        or not self.library_reference_type(
+                            kind, argument, "kotlin.Array", default_import=True
+                        )
+                    ):
+                        matched = False
+                        break
+                    vararg_bound = named_array = True
+                elif label or named_array:
+                    matched = False
+                    break
+                else:
+                    vararg_bound = True
+            if matched and (not with_locale or locale_bound):
+                return True
+        return False
+
+    def implicit_string_subject(self, call: Call, frame: Frame) -> Any:
         """Identified String reads precede an outer class or top-level helper.
 
         Local callables and project extensions keep their own dispatch. This recognizes
         no-argument reads, String.plus and vararg String.format rather than assuming
         arbitrary same-named calls are applicable.
         """
-        name, count = call.name.rsplit(".", 1)[-1], len(call.args)
+        name = call.name.rsplit(".", 1)[-1]
         if (
             self.language != "kotlin"
             or call.receiver is not None
-            or not (
-                count == 0
-                and name
-                in {
-                    "toString",
-                    "trim",
-                    "trimStart",
-                    "trimEnd",
-                    "lowercase",
-                    "uppercase",
-                    "trimIndent",
-                    "trimMargin",
-                    "reversed",
-                    "orEmpty",
-                    "lines",
-                }
-                or name == "plus"
-                and count == 1
-                or name == "format"
-            )
+            or not self.string_operation_applicable(call, frame)
         ):
             return None
         if name in frame.local_names:
@@ -8002,7 +8137,12 @@ class Analyzer:
             targets = self.native_flow.resolve(self, call, Value(), frame)[0]
             if any(self.native_flow.lexical_function(target.node) for target in targets):
                 return None
-            if self.project_extension(name, call, {"String", "CharSequence"}):
+            if name not in {"plus", "toString"} and self.project_extension(
+                name, call, {"String", "CharSequence", "Any"}, visible=True
+            ):
+                self.native_flow.partial(
+                    "Kotlin project extension receiver flow unavailable", self, call=call
+                )
                 return None
         node = call.node.parent
         for _ in range(64):
@@ -8016,12 +8156,25 @@ class Analyzer:
                         return None
                     kind = self.known_value_type(subject, frame)
                     if kind == "String" or not kind and self.string_template_root(subject, frame):
-                        return self.reused(subject, frame)
+                        return subject
                     return None
-                if not self.closure_parameters(node):
+                owner = self.closure_owner(node)
+                if (
+                    owner is not None
+                    and owner.name in {"run", "let", "also", "takeIf", "takeUnless", "use"}
+                    and self.kotlin_scope_identity_known(owner.name, frame)
+                ):
+                    continue_search = True
+                else:
+                    continue_search = False
+                if not continue_search and not self.closure_parameters(node):
                     return None  # an unknown nearer DSL may supply its own receiver
             node = node.parent
         return None
+
+    def implicit_string_receiver(self, call: Call, frame: Frame) -> Value | None:
+        subject = self.implicit_string_subject(call, frame)
+        return self.reused(subject, frame) if subject is not None else None
 
     def builder_transform(self, call: Call, types: frozenset[str], frame: Frame) -> bool:
         """Whether a known builder can receive this modeled transform/overload.
@@ -8400,13 +8553,43 @@ class Analyzer:
             for target in self.native_flow.by_name.get(alias, [])
         )
 
-    def project_extension(self, name: str, call: Call, receivers: set[str]) -> bool:
+    def project_extension(self, name: str, call: Call, receivers: set[str], *, visible: bool = False) -> bool:
         """A Kotlin project extension function of this name on one of these receiver types."""
         if self.native_flow is None:
             return False
-        for target in self.native_flow.by_name.get(name, []):
+        aliases = {
+            name,
+            *(symbol.rsplit(".", 1)[-1] for symbol in self.native_flow.imported_symbols(self, name)),
+        }
+        for target in (target for alias in aliases for target in self.native_flow.by_name.get(alias, [])):
             if target.analyzer.language != "kotlin":
                 continue
+            if visible:
+                if not self.native_flow.lexical_visible(self, target, call, allow_extensions=True):
+                    continue
+                labels = [
+                    self.argument_label(argument) for argument in call.args if self.argument_label(argument)
+                ]
+                if len(labels) != len(set(labels)) or not set(labels) <= {
+                    parameter for parameter, _, _ in target.parameters
+                }:
+                    continue
+                if target.owner:
+                    lexical_owners = {
+                        self.native_flow.owner(self, body) for body in self.class_bodies(call.node)
+                    }
+                    classes = {
+                        ancestor
+                        for owner in lexical_owners
+                        for ancestor in self.native_flow.project_ancestry(owner)
+                    }
+                    if target.owner not in classes or (
+                        "private" in self.native_flow.declaration_tokens(target.node)
+                        and target.owner not in lexical_owners
+                    ):
+                        continue
+                elif not self.native_flow.top_level_visible(self, target, name):
+                    continue
             declared = _field(target.node, "name")
             receiver = next(
                 (
@@ -8431,6 +8614,7 @@ class Analyzer:
         parameter's bounds (`fun <T : Appendable> T.x()`) or a project typealias's target."""
         simple = re.sub(r"<.*", "", analyzer.text(receiver)).rstrip("?").strip().rsplit(".", 1)[-1]
         names = {simple}
+        type_parameter = False
         parameters = [part for part in function.named_children if part.type == "type_parameters"]
         constraints = [part for part in function.named_children if part.type == "type_constraints"]
         for declared in (
@@ -8439,11 +8623,14 @@ class Analyzer:
         ):
             identifier = next((child for child in declared.named_children if child.type in IDENTIFIERS), None)
             if identifier is not None and analyzer.text(identifier) == simple:
+                type_parameter = True
                 names.update(
                     re.sub(r"<.*", "", analyzer.text(bound)).rstrip("?").strip().rsplit(".", 1)[-1]
                     for bound in declared.named_children
                     if bound.type in {"user_type", "nullable_type"}
                 )
+        if type_parameter and names == {simple}:
+            names.add("Any")  # the implicit upper bound of an unbounded function type parameter
         if self.native_flow is not None:
             for source, alias in self.native_flow.module_type_aliases.get(simple, []):
                 if source.language == "kotlin":
@@ -9554,6 +9741,8 @@ class Analyzer:
             local.values[name] = value
             if value.type_name:
                 local.types[name] = value.type_name
+            else:
+                local.types.pop(name, None)
             local.constants.pop(name, None)
             self.aliases.pop(name, None)
         local_guards = {origin: checks.copy() for origin, checks in guards.items()}

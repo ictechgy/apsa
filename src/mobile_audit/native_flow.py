@@ -64,6 +64,7 @@ REASON_KINDS = {
     "source trace budget": "budget",
     "Kotlin non-local return context unavailable": "precision",
     "Kotlin scope import identity unavailable": "precision",
+    "Kotlin project extension receiver flow unavailable": "precision",
     "Swift inout writeback unavailable": "precision",
     "aggregate reference ownership unavailable": "precision",
     "ambiguous class identity": "precision",
@@ -2351,8 +2352,10 @@ class NativeFlow:
             return None
         return frame.values.get(call.name, Value(type_name=frame.types.get(call.name, "")))
 
-    def lexical_visible(self, analyzer: Analyzer, target: Callable, call: Call) -> bool:
-        if target.analyzer.language == "kotlin":
+    def lexical_visible(
+        self, analyzer: Analyzer, target: Callable, call: Call, *, allow_extensions: bool = False
+    ) -> bool:
+        if target.analyzer.language == "kotlin" and not allow_extensions:
             name = _field(target.node, "name")
             if name is not None and any(
                 child.type == "." for child in target.node.children if child.end_byte <= name.start_byte
