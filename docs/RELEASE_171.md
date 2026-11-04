@@ -610,3 +610,14 @@ with many followed calls can reach `recursion or call evaluation budget`
 (`partial`) sooner, at the same cost per followed call as direct calls. Deeply
 nested Swift closures (dozens of levels) cost superlinear time in type
 lookups.
+
+Source nominal identities remain distinct from modeled builtin names through
+constructor facts and imported aliases, including default-package source classes.
+Detached constructor proofs check declaration-site lexical values and visible
+hierarchy/companion value heads before granting a class identity. A matching
+callable property cannot become an unrelated source constructor proof.
+
+Non-null standard receiver identity is retained at its declaration. Strict
+receiver proofs do not borrow a detached initializer's caller names. Consumed
+unknown receiver or pattern facts identify the actual affected call in precision
+details without executing their initializers.

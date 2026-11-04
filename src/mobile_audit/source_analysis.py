@@ -775,6 +775,14 @@ KOTLIN_CALLBACK_TYPES = {
     "Map": "kotlin.collections.Map",
     "Collection": "kotlin.collections.Collection",
 }
+KOTLIN_STANDARD_RECEIVER_TYPES = {
+    "Any": ("kotlin.Any",),
+    "Object": ("java.lang.Object",),
+    "CharSequence": ("kotlin.CharSequence", "java.lang.CharSequence"),
+    "StringBuilder": ("kotlin.text.StringBuilder", "java.lang.StringBuilder"),
+    "Exception": ("kotlin.Exception", "java.lang.Exception"),
+    "Number": ("kotlin.Number", "java.lang.Number"),
+}
 # Members whose result is a flag or a number, not text (`b.visible { q.isNotEmpty() }`,
 # `q.length`, `template.contains(q)`).
 SCALAR_RESULTS = {
@@ -6697,6 +6705,73 @@ class Analyzer:
                 return name[len(prefix) :]
         return name
 
+    def standard_receiver_type(
+        self,
+        kind: str,
+        spelling: str,
+        use: Any,
+        *,
+        context: Analyzer | None = None,
+    ) -> str:
+        context = context or self
+        for qualified in KOTLIN_STANDARD_RECEIVER_TYPES.get(kind, ()):
+            if self.library_reference_type(
+                spelling,
+                use,
+                qualified,
+                default_import=True,
+                context=context,
+                require_nonnullable=True,
+            ):
+                return qualified
+        return ""
+
+    def detached_constructor_kind(self, node: Any) -> str:
+        """Read constructor identity at its declaration, without evaluating it."""
+        flow = self.native_flow
+        constructor = self.call(node)
+        if flow is None or constructor is None or constructor.receiver is not None:
+            return ""
+        lexical_owner = flow.owner(self, node)
+        choices = flow.by_name.get(constructor.name, ())
+        if (
+            self.reference_binding(node, constructor.name, frame=Frame()) is not None
+            or self.nominal_reference_head_shadow(
+                node, constructor.name, {lexical_owner} if lexical_owner else set()
+            )
+            or any(
+                target.node.type not in {"constructor_declaration", "primary_constructor"}
+                for target in choices
+            )
+        ):
+            return ""
+        if not (
+            constructor.node.type == "object_creation_expression"
+            or constructor.name.rsplit(".", 1)[-1][:1].isupper()
+        ):
+            return ""
+        spelling = constructor.name
+        imported = flow.imported_symbols(self, constructor.name)
+        classes = flow.imported_symbols(self, constructor.name, classes=True)
+        owners = flow.class_owners(self, spelling, node)
+        if imported - classes or len(owners) != 1:
+            return ""
+        owner = next(iter(owners))
+        definitions = flow.class_definitions.get(owner, ())
+        if len(definitions) != 1:
+            return ""
+        context, nominal = definitions[0]
+        if nominal.type in {"object_declaration", "companion_object"}:
+            return ""
+        primary = next((part for part in nominal.named_children if part.type == "primary_constructor"), None)
+        if primary is not None and context.has_modifier(primary, "private"):
+            current = node if context is self else None
+            while current is not None and current.id != nominal.id:
+                current = current.parent
+            if current is None:
+                return ""
+        return "@source:" + owner if "." not in owner else owner
+
     def known_value_type(
         self,
         node: Any,
@@ -6747,21 +6822,7 @@ class Analyzer:
                         )
                         or ""
                     )
-                constructor = self.call(node)
-                if constructor is not None and constructor.receiver is None:
-                    flow = self.native_flow
-                    spelling = flow.constructor_type(self, constructor, Frame())
-                    choices = flow.by_name.get(constructor.name, ())
-                    if spelling and not any(
-                        target.node.type not in {"constructor_declaration", "primary_constructor"}
-                        for target in choices
-                    ):
-                        imported = flow.imported_symbols(self, constructor.name)
-                        classes = flow.imported_symbols(self, constructor.name, classes=True)
-                        owners = flow.class_owners(self, spelling, node)
-                        if not imported - classes and len(owners) == 1:
-                            return next(iter(owners))
-                return ""
+                return self.detached_constructor_kind(node)
         if self.safe_receiver_access(node) and not allow_nullable:
             return ""
         if self.opaque_implicit_it(node, frame):
@@ -7017,20 +7078,41 @@ class Analyzer:
         ):
             owners = flow.class_owners(context, spelling.rstrip("?!"), use)
             if len(owners) == 1:
-                return next(iter(owners))
+                owner = next(iter(owners))
+                return "@source:" + owner if "." not in owner else owner
+            standard = self.standard_receiver_type(kind, spelling, use, context=context)
+            if standard:
+                return standard
             imported = (
                 flow.imported_symbols(context, spelling.rstrip("?!"), classes=True)
                 if flow.lexical_type(context, spelling.rstrip("?!"), use) is None
                 else set()
             )
             if len(imported) == 1:
-                imported_kind = self.modeled_type_name(next(iter(imported)))
-                if (
-                    imported_kind in MODELED_NOMINAL_TYPES
-                    and spelling.rstrip().endswith("?")
-                    and not allow_nullable
+                identity = next(iter(imported))
+                if any(
+                    source.language == context.language
+                    for source, _nominal in flow.class_definitions.get(identity, ())
                 ):
-                    return ""
+                    return "@source:" + identity if "." not in identity else identity
+                imported_kind = self.modeled_type_name(identity)
+                standard = self.standard_receiver_type(imported_kind, spelling, use, context=context)
+                if standard:
+                    return standard
+                if imported_kind in MODELED_NOMINAL_TYPES:
+                    if spelling.rstrip().endswith("?") and not allow_nullable:
+                        return ""
+                    if identity not in KOTLIN_MODEL_TYPES.get(
+                        imported_kind, ()
+                    ) or not self.library_reference_type(
+                        spelling,
+                        use,
+                        identity,
+                        default_import=False,
+                        context=context,
+                        require_nonnullable=not allow_nullable,
+                    ):
+                        return ""
                 return imported_kind
         if context.language != "kotlin" or kind not in MODELED_NOMINAL_TYPES or flow is None:
             return kind
@@ -7059,10 +7141,11 @@ class Analyzer:
         owners = flow.class_owners(context, spelling.rstrip("?!"), use)
         if len(owners) == 1:
             owner = owners.pop()
-            return "@source:" + owner if owner in MODELED_NOMINAL_TYPES else owner
+            return "@source:" + owner if "." not in owner else owner
         imported = flow.imported_symbols(context, spelling.rstrip("?!"), classes=True)
         if len(imported) == 1 and not next(iter(imported)).startswith(("kotlin.", "java.lang.")):
-            return imported.pop()
+            identity = imported.pop()
+            return "@source:" + identity if "." not in identity else identity
         return ""
 
     def known_value_type_result(
@@ -7148,6 +7231,15 @@ class Analyzer:
                 )
                 resolved_kind = self.resolved_receiver_kind(call.receiver, receiver_kind, frame)
                 if receiver_kind and not resolved_kind:
+                    name = call.name.rsplit(".", 1)[-1]
+                    if (
+                        name in {"toString", "toRegex"}
+                        or name in {"toInt", "toIntOrNull", "toLong", "toLongOrNull", "toDouble", "toFloat"}
+                        and self.flag_or_number(node)
+                    ):
+                        self.native_flow.partial(
+                            "callable argument type identity unresolved", self, call=call
+                        )
                     return ""
                 receiver_kind = resolved_kind
                 receiver = Value(type_name=receiver_kind)
@@ -7172,7 +7264,7 @@ class Analyzer:
                     owners = {target.owner for target in targets if target.owner}
                     if len(owners) == 1:
                         owner = owners.pop()
-                        return "@source:" + owner if owner in MODELED_NOMINAL_TYPES else owner
+                        return "@source:" + owner if "." not in owner else owner
                 if targets and all(not self.declared_return(target) for target in targets):
                     inferred = {
                         target.analyzer.inferred_function_kind(
@@ -7360,6 +7452,11 @@ class Analyzer:
         if node is not None and node.type in IDENTIFIERS:
             binding = self.reference_binding(node, self.symbol_name(self.text(node)), frame=frame)
             if binding is not None and binding[1]:
+                if kind in KOTLIN_STANDARD_RECEIVER_TYPES and binding[1].rstrip().endswith("?"):
+                    return ""
+                standard = self.standard_receiver_type(kind, binding[1], binding[0])
+                if standard:
+                    return standard
                 owners = flow.class_owners(self, binding[1].rstrip("?!"), binding[0])
                 if len(owners) == 1:
                     owner = next(iter(owners))
@@ -8154,6 +8251,12 @@ class Analyzer:
         if receiver_proof and self.language == "kotlin" and base is not None:
             if self.safe_receiver_access(base):
                 return False
+            if self.native_flow is not None and base.type not in (
+                TEXT_LITERALS | NUMBERS | {"boolean_literal", "as_expression", "cast_expression"}
+            ):
+                lexical = self.native_flow.enclosing(base, FUNCTIONS | INITIALIZERS)
+                if self.function is None or lexical is None or lexical.id != self.function.id:
+                    return self.known_value_type(base, Frame(), depth) == "String"
             if depth >= 16:
                 if self.native_flow is not None:
                     self.native_flow.partial("callable argument type identity unresolved", self)
@@ -10546,6 +10649,8 @@ class Analyzer:
         if first is None:
             return False
         kind = self.known_value_type(first, frame)
+        if not kind and self.unresolved_receiver_origin(first, frame) and self.native_flow is not None:
+            self.native_flow.partial("callable argument type identity unresolved", self, call=call)
         regex = kind == "Regex" or not kind and self.argument_label(pattern) == "regex"
         if regex:
             return count == 2

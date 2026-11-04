@@ -321,6 +321,27 @@ Represented constructors with default arguments and unresolved aggregate
 effects can retain explicit precision limits. The existing private callback and
 post-write object-alias conservative results are not claimed exact.
 
+Detached initializer queries may retain a unique source constructor's nominal identity
+from declaration syntax when no value, import or project callable competes with it.
+Singleton invocation is not constructor proof; private primary constructors
+outside their declaring class are rejected. This does not execute the constructor
+or recover its field state.
+
+Source/import nominal facts that collide with modeled builtin names retain their
+source distinction, including root-package imports and aliases. Imported aliases
+grant modeled kinds only after canonical library identity is established. A
+detached constructor fact also requires no lexical value or visible inherited or
+companion value competing with its head name. These checks preserve nominal type
+identity; they do not execute the initializer or recover its field state.
+
+Known non-null standard receiver identities are checked at the declaration, so a
+caller's same-named class cannot replace a represented library type. Detached
+strict String proofs use declaration facts with an empty frame. Constructor and
+project-call results outside that context may remain unknown. If an unanchored receiver withholds a modeled text/numeric result hint, or a
+builder consumes an unrepresented initializer pattern type, the precision
+detail identifies the affected call. An unrelated diagnostic elsewhere does not
+justify a missing flow.
+
 ## Hybrid source and compiled artifacts
 
 JS, TS and Dart use token/block flow, not full compiler semantics. Analysis covers
@@ -422,7 +443,3 @@ exception handlers limit that proof. Other legacy algorithm indicators retain
 their documented method/string heuristics; none proves whole-program dataflow,
 reachability or a vulnerability. The unified parser's OS isolation and the direct
 legacy CLI's in-process limits remain distinct as described in the threat model.
-
-Detached initializer queries may retain a unique source constructor's nominal identity
-from declaration syntax when no value, import or project callable competes with it.
-This does not execute the constructor or recover its field state.
