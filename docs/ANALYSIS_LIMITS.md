@@ -104,6 +104,15 @@ aliases are followed in their declaring files for at most 16 alias declarations;
 cycles, conflicting visible aliases and unproven type-parameter roots record
 `callable argument type identity unresolved`. Alias expansion establishes nominal
 roots, not a general generic-substitution or overload-resolution system.
+Reference argument types are resolved at their represented declarations, rather
+than reinterpreting parameter/field type names under a later local class. The
+declaration indexes store immutable syntax per analysis; call-specific values
+are not cached there. Nullable Array arguments record the same precision reason;
+smart casts and arbitrary generic substitutions are not established by these
+nominal facts. Numeric hints keep their eight-level depth bound, reuse computed
+operand kinds and abstain with a precision reason on an unproven numeric
+signature instead of borrowing a competing helper's return kind. Type-hint
+queries do not evaluate scalar provenance to fill missing operand kinds.
 
 Project extension visibility checks package/import, owner and lexical access;
 incomplete receiver binding records `Kotlin project extension receiver flow unavailable`

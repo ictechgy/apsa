@@ -405,6 +405,8 @@ class NativeFlow:
         self.owner_cache: dict[tuple[int, int], str] = {}
         self.type_scope_cache: dict[tuple[int, int], list[tuple[str, Any]]] = {}
         self.type_parameter_cache: dict[tuple[int, int], dict[str, Any]] = {}
+        # Immutable declaration syntax only; no frame values or call-specific kinds.
+        self.reference_binding_cache: dict[tuple[int, int], dict[str, list[tuple[Any, str, Any]]]] = {}
         self.empty_base_cache: dict[tuple[int, int, str], bool] = {}
         self.known_base_cache: dict[tuple[int, int, str], bool] = {}
         self.ancestry_cache: dict[str, set[str]] = {}
@@ -2128,7 +2130,7 @@ class NativeFlow:
                     # Unknown or nonempty ancestry may supply a member before
                     # an enclosing/package/import binding.
                     return inherited
-            if scope.type in scopes:
+            if scope.type in scopes or analyzer.language == "kotlin" and scope.type == "class_declaration":
                 if scope.type == "program" and analyzer.language == "java":
                     for declaration in analyzer.imports:
                         if declaration.startswith("static ") and (
@@ -2140,7 +2142,12 @@ class NativeFlow:
                             return scope
                 if key not in self.type_scope_cache:
                     entries = []
-                    for declaration in scope.named_children:
+                    declarations_scope = (
+                        next((child for child in scope.named_children if child.type == "class_body"), scope)
+                        if analyzer.language == "kotlin" and scope.type == "class_declaration"
+                        else scope
+                    )
+                    for declaration in declarations_scope.named_children:
                         if declaration.type not in declarations:
                             continue
                         name = (

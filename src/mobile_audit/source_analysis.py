@@ -68,6 +68,7 @@ NUMBERS = {
     "number_literal",
     "integer_literal",
     "real_literal",
+    "float_literal",
     "decimal_integer_literal",
     "decimal_floating_point_literal",
     "hex_integer_literal",
@@ -6634,8 +6635,8 @@ class Analyzer:
         if call is not None:
             if self.implicit_string_subject(call, frame) is not None:
                 return "List<String>" if call.name.rsplit(".", 1)[-1] == "lines" else "String"
-            numeric = self.implicit_numeric_result_type(call, frame)
-            if numeric:
+            numeric = self.implicit_numeric_result_type(call, frame, depth)
+            if numeric is not None:
                 return numeric
             targets = []
             if self.native_flow is not None:
@@ -6775,35 +6776,62 @@ class Analyzer:
         value = value or Value()
         return self.modeled_type_name(value.type_name) or ("String" if value.category == "text" else "")
 
-    def numeric_receiver_kind(self, call: Call, frame: Frame) -> str:
+    def numeric_receiver_kind(self, call: Call, frame: Frame, depth: int = 0) -> str:
         current = call.node.parent
         for _ in range(64):
             if current is None or current.type in FUNCTIONS:
                 break
             subject = self.scope_receiver(current) if current.type in CLOSURES else None
             if subject is not None:
-                return self.known_value_type(subject, frame)
+                return self.known_value_type(subject, frame, depth + 1)
             current = current.parent
         return ""
 
-    def implicit_numeric_result_type(self, call: Call, frame: Frame) -> str:
+    def implicit_numeric_result_type(self, call: Call, frame: Frame, depth: int = 0) -> str | None:
         """An applicable numeric member's kind precedes an outer helper's return."""
         name = call.name.rsplit(".", 1)[-1]
         if self.language != "kotlin" or call.receiver is not None or name not in NUMBER_OPERATIONS:
+            return None
+        if depth >= 8:
+            if self.native_flow is not None:
+                self.native_flow.partial("callable argument type identity unresolved", self, call=call)
             return ""
-        kind = self.numeric_receiver_kind(call, frame)
+        kind = self.numeric_receiver_kind(call, frame, depth)
         if kind not in {"Int", "Long", "Byte", "Short", "UInt", "ULong", "Float", "Double", "Boolean"}:
-            return ""
-        if not self.numeric_operation_applicable(call, frame, frozenset({"this"})):
-            return ""
+            return None
+        arguments: dict[int, str] = {}
+        if not self.numeric_operation_applicable(
+            call,
+            frame,
+            frozenset({"this"}),
+            receiver_kind=kind,
+            argument_kinds=arguments,
+            depth=depth,
+            hints_only=True,
+        ):
+            if any(not argument for argument in arguments.values()):
+                if self.native_flow is not None:
+                    self.native_flow.partial("callable argument type identity unresolved", self, call=call)
+                return ""  # do not borrow a helper's result for an unproven numeric overload
+            return None
         if name == "toString":
             return "String"
         if name not in {"plus", "minus", "times", "div", "rem"}:
             return kind
-        kinds = {kind, *(self.known_value_type(argument, frame) for argument in call.args)}
+        kinds = {kind, *arguments.values()}
         return next((item for item in ("Double", "Float", "ULong", "Long", "UInt") if item in kinds), "Int")
 
-    def numeric_operation_applicable(self, call: Call, frame: Frame, scalars: frozenset[str]) -> bool:
+    def numeric_operation_applicable(
+        self,
+        call: Call,
+        frame: Frame,
+        scalars: frozenset[str],
+        *,
+        receiver_kind: str | None = None,
+        argument_kinds: dict[int, str] | None = None,
+        depth: int = 0,
+        hints_only: bool = False,
+    ) -> bool:
         """Required arities, labels and known argument kinds before numeric precedence."""
         name = call.name.rsplit(".", 1)[-1]
         if (
@@ -6815,7 +6843,10 @@ class Analyzer:
             )
         ):
             return False
-        receiver_kind = self.numeric_receiver_kind(call, frame)
+        if receiver_kind is None:
+            receiver_kind = self.numeric_receiver_kind(call, frame, depth)
+        if argument_kinds is None:
+            argument_kinds = {}
         if (
             receiver_kind == "Boolean"
             and (name != "toString" or call.args)
@@ -6831,14 +6862,19 @@ class Analyzer:
                 continue
             used: set[str] = set()
             matched = True
-            for argument in call.args:
+            for index, argument in enumerate(call.args):
                 label = self.argument_label(argument)
                 slot = label or next((parameter for parameter in parameters if parameter not in used), "")
                 if slot not in parameters or slot in used:
                     matched = False
                     break
                 used.add(slot)
-                kind = self.known_value_type(argument, frame)
+                if index not in argument_kinds:
+                    argument_kinds[index] = self.known_value_type(argument, frame, depth + 1)
+                kind = argument_kinds[index]
+                if hints_only and not kind:
+                    matched = False
+                    break  # type hints never evaluate scalar provenance to establish an argument kind
                 if kind in {"Boolean", "Bool"} or slot == "radix" and kind and kind not in {"Int", "int"}:
                     matched = False
                     break
@@ -8076,33 +8112,43 @@ class Analyzer:
         default_import: bool = False,
         context: Analyzer | None = None,
         seen: frozenset[tuple[int, int]] = frozenset(),
+        nullable: bool = False,
+        expanded: list[tuple[int, int]] | None = None,
     ) -> bool:
         """Resolve a nominal root in its lexical and alias-declaration context."""
         if not kind:
             return True  # retain the existing unknown-argument model
         context = context or self
         spelling = re.sub(r"\s+", "", kind)
+        nullable = nullable or spelling.endswith("?")
         root = spelling.rstrip("?!").partition("<")[0]
         flow = self.native_flow
+
+        def compatible_root() -> bool:
+            if qualified == "kotlin.Array" and nullable:
+                if flow is not None:
+                    flow.partial("callable argument type identity unresolved", self)
+                return False  # nullable smart casts are outside these nominal signature facts
+            return True
+
         if flow is not None:
             binding = flow.lexical_type(context, root, use)
             if binding is not None:
                 if binding.type in {"type_alias", "typealias_declaration"}:
-                    return self.library_alias_type(context, binding, qualified, default_import, seen)
+                    return self.library_alias_type(
+                        context, binding, qualified, default_import, seen, nullable, expanded
+                    )
                 if binding.type in {"type_parameter", "type_constraint"}:
                     flow.partial("callable argument type identity unresolved", self)
                 return False
         if root == qualified:
-            if qualified == "kotlin.Array" and spelling.endswith("?") and flow is not None:
-                flow.partial("callable argument type identity unresolved", self)
-                return False
-            return True
+            return compatible_root()
         simple = qualified.rsplit(".", 1)[-1]
         if flow is None:
-            return default_import and root == simple
+            return default_import and root == simple and compatible_root()
         imported = flow.imported_symbols(context, root, classes=True)
         if imported == {qualified}:
-            return True
+            return compatible_root()
         buckets: list[list[tuple[Analyzer, Any]]] = [[], [], [], []]
         names = {root.rsplit(".", 1)[-1], *(name.rsplit(".", 1)[-1] for name in imported)}
         for name in names:
@@ -8133,10 +8179,15 @@ class Analyzer:
                 flow.partial("callable argument type identity unresolved", self)
                 return False
             source, alias = aliases[0]
-            return self.library_alias_type(source, alias, qualified, default_import, seen)
+            return self.library_alias_type(source, alias, qualified, default_import, seen, nullable, expanded)
         if imported:
             return False
-        return default_import and root == simple and not flow.class_owners(context, root, use)
+        return (
+            default_import
+            and root == simple
+            and not flow.class_owners(context, root, use)
+            and compatible_root()
+        )
 
     def library_alias_type(
         self,
@@ -8145,12 +8196,16 @@ class Analyzer:
         qualified: str,
         default_import: bool,
         seen: frozenset[tuple[int, int]],
+        nullable: bool = False,
+        expanded: list[tuple[int, int]] | None = None,
     ) -> bool:
         key = id(source), alias.id
         if key in seen or len(seen) >= 16:
             if self.native_flow is not None:
                 self.native_flow.partial("callable argument type identity unresolved", self)
             return False
+        if expanded is not None:
+            expanded.append(key)
         equal = next((part for part in alias.children if part.type == "="), None)
         target = next(
             (
@@ -8169,6 +8224,122 @@ class Analyzer:
             default_import=default_import,
             context=source,
             seen=seen | {key},
+            nullable=nullable,
+            expanded=expanded,
+        )
+
+    def reference_binding(self, use: Any, name: str) -> tuple[Any, str, Any] | None:
+        """Find an argument's declaration before resolving its type spelling."""
+        flow = self.native_flow
+        if flow is None:
+            return None
+        scope = use.parent
+        for _ in range(64):
+            if scope is None:
+                return None
+            key = id(self), scope.id
+            if key not in flow.reference_binding_cache:
+                entries: dict[str, list[tuple[Any, str, Any]]] = {}
+
+                if scope.type in FUNCTIONS:
+                    for symbol, kind, origin in self.parameters(scope):
+                        entries.setdefault(symbol, []).append((origin, kind, None))
+                elif scope.type in CLOSURES:
+                    parameters = self.closure_parameters(scope)
+                    for symbol, kind, _ in parameters:
+                        entries.setdefault(symbol, []).append((scope, kind, None))
+                    owner = self.closure_owner(scope)
+                    if (
+                        not parameters
+                        and owner is not None
+                        and owner.name in {"let", "also", "takeIf", "takeUnless", "use"}
+                    ):
+                        entries.setdefault("it", []).append((scope, "", None))
+                elif scope.type in BLOCKS | {"class_body", "source_file", "program"}:
+                    for child in scope.named_children:
+                        declaration = self.declaration(child)
+                        if declaration is not None:
+                            symbol, expression, kind = declaration
+                            entries.setdefault(symbol, []).append((child, kind, expression))
+                elif scope.type == "class_declaration":
+                    primary = next(
+                        (child for child in scope.named_children if child.type == "primary_constructor"), None
+                    )
+                    if primary is not None:
+                        for group in primary.named_children:
+                            if group.type != "class_parameters":
+                                continue
+                            for parameter in group.named_children:
+                                symbol = next(
+                                    (p for p in parameter.named_children if p.type in IDENTIFIERS), None
+                                )
+                                kind = next(
+                                    (
+                                        p
+                                        for p in parameter.named_children
+                                        if p.type in {"user_type", "nullable_type"}
+                                    ),
+                                    None,
+                                )
+                                if symbol is not None:
+                                    entries.setdefault(self.symbol_name(self.text(symbol)), []).append(
+                                        (parameter, self.text(kind), None)
+                                    )
+                flow.reference_binding_cache[key] = entries
+            for origin, kind, expression in reversed(flow.reference_binding_cache[key].get(name, [])):
+                if scope.type in BLOCKS and (
+                    origin.start_byte > use.start_byte
+                    or origin.start_byte <= use.start_byte < origin.end_byte
+                ):
+                    continue
+                return origin, kind, expression
+            scope = scope.parent
+        flow.partial("callable argument type identity unresolved", self)
+        return None
+
+    def library_argument_type(
+        self, argument: Any, frame: Frame, qualified: str, *, default_import: bool = False, depth: int = 0
+    ) -> bool:
+        """Resolve reference signatures at their type declaration, retaining nullability."""
+        node = self.unwrap(argument)
+        if node is None:
+            return True
+        if depth >= 16:
+            if self.native_flow is not None:
+                self.native_flow.partial("callable argument type identity unresolved", self)
+            return False
+        kind = self.known_value_type(node, frame)
+        context, origin = self, node
+        if node.type in IDENTIFIERS:
+            binding = self.reference_binding(node, self.symbol_name(self.text(node)))
+            if binding is not None:
+                origin, declared, expression = binding
+                if declared:
+                    kind = declared
+                elif expression is not None:
+                    return self.library_argument_type(
+                        expression, frame, qualified, default_import=default_import, depth=depth + 1
+                    )
+                elif origin.type in CLOSURES:
+                    owner = self.closure_owner(origin)
+                    if (
+                        owner is not None
+                        and owner.receiver is not None
+                        and owner.name in {"let", "also", "takeIf", "takeUnless", "use"}
+                        and self.kotlin_scope_identity_known(owner.name, frame)
+                    ):
+                        return self.library_argument_type(
+                            owner.receiver, frame, qualified, default_import=default_import, depth=depth + 1
+                        )
+                    # Retained per-node facts already exclude a stale enclosing parameter/field.
+        elif self.native_flow is not None:
+            call = self.call(node)
+            targets = self.native_flow.resolve(self, call, Value(), frame)[0] if call is not None else []
+            if len(targets) == 1 and self.declared_return(targets[0]):
+                target = targets[0]
+                kind, context, origin = self.declared_return(target), target.analyzer, target.node
+        return self.library_reference_type(
+            kind, origin, qualified, default_import=default_import, context=context
         )
 
     def string_operation_applicable(self, call: Call, frame: Frame) -> bool:
@@ -8196,22 +8367,20 @@ class Analyzer:
             for argument in call.args:
                 label = self.argument_label(argument)
                 if label == "locale" or not label and with_locale and not locale_bound:
-                    kind = self.known_value_type(argument, frame)
                     if (
                         not with_locale
                         or locale_bound
-                        or not self.library_reference_type(kind, argument, "java.util.Locale")
+                        or not self.library_argument_type(argument, frame, "java.util.Locale")
                     ):
                         matched = False
                         break
                     locale_bound = True
                 elif label == "args":
-                    kind = self.known_value_type(argument, frame)
                     if (
                         vararg_bound
                         or self.text(self.unwrap(argument)).strip() == "null"
-                        or not self.library_reference_type(
-                            kind, argument, "kotlin.Array", default_import=True
+                        or not self.library_argument_type(
+                            argument, frame, "kotlin.Array", default_import=True
                         )
                     ):
                         matched = False
@@ -8237,7 +8406,8 @@ class Analyzer:
         if (
             self.language != "kotlin"
             or call.receiver is not None
-            or not self.string_operation_applicable(call, frame)
+            or name != "format"
+            and not self.string_operation_applicable(call, frame)
         ):
             return None
         if name in frame.local_names:
@@ -8258,6 +8428,8 @@ class Analyzer:
                         return None
                     kind = self.known_value_type(subject, frame)
                     if kind == "String" or not kind and self.string_template_root(subject, frame):
+                        if not self.string_operation_applicable(call, frame):
+                            return None
                         if name not in {"plus", "toString"} and self.project_extension(
                             name,
                             call,
@@ -8768,10 +8940,13 @@ class Analyzer:
             ]:
                 if self.library_reference_type(text, use, qualified, default_import=default, context=source):
                     return True
+            expanded: list[tuple[int, int]] = []
             if not self.library_reference_type(
-                text, use, "kotlin.Comparable", default_import=True, context=source
+                text, use, "kotlin.Comparable", default_import=True, context=source, expanded=expanded
             ):
                 return False
+            if expanded:
+                return True  # alias parameters are opaque; the caller records limited receiver flow
             match = re.search(r"<(.+)>", text)
             if match is None:
                 return True  # an aliased generic argument remains conservatively limited by the caller

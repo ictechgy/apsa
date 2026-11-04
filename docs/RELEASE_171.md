@@ -65,6 +65,15 @@ credential service was contacted.
   concrete type arguments retain standard dispatch. Their incomplete receiver
   flow is explicitly `limited`, only after a String subject is established.
   Applicable numeric members retain their result kind before outer helper returns.
+  Reference-argument facts retain their declared nullability and binding origin
+  across parameters, locals, fields and declared project returns. Constructor
+  signatures see their class's member types. Nullable Array identities remain
+  explicitly limited, including smart casts not represented by these hints.
+  Kotlin floating literals retain Float/Double kinds. Nested numeric type hints
+  reuse argument kinds, preserve the depth bound and never evaluate scalar
+  provenance to establish a missing type. Unproven numeric signatures do not
+  borrow a helper return kind. Opaque Comparable alias arguments conservatively
+  retain the documented project-extension precision limit.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and

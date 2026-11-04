@@ -8249,3 +8249,514 @@ class Notes(private val db:SQLiteDatabase) {{
     report = analyze_sources([("app/Notes.kt", source)])
     assert "callable argument type identity unresolved" in _reasons(report)
     assert _state(report, SQL) == "limited"
+
+
+def _review20_nullable_cases() -> list[dict]:
+    HEADER = """package synthetic
+    import android.content.Intent
+    import android.database.sqlite.SQLiteDatabase
+    """
+    CASES = []
+    for kind, alias in [
+        ("Array<String>?", ""),
+        ("kotlin.Array<String>?", ""),
+        ("Values<String>?", "typealias Values<T> = kotlin.Array<T>"),
+        ("Values<String>?", "typealias Base<T> = kotlin.Array<T>\ntypealias Values<T> = Base<T>"),
+        ("Values<String>", "typealias Values<T> = kotlin.Array<T>"),
+    ]:
+        expected = kind.endswith("?")
+        source = (
+            HEADER
+            + f"""{alias}
+    class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun format(args:{kind}):String=captured
+     fun scan(intent:Intent, values:{kind}) {{
+      captured=intent.getStringExtra("q") ?: ""
+      with("fixed") {{ db.execSQL(format(args=values)) }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id="nullable/" + kind + "/" + str(len(CASES)),
+                group="native19",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=expected,
+                factory="null" if expected else 'kotlin.arrayOf("fixed")',
+            )
+        )
+    for nested in [False, True]:
+        body = "val s=minus(1); s.run { db.execSQL(trim()) }"
+        if nested:
+            body = '"safe".run { ' + body + " }"
+        source = (
+            HEADER
+            + """class Notes(private val db:SQLiteDatabase) {
+     private var captured=""
+     private fun minus(value:Int):String="fixed"
+     private fun trim():String=captured
+     fun scan(intent:Intent) {
+      val q=intent.getStringExtra("q") ?: ""
+      captured=q
+      q.length.run { """
+            + body
+            + """ }
+     }
+    }
+    """
+        )
+        CASES.append(
+            dict(
+                id="nested-numeric/" + str(nested),
+                group="native19",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=not nested,
+                factory="",
+            )
+        )
+    return CASES
+
+
+def _review20_origin_cases() -> list[dict]:
+    CASES = []
+    for kind, alias in [("Array<String>", ""), ("Values<String>", "typealias Values<T> = kotlin.Array<T>")]:
+        local = kind.split("<")[0]
+        source = f"""package synthetic
+    import android.content.Intent
+    import android.database.sqlite.SQLiteDatabase
+    {alias}
+    class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun format(args:{kind}):String=captured
+     fun scan(intent:Intent, values:{kind}) {{
+      class {local}<T>
+      captured=intent.getStringExtra("q") ?: ""
+      with("fixed") {{ db.execSQL(format(args=values)) }}
+     }}
+    }}
+    """
+        CASES.append(
+            dict(
+                id="declaration-origin/" + kind,
+                group="origin19",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=False,
+                factory='kotlin.arrayOf("fixed")',
+            )
+        )
+    return CASES
+
+
+def _review20_extra_cases() -> list[dict]:
+    HEADER = """package synthetic
+    import android.content.Intent
+    import android.database.sqlite.SQLiteDatabase
+    """
+    CASES = []
+    for target, imports in [
+        ("Array<T>?", ""),
+        ("kotlin.Array<T>?", ""),
+        ("Base<T>?", "import kotlin.Array as Base"),
+    ]:
+        source = (
+            HEADER
+            + imports
+            + f"""
+    typealias Values<T> = {target}
+    class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun format(args:Values<String>):String=captured
+     fun scan(intent:Intent, values:Values<String>) {{
+      captured=intent.getStringExtra("q") ?: ""
+      with("fixed") {{ db.execSQL(format(args=values)) }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id="nullable-target/" + target,
+                group="extra20",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=True,
+                factory="null",
+            )
+        )
+    for annotation in ["", ":Array<String>"]:
+        source = (
+            HEADER
+            + f"""class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun format(args:Array<String>):String=captured
+     fun scan(intent:Intent, values:Array<String>) {{
+      val copy{annotation} = values
+      class Array<T>
+      captured=intent.getStringExtra("q") ?: ""
+      with("fixed") {{ db.execSQL(format(args=copy)) }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id="local-origin/" + annotation,
+                group="extra20",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=False,
+                factory='kotlin.arrayOf("fixed")',
+            )
+        )
+    for nullable in [False, True]:
+        suffix = "?" if nullable else ""
+        source = (
+            HEADER
+            + f"""class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun values():Array<String>{suffix} = {"null" if nullable else 'arrayOf("fixed")'}
+     private fun format(args:Array<String>{suffix}):String=captured
+     fun scan(intent:Intent) {{
+      class Array<T>
+      captured=intent.getStringExtra("q") ?: ""
+      with("fixed") {{ db.execSQL(format(args=values())) }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id="return-origin/" + str(nullable),
+                group="extra20",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=nullable,
+                factory="",
+            )
+        )
+    for argument, parameter, initialization, expected in [
+        ("1f", "v:Float", "", True),
+        ("1.0", "v:Double", "", True),
+        ("v", "v:Float", "val v:Float=1f;", True),
+        ("v", "v:Double", "val v:Double=1.0;", True),
+        ("1.toFloat()", "v:Float", "", True),
+        ('"1"', "v:String", "", False),
+    ]:
+        source = (
+            HEADER
+            + f"""class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun minus({parameter}):String="fixed"
+     private fun trim():String=captured
+     fun scan(intent:Intent) {{
+      val q=intent.getStringExtra("q") ?: ""
+      captured=q
+      q.length.run {{ {initialization} val s=minus({argument}); s.run {{ db.execSQL(trim()) }} }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id="numeric-literal/" + argument + "/" + parameter,
+                group="extra20",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=expected,
+                factory="",
+            )
+        )
+    for nested in [False, True]:
+        source = (
+            HEADER
+            + f"""class Notes(private val db:SQLiteDatabase,private val values:Array<String>) {{
+     {"class Array<T>" if nested else ""}
+     private var captured=""
+     private fun format(args:Array<String>):String=captured
+     fun scan(intent:Intent) {{
+      captured=intent.getStringExtra("q") ?: ""
+      with("fixed") {{ db.execSQL(format(args=values)) }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id="constructor-origin/" + str(nested),
+                group="extra20",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=nested,
+                factory="",
+                constructor="ProbeINDEX.Array<String>()" if nested else 'kotlin.arrayOf("fixed")',
+            )
+        )
+    return CASES
+
+
+def _review20_opaque_cases() -> list[dict]:
+    HEADER = """package synthetic
+    import android.content.Intent
+    import android.database.sqlite.SQLiteDatabase
+    """
+    CASES = []
+    source = (
+        HEADER
+        + """class Notes(private val db:SQLiteDatabase) {
+     private fun <L> format(locale:L):String="fixed"
+     fun <L> scan(intent:Intent, value:L) { db.execSQL(format(locale=value)) }
+    }
+    """
+    )
+    CASES.append(
+        dict(
+            id="identity-reason-without-string",
+            group="claude19",
+            files=[("app/Notes.kt", source)],
+            rule="AST-SQL-CONCAT",
+            expect=False,
+            factory="java.util.Locale.US",
+            checked=True,
+        )
+    )
+    for alias, receiver in [
+        ("typealias C<T> = Comparable<String>", "C<Int>"),
+        ("typealias P<A,B> = Comparable<B>", "P<Int,String>"),
+    ]:
+        source = (
+            HEADER
+            + f"""{alias}
+    class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun {receiver}.trim():String=captured
+     fun scan(intent:Intent) {{
+      captured=intent.getStringExtra("q") ?: ""
+      "fixed".run {{ db.execSQL(trim()) }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id="opaque-comparable/" + receiver,
+                group="claude19",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=True,
+                factory="",
+                limited=True,
+            )
+        )
+    for receiver, expected in [("Int", True), ("String", False)]:
+        source = (
+            HEADER
+            + f"""class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun {receiver}.coerceAtLeast(minimumValue:Int):String=captured
+     private fun trim():String="fixed"
+     fun scan(intent:Intent) {{
+      captured=intent.getStringExtra("q") ?: ""
+      5.run {{ val s=coerceAtLeast(0); s.run {{ db.execSQL(trim()) }} }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id="numeric-extension/" + receiver,
+                group="claude19",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=expected,
+                factory="",
+                limited=expected,
+                checked=not expected,
+            )
+        )
+    return CASES
+
+
+@pytest.mark.parametrize(
+    "case",
+    _review20_nullable_cases()
+    + _review20_origin_cases()
+    + _review20_extra_cases()
+    + _review20_opaque_cases(),
+    ids=lambda case: case["id"],
+)
+def test_review20_reference_facts_and_numeric_literals(case: dict) -> None:
+    report = analyze_sources(case["files"])
+    if case["id"] == "numeric-extension/Int":
+        # Existing incomplete explicit receiver flow remains visible; release item2.
+        assert _state(report, SQL) == "limited"
+        assert "unresolved callable identity or argument signature" in _reasons(report)
+    else:
+        assert _hit(report, case["rule"]) is case["expect"], report["findings"]
+    if case["id"].startswith("opaque-comparable/"):
+        assert _state(report, SQL) == "limited"
+        assert "Kotlin project extension receiver flow unavailable" in _reasons(report)
+    if case["id"].startswith("nullable/") and "?" in case["id"] or case["id"].startswith("nullable-target/"):
+        assert _state(report, SQL) == "limited"
+        assert "callable argument type identity unresolved" in _reasons(report)
+
+
+def test_review20_nested_type_hints_have_bounded_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = Analyzer.known_value_type
+    for size in [8, 16, 32, 64]:
+        count = 0
+
+        def counted(self: Analyzer, *args, **kwargs):
+            nonlocal count
+            count += 1
+            assert count <= 512, "type hints repeat nested numeric argument work"
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Analyzer, "known_value_type", counted)
+        expression = "1"
+        for _ in range(size):
+            expression = "plus(" + expression + ")"
+        source = """import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+class Notes(private val db:SQLiteDatabase) {
+    fun scan(intent:Intent) {
+        val q=intent.getStringExtra("q") ?: ""
+        q.length.run { val n=EXPRESSION; db.execSQL("SELECT "+n) }
+    }
+}
+""".replace("EXPRESSION", expression)
+        report = analyze_sources([("app/Notes.kt", source)])
+        assert count <= 8 * size + 32
+        if size >= 16:
+            assert "callable argument type identity unresolved" in _reasons(report)
+            assert _state(report, SQL) in {"limited", "partial"}
+
+
+def _review20_smartcast_cases() -> list[dict]:
+    CASES = []
+    for tainted in [False, True]:
+        source = f"""package synthetic
+    import android.content.Intent
+    import android.database.sqlite.SQLiteDatabase
+    class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun format(args:Array<String>?):String={'"fixed"' if tainted else "captured"}
+     fun scan(intent:Intent, values:Array<String>?) {{
+      val q=intent.getStringExtra("q") ?: ""
+      captured=q
+      if(values!=null) {{ with({"q" if tainted else '"fixed"'}) {{ db.execSQL(format(args=values)) }} }}
+     }}
+    }}
+    """
+        CASES.append(
+            dict(
+                id="nullable-smartcast/" + str(tainted),
+                group="smartcast20",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect="LIMITED",
+                runtime_expect=tainted,
+                factory='kotlin.arrayOf("fixed")',
+            )
+        )
+    return CASES
+
+
+@pytest.mark.parametrize("case", _review20_smartcast_cases(), ids=lambda case: case["id"])
+def test_review20_nullable_smartcast_is_explicitly_limited(case: dict) -> None:
+    report = analyze_sources(case["files"])
+    assert _state(report, SQL) == "limited"
+    assert "callable argument type identity unresolved" in _reasons(report)
+
+
+def _review20_callback_cases() -> list[dict]:
+    HEADER = """package synthetic
+    import android.content.Intent
+    import android.database.sqlite.SQLiteDatabase
+    """
+    CASES = []
+    for nominal, local, expected in [("", "class Array<T>", False), ("class Array<T>", "", True)]:
+        source = (
+            HEADER
+            + f"""class Notes(private val db:SQLiteDatabase) {{
+     {nominal}
+     private var captured=""
+     private fun format(args:Array<String>):String=captured
+     fun scan(intent:Intent, values:Array<String>) {{
+      captured=intent.getStringExtra("q") ?: ""
+      values.let {{ value ->
+       {local}
+       with("fixed") {{ db.execSQL(format(args=value)) }}
+      }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id="callback-origin/" + str(expected),
+                group="callback20",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=expected,
+                factory="ProbeINDEX.Array<String>()" if expected else 'kotlin.arrayOf("fixed")',
+            )
+        )
+    source = (
+        HEADER
+        + """class Notes(private val db:SQLiteDatabase) {
+     private var captured=""
+     private fun format(locale:Regex):String=captured
+     fun scan(intent:Intent) {
+      captured=intent.getStringExtra("q") ?: ""
+      val rx:Regex=Regex("x")
+      rx.let { locale -> with("fixed") { db.execSQL(format(locale=locale)) } }
+     }
+    }
+    """
+    )
+    CASES.append(
+        dict(
+            id="callback-known-incompatible-regex",
+            group="callback20",
+            files=[("app/Notes.kt", source)],
+            rule="AST-SQL-CONCAT",
+            expect=True,
+            factory="",
+        )
+    )
+    return CASES
+
+
+@pytest.mark.parametrize("case", _review20_callback_cases(), ids=lambda case: case["id"])
+def test_review20_callback_reference_origins(case: dict) -> None:
+    report = analyze_sources(case["files"])
+    assert _hit(report, SQL) is case["expect"], report["findings"]
+
+
+@pytest.mark.parametrize("aliased", [False, True])
+def test_review20_inferred_copy_keeps_the_parameter_type_origin(aliased: bool) -> None:
+    kind = "Values" if aliased else "Array"
+    alias = "typealias Values<T> = kotlin.Array<T>" if aliased else ""
+    source = f"""package synthetic
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+{alias}
+class Notes(private val db:SQLiteDatabase) {{
+    private var captured=""
+    private fun format(args:{kind}<String>):String=captured
+    fun scan(intent:Intent, values:{kind}<String>) {{
+        class {kind}<T>
+        val copy=values
+        captured=intent.getStringExtra("q") ?: ""
+        with("fixed") {{ db.execSQL(format(args=copy)) }}
+    }}
+}}
+"""
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert not _hit(report, SQL), report["findings"]
+    assert _state(report, SQL) == "checked"
