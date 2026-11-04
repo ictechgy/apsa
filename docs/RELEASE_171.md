@@ -504,6 +504,15 @@ losing even one of eight locations stays `partial` when a duplicate route takes
 the last retained slot. Raw and located forms of the same syntax node denote one
 location. A duplicate-route-only cut can remain `limited`.
 
+Ordinary escaped type names now share canonical inventory, lexical and owner
+identities; root-package declarations in separate Kotlin files are retained.
+Receiver proof preserves safe-cast and alias-expanded nullability, separately
+from nullable content/reference compatibility. Template fallback cannot undo
+that receiver abstention. String constructor hints respect source identity for
+both inferred locals and direct receivers. Writes to local supertypes veto
+stale implicit-head/callback proof even without an is-test; established final
+standard declarations and literal-initialized final types remain usable.
+
 ## Remaining limits
 
 A callee does not bind a lambda's parameters when it calls the lambda, and a

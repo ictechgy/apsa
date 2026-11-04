@@ -1941,6 +1941,12 @@ class Analyzer:
         match = re.fullmatch(r"`([^\W\d]\w*)`", name) if self.language == "kotlin" else None
         return match[1] if match else name
 
+    def canonical_type_spelling(self, spelling: str) -> str:
+        """Normalize supported escaped identifiers within a type, keeping its modifiers."""
+        if self.language != "kotlin":
+            return spelling
+        return re.sub(r"`[^\W\d]\w*`", lambda match: self.symbol_name(match[0]), spelling)
+
     def import_name(self, imported: str) -> str:
         """Normalize a whole supported Kotlin import once, before indexing it."""
         normalized = self.normalized_import_name(imported)
@@ -6729,6 +6735,7 @@ class Analyzer:
     ) -> str:
         """Modeled precedence needs a standard identity at the declaration's origin."""
         context = context or self
+        spelling = context.canonical_type_spelling(spelling)
         kind = self.modeled_type_name(spelling)
         flow = self.native_flow
         if context.language != "kotlin" or kind not in MODELED_NOMINAL_TYPES or flow is None:
@@ -6744,7 +6751,14 @@ class Analyzer:
         ):
             return kind
         if any(
-            self.library_reference_type(spelling, use, qualified, default_import=True, context=context)
+            self.library_reference_type(
+                spelling,
+                use,
+                qualified,
+                default_import=True,
+                context=context,
+                require_nonnullable=not allow_nullable,
+            )
             for qualified in qualified_types
         ):
             return kind
@@ -6765,8 +6779,8 @@ class Analyzer:
         if node is None:
             return ""
         if self.language == "kotlin" and node.type in {"as_expression", "cast_expression"}:
-            target = node.named_children[-1] if node.named_children else None
-            return self.declared_modeled_type(self.text(target), node) if target is not None else ""
+            target, spelling = self.kotlin_cast_type(node)
+            return self.declared_modeled_type(spelling, target) if target is not None else ""
         text = self.text(node).strip()
         if node.type in TEXT_LITERALS:
             return "String"
@@ -6856,9 +6870,18 @@ class Analyzer:
                     and (name != "Regex" or call.receiver is None or self.key(call.receiver) == "kotlin.text")
                 ):
                     return "Regex"
-            if call.name == "String" or (
-                call.name.rsplit(".", 1)[-1] == "toString" and call.receiver is not None and not call.args
-            ):
+            if call.name == "String":
+                if call.receiver is None and (
+                    call.name in frame.values
+                    or call.name in frame.local_names
+                    or self.reference_binding(call.node, call.name) is not None
+                    or self.native_flow is not None
+                    and self.native_flow.module_value_present(self, call.name)
+                ):
+                    return ""
+                receiver = self.key(call.receiver)
+                return self.declared_modeled_type((receiver + "." if receiver else "") + call.name, call.node)
+            if call.name.rsplit(".", 1)[-1] == "toString" and call.receiver is not None and not call.args:
                 return "String"
         if self.flag_or_number(node):
             navigation = self.navigation(node)
@@ -7591,9 +7614,44 @@ class Analyzer:
             return False
         return member in SCALAR_RESULTS or bool(re.fullmatch(r"(?:is|has|can|should)[A-Z]\w*", member))
 
-    def string_template_root(self, base: Any, frame: Frame, data: frozenset[str] = frozenset()) -> bool:
+    def string_template_root(
+        self,
+        base: Any,
+        frame: Frame,
+        data: frozenset[str] = frozenset(),
+        *,
+        receiver_proof: bool = False,
+        depth: int = 0,
+    ) -> bool:
         """A literal or lexically resolved String root, including an implicit scope receiver."""
-        base = self.unwrap(base)
+        base = self.unwrap(base, preserve_cast=receiver_proof)
+        if receiver_proof and self.language == "kotlin" and base is not None:
+            if depth >= 16:
+                if self.native_flow is not None:
+                    self.native_flow.partial("callable argument type identity unresolved", self)
+                return False
+            if base.type in {"as_expression", "cast_expression"}:
+                target, spelling = self.kotlin_cast_type(base)
+                return target is not None and self.declared_modeled_type(spelling, target) == "String"
+            if base.type in IDENTIFIERS:
+                binding = self.reference_binding(base, self.symbol_name(self.text(base)), frame=frame)
+                if binding is not None:
+                    origin, declared, expression = binding
+                    if declared:
+                        return self.declared_modeled_type(declared, origin) == "String"
+                    expression = self.unwrap(expression, preserve_cast=True)
+                    if expression is not None and expression.type in IDENTIFIERS | {
+                        "as_expression",
+                        "cast_expression",
+                    }:
+                        return self.string_template_root(
+                            expression, frame, data, receiver_proof=True, depth=depth + 1
+                        )
+            elif self.navigation(base) is not None:
+                member = self.reference_member_binding(base, frame)
+                if member is not None and member[2]:
+                    context, origin, declared = member
+                    return self.declared_modeled_type(declared, origin, context=context) == "String"
         if base is not None and (self.constant_text(base) or self.reused(base, frame).category == "text"):
             return True
         if base is None:
@@ -8395,17 +8453,20 @@ class Analyzer:
         seen: frozenset[tuple[int, int]] = frozenset(),
         nullable: bool = False,
         expanded: list[tuple[int, int]] | None = None,
+        require_nonnullable: bool = False,
     ) -> bool:
         """Resolve a nominal root in its lexical and alias-declaration context."""
         if not kind:
             return True  # retain the existing unknown-argument model
         context = context or self
-        spelling = re.sub(r"\s+", "", kind)
+        spelling = re.sub(r"\s+", "", context.canonical_type_spelling(kind))
         nullable = nullable or spelling.endswith("?")
         root = spelling.rstrip("?!").partition("<")[0]
         flow = self.native_flow
 
         def compatible_root() -> bool:
+            if nullable and require_nonnullable:
+                return False
             if qualified == "kotlin.Array" and nullable:
                 if flow is not None:
                     flow.partial("callable argument type identity unresolved", self)
@@ -8417,7 +8478,14 @@ class Analyzer:
             if binding is not None:
                 if binding.type in {"type_alias", "typealias_declaration"}:
                     return self.library_alias_type(
-                        context, binding, qualified, default_import, seen, nullable, expanded
+                        context,
+                        binding,
+                        qualified,
+                        default_import,
+                        seen,
+                        nullable,
+                        expanded,
+                        require_nonnullable=require_nonnullable,
                     )
                 if binding.type in {"type_parameter", "type_constraint"}:
                     flow.partial("callable argument type identity unresolved", self)
@@ -8460,7 +8528,16 @@ class Analyzer:
                 flow.partial("callable argument type identity unresolved", self)
                 return False
             source, alias = aliases[0]
-            return self.library_alias_type(source, alias, qualified, default_import, seen, nullable, expanded)
+            return self.library_alias_type(
+                source,
+                alias,
+                qualified,
+                default_import,
+                seen,
+                nullable,
+                expanded,
+                require_nonnullable=require_nonnullable,
+            )
         if imported:
             return False
         return (
@@ -8479,6 +8556,7 @@ class Analyzer:
         seen: frozenset[tuple[int, int]],
         nullable: bool = False,
         expanded: list[tuple[int, int]] | None = None,
+        require_nonnullable: bool = False,
     ) -> bool:
         key = id(source), alias.id
         if key in seen or len(seen) >= 16:
@@ -8507,6 +8585,7 @@ class Analyzer:
             seen=seen | {key},
             nullable=nullable,
             expanded=expanded,
+            require_nonnullable=require_nonnullable,
         )
 
     def reference_declarations(self, node: Any) -> list[tuple[str, Any, str]]:
@@ -8580,8 +8659,7 @@ class Analyzer:
         subject = self.unwrap(owner.receiver, preserve_cast=True)
         raw = "kotlin.String" if subject is not None and subject.type in TEXT_LITERALS else ""
         if subject is not None and subject.type in {"as_expression", "cast_expression"}:
-            target = subject.named_children[-1] if subject.named_children else None
-            raw = self.text(target) if target is not None else ""
+            _target, raw = self.kotlin_cast_type(subject)
         if subject is not None and subject.type in IDENTIFIERS:
             symbol = self.symbol_name(self.text(subject))
             binding = self.reference_binding(subject, symbol, frame=frame) if symbol != "it" else None
@@ -8595,6 +8673,8 @@ class Analyzer:
                 raw = "kotlin.String"
             tests = self.tested_reference_types(subject, subject)
             if tests is None:
+                return False
+            if binding is not None and self.reference_write_invalidates_type(binding, subject, tests):
                 return False
             for tested in tests:
                 condition = tested[0].parent
@@ -9110,6 +9190,29 @@ class Analyzer:
             for qualified in {"kotlin." + primitive, "java.lang." + java}
         )
 
+    def reference_write_invalidates_type(
+        self, binding: tuple[Any, str, Any], use: Any, tests: tuple[tuple[Any, str], ...] = ()
+    ) -> bool:
+        """A write can narrow a supertype; proven final standard declarations stay final."""
+        origin, declared, expression = binding
+        if not self.reference_written_between(origin, origin.end_byte, use.start_byte):
+            return False
+        for target, kind in tests:
+            condition = target.parent
+            if (
+                condition is not None
+                and self.declared_modeled_type(kind, target) in MODELED_NOMINAL_TYPES
+                and not self.reference_written_between(origin, condition.end_byte, use.start_byte)
+            ):
+                return False
+        if declared:
+            return (
+                self.declared_modeled_type(declared, origin, allow_nullable=True) not in MODELED_NOMINAL_TYPES
+            )
+        expression = self.unwrap(expression, preserve_cast=True)
+        # Kotlin infers a final standard type for literal-initialized locals.
+        return expression is None or expression.type not in TEXT_LITERALS | NUMBERS
+
     def reference_written_between(self, origin: Any, start: int, end: int) -> bool:
         """Index immutable write positions by declaration; no mutable frame facts persist."""
         flow = self.native_flow
@@ -9212,14 +9315,17 @@ class Analyzer:
                 fallback_allowed = True
                 for _ in range(8):
                     if origin.type in {"as_expression", "cast_expression"}:
-                        target = origin.named_children[-1] if origin.named_children else None
-                        kind = context.text(target) if target is not None else ""
+                        _target, kind = context.kotlin_cast_type(origin)
                         break
                     if origin.type in IDENTIFIERS:
                         symbol = context.symbol_name(context.text(origin))
                         binding = context.reference_binding(origin, symbol)
                         tests = context.tested_reference_types(origin, subject) if context is self else ()
                         if tests is None:
+                            return True
+                        if binding is not None and context.reference_write_invalidates_type(
+                            binding, origin, tests
+                        ):
                             return True
                         if tests:
                             if binding is None:
@@ -9424,6 +9530,16 @@ class Analyzer:
             self.callback_result_nodes[closure.id] = tuple(self.closure_value_expressions(closure))
         return self.callback_result_nodes[closure.id]
 
+    def kotlin_cast_type(self, node: Any) -> tuple[Any, str]:
+        """A safe cast's result is nullable even when its written target is not."""
+        target = node.named_children[-1] if len(node.named_children) >= 2 else None
+        spelling = self.text(target) if target is not None else ""
+        if any(self.text(part).strip() == "as?" for part in node.children) and not spelling.rstrip().endswith(
+            "?"
+        ):
+            spelling = spelling.rstrip() + "?"
+        return target, spelling
+
     def library_argument_type_result(
         self,
         argument: Any,
@@ -9443,16 +9559,11 @@ class Analyzer:
                 self.native_flow.partial("callable argument type identity unresolved", self)
             return False
         if self.language == "kotlin" and node.type in {"as_expression", "cast_expression"}:
-            target = node.named_children[-1] if len(node.named_children) >= 2 else None
+            target, spelling = self.kotlin_cast_type(node)
             if target is None or target.type == "non_nullable_type":
                 if self.native_flow is not None:
                     self.native_flow.partial("callable argument type identity unresolved", self)
                 return False
-            spelling = self.text(target)
-            if any(
-                self.text(part).strip() == "as?" for part in node.children
-            ) and not spelling.rstrip().endswith("?"):
-                spelling = spelling.rstrip() + "?"
             return self.library_reference_type(spelling, target, qualified, default_import=default_import)
         if node.type in BLOCKS | {"control_structure_body"}:
             values = [part for part in node.named_children if part.type not in COMMENTS]
@@ -9702,7 +9813,11 @@ class Analyzer:
                     if owner is None or not self.kotlin_scope_identity_known(owner.name, frame):
                         return None
                     kind = self.scope_subject_kind(subject, frame, depth, receiver_kinds)
-                    if kind == "String" or not kind and self.string_template_root(subject, frame):
+                    if (
+                        kind == "String"
+                        or not kind
+                        and self.string_template_root(subject, frame, receiver_proof=True)
+                    ):
                         if not self.string_operation_applicable(call, frame, depth):
                             return None
                         if name not in {"plus", "toString"} and self.project_extension(

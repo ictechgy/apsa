@@ -426,7 +426,7 @@ class NativeFlow:
         self.active_conditions: list[Any] = []
         self.files = sorted(files, key=lambda item: item[0].path)
         self.type_spelling_shadows = {
-            analyzer.text(name)
+            analyzer.symbol_name(analyzer.text(name))
             for analyzer, _root, nodes in self.files
             for node in nodes
             if node.type
@@ -485,7 +485,9 @@ class NativeFlow:
                         or next((child for child in node.named_children if child.type in IDENTIFIERS), None)
                     )
                     if name is not None:
-                        self.module_type_aliases.setdefault(analyzer.text(name), []).append((analyzer, node))
+                        self.module_type_aliases.setdefault(
+                            analyzer.symbol_name(analyzer.text(name)), []
+                        ).append((analyzer, node))
                 if (
                     analyzer.language in {"kotlin", "swift"}
                     and node.type == "property_declaration"
@@ -562,7 +564,7 @@ class NativeFlow:
                     name = boundary.name
                     if name is not None and self.unavailable_scope(node) is None:
                         owner = self.owner(analyzer, name)
-                        self.classes.setdefault(analyzer.text(name), set()).add(owner)
+                        self.classes.setdefault(analyzer.symbol_name(analyzer.text(name)), set()).add(owner)
                         self.class_definitions.setdefault(owner, []).append((analyzer, node))
                 # Accessor and initializer bodies are analysis units, never call targets by name.
                 if node.type not in FUNCTIONS or node.type in ACCESSORS | INITIALIZERS or node.has_error:
@@ -604,7 +606,7 @@ class NativeFlow:
             if scope.kind != "nominal":
                 names.append(f"@{scope.kind}:{analyzer.path}:{scope.node.start_byte}")
                 break
-            names.append(analyzer.text(scope.name))
+            names.append(analyzer.symbol_name(analyzer.text(scope.name)))
             scope = self.enclosing_scope(scope.node)
         if not names:
             owner = ""
@@ -2079,6 +2081,7 @@ class NativeFlow:
 
     def lexical_type(self, analyzer: Analyzer, declared: str, use: Any = None) -> Any:
         """Find source type bindings before interpreting a spelling as an import/package."""
+        declared = analyzer.canonical_type_spelling(declared)
         match = re.match(r"[A-Za-z_]\w*", declared)
         if match is None:
             return None
@@ -2123,7 +2126,7 @@ class NativeFlow:
                                 None,
                             )
                             if name is not None:
-                                names[analyzer.text(name)] = parameter
+                                names[analyzer.symbol_name(analyzer.text(name))] = parameter
                     self.type_parameter_cache[key] = names
                 if root in self.type_parameter_cache[key]:
                     return self.type_parameter_cache[key][root]
@@ -2193,7 +2196,7 @@ class NativeFlow:
                             )
                         )
                         if name is not None:
-                            entries.append((analyzer.text(name), declaration))
+                            entries.append((analyzer.symbol_name(analyzer.text(name)), declaration))
                     self.type_scope_cache[key] = entries
                 for name, declaration in self.type_scope_cache[key]:
                     if name != root:
@@ -2210,6 +2213,7 @@ class NativeFlow:
 
     def class_owners(self, analyzer: Analyzer, declared: str, use: Any = None) -> set[str]:
         """Class identity is package/import/file based, never globally unique by leaf."""
+        declared = analyzer.canonical_type_spelling(declared)
         binding = self.lexical_type(analyzer, declared, use)
         if binding is not None:
             # Same-file top-level nominal declarations (including qualified
@@ -2257,6 +2261,7 @@ class NativeFlow:
                 and (
                     analyzer.language != "kotlin"
                     or self.namespaces[id(source)]
+                    or not self.namespaces[id(analyzer)]
                     or source.path == analyzer.path
                     or bool(imported)
                 )
@@ -2694,7 +2699,7 @@ class NativeFlow:
 
     def signature_type(self, analyzer: Analyzer, declared: str, use: Any) -> tuple | None:
         """A bounded nominal or identical lexical binding, without assignability guesses."""
-        declared = declared.strip()
+        declared = analyzer.canonical_type_spelling(declared).strip()
         if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", declared):
             return None
         if (
@@ -2710,7 +2715,11 @@ class NativeFlow:
                 binding.type in {"type_alias", "typealias_declaration"}
                 and analyzer.language in SCALAR_STRING_TYPES
                 and analyzer.library_reference_type(
-                    declared, use, SCALAR_STRING_TYPES[analyzer.language], default_import=True
+                    declared,
+                    use,
+                    SCALAR_STRING_TYPES[analyzer.language],
+                    default_import=True,
+                    require_nonnullable=True,
                 )
             ):
                 return ("nominal", SCALAR_STRING_TYPES[analyzer.language])

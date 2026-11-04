@@ -205,7 +205,7 @@ typealias can retain its proven standard identity; unrelated aliases or lexical
 type parameters cannot erase inherited overloads.
 
 Kotlin receiver queries preserve explicit cast targets. Simple positive
-\`is\` tests contribute intersection evidence at the receiver expression's
+`is` tests contribute intersection evidence at the receiver expression's
 capture position: a supertype/marker test cannot erase an existing source type,
 and a later test cannot retroactively narrow an already captured receiver.
 A write between a test and that capture prevents the test from proving a
@@ -223,9 +223,31 @@ callable scopes remain explicit precision limits.
 
 A capped source trace compares source locations before and after retention,
 rather than just counting unique locations. Dropping one of eight locations
-still stays \`partial\` if a duplicate route occupies the final retained slot.
+still stays `partial` if a duplicate route occupies the final retained slot.
 Raw and located forms of the same syntax node count as one source location;
-duplicate-route-only collapse can remain \`limited\`.
+duplicate-route-only collapse can remain `limited`.
+
+Ordinary escaped Kotlin type identifiers are canonicalized at nominal inventory,
+owner and lexical lookup boundaries, including aliases and type parameters.
+Source bytes and offsets remain intact; unusual escaped names remain outside
+this ordinary-identifier support. Same root-package Kotlin declarations in
+different files can retain one source identity.
+
+Modeled receiver proof preserves safe-cast nullability and alias-expanded
+nullability. Its nonnullable policy is separate from reference-signature
+compatibility and nullable scalar-content classification. Template-value flow
+can still retain nullable text, while the receiver fallback checks declaration
+identity and casts before granting nonnullable String dispatch. Represented
+constructors named String use source/import identity rather than a builtin
+name hint, including inferred locals and direct receiver expressions.
+
+A local write can invalidate a supertype-based head or callback-shape proof
+even without an is-test. The structural write index is queried between the
+declaration and the receiver's capture, including copied receiver origins.
+Proven final standard declarations and literal-initialized final types retain
+their absence proof after writes. This is conservative abstention rather than
+exact reassignment recovery. Unknown dependency/private callback controls may
+still retain input with their existing explicit precision/budget diagnostics.
 
 ## Hybrid source and compiled artifacts
 
