@@ -1487,6 +1487,7 @@ class ClosureEffects:
     # The `this` binding around the lambda when it was followed: `this` inside it is the
     # lambda's receiver unless a nested scope block rebound it.
     outer_this: Value | None = None
+    expressions: list[Any] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -1521,6 +1522,7 @@ class ClosureLocal:
     position: int
     kinds: int = 0
     typed_scalar: bool = False
+    excluded: tuple[int, int] | None = None
 
 
 @dataclass
@@ -1817,6 +1819,9 @@ class Analyzer:
         # What a followed closure wrote into the objects its callee supplied (by span):
         # a nested builder call hands it on to the enclosing builder.
         self.closure_written: dict[tuple[int, int], Value] = {}
+        self.closure_write_nodes: dict[tuple[int, int], tuple[Any, ...]] = {}
+        self.implicit_formats: dict[tuple[int, int], Any] = {}
+        self.string_builder_results: set[tuple[int, int]] = set()
         # The value each assignment inside a followed closure stored (by assignment span).
         self.assigned_values: dict[tuple[int, int], Value] = {}
         # result_position and statement_position per node: structural, so kept for the file.
@@ -1836,7 +1841,7 @@ class Analyzer:
         self.class_members: dict[tuple[int, int], dict[str, bool]] = {}
         self.closure_classification_work: int | None = None
         self.closure_classification_cut = False
-        self.closure_contexts: list[tuple[Frame, Any]] = []
+        self.closure_contexts: dict[tuple[int, int, int, str], list[tuple[Frame, Any]]] = {}
         self.class_string_functions: dict[tuple[int, int], dict[str, bool]] = {}
         self.guarded_paths: set[tuple[int, str]] = set()
         self.unguarded_paths: set[tuple[int, str]] = set()
@@ -3380,17 +3385,15 @@ class Analyzer:
                 # Project callees were resolved above. An unresolved String transform in
                 # a bound run/with/apply scope reads that scope's implicit receiver.
                 bound = frame.values.get("this", receiver)
-                builder = next(
-                    (effects for effects in reversed(self.closure_effects) if effects.implicit), None
-                )
-                if (
-                    builder is not None
-                    and "StringBuilder" in builder.receiver_types
-                    and bound is builder.outer_this
-                ):
-                    receiver = _union(builder.values)  # the nearer builder owns CharSequence transforms
-                else:
-                    receiver = bound
+                receiver = bound
+                for builder in reversed(self.closure_effects):
+                    if not builder.implicit:
+                        continue
+                    if bound is not builder.outer_this or not builder.receiver_types:
+                        break  # a nearer scope rebind or unknown DSL ends the known receiver tower
+                    if self.builder_transform(call, builder.receiver_types, frame):
+                        receiver = _union(builder.values)
+                        break
             if call.name == "getIntent" and (call.receiver is None or self.text(call.receiver) == "this"):
                 return self.source(node, "Activity Intent", "intent")
             if call.name in {"getData", "getDataString"} and receiver.category == "intent":
@@ -4675,15 +4678,15 @@ class Analyzer:
                     )
                     if self.implicit_this(base, frame):
                         # `this += q`, `this["k"] = q` in a builder lambda write into its receiver.
-                        self.record_effect(None, frame, value)
+                        self.record_effect(None, frame, value, expressions=(right,))
                     elif left.type not in IDENTIFIERS:
-                        self.record_effect(left, frame, value, receiverless=False)
+                        self.record_effect(left, frame, value, receiverless=False, expressions=(right,))
                     elif not (
                         {key, self.symbol_name(self.text(left))}
                         & (frame.values.keys() | frame.types.keys() | frame.local_names)
                     ):
                         # A name that is no local or field: a property of an implicit receiver.
-                        self.record_effect(None, frame, value)
+                        self.record_effect(None, frame, value, expressions=(right,))
                 if self.native_flow is not None and self.navigation(left) is not None:
                     self.native_flow.assign_member(self, left, value, frame)
                     return
@@ -5051,13 +5054,30 @@ class Analyzer:
                 else:
                     closures.append((index, argument))
             if self.closure_depth:
+                if (
+                    self.language == "kotlin"
+                    and call.receiver is None
+                    and call.name == "format"
+                    and frame.kotlin_bound_scopes
+                    and "this" in self.aliases
+                    and self.string_template_root(self.aliases["this"], frame)
+                    and not (
+                        self.native_flow is not None
+                        and self.native_flow.resolve(self, call, Value(), frame)[0]
+                    )
+                ):
+                    template = self.aliases["this"]
+                    self.implicit_formats[(call.node.start_byte, call.node.end_byte)] = template
+                    self.visited_values[(template.start_byte, template.end_byte, template.type)] = (
+                        frame.values.get("this", Value())
+                    )
                 formatted = self.format_parts(call, frame)
                 if formatted is not None:
                     for index, argument in enumerate(call.args):
                         if _same_node(argument, formatted[0]):
                             self.format_argument_offsets[(call.node.start_byte, call.node.end_byte)] = index
                             break
-                kept = [formatted[0]] if formatted is not None else []
+                kept = [formatted[0], *formatted[1]] if formatted is not None else []
                 if call.name.rsplit(".", 1)[-1] in TEMPLATE_FILLS:
                     kept.extend(self.inserted_arguments(call))
                 for argument in kept:
@@ -5157,7 +5177,12 @@ class Analyzer:
             # `+q` in a DSL lambda (kotlinx.html) adds q to the implicit receiver.
             for child in node.named_children:
                 self.visit(child, frame, guards, conditions)
-            self.record_effect(None, frame, self.reused(node.named_children[-1], frame))
+            self.record_effect(
+                None,
+                frame,
+                self.reused(node.named_children[-1], frame),
+                expressions=(node.named_children[-1],),
+            )
             return
         for child in node.named_children:
             self.visit(child, frame, guards, conditions)
@@ -5567,6 +5592,16 @@ class Analyzer:
                     BUILDER_RECEIVERS.get(callee, frozenset()) if standard else frozenset(),
                     frame.values.get("this"),
                 )
+                if (
+                    standard
+                    and callee == "buildString"
+                    and owner is not None
+                    and not (
+                        self.native_flow is not None
+                        and self.native_flow.resolve(self, owner, Value(), frame)[0]
+                    )
+                ):
+                    self.string_builder_results.add((node.start_byte, node.end_byte))
         self.visit_scope_lambda(
             node, frame, guards, conditions, "", None, optional=True, bindings=bindings, effects=effects
         )
@@ -5585,11 +5620,21 @@ class Analyzer:
         # `appendFilter(this, q)` in a builder lambda hands the implicit receiver itself.
         handed_this = statement and any(self.implicit_this(arg, frame) for arg in data)
         name = call.name.rsplit(".", 1)[-1]
+        owner = next((effects for effects in reversed(self.closure_effects) if effects.implicit), None)
+        bound_transform = (
+            call.receiver is None
+            and name in STRING_TRANSFORMS
+            and "this" in self.aliases
+            and frame.kotlin_bound_scopes
+            and owner is not None
+            and frame.values.get("this") is not owner.outer_this
+            and self.string_template_root(self.aliases["this"], frame)
+        )
         writes = (
             call.receiver is not None
             and name not in READ_ONLY_MEMBERS
             and self.supplied(call.receiver, frame)
-            or (call.receiver is None and self.implicit_write(call))
+            or (call.receiver is None and not bound_transform and self.implicit_write(call))
         )
         # `append("<p>").append(q)` and `this.append(q)` write into the implicit receiver.
         chain = (
@@ -5605,8 +5650,8 @@ class Analyzer:
         # closure the receiver stores (`m.getOrPut(k) { q }`) or takes as content
         # (`b.section { q }`).
         nested = [self.closure_argument(arg) for arg in call.args if self.closure_argument(arg) is not None]
-        content = [
-            self.closure_values.get((closure.start_byte, closure.end_byte), Value())
+        content_closures = [
+            closure
             for closure in nested
             if closure is not None
             and (
@@ -5623,6 +5668,23 @@ class Analyzer:
                 and self.content_closure(closure, frame)
             )
         ]
+        content = [
+            self.closure_values.get((closure.start_byte, closure.end_byte), Value())
+            for closure in content_closures
+        ]
+        expressions = [
+            arg for arg in data if not self.supplied(arg, frame) and not self.implicit_this(arg, frame)
+        ]
+        expressions.extend(arg for link in chain for arg in link.args if self.closure_argument(arg) is None)
+        expressions.extend(
+            closure
+            for closure in nested
+            if closure is not None
+            and (
+                closure in content_closures
+                or self.closure_written.get((closure.start_byte, closure.end_byte), Value()).traces
+            )
+        )
         written = _union(
             [
                 self.reused(arg, frame)
@@ -5645,19 +5707,20 @@ class Analyzer:
         if (targets or handed_this) and call.receiver is not None and not self.supplied(call.receiver, frame):
             # `parts.joinTo(b)`, `parts.joinTo(this)` write their receiver into the handed object.
             handed = _union([written, self.reused(call.receiver, frame)])
+            expressions.append(call.receiver)
         else:
             handed = written
         if call.receiver is not None and writes:
-            self.record_effect(call.receiver, frame, written)
+            self.record_effect(call.receiver, frame, written, expressions=tuple(expressions))
         elif writes or chain:
-            self.record_effect(None, frame, written)
+            self.record_effect(None, frame, written, expressions=tuple(expressions))
         elif handed_this:
-            self.record_effect(None, frame, handed)
+            self.record_effect(None, frame, handed, expressions=tuple(expressions))
         written = handed
         for arg in targets:
             # A helper handed the supplied object (`fill(b, q)`) may write into it.
             for part in self.handed_parts(arg):
-                self.record_effect(part, frame, written, receiverless=False)
+                self.record_effect(part, frame, written, receiverless=False, expressions=tuple(expressions))
 
     def reused(self, node: Any, frame: Frame) -> Value:
         """value() of a node the visit just walked: its calls keep the values they were visited with."""
@@ -5772,7 +5835,7 @@ class Analyzer:
         if outer:
             self.closure_classification_work = 0
             self.closure_classification_cut = False
-            self.closure_contexts = []
+            self.closure_contexts = {}
         if self.native_flow is not None:
             self.native_flow.muted += 1
         try:
@@ -5785,18 +5848,20 @@ class Analyzer:
                 self.native_flow.muted -= 1
             if outer:
                 self.closure_classification_work = None
-                self.closure_contexts = []
+                self.closure_contexts = {}
                 if self.closure_classification_cut and self.native_flow is not None:
                     self.native_flow.partial("closure value classification budget", self, node=closure)
 
     def closure_declarations(self, closure: Any) -> list[tuple[str, Any, str]]:
-        return [(name, value, kind) for _, name, value, kind in self.closure_declaration_rows(closure)]
+        return [(name, value, kind) for _, name, value, kind, _ in self.closure_declaration_rows(closure)]
 
-    def closure_declaration_rows(self, closure: Any) -> list[tuple[int, str, Any, str]]:
+    def closure_declaration_rows(
+        self, closure: Any
+    ) -> list[tuple[int, str, Any, str, tuple[int, int] | None]]:
         """The locals a closure or block body declares in its own statements (not in a nested
         block, whose locals that block's last statement reads), with their initializers and
         declared types, in source order."""
-        found: list[tuple[int, str, Any, str]] = []
+        found: list[tuple[int, str, Any, str, tuple[int, int] | None]] = []
         pending = [part for part in closure.named_children]
         while pending:
             node = pending.pop()
@@ -5807,14 +5872,16 @@ class Analyzer:
             if node.type == "guard_statement":
                 # `guard let t = Optional(q) else { .. }`: t is a local after the guard holding its
                 # initializer; the shorthand `guard let query else { .. }` unwraps the outer name.
-                for clause in self.swift_clauses(node)[0]:
+                clauses, _, alternative = self.swift_clauses(node)
+                excluded = (alternative.start_byte, alternative.end_byte) if alternative is not None else None
+                for clause in clauses:
                     for name, bound in clause.names:
                         value = clause.initializer if clause.initializer is not None else bound
-                        found.append((node.end_byte, name, value, ""))
+                        found.append((value.end_byte, name, value, "", excluded))
             for item in node.named_children if node.type == "local_variable_declaration" else [node]:
                 declared = self.declaration(item)
                 if declared:
-                    found.append((item.end_byte, declared[0], declared[1], declared[2]))
+                    found.append((item.end_byte, declared[0], declared[1], declared[2], None))
             if node.type not in STRINGS:
                 pending.extend(node.named_children)
         return sorted(found, key=lambda row: row[0])
@@ -5845,7 +5912,10 @@ class Analyzer:
         if depth > 16:
             return data, results, scalars
         if active:
-            for owner, query in reversed(self.closure_contexts):
+            key = id(frame), closure.start_byte, closure.end_byte, closure.type
+            for owner, query in reversed(self.closure_contexts.get(key, [])):
+                if not self.closure_work():
+                    return data, results, scalars
                 if owner is frame:
                     classified = query(closure, data, on_receiver, results, scalars, at)
                     if classified is not None:
@@ -5888,10 +5958,20 @@ class Analyzer:
         def span(node: Any) -> tuple[int, int, str]:
             return node.start_byte, node.end_byte, node.type
 
-        def bind(scope: int, position: int, name: str, kind: str, value: Any, value_scope: int) -> int:
+        def bind(
+            scope: int,
+            position: int,
+            name: str,
+            kind: str,
+            value: Any,
+            value_scope: int,
+            excluded: tuple[int, int] | None = None,
+        ) -> int:
             index = len(bindings)
             numeric = re.sub(r"\s+", "", kind).rstrip("?!") in NUMBER_TYPES
-            bindings.append(ClosureLocal(name, scope, position, scalar_kind if numeric else 0, numeric))
+            bindings.append(
+                ClosureLocal(name, scope, position, scalar_kind if numeric else 0, numeric, excluded)
+            )
             scopes[scope].names.setdefault(name, []).append(index)
             if value is not None:
                 values.append(ClosureValue(index, value, value_scope, position >= 0))
@@ -5905,11 +5985,11 @@ class Analyzer:
                 if key not in declarations:
                     declarations.add(key)
                     bind(scope, value.end_byte, name, "", value, scope)
-            for position, name, value, kind in self.closure_declaration_rows(scopes[scope].node):
+            for position, name, value, kind, excluded in self.closure_declaration_rows(scopes[scope].node):
                 key = position, name
                 if key not in declarations:
                     declarations.add(key)
-                    bind(scope, position, name, kind, value, scope)
+                    bind(scope, position, name, kind, value, scope, excluded)
 
         def lookup(name: str, scope: int, position: int) -> int | None:
             current: int | None = scope
@@ -5917,7 +5997,10 @@ class Analyzer:
                 if not self.closure_work():
                     return None
                 for index in reversed(scopes[current].names.get(name, [])):
-                    if bindings[index].position <= position:
+                    binding = bindings[index]
+                    if binding.position <= position and not (
+                        binding.excluded is not None and binding.excluded[0] <= position < binding.excluded[1]
+                    ):
                         return index
                 current = scopes[current].parent
             return None
@@ -6120,7 +6203,12 @@ class Analyzer:
             return classified_at(node, at)
 
         if self.closure_classification_work is not None:
-            self.closure_contexts.append((frame, reuse_context))
+            # Index represented spans so unrelated sibling callbacks are never scanned.
+            # Retaining the frame also prevents an id from being reused during this boundary.
+            for start, end, kind in node_scopes:
+                self.closure_contexts.setdefault((id(frame), start, end, kind), []).append(
+                    (frame, reuse_context)
+                )
 
         queue = list(range(len(values)))
         queued = set(queue)
@@ -6156,7 +6244,7 @@ class Analyzer:
             )
             if binding.typed_scalar:
                 continue  # declared numeric locals and inline indices remain numeric
-            if self.scalar_result(record.node, local_scalars) or self.scalar_format(
+            if self.scalar_result(record.node, local_scalars, frame) or self.scalar_format(
                 record.node, frame, local_scalars
             ):
                 kind = scalar_kind
@@ -6209,12 +6297,13 @@ class Analyzer:
         (`t.track("open")`) is a side effect."""
         if call.receiver is None or call.name.rsplit(".", 1)[-1] not in STRING_TRANSFORMS:
             return False
-        if self.scalar_result(self.unwrap(call.receiver) or call.receiver, scalars) or self.scalar_format(
-            call.receiver, frame, scalars
-        ):
+        if self.scalar_result(
+            self.unwrap(call.receiver) or call.receiver, scalars, frame
+        ) or self.scalar_format(call.receiver, frame, scalars):
             # A number's text can still be filled with input (`n.toString().plus(q)`).
             return call.name.rsplit(".", 1)[-1] in TEMPLATE_FILLS and any(
-                not self.scalar_result(argument, scalars) and self.argument_data(argument, frame, results)
+                not self.scalar_result(argument, scalars, frame)
+                and self.argument_data(argument, frame, results)
                 for argument in self.inserted_arguments(call)
             )
         if self.mentions(self.chain_base(call.receiver), results):
@@ -6277,7 +6366,10 @@ class Analyzer:
             )
         if node.type in STATEMENT_ONLY:
             return False
-        if self.scalar_result(node, scalars):
+        project = self.project_transform_result(self.call(node), frame, scalars)
+        if project is not None:
+            return project[0]
+        if self.scalar_result(node, scalars, frame):
             return False  # a flag or a number read from data (`q.isNotEmpty()`, `q == "x"`)
         if node.type in {"null_literal", "nil"} or self.text(node).strip() in {"Unit", "null", "nil", "()"}:
             return False  # `{ audit.track(it); Unit }`
@@ -6331,7 +6423,7 @@ class Analyzer:
                 scalars - {"this"}
                 | (
                     {"this"}
-                    if self.scalar_result(call.args[0], scalars)
+                    if self.scalar_result(call.args[0], scalars, frame)
                     or self.scalar_format(call.args[0], frame, scalars)
                     else set()
                 ),
@@ -6364,9 +6456,11 @@ class Analyzer:
                 block_scalars,
             )
         if call.receiver is None:
+            if self.format_parts(call, frame) is not None:
+                return True  # a non-scalar receiverless format retains its visited template/fills
             if "this" in scalars and name in NUMBER_OPERATIONS:
                 return name in TEMPLATE_FILLS and any(
-                    not self.scalar_result(argument, scalars)
+                    not self.scalar_result(argument, scalars, frame)
                     and self.argument_data(argument, frame, data | results)
                     for argument in self.inserted_arguments(call)
                 )
@@ -6406,7 +6500,7 @@ class Analyzer:
             numbers = scalars - names
             # `run` rebinds `this`: an outer block's receiver is no longer read.
             outer = results - {"this"} if name == "run" else results
-            scalar_receiver = self.scalar_result(call.receiver, scalars) or self.scalar_format(
+            scalar_receiver = self.scalar_result(call.receiver, scalars, frame) or self.scalar_format(
                 call.receiver, frame, scalars
             )
             if receiver_data and not scalar_receiver:
@@ -6439,7 +6533,44 @@ class Analyzer:
             return False
         return True
 
-    def scalar_result(self, node: Any, scalars: frozenset[str] = frozenset()) -> bool:
+    def project_transform_result(
+        self, call: Call | None, frame: Frame | None, scalars: frozenset[str] = frozenset()
+    ) -> tuple[bool, bool] | None:
+        """A resolved project's text/numeric result takes precedence over name shortcuts.
+
+        Return (content, scalar-or-input-free); None leaves an unresolved standard
+        transform to its receiver model. A traced object return remains a call result.
+        """
+        if (
+            call is None
+            or call.receiver is not None
+            or frame is None
+            or self.native_flow is None
+            or call.name.rsplit(".", 1)[-1] not in STRING_TRANSFORMS | NUMBER_OPERATIONS
+        ):
+            return None
+        name = call.name.rsplit(".", 1)[-1]
+        if (
+            "this" in scalars
+            and name in NUMBER_OPERATIONS
+            and len(call.args) <= (2 if name == "coerceIn" else 1)
+            and all(self.scalar_result(argument, scalars, frame) for argument in call.args)
+        ):
+            return None  # keep an applicable numeric receiver operation ahead of an outer helper
+        targets = self.native_flow.resolve(self, call, Value(), frame)[0]
+        if not targets:
+            return None
+        value = self.reused(call.node, frame)
+        text = any(target.analyzer.string_function_header(target.node) for target in targets)
+        numeric = all(
+            re.sub(r"\s+", "", self.declared_return(target)).rstrip("?!").rsplit(".", 1)[-1] in NUMBER_TYPES
+            for target in targets
+        )
+        return bool(text and value.traces), numeric or not value.traces
+
+    def scalar_result(
+        self, node: Any, scalars: frozenset[str] = frozenset(), frame: Frame | None = None
+    ) -> bool:
         """An expression whose value is a flag or a number, not text: a comparison or a logical
         operation (`q == "x"`, `!ok`, `q in xs`, `q is String`), a member read or call by such a
         name (`q.isNotEmpty()`, `q.length`, `template.contains(q)`), a closure's name holding
@@ -6498,9 +6629,14 @@ class Analyzer:
                     return False  # a constant or `$t` text
                 pending.extend(parts)
                 continue
+            call = self.call(current)
+            project = self.project_transform_result(call, frame, scalars)
+            if project is not None:
+                if project[1]:
+                    continue
+                return False
             if self.flag_or_number(current):
                 continue
-            call = self.call(current)
             if (
                 call is not None
                 and call.receiver is None
@@ -6553,7 +6689,7 @@ class Analyzer:
         A later transform that inserts input makes it text again (`tpl.format(n).plus(q)`)."""
         current = self.unwrap(node)
         for _ in range(MAX_CHAIN):
-            if current is not None and self.scalar_result(current, scalars):
+            if current is not None and self.scalar_result(current, scalars, frame):
                 return True
             call = self.call(current) if current is not None else None
             if call is None:
@@ -6565,7 +6701,8 @@ class Analyzer:
                 return not (
                     name in TEMPLATE_FILLS
                     and any(
-                        not self.scalar_result(argument, scalars) and self.reused(argument, frame).traces
+                        not self.scalar_result(argument, scalars, frame)
+                        and self.reused(argument, frame).traces
                         for argument in self.inserted_arguments(call)
                     )
                 )
@@ -6573,13 +6710,13 @@ class Analyzer:
             if formatted is not None:
                 template, arguments = formatted
                 return not self.reused(template, frame).traces and all(
-                    self.scalar_result(argument, scalars) or not self.reused(argument, frame).traces
+                    self.scalar_result(argument, scalars, frame) or not self.reused(argument, frame).traces
                     for argument in arguments
                 )
             if call.receiver is None or name not in STRING_TRANSFORMS:
                 return False
             if name in TEMPLATE_FILLS and any(
-                not self.scalar_result(argument, scalars) and self.reused(argument, frame).traces
+                not self.scalar_result(argument, scalars, frame) and self.reused(argument, frame).traces
                 for argument in self.inserted_arguments(call)
             ):
                 return False
@@ -6588,6 +6725,9 @@ class Analyzer:
 
     def format_parts(self, call: Call, frame: Frame | None = None) -> tuple[Any, list[Any]] | None:
         """A format's template and inserted values, including static and Swift spellings."""
+        implicit = self.implicit_formats.get((call.node.start_byte, call.node.end_byte))
+        if implicit is not None:
+            return implicit, list(call.args)
         cached = self.format_argument_offsets.get((call.node.start_byte, call.node.end_byte))
         if cached is not None and len(call.args) > cached + 1:
             return call.args[cached], list(call.args[cached + 1 :])
@@ -6756,35 +6896,11 @@ class Analyzer:
             return False
         return member in SCALAR_RESULTS or bool(re.fullmatch(r"(?:is|has|can|should)[A-Z]\w*", member))
 
-    def string_template(
-        self,
-        call: Call,
-        frame: Frame,
-        data: frozenset[str] = frozenset(),
-        scalars: frozenset[str] = frozenset(),
-    ) -> bool:
-        """A transform of a String held in a name that inserts input (`tpl.format(q)`,
-        `tpl.replace("{q}", q)`, `prefix.plus(q)`): the template's root is a String constant
-        or a String-typed parameter, the String transforms that start the chain fill it
-        (TEMPLATE_FILLS) with an argument that carries input; a later call is a call on that
-        data (`template.replace("{q}", q).encodeForWeb()`). A predicate
-        (`template.contains(q)`) holds no input."""
-        base = self.unwrap(call.receiver) if call.receiver is not None else None
-        chain = [call]
-        for _ in range(MAX_CHAIN):
-            inner = self.call(base) if base is not None else None
-            if inner is None or inner.receiver is None:
-                break
-            chain.append(inner)
-            base = self.unwrap(inner.receiver)
-        filling: list[Call] = []
-        for link in reversed(chain):  # from the template outward
-            if link.name.rsplit(".", 1)[-1] not in STRING_TRANSFORMS | TEMPLATE_FILLS:
-                break
-            filling.append(link)
-        if not any(link.name.rsplit(".", 1)[-1] in TEMPLATE_FILLS for link in filling):
-            return False
-        arguments = [argument for link in filling for argument in self.inserted_arguments(link)]
+    def string_template_root(self, base: Any, frame: Frame, data: frozenset[str] = frozenset()) -> bool:
+        """A literal or lexically resolved String root, including an implicit scope receiver."""
+        base = self.unwrap(base)
+        if base is not None and (self.constant_text(base) or self.reused(base, frame).category == "text"):
+            return True
         if base is None:
             return False
         if base.type in IDENTIFIERS:
@@ -6829,9 +6945,41 @@ class Analyzer:
                 or navigation[1] in self.string_constants
                 and qualifier[:1].isupper()
             )
+        return bool(template)
+
+    def string_template(
+        self,
+        call: Call,
+        frame: Frame,
+        data: frozenset[str] = frozenset(),
+        scalars: frozenset[str] = frozenset(),
+    ) -> bool:
+        """A transform of a String held in a name that inserts input (`tpl.format(q)`,
+        `tpl.replace("{q}", q)`, `prefix.plus(q)`): the template's root is a String constant
+        or a String-typed parameter, the String transforms that start the chain fill it
+        (TEMPLATE_FILLS) with an argument that carries input; a later call is a call on that
+        data (`template.replace("{q}", q).encodeForWeb()`). A predicate
+        (`template.contains(q)`) holds no input."""
+        base = self.unwrap(call.receiver) if call.receiver is not None else None
+        chain = [call]
+        for _ in range(MAX_CHAIN):
+            inner = self.call(base) if base is not None else None
+            if inner is None or inner.receiver is None:
+                break
+            chain.append(inner)
+            base = self.unwrap(inner.receiver)
+        filling: list[Call] = []
+        for link in reversed(chain):  # from the template outward
+            if link.name.rsplit(".", 1)[-1] not in STRING_TRANSFORMS | TEMPLATE_FILLS:
+                break
+            filling.append(link)
+        if not any(link.name.rsplit(".", 1)[-1] in TEMPLATE_FILLS for link in filling):
+            return False
+        arguments = [argument for link in filling for argument in self.inserted_arguments(link)]
+        template = self.string_template_root(base, frame, data)
         # A fill of numbers only is a number's text (`"LIMIT %d".format(q.length)`).
         return bool(template) and any(
-            self.argument_data(argument, frame, data) and not self.scalar_result(argument, scalars)
+            self.argument_data(argument, frame, data) and not self.scalar_result(argument, scalars, frame)
             for argument in arguments
         )
 
@@ -7100,8 +7248,8 @@ class Analyzer:
         if base is None:
             return False
         if (
-            self.scalar_result(node, scalars)
-            or self.scalar_result(base, scalars)
+            self.scalar_result(node, scalars, frame)
+            or self.scalar_result(base, scalars, frame)
             or self.scalar_format(node, frame, scalars)
         ):
             return False  # a flag or a number (`q.length.toString()`, `n` on `val n = q.length`)
@@ -7319,7 +7467,7 @@ class Analyzer:
                 names = {"$0" if self.language == "swift" else "it"}
         scope, held, numbers = data - names, results - names, scalars - names
         if subject is not None:
-            if self.scalar_result(subject, scalars) or self.scalar_format(subject, frame, scalars):
+            if self.scalar_result(subject, scalars, frame) or self.scalar_format(subject, frame, scalars):
                 held, numbers = held | names, numbers | names
             elif self.data_expression(subject, frame, data, results=results, scalars=scalars) or (
                 self.reused(subject, frame).traces
@@ -7351,7 +7499,7 @@ class Analyzer:
         pending = [node]
         while pending and self.closure_work():
             current = pending.pop()
-            if self.scalar_result(current, scalars) or self.scalar_format(current, frame, scalars):
+            if self.scalar_result(current, scalars, frame) or self.scalar_format(current, frame, scalars):
                 continue
             if current.type in IDENTIFIERS:
                 name = self.symbol_name(self.text(current))
@@ -7360,6 +7508,19 @@ class Analyzer:
                 continue
             call = self.call(current)
             if call is not None:
+                builders = [
+                    closure
+                    for arg in call.args
+                    if (closure := self.closure_argument(arg)) is not None
+                    and (closure.start_byte, closure.end_byte) in self.string_builder_results
+                ]
+                if builders:
+                    if any(
+                        self.written_outer_input(closure, frame, data, results, scalars)
+                        for closure in builders
+                    ):
+                        return True
+                    continue  # buildString returns its written text, not append's receiver or capacity
                 implicit_result = (
                     call.receiver is None
                     and "this" in results
@@ -7381,9 +7542,8 @@ class Analyzer:
                     pending.append(call.receiver)
                 continue
             if current.type in CLOSURES:
-                written = self.closure_written.get((current.start_byte, current.end_byte))
-                if written is not None and written.traces:
-                    return True  # explicit writes into the objects supplied to this closure
+                if self.written_outer_input(current, frame, data, results, scalars):
+                    return True
                 if self.reused(current, frame).traces:
                     for expression in self.closure_value_expressions(current):
                         local_data, local_results, local_scalars = self.closure_value_context(
@@ -7414,6 +7574,26 @@ class Analyzer:
                 pending.extend(current.named_children[:1])
             else:
                 pending.extend(current.named_children)
+        return False
+
+    def written_outer_input(
+        self,
+        closure: Any,
+        frame: Frame,
+        data: frozenset[str],
+        results: frozenset[str],
+        scalars: frozenset[str],
+    ) -> bool:
+        """Classify written expressions in their own scopes; call-result provenance alone is insufficient."""
+        written = self.closure_written.get((closure.start_byte, closure.end_byte))
+        if written is None or not written.traces:
+            return False
+        for expression in self.closure_write_nodes.get((closure.start_byte, closure.end_byte), ()):
+            local_data, local_results, local_scalars = self.closure_value_context(
+                closure, frame, data, results, scalars, expression
+            )
+            if self.outer_input(expression, frame, local_data, local_results, local_scalars):
+                return True
         return False
 
     def reads_names(self, node: Any, names: frozenset[str]) -> bool:
@@ -7467,6 +7647,70 @@ class Analyzer:
         owner = next((effects for effects in reversed(self.closure_effects) if effects.implicit), None)
         # A `with`/`apply` around the builder call bound `this` before the lambda: still its own.
         return owner is not None and frame.values.get("this") is owner.outer_this
+
+    def builder_transform(self, call: Call, types: frozenset[str], frame: Frame) -> bool:
+        """Whether a known builder can receive this modeled transform/overload.
+
+        String-only extensions keep looking outward; collection receivers can own
+        shared spellings such as take/toString before an outer StringBuilder.
+        """
+        name, count = call.name.rsplit(".", 1)[-1], len(call.args)
+        if name == "toString":
+            return count == 0
+        if types & {"MutableCollection", "MutableMap"}:
+            if name == "plus":
+                return count == 1
+            if name == "orEmpty":
+                return count == 0
+            if name == "ifEmpty":
+                return count == 1
+        if "MutableIterable" in types:
+            if name in {"take", "drop"} or name in {"takeLast", "dropLast"} and "MutableList" in types:
+                return count == 1
+            if name == "reversed":
+                return count == 0
+        if not types & {"StringBuilder", "SpannableStringBuilder"}:
+            return False
+        if name in {"trim", "trimStart", "trimEnd", "split"}:
+            return True
+        if name in {"lines", "reversed"}:
+            return count == 0
+        if name in {
+            "take",
+            "takeLast",
+            "drop",
+            "dropLast",
+            "repeat",
+            "removePrefix",
+            "removeSuffix",
+            "ifEmpty",
+            "ifBlank",
+        }:
+            return count == 1
+        if name in {"padStart", "padEnd", "removeSurrounding", "substring"}:
+            return 1 <= count <= 2
+        if name not in {"replace", "replaceFirst"} or count < 2:
+            return False
+        first = self.unwrap(call.args[0])
+        if first is None:
+            return False
+        value = self.reused(first, frame)
+        kind = value.type_name
+        if first.type in IDENTIFIERS:
+            local = self.symbol_name(self.text(first))
+            kind = frame.types.get(local, "") or self.parameter_types.get(local, "") or kind
+        kind = kind.rstrip("?").rsplit(".", 1)[-1]
+        constructor = self.call(first)
+        regex = (
+            self.argument_label(call.args[0]) == "regex"
+            or kind == "Regex"
+            or (constructor is not None and constructor.name.rsplit(".", 1)[-1] in {"Regex", "toRegex"})
+        )
+        if regex:
+            return count == 2
+        # JVM StringBuilder.replace(start, end, text) is a member; the two-String
+        # replacement overload is an extension on String, not CharSequence.
+        return name == "replace" and count == 3 and (first.type in NUMBERS or kind in {"Int", "int"})
 
     def statement_position(self, node: Any) -> bool:
         """An expression written as a statement of a block or lambda (also its last one,
@@ -8285,7 +8529,14 @@ class Analyzer:
                     effects.names[name] = frame.values[name]
                 return
 
-    def record_effect(self, target: Any, frame: Frame, value: Value, receiverless: bool = True) -> None:
+    def record_effect(
+        self,
+        target: Any,
+        frame: Frame,
+        value: Value,
+        receiverless: bool = True,
+        expressions: tuple[Any, ...] = (),
+    ) -> None:
         """Note a value passed to a call on, or written into, a followed closure's supplied object."""
         if not value.traces:
             return
@@ -8294,6 +8545,7 @@ class Analyzer:
                 for effects in reversed(self.closure_effects):
                     if effects.implicit:
                         effects.values.append(value)
+                        effects.expressions.extend(expressions)
                         return
             return
         root = self.effect_root(target)
@@ -8305,6 +8557,7 @@ class Analyzer:
             if bound is not None:
                 if frame.values.get(name) is bound:
                     effects.values.append(value)
+                    effects.expressions.extend(expressions)
                 return
 
     def closure_parameters(self, node: Any) -> list[tuple[str, str, int]]:
@@ -8461,8 +8714,10 @@ class Analyzer:
                 values.append(last)
         if effects is None or not effects.values:
             self.closure_written.pop((node.start_byte, node.end_byte), None)
+            self.closure_write_nodes.pop((node.start_byte, node.end_byte), None)
         if effects is not None and effects.values:
             self.closure_written[(node.start_byte, node.end_byte)] = self.distinct_sources(effects.values)
+            self.closure_write_nodes[(node.start_byte, node.end_byte)] = tuple(effects.expressions)
             # A write already in the result (`b.child(inner)` ending a nested builder) adds no route.
             seen = {self.source_key(trace) for value in values for trace in value.traces}
             extra = tuple(
@@ -9240,6 +9495,9 @@ class Analyzer:
         self.closure_effects = []
         self.assigned_values = {}
         self.closure_written = {}
+        self.closure_write_nodes = {}
+        self.implicit_formats = {}
+        self.string_builder_results = set()
         self.guarded_paths = set()
         self.unguarded_paths = set()
         enclosing = function.parent

@@ -6727,3 +6727,338 @@ def test_review15_classification_keeps_distinct_frames(monkeypatch: pytest.Monke
     source = REVIEW13_KOTLIN.replace("REVIEW_BODY", "val piece=q.trim(); piece")
     report = analyze_sources([("app/Notes.kt", source)])
     assert checked and _hit(report, SQL), report["findings"]
+
+
+# Round 16: supported receiver signatures, visited fills and ordered bindings.
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "lowercase()",
+        "uppercase()",
+        "format(1)",
+        'replace("a", "b")',
+        'replaceFirst("a", "b")',
+        'substringBefore("a")',
+        "trimIndent()",
+        'plus("x")',
+    ],
+)
+@pytest.mark.parametrize("outer_input", [True, False])
+def test_review16_string_only_calls_keep_the_outer_receiver(operation: str, outer_input: bool) -> None:
+    outer, inner = ("q", '"safe"') if outer_input else ('"safe"', "q")
+    body = f"with({outer}) {{ buildString {{ append({inner}); db.execSQL({operation}) }} }}"
+    source = REVIEW13_KOTLIN.replace(
+        'val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }',
+        body + '; val s="safe"',
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is outer_input, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "operation, inner_owns",
+    [
+        ("trim().toString()", True),
+        ("padStart(3).toString()", True),
+        ("take(1).toString()", True),
+        ('removePrefix("a").toString()', True),
+        ('replace(Regex("a"), "b")', True),
+        ('replace("a".toRegex(), "b")', True),
+        ('replace(0, 0, "b").toString()', True),
+        ('replace("a", "b")', False),
+    ],
+)
+@pytest.mark.parametrize("inner_input", [True, False])
+def test_review16_charsequence_and_replace_overloads(
+    operation: str, inner_owns: bool, inner_input: bool
+) -> None:
+    outer, inner = ('"safe"', "q") if inner_input else ("q", '"safe"')
+    body = f"with({outer}) {{ buildString {{ append({inner}); db.execSQL({operation}) }} }}"
+    source = REVIEW13_KOTLIN.replace(
+        'val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }',
+        body + '; val s="safe"',
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is (inner_input if inner_owns else not inner_input), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "operation, collection_owns",
+    [
+        ("trim().toString()", False),
+        ("repeat(2)", False),
+        ("take(1).toString()", True),
+        ("toString()", True),
+    ],
+)
+@pytest.mark.parametrize("list_input", [True, False])
+def test_review16_intervening_collection_uses_the_applicable_receiver(
+    operation: str, collection_owns: bool, list_input: bool
+) -> None:
+    text, item = ('"safe"', "q") if list_input else ("q", '"safe"')
+    body = f'with("safe") {{ buildString {{ append({text}); buildList {{ add({item}); db.execSQL({operation}) }} }} }}'
+    source = REVIEW13_KOTLIN.replace(
+        'val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }',
+        body + '; val s="safe"',
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is (list_input if collection_owns else not list_input), report["findings"]
+
+
+@pytest.mark.parametrize("name", ["trim", "toString", "minus", "coerceAtLeast"])
+@pytest.mark.parametrize("scope", ["q.length.run { CALL }", "with(q.length) { CALL }"])
+@pytest.mark.parametrize(
+    "returned, value, expected",
+    [("String", "v", True), ("String", '"safe"', False), ("Int", "7", False), ("Boolean", "true", False)],
+)
+def test_review16_project_return_wins_over_numeric_name_shortcuts(
+    name: str, scope: str, returned: str, value: str, expected: bool
+) -> None:
+    body = scope.replace("CALL", f"{name}(q)")
+    source = REVIEW13_KOTLIN.replace("REVIEW_BODY", body).replace(
+        "    fun open(",
+        f"    private fun {name}(v: String): {returned} = {value}\n    fun open(",
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ('guard let a = Optional(Optional(query)), let t = a else { return "" }; return t', True),
+        (
+            'guard let a = Optional(Optional(query)) else { return "" }; guard let t = a else { return "" }; return t',
+            True,
+        ),
+        ('let t=query; guard let t=Optional(t) else { return "" }; return t', True),
+        ('guard let a = Optional(Optional("safe")), let t = a else { return "" }; return t', False),
+        ('let t = query.lowercased(); return String(format: "%@", t)', True),
+        ('let t = query.lowercased(); let s = String(format: "%@", t); return s', True),
+        ('let t = query.count; return String(format: "%d", t)', False),
+        ('let t = "safe"; return String(format: "%@", t)', False),
+    ],
+)
+def test_review16_swift_guard_clauses_and_local_format_fills(body: str, expected: bool) -> None:
+    report = analyze_sources([("App/Router.swift", REVIEW13_SWIFT.replace("REVIEW_BODY", body))])
+    assert _hit(report, URL) is expected, report["findings"]
+    assert _state(report, URL) == "checked", report["coverage"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("template.run { format(q) }", True),
+        ("with(template) { format(q) }", True),
+        ("template.let { it.format(q) }", True),
+        ("template.run { format(q.length) }", False),
+        ("with(template) { format(q.length) }", False),
+        ('template.run { format("safe") }', False),
+        ("template.run { trim() }", False),
+    ],
+)
+def test_review16_receiverless_format_uses_its_visited_template(body: str, expected: bool) -> None:
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "value, expected", [("row", False), ('"safe"', False), ("q", True), ("q.length", False)]
+)
+@pytest.mark.parametrize(
+    "write", ["sb.append(VALUE)", "sb.text = VALUE", "sb.append(buildString { append(VALUE) })"]
+)
+def test_review16_supplied_writes_preserve_the_call_result_boundary(
+    value: str, expected: bool, write: str
+) -> None:
+    body = (
+        "val row=repo.find(q); (Ext.wrap(row) { sb -> "
+        + write.replace("VALUE", value)
+        + ' } + "x").escapeSql()'
+    )
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+def test_review16_sibling_context_lookup_work_is_bounded() -> None:
+    def calls(count: int) -> int:
+        probes = 0
+
+        def profile(frame, event, arg):
+            nonlocal probes
+            if event == "call" and frame.f_code.co_name == "reuse_context":
+                probes += 1
+
+        previous = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            body = (
+                "val row=repo.find(q); "
+                + "".join(f'val a{i}=(Ext.or(row, {{ row }})+"x").escapeSql(); ' for i in range(count))
+                + '(a0 + "x").escapeSql()'
+            )
+            report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+        finally:
+            sys.setprofile(previous)
+        assert not _hit(report, SQL), report["findings"]
+        assert _state(report, SQL) == "checked", report["coverage"]
+        return probes
+
+    small = calls(40)
+    assert calls(160) <= 6 * max(small, 1)
+
+
+@pytest.mark.parametrize("name", ["minus", "coerceAtLeast", "toString"])
+def test_review16_applicable_numeric_operation_stays_numeric(name: str) -> None:
+    source = REVIEW13_KOTLIN.replace("REVIEW_BODY", f"q.length.run {{ {name}(q.length) }}").replace(
+        "    fun open(",
+        f"    private fun {name}(v: Int): String = v.toString()\n    fun open(",
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert not _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize("scope", ["q.length.run { trim() }", "with(q.length) { trim() }"])
+@pytest.mark.parametrize("returned, value", [("String", '"safe"'), ("Int", "7"), ("Boolean", "true")])
+def test_review16_inputfree_zero_argument_helper_keeps_its_actual_result(
+    scope: str, returned: str, value: str
+) -> None:
+    source = REVIEW13_KOTLIN.replace("REVIEW_BODY", scope).replace(
+        "    fun open(",
+        f"    private fun trim(): {returned} = {value}\n    fun open(",
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert not _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("val text=q.trim(); return@section text; template.plus(text)", True),
+        (
+            'val x=q.trim(); val row=repo.find(q); (Ext.or(row, { val part=Ext.audit.let { x -> x.track(q) }; part })+"x").escapeSql()',
+            False,
+        ),
+        (
+            'val row=repo.find(q); (Ext.or(row, { val part=with(Formatters.date) { row }; part })+"x").escapeSql()',
+            False,
+        ),
+        (
+            'val row=repo.find(q); (Ext.or(row, { val part=repo.find(q).let { t -> t }; part })+"x").escapeSql()',
+            False,
+        ),
+        (
+            'val row=repo.find(q); (Ext.or(row, { val part=with(repo.find(q)) { trim() }; part })+"x").escapeSql()',
+            True,
+        ),
+        (
+            'val row=repo.find(q); (Ext.or(row, { val part=repo.find(q).run { trim() }; part })+"x").escapeSql()',
+            True,
+        ),
+        (
+            'val n=q.length; val row=repo.find(q); (Ext.or(row, { val part=q.length.let { n -> n.toString() }; part })+"x").escapeSql()',
+            False,
+        ),
+        (
+            'val n=q.length; val row=repo.find(q); (Ext.or(row, { val part=template.format(q).let { n -> n.trim() }; part })+"x").escapeSql()',
+            True,
+        ),
+        ('val n=q.length; val row=repo.find(q); (Ext.or(row, { val n=q.trim(); n })+"x").escapeSql()', True),
+        (
+            'val n=q.length; val row=repo.find(q); (Ext.or(row, { val part=if(strict) { n.toString() } else { Ext.safe() }; part })+"x").escapeSql()',
+            False,
+        ),
+        (
+            'val row=repo.find(q); (Ext.or(row, { val part=with(row) { with(Formatters.date) { format(createdAt) } }; part })+"x").escapeSql()',
+            False,
+        ),
+        (
+            'val row=repo.find(q); (Ext.or(row, { val part=row.run { Formatters.date.run { format(createdAt) } }; part })+"x").escapeSql()',
+            False,
+        ),
+        (
+            'val row=repo.find(q); (Ext.or(row, { val part=template.format(q.length).run { trim() }; part })+"x").escapeSql()',
+            False,
+        ),
+    ],
+)
+def test_review16_captured_kinds_in_fallback_scope_initializers(body: str, expected: bool) -> None:
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL) is expected, report["findings"]
+    assert _state(report, SQL) == "checked", report["coverage"]
+
+
+def test_review16_guard_else_reads_the_pre_guard_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = Analyzer.classify_closure_locals
+    checked = False
+
+    def classify(self, closure, frame, *args, **kwargs):
+        nonlocal checked
+        result = original(self, closure, frame, *args, **kwargs)
+        if (
+            not checked
+            and self.closure_classification_work is not None
+            and "guard let a" in self.text(closure)
+        ):
+            pending = [closure]
+            guard = None
+            while pending:
+                part = pending.pop()
+                if part.type == "guard_statement":
+                    guard = part
+                    break
+                pending.extend(part.named_children)
+            if guard is not None:
+                alternative = self.swift_clauses(guard)[2]
+                assert alternative is not None
+                checked = True
+                positions = list(args)
+                options = dict(kwargs)
+                if len(positions) > 5:
+                    positions[5] = alternative
+                else:
+                    options["at"] = alternative
+                held = original(self, closure, frame, *positions, **options)
+                assert "a" not in held[0] and "a" in held[1], held
+                assert "a" in result[0], result
+        return result
+
+    monkeypatch.setattr(Analyzer, "classify_closure_locals", classify)
+    body = "let a=Store.find(query); guard let a=Optional(query) else { return a }; return a"
+    report = analyze_sources([("App/Router.swift", REVIEW13_SWIFT.replace("REVIEW_BODY", body))])
+    assert checked and _hit(report, URL), report["findings"]
+
+
+def test_review16_traced_object_helper_can_still_become_text() -> None:
+    source = (
+        REVIEW13_KOTLIN.replace("REVIEW_BODY", "q.length.run { val box=trim(q); box.toString() }").replace(
+            "    fun open(",
+            "    private fun trim(v: String): Holder = Holder(v)\n    fun open(",
+        )
+        + "\nclass Holder(val value: String)\n"
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("template.run { val s=format(q); ping(); s }", True),
+        (
+            'val row=repo.find(q); val part=(Ext.wrap(row) { sb -> sb.append(q) }+"x").escapeSql(); ping(); part',
+            True,
+        ),
+        (
+            'val row=repo.find(q); (Ext.wrap(row) { sb -> sb.append(buildString { append(q.length); ping() }) }+"x").escapeSql()',
+            False,
+        ),
+    ],
+)
+def test_review16_native_calls_restore_closure_provenance(body: str, expected: bool) -> None:
+    source = REVIEW13_KOTLIN.replace("REVIEW_BODY", body).replace(
+        "    fun open(",
+        '    private fun ping(): String = "safe"\n    fun open(',
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is expected, report["findings"]

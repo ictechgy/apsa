@@ -38,7 +38,18 @@ credential service was contacted.
 - Receiverless String transforms in Kotlin `run`/`with`/`apply` scopes read the
   bound receiver after project-callee resolution, including ordinary sinks
   (`q.run { db.execSQL(trim()) }`). A nested `buildString` supplies the nearer
-  CharSequence receiver; a nested scope can rebind it again.
+  receiver for applicable CharSequence operations and Regex replacements. String-only
+  operations keep their outer String receiver; an intervening collection owns its
+  applicable operations, while a nested scope can rebind the receiver again.
+  Resolved project helpers keep their actual return provenance and declared return
+  kind, including names shared with numeric operations when the numeric operation
+  cannot take those arguments.
+- Swift guard bindings become visible to subsequent clauses after their own
+  initializers, remain available after success, and stay outside the else body.
+  Format calls retain their visited fills, including Swift closure locals and
+  Kotlin receiverless `run`/`with` templates. Input-free and numeric-only fills
+  contribute no input text. Writes into supplied objects are classified at their
+  written expressions: an earlier call's result alone remains a call result.
 - A call's receiver and data arguments are bound before its closures run: a
   callback that assigns an argument variable (`evaluateJavascript(js) { js = ... }`,
   `val r = attach(name) { name = ... }`) does not change that call's argument,
