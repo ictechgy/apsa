@@ -17469,7 +17469,7 @@ def test_review31_constructor_applicability_nullable_alias_and_consumed_proof(
         assert findings[0]["evidence"][0]["excerpt"].strip() == "db.execSQL(q.trim())"
 
 
-def test_review31_optional_initializer_hint_restores_diagnostics_after_failure(monkeypatch):
+def test_review31_optional_initializer_hint_restores_query_depth_after_failure(monkeypatch):
     from mobile_audit.native_flow import NativeFlow
     from mobile_audit.source_analysis import Frame
 
@@ -17485,6 +17485,190 @@ def test_review31_optional_initializer_hint_restores_diagnostics_after_failure(m
     with pytest.raises(LookupError, match="synthetic type query failure"):
         analyzer.initializer_type_hint(None, Frame())
     assert flow.type_hint_depth == 1
-    flow.type_hint_depth = 0
-    flow.partial("callable argument type identity unresolved")
-    assert flow.reasons == {"callable argument type identity unresolved"}
+
+
+_REVIEW32_PROGRAMS = {
+    "01-constructor-applicability": [
+        (
+            "Caller.kt",
+            'package fresh.adversarial31.constructors\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\nclass Required(val n:Int) {\n fun label():kotlin.String="fixed"\n companion object { operator fun invoke():Other=Other() }\n}\nclass Defaulted(val n:Int=7) {\n fun label():kotlin.String="fixed"\n companion object { operator fun invoke():Other=Other() }\n}\nclass Secondary private constructor(n:Int) {\n constructor():this(7)\n fun label():kotlin.String="fixed"\n companion object { operator fun invoke():Other=Other() }\n}\nclass Protected protected constructor() {\n fun label():kotlin.String="fixed"\n companion object { operator fun invoke():Other=Other() }\n}\nclass Public public constructor() {\n fun label():kotlin.String="fixed"\n companion object { operator fun invoke():Other=Other() }\n}\nclass NotesRequired(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Required()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  value.label().run { db.execSQL(trim()) } // ROW:101\n }\n}\nclass NotesDefaulted(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Defaulted()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  value.label().run { db.execSQL(trim()) } // ROW:102\n }\n}\nclass NotesSecondary(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Secondary()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  value.label().run { db.execSQL(trim()) } // ROW:103\n }\n}\nclass NotesProtected(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Protected()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  value.label().run { db.execSQL(trim()) } // ROW:104\n }\n}\nclass NotesPublic(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Public()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  value.label().run { db.execSQL(trim()) } // ROW:105\n }\n}\n',
+        )
+    ],
+    "02-implicit-outer-heads": [
+        (
+            "Caller.kt",
+            'package fresh.adversarial31.outerheads\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\nclass Thing { fun label():kotlin.String="fixed" }\nclass OuterHead {\n companion object { val Thing:()->Other={Other()} }\n class Middle {\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Thing()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  value.label().run { db.execSQL(trim()) } // ROW:201\n }\n}\n }\n}\nclass OuterInstance {\n val Thing:()->Other={Other()}\n class Middle {\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Thing()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  value.label().run { db.execSQL(trim()) } // ROW:202\n }\n}\n }\n}\nopen class Base { val Thing:()->Other={Other()} }\nclass OuterInherited:Base() {\ninner class Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Thing()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  value.label().run { db.execSQL(trim()) } // ROW:203\n }\n}\n}\n',
+        )
+    ],
+    "03-nullable-carriers": [
+        (
+            "Caller.kt",
+            'package fresh.adversarial31.nullable\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport fresh.adversarial31.nullable.kinds.MaybeText\nimport fresh.adversarial31.nullable.kinds.Text\nclass Other\nclass Holder { val label:kotlin.String?=null }\nclass NotesThis(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:kotlin.String?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  this.label.toString().run { db.execSQL(trim()) } // ROW:301\n }\n}\nclass NotesParenthesized(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:kotlin.String?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  (label).toString().run { db.execSQL(trim()) } // ROW:302\n }\n}\nclass NotesCast(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:kotlin.String?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  (label as kotlin.String?).toString().run { db.execSQL(trim()) } // ROW:303\n }\n}\nclass NotesCopy(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:kotlin.String?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  val copy=label\n  copy.toString().run { db.execSQL(trim()) } // ROW:304\n }\n}\nclass NotesBare(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:kotlin.String?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  label.toString().run { db.execSQL(trim()) } // ROW:305\n }\n}\nclass NotesMember(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val holder=Holder()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  holder.label.toString().run { db.execSQL(trim()) } // ROW:306\n }\n}\nclass NotesReturn(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private fun label():kotlin.String?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  label().toString().run { db.execSQL(trim()) } // ROW:307\n }\n}\nclass NotesAlias(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:MaybeText=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  label.toString().run { db.execSQL(trim()) } // ROW:308\n }\n}\nclass NotesNonnull(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:Text="fixed"\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  label.toString().run { db.execSQL(trim()) } // ROW:309\n }\n}\nclass NotesAsserted(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:kotlin.String?="fixed"\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  label!!.toString().run { db.execSQL(trim()) } // ROW:310\n }\n}\nclass NotesSafe(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:kotlin.String?="fixed"\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label?.toString()?.run { db.execSQL(trim()) } // ROW:311\n }\n}\n',
+        ),
+        (
+            "Kinds.kt",
+            "package fresh.adversarial31.nullable.kinds\ntypealias MaybeText=kotlin.String?\ntypealias Text=kotlin.String\n",
+        ),
+    ],
+    "04-diagnostic-consumption": [
+        (
+            "Caller.kt",
+            'package fresh.adversarial31.consumption\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass NotesUnused(private val db:SQLiteDatabase) {\n fun scan(intent:Intent) {\n  val letter:Char=\'z\'\n  val unused=letter.toString()\n  db.execSQL("fixed") // ROW:401\n }\n}\nclass NotesThread(private val db:SQLiteDatabase) {\n private fun trim():kotlin.String="fixed"\n fun scan(intent:Intent) {\n  val q=intent.getStringExtra("q") ?: ""\n  val thread:java.lang.Thread=java.lang.Thread("bounded-"+q)\n  val converted=thread.toString()\n  converted.run { db.execSQL(trim()) } // ROW:402\n }\n}\nclass NotesRegex(private val db:SQLiteDatabase) {\n private val first="unmatched".toRegex()\n private val second=first\n private val copied=second\n fun scan(intent:Intent) {\n  val q=intent.getStringExtra("q") ?: ""\n  with("fixed") {\n   buildString {\n    append(q)\n    db.execSQL(replace(copied,"unused")) // ROW:403\n   }\n  }\n }\n}\n',
+        )
+    ],
+    "05-exact-root-member-copies": [
+        (
+            "Caller.kt",
+            'package fresh.adversarial31.rootcopies\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport FixedCarrier as RootFixed\nimport TaintCarrier as RootTaint\nclass Other\nclass FixedPayload { val label:Other=Other() }\nclass TaintPayload { fun label():kotlin.String="fixed" }\nclass NotesFixed(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n \n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  val carrier=RootFixed()\n  val copy=carrier.item\n  copy.label.run { db.execSQL(trim()) } // ROW:501\n }\n}\nclass NotesTaint(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n \n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  val carrier=RootTaint()\n  val copy=carrier.item\n  copy.label().run { db.execSQL(trim()) } // ROW:502\n }\n}\n',
+        ),
+        (
+            "Root.kt",
+            'class FixedPayload(\n val label:kotlin.String="fixed"\n)\nclass FixedCarrier(\n val item:FixedPayload=FixedPayload()\n)\nclass TaintPayload { fun label():TaintPayload=TaintPayload() }\nclass TaintCarrier(\n val item:TaintPayload=TaintPayload()\n)\n',
+        ),
+    ],
+    "06-query-isolation": [
+        (
+            "Caller.kt",
+            'package fresh.adversarial31.queryisolation\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass NotesQuery(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun clearBeforeScan():kotlin.String? { captured="CLEARED"; return null }\n private val origin=clearBeforeScan()\n private val mirror=origin\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  mirror.run { db.execSQL(trim()) } // ROW:601\n }\n}\nclass NotesFixed(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val origin="fixed"\n private val mirror=origin\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  \n  mirror.run { db.execSQL(trim()) } // ROW:602\n }\n}\n',
+        )
+    ],
+    "modeled-alias-names-and-inapplicable-extension": [
+        (
+            "Caller.kt",
+            'package fresh.r32.modeledaliases\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport fresh.r32.modeledaliases.kinds.OriginAny as String\nimport fresh.r32.modeledaliases.kinds.OriginAny as Int\nimport fresh.r32.modeledaliases.kinds.OriginAny as Regex\nclass Other\nclass NotesString(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun String?.toString():Other=Other()\n private val label:String=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) } // ROW:String\n }\n}\nclass NotesInt(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Int?.toString():Other=Other()\n private val label:Int=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) } // ROW:Int\n }\n}\nclass NotesRegex(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Regex?.toString():Other=Other()\n private val label:Regex=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) } // ROW:Regex\n }\n}\nclass NotesNonnullableExtension(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun kotlin.String.toString():Other=Other()\n private val label:kotlin.String?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) } // ROW:nonnullable-extension\n }\n}\n',
+        ),
+        ("Kinds.kt", "package fresh.r32.modeledaliases.kinds\ntypealias OriginAny=kotlin.Any?\n"),
+    ],
+    "nullable-supertypes": [
+        (
+            "Caller.kt",
+            'import android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other\nopen class Base\nclass Derived:Base()\nclass Holder\nclass NotesNumber(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Number?.toString():Other=Other()\n private val label:kotlin.Int?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) } // ROW:1\n }\n}\nclass NotesComparable(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Comparable<Int>?.toString():Other=Other()\n private val label:kotlin.Int?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) } // ROW:2\n }\n}\nclass NotesSerializable(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun java.io.Serializable?.toString():Other=Other()\n private val label:java.lang.Integer?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) } // ROW:3\n }\n}\nclass NotesAncestry(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Base?.toString():Other=Other()\n private val label:Derived?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) } // ROW:4\n }\n}\nclass NotesDefaultRoot(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Holder?.toString():Other=Other()\n private val label:Holder?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) } // ROW:5\n }\n}\n',
+        )
+    ],
+    "singleton-and-captured-heads": [
+        (
+            "Caller.kt",
+            'import android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\nclass Thing { fun label():kotlin.String="fixed" }\nopen class Base { val Thing:()->Other={Other()} }\nobject Outer {\n val Thing:()->Other={Other()}\n class Notes(private val db:SQLiteDatabase) {\n  private var captured=""\n  private fun trim():kotlin.String=captured\n  private val value=Thing()\n  fun scan(intent:Intent) {\n   captured=intent.getStringExtra("q") ?: ""\n   value.label().run { db.execSQL(trim()) } // ROW:1\n  }\n }\n}\nfun runLocal(intent:Intent, db:SQLiteDatabase) {\n val Thing:()->Other={Other()}\n class LocalNotes {\n  private var captured=""\n  private fun trim():kotlin.String=captured\n  private val value=Thing()\n  fun scan() {\n   captured=intent.getStringExtra("q") ?: ""\n   value.label().run { db.execSQL(trim()) } // ROW:2\n  }\n }\n LocalNotes().scan()\n}\nfun runAnonymous(intent:Intent,db:SQLiteDatabase) {\n val notes=object:Base() {\n  private var captured=""\n  private fun trim():kotlin.String=captured\n  private val value=Thing()\n  fun scan() {\n   captured=intent.getStringExtra("q") ?: ""\n   value.label().run { db.execSQL(trim()) } // ROW:3\n  }\n }\n notes.scan()\n}\n',
+        )
+    ],
+}
+
+_REVIEW32_ROWS = [
+    ("01-constructor-applicability", "101", "Caller.kt", 33, True, "exact", 0, (0, 0)),
+    ("01-constructor-applicability", "102", "Caller.kt", 43, False, "exact", 0, (0, 0)),
+    ("01-constructor-applicability", "103", "Caller.kt", 53, False, "exact", 0, (0, 0)),
+    ("01-constructor-applicability", "104", "Caller.kt", 63, True, "exact", 0, (0, 0)),
+    ("01-constructor-applicability", "105", "Caller.kt", 73, False, "exact", 0, (0, 0)),
+    ("02-implicit-outer-heads", "201", "Caller.kt", 16, True, "exact", 0, (0, 0)),
+    ("02-implicit-outer-heads", "202", "Caller.kt", 31, False, "exact", 0, (0, 0)),
+    ("02-implicit-outer-heads", "203", "Caller.kt", 45, True, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "301", "Caller.kt", 16, True, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "302", "Caller.kt", 27, True, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "303", "Caller.kt", 38, True, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "304", "Caller.kt", 49, True, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "305", "Caller.kt", 60, True, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "306", "Caller.kt", 71, True, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "307", "Caller.kt", 82, True, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "308", "Caller.kt", 93, True, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "309", "Caller.kt", 104, False, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "310", "Caller.kt", 115, False, "exact", 0, (0, 0)),
+    ("03-nullable-carriers", "311", "Caller.kt", 125, False, "exact", 0, (0, 0)),
+    ("04-diagnostic-consumption", "401", "Caller.kt", 8, False, "exact", 0, (0, 0)),
+    ("04-diagnostic-consumption", "402", "Caller.kt", 17, True, "toString-boundary", 16, (0, 0)),
+    ("04-diagnostic-consumption", "403", "Caller.kt", 29, True, "replace-boundary", 29, (0, 0)),
+    ("05-exact-root-member-copies", "501", "Caller.kt", 17, False, "known-root-boundary", 0, (14, 17)),
+    ("05-exact-root-member-copies", "502", "Caller.kt", 28, True, "exact", 0, (0, 0)),
+    ("06-query-isolation", "601", "Caller.kt", 13, True, "exact", 0, (0, 0)),
+    ("06-query-isolation", "602", "Caller.kt", 24, False, "exact", 0, (0, 0)),
+    ("modeled-alias-names-and-inapplicable-extension", "String", "Caller.kt", 15, True, "exact", 0, (0, 0)),
+    ("modeled-alias-names-and-inapplicable-extension", "Int", "Caller.kt", 25, True, "exact", 0, (0, 0)),
+    ("modeled-alias-names-and-inapplicable-extension", "Regex", "Caller.kt", 35, True, "exact", 0, (0, 0)),
+    (
+        "modeled-alias-names-and-inapplicable-extension",
+        "nonnullable-extension",
+        "Caller.kt",
+        45,
+        False,
+        "exact",
+        0,
+        (0, 0),
+    ),
+    ("nullable-supertypes", "1", "Caller.kt", 14, True, "exact", 0, (0, 0)),
+    ("nullable-supertypes", "2", "Caller.kt", 24, True, "exact", 0, (0, 0)),
+    ("nullable-supertypes", "3", "Caller.kt", 34, True, "exact", 0, (0, 0)),
+    ("nullable-supertypes", "4", "Caller.kt", 44, True, "exact", 0, (0, 0)),
+    ("nullable-supertypes", "5", "Caller.kt", 54, True, "exact", 0, (0, 0)),
+    ("singleton-and-captured-heads", "1", "Caller.kt", 14, True, "exact", 0, (0, 0)),
+    ("singleton-and-captured-heads", "2", "Caller.kt", 26, True, "scope-boundary", 0, (20, 29)),
+    ("singleton-and-captured-heads", "3", "Caller.kt", 38, True, "scope-boundary", 0, (32, 41)),
+]
+
+
+@pytest.mark.parametrize(
+    "program,marker,path,line,expected,mode,consumer,scope",
+    _REVIEW32_ROWS,
+    ids=[r[0] + ":" + r[1] for r in _REVIEW32_ROWS],
+)
+def test_review32_nullable_origin_and_lexical_constructor_evidence(
+    program, marker, path, line, expected, mode, consumer, scope
+):
+    report = analyze_sources(_REVIEW32_PROGRAMS[program])
+    assert not any(row.get("parse_errors") for row in report["metadata"]["files"]), (program, marker)
+    hits = {
+        (ev["path"], ev["line"])
+        for finding in report["findings"]
+        if finding["rule_id"] == SQL
+        for ev in finding["evidence"]
+    }
+    hit = (path, line) in hits
+    state, reasons = _state(report, SQL), _reasons(report)
+    flow = report["metadata"]["native_flow"]
+    details = flow.get("partial_details", [])
+    if state == "partial":
+        assert flow.get("budget_reasons"), (program, marker, state, reasons)
+    elif state == "limited":
+        assert reasons and not flow.get("budget_reasons"), (program, marker, state, reasons)
+    else:
+        assert state == "checked" and not reasons, (program, marker, state, reasons)
+    if mode in {"toString-boundary", "replace-boundary"} and hit is not expected:
+        assert state in {"limited", "partial"}
+        assert any(
+            row.get("reason") == "callable argument type identity unresolved"
+            and row.get("call") == mode.removesuffix("-boundary")
+            and row.get("path") == path
+            and row.get("line") == consumer
+            for row in details
+        ), (program, marker, details)
+    elif mode == "known-root-boundary" and hit is not expected:
+        assert state == "limited" and any(
+            row.get("reason")
+            in {
+                "constructor field mapping unavailable",
+                "object alias identity unavailable",
+                "unresolved callable identity or argument signature",
+            }
+            and row.get("path") == path
+            and scope[0] <= row.get("line", 0) <= scope[1]
+            for row in details
+        ), (program, marker, details)
+    elif mode == "scope-boundary" and hit is not expected:
+        assert state in {"limited", "partial"} and any(
+            row.get("reason")
+            in {
+                "nominal callable scope unavailable",
+                "anonymous callable scope unavailable",
+                "callable value binding unresolved",
+            }
+            and row.get("path") == path
+            and scope[0] <= row.get("line", 0) <= scope[1]
+            for row in details
+        ), (program, marker, details)
+    else:
+        assert hit is expected, (program, marker, state, reasons, hits)
+    if marker == "401":
+        assert not any(
+            row.get("reason") == "callable argument type identity unresolved"
+            and row.get("path") == path
+            and row.get("line") == 7
+            for row in details
+        ), details

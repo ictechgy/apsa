@@ -630,3 +630,13 @@ borrow positive String proof over a visible project extension. Optional
 initializer hints do not add unconsumed receiver-identity details, and copied
 default-package members retain their exact source owner. These remain bounded
 static declaration proofs without initializer execution.
+
+Receiver proof now re-queries the same origin with the non-null policy before
+member precedence, including wrappers, casts, member navigation and copies.
+Canonical aliases cover modeled String/Regex/numeric targets as well as other
+standard receivers, preserving nullable expansion even for aliases named like
+builtins. Nullable extension compatibility remains conservative through unknown
+supertypes; inapplicable non-null/final-library controls stay separate.
+Zero-argument constructor applicability includes defaults/varargs and explicit
+zero-argument secondaries without executing them. Nested singleton object heads
+remain visible, and opaque anonymous ownership cannot prove head absence.

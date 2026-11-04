@@ -6712,18 +6712,19 @@ class Analyzer:
         use: Any,
         *,
         context: Analyzer | None = None,
+        allow_nullable: bool = False,
     ) -> str:
         context = context or self
-        for qualified in KOTLIN_STANDARD_RECEIVER_TYPES.get(kind, ()):
+        for qualified in KOTLIN_STANDARD_RECEIVER_TYPES.get(kind, KOTLIN_MODEL_TYPES.get(kind, ())):
             if self.library_reference_type(
                 spelling,
                 use,
                 qualified,
                 default_import=True,
                 context=context,
-                require_nonnullable=True,
+                require_nonnullable=not allow_nullable,
             ):
-                return qualified
+                return kind if kind in KOTLIN_MODEL_TYPES else qualified
         return ""
 
     def detached_constructor_kind(self, node: Any) -> str:
@@ -6779,23 +6780,56 @@ class Analyzer:
         if context.language == "kotlin" and not any(part.type == "class" for part in nominal.children):
             return ""
         primary = next((part for part in nominal.named_children if part.type == "primary_constructor"), None)
-        if primary is not None and any(
-            part.named_children for part in primary.named_children if part.type == "class_parameters"
-        ):
-            return ""
         body = next((part for part in nominal.named_children if part.type == "class_body"), None)
-        if body is not None and any(
-            part.type in {"secondary_constructor", "constructor_declaration"} for part in body.named_children
-        ):
+        secondary = (
+            [
+                part
+                for part in body.named_children
+                if part.type in {"secondary_constructor", "constructor_declaration"}
+            ]
+            if body is not None
+            else []
+        )
+        candidates = []
+        if primary is not None:
+            if not any(
+                parameter.type == "class_parameter"
+                and not any(token.type == "=" for token in parameter.children)
+                and not context.has_modifier(parameter, "vararg")
+                for group in primary.named_children
+                if group.type == "class_parameters"
+                for parameter in group.named_children
+            ):
+                candidates.append(primary)
+        elif not secondary:
+            candidates.append(None)  # implicit public no-argument constructor
+        for constructor_node in secondary:
+            parameters = _field(constructor_node, "parameters") or next(
+                (
+                    part
+                    for part in constructor_node.named_children
+                    if part.type in {"function_value_parameters", "formal_parameters", "parameters"}
+                ),
+                None,
+            )
+            if parameters is not None and not any(
+                part.type not in COMMENTS for part in parameters.named_children
+            ):
+                candidates.append(constructor_node)
+        accessible = False
+        for candidate in candidates:
+            if candidate is not None and any(
+                context.has_modifier(candidate, modifier) for modifier in {"private", "protected"}
+            ):
+                current = node if context is self else None
+                while current is not None and current.id != nominal.id:
+                    current = current.parent
+                if current is None:
+                    continue
+            accessible = True
+            break
+        if not accessible:
             return ""
-        if primary is not None and any(
-            context.has_modifier(primary, modifier) for modifier in {"private", "protected"}
-        ):
-            current = node if context is self else None
-            while current is not None and current.id != nominal.id:
-                current = current.parent
-            if current is None:
-                return ""
         return "@source:" + owner if "." not in owner else owner
 
     def initializer_type_hint(self, expression: Any, frame: Frame) -> str:
@@ -7104,20 +7138,18 @@ class Analyzer:
         """Modeled precedence needs a standard identity at the declaration's origin."""
         context = context or self
         spelling = context.canonical_type_spelling(spelling)
+        if context.language == "kotlin" and spelling.rstrip().endswith("?") and not allow_nullable:
+            return ""
         kind = self.modeled_type_name(spelling)
         flow = self.native_flow
-        if (
-            qualify_source
-            and kind
-            and context.language == "kotlin"
-            and flow is not None
-            and kind not in MODELED_NOMINAL_TYPES
-        ):
+        if qualify_source and kind and context.language == "kotlin" and flow is not None:
             owners = flow.class_owners(context, spelling.rstrip("?!"), use)
             if len(owners) == 1:
                 owner = next(iter(owners))
                 return "@source:" + owner if "." not in owner else owner
-            standard = self.standard_receiver_type(kind, spelling, use, context=context)
+            standard = self.standard_receiver_type(
+                kind, spelling, use, context=context, allow_nullable=allow_nullable
+            )
             if standard:
                 return standard
             imported = (
@@ -7140,8 +7172,13 @@ class Analyzer:
                     and flow.namespaces[id(source)] == identity.rpartition(".")[0]
                     for source, _alias in flow.module_type_aliases.get(identity.rsplit(".", 1)[-1], ())
                 )
-                for candidate in KOTLIN_STANDARD_RECEIVER_TYPES if aliases else (imported_kind,):
-                    standard = self.standard_receiver_type(candidate, spelling, use, context=context)
+                candidates = (
+                    (*KOTLIN_STANDARD_RECEIVER_TYPES, *KOTLIN_MODEL_TYPES) if aliases else (imported_kind,)
+                )
+                for candidate in candidates:
+                    standard = self.standard_receiver_type(
+                        candidate, spelling, use, context=context, allow_nullable=allow_nullable
+                    )
                     if standard:
                         return standard
                 if aliases:
@@ -7189,11 +7226,7 @@ class Analyzer:
         if len(owners) == 1:
             owner = owners.pop()
             return "@source:" + owner if "." not in owner else owner
-        imported = flow.imported_symbols(context, spelling.rstrip("?!"), classes=True)
-        if len(imported) == 1 and not next(iter(imported)).startswith(("kotlin.", "java.lang.")):
-            identity = imported.pop()
-            return "@source:" + identity if "." not in identity else identity
-        return ""
+        return ""  # an unproved imported alias is not a nominal source class
 
     def known_value_type_result(
         self,
@@ -7287,13 +7320,29 @@ class Analyzer:
                         {self.modeled_type_name(receiver_kind).rsplit(".", 1)[-1], "Any", "Object"},
                         visible=True,
                         standard_string=receiver_kind in {"String", "kotlin.String"},
+                        nullable_receiver=receiver_kind,
                     )
                 )
-                resolved_kind = self.resolved_receiver_kind(
-                    call.receiver,
-                    receiver_kind,
-                    frame,
-                    allow_nullable=self.safe_receiver_access(node) or nullable_text,
+                allow_nullable_receiver = self.safe_receiver_access(node) or nullable_text
+                nonnull_receiver = (
+                    self.known_value_type(
+                        call.receiver,
+                        frame,
+                        depth + 1,
+                        receiver_kinds=receiver_kinds,
+                    )
+                    if receiver_kind and not allow_nullable_receiver
+                    else receiver_kind
+                )
+                resolved_kind = (
+                    self.resolved_receiver_kind(
+                        call.receiver,
+                        receiver_kind,
+                        frame,
+                        allow_nullable=allow_nullable_receiver,
+                    )
+                    if nonnull_receiver
+                    else ""
                 )
                 if receiver_kind and not resolved_kind:
                     name = call.name.rsplit(".", 1)[-1]
@@ -9923,7 +9972,7 @@ class Analyzer:
                     body = next(
                         (part for part in nominal.named_children if part.type == "class_body"), nominal
                     )
-                    bodies = [] if companion_only else [body]
+                    bodies = [] if companion_only and nominal.type != "object_declaration" else [body]
                     bodies.extend(
                         next((part for part in child.named_children if part.type == "class_body"), child)
                         for child in body.named_children
@@ -10088,6 +10137,8 @@ class Analyzer:
             if current is None:
                 return False
             boundary = flow.scope_boundary(current)
+            if boundary is not None and boundary.kind in {"anonymous", "unavailable"}:
+                return True
             if boundary is not None and boundary.kind == "nominal":
                 if not lexical:
                     return False
@@ -11083,6 +11134,7 @@ class Analyzer:
         *,
         visible: bool = False,
         standard_string: bool = False,
+        nullable_receiver: str = "",
     ) -> bool:
         """A Kotlin project extension function of this name on one of these receiver types."""
         if self.native_flow is None:
@@ -11092,7 +11144,30 @@ class Analyzer:
             *(symbol.rsplit(".", 1)[-1] for symbol in self.native_flow.imported_symbols(self, name)),
         }
         for target in (target for alias in aliases for target in self.native_flow.by_name.get(alias, [])):
-            if target.analyzer.language != "kotlin":
+            if target.analyzer.language != "kotlin" or not target.analyzer.accepts_arguments(
+                target.node, len(call.args)
+            ):
+                continue
+            declared = _field(target.node, "name")
+            receiver = next(
+                (
+                    child
+                    for child in target.node.named_children
+                    if declared is not None
+                    and child.end_byte <= declared.start_byte
+                    and child.type in {"user_type", "nullable_type", "type_identifier"}
+                ),
+                None,
+            )
+            unknown_receiver = (
+                receiver is None
+                and declared is not None
+                and any(
+                    child.type == "." and child.end_byte <= declared.start_byte
+                    for child in target.node.children
+                )
+            )
+            if receiver is None and not (nullable_receiver and unknown_receiver):
                 continue
             if visible:
                 if not self.native_flow.lexical_visible(self, target, call, allow_extensions=True):
@@ -11120,24 +11195,70 @@ class Analyzer:
                         continue
                 elif not self.native_flow.top_level_visible(self, target, name):
                     continue
-            declared = _field(target.node, "name")
-            receiver = next(
-                (
-                    child
-                    for child in target.node.named_children
-                    if declared is not None
-                    and child.end_byte <= declared.start_byte
-                    and child.type in {"user_type", "nullable_type", "type_identifier"}
-                ),
-                None,
-            )
             if receiver is None:
+                return True  # represented extension syntax, unresolved nullable compatibility
+            spelling = target.analyzer.text(receiver)
+            canonical = {
+                qualified
+                for kind in receivers
+                for qualified in KOTLIN_MODEL_TYPES.get(kind, KOTLIN_STANDARD_RECEIVER_TYPES.get(kind, ()))
+            }
+            if nullable_receiver and (
+                any(
+                    self.library_reference_type(
+                        spelling,
+                        receiver,
+                        qualified,
+                        context=target.analyzer,
+                        default_import=True,
+                        require_nonnullable=True,
+                    )
+                    for qualified in canonical
+                )
+                or not spelling.rstrip().endswith("?")
+                and self.native_flow.class_owners(target.analyzer, spelling, receiver)
+            ):
+                continue  # a proven non-null extension cannot accept a nullable receiver
+            if nullable_receiver:
+                # Unknown nullable supertypes/aliases compete conservatively.
+                # Distinct proven final library types cannot be supertypes.
+                final_targets = {
+                    kind
+                    for kind, types in KOTLIN_MODEL_TYPES.items()
+                    if any(
+                        self.library_reference_type(
+                            spelling, receiver, qualified, context=target.analyzer, default_import=True
+                        )
+                        for qualified in types
+                    )
+                }
+                actual_types = set(KOTLIN_MODEL_TYPES.get(nullable_receiver, ()))
+                actual_known = (
+                    bool(actual_types)
+                    or any(nullable_receiver in types for types in KOTLIN_STANDARD_RECEIVER_TYPES.values())
+                    or nullable_receiver.removeprefix("@source:") in self.native_flow.class_definitions
+                )
+                if (
+                    final_targets
+                    and actual_known
+                    and not any(actual_types & set(KOTLIN_MODEL_TYPES[kind]) for kind in final_targets)
+                ):
+                    continue
+                if target.analyzer.accepts_arguments(target.node, len(call.args)):
+                    return True
                 continue
-            if target.analyzer.accepts_arguments(target.node, len(call.args)) and (
+            compatible = (
                 self.string_extension_receiver(target.analyzer, target.node, receiver)
                 if standard_string
                 else bool(self.receiver_names(target.analyzer, target.node, receiver) & receivers)
-            ):
+                or any(
+                    self.library_reference_type(
+                        spelling, receiver, qualified, context=target.analyzer, default_import=True
+                    )
+                    for qualified in canonical
+                )
+            )
+            if target.analyzer.accepts_arguments(target.node, len(call.args)) and compatible:
                 return True
         return False
 

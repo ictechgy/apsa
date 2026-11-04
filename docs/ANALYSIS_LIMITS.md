@@ -323,13 +323,16 @@ post-write object-alias conservative results are not claimed exact.
 
 Detached initializer queries may retain a unique source constructor's nominal identity
 from declaration syntax when no value, import or project callable competes with it.
-Only a concrete ordinary source class with a represented no-argument constructor
-can supply this detached fact. Singleton, abstract/interface and unproven
-constructor signatures abstain; private/protected primary constructors outside
-their declaring class are rejected. No constructor or initializer is executed,
-and the fact does not recover field state. Enclosing inner receivers and outer
-companions participate in competing-head checks; an outer instance member is
-not made visible to a static nested class.
+Only a concrete ordinary source class with a represented accessible constructor
+that accepts no arguments can supply this detached fact. Defaulted/vararg primary
+parameters and explicit zero-argument secondary constructors are checked from
+syntax, without evaluating defaults. Private/protected candidates outside their
+declaring class are excluded; an accessible secondary may still prove allocation.
+Singleton, abstract/interface and unproven signatures abstain. The fact does not
+recover field state. Enclosing inner receivers, outer companions and singleton
+object members participate in competing-head checks; an ordinary outer instance
+member is not made visible to a static nested class. Opaque anonymous ownership
+blocks a positive absence proof.
 
 Source/import nominal facts that collide with modeled builtin names retain their
 source distinction, including root-package imports and aliases. Imported aliases
@@ -346,11 +349,16 @@ builder consumes an unrepresented initializer pattern type, the precision
 detail identifies the affected call. An unrelated diagnostic elsewhere does not
 justify a missing flow.
 
-Imported typealiases grant a standard receiver kind only through their declaring
-source; an unresolved alias is not an invented nominal class. A nullable receiver
-cannot borrow non-null member precedence when a represented visible project
-extension competes with toString. Standard nullable toString and explicit safe
-calls retain their separate controls. Default-package source identity markers
+Imported typealiases grant modeled and other standard receiver kinds only through
+their declaring source, before the spelling is split by modeled name. An
+unresolved alias is not an invented nominal class. Receiver queries preserve the
+same origin's non-null policy through parentheses, casts, members and inferred
+copies. A nullable receiver cannot borrow non-null member precedence when a
+represented visible project extension may compete with toString. Unknown
+nullable supertype/alias compatibility abstains; proven non-null extensions and
+distinct final library receiver types are excluded. Full generic assignability
+is not modeled. Standard nullable toString and explicit safe/asserted calls keep
+their separate controls. Default-package source identity markers
 also survive copied member lookup without rebinding in the caller's namespace.
 Optional initializer hint queries suppress unconsumed receiver-identity details;
 later modeled consumers still record the actual affected call. Existing value
