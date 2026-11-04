@@ -114,16 +114,36 @@ operand kinds and abstain with a precision reason on an unproven numeric
 signature instead of borrowing a competing helper's return kind. Type-hint
 queries do not evaluate scalar provenance to fill missing operand kinds.
 The same restriction applies when numeric overloads are classified as content
-or scalar. Receiver-kind facts are shared only within one query and frame;
-they do not persist across calls. Lambda-body, loop, catch and when declarations
-block farther same-named bindings. Inferred loop-element types can remain
-unproven. Discarded lambda parameters do not bind implicit it, and plain
+or scalar. A scalar local with an unproven operand kind can still produce a
+conservative content finding; the classification-only signature limit is
+visible even when ordinary re-read diagnostics are muted. Receiver-kind facts
+are shared only within one query and frame, including nested queries. Successful
+facts are independent of remaining depth; unknown facts retain their query depth.
+They do not persist across calls. An unused bounded-out type hint does not limit
+ordinary initializer coverage; a dispatch consumer records its uncertainty.
+Lambda-body, loop, catch, when and destructuring declarations block farther
+same-named bindings. Loop variables are visible only in their bodies, and when
+subjects only after their initializers. Known element callbacks bind implicit it;
+simple declared standard containers retain their element's declaration context.
+Opaque container aliases and inferred element types can remain unproven.
+Discarded lambda parameters do not bind implicit it, and plain
 constructor parameters are not instance fields. Qualified own/project member
 facts use represented declarations; unavailable, inherited, static/companion or
-untyped member origins may remain limited. An outer implicit receiver that
-could change a modeled operation's selection records
-unresolved callable identity or argument signature rather than claiming complete
-receiver-tower overload flow. This model is not a Kotlin compiler.
+untyped member origins may remain limited. A package/type qualifier does not
+prove an instance-field selection. Reference signature queries preserve branch
+results and share declaration facts within a query. Unknown result expressions,
+including unresolved nullable expressions and deep initializer aliases, abstain
+with callable argument type identity unresolved. This may conservatively retain
+a helper flow when the real operation is standard; no general Kotlin expression
+type inference is claimed. The reference-query depth bound is sixteen.
+Known Locale constants, constructors and selected static factories, and standard
+Array construction retain nominal reference kinds without treating a value or
+project type shadow as the standard class. This is a small library model, not
+general SDK return typing.
+The receiver-tower disclosure covers known numeric/String alternatives, including
+shared operation names and direct calls. Other incompatible or unknown receiver
+types are not a complete receiver-tower model. Covered alternatives record
+unresolved callable identity or argument signature. This model is not a Kotlin compiler.
 
 Project extension visibility checks package/import, owner and lexical access;
 incomplete receiver binding records `Kotlin project extension receiver flow unavailable`

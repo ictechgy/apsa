@@ -394,8 +394,8 @@ class NativeFlow:
         self.reasons: set[str] = set()
         self.partial_events = 0
         self._string_members: set[tuple[str, str]] | None = None
-        # Above zero while Analyzer re-reads visited code to classify it (content results);
-        # what that re-read would record was recorded, or not, where the visit read it.
+        # Above zero while Analyzer re-reads visited code to classify content.
+        # Ordinary diagnostics are muted; classification-only precision can opt in.
         self.muted = 0
         self.namespace_names: set[str] = set()
         self.owners_with_constructor: set[str] = set()
@@ -608,14 +608,18 @@ class NativeFlow:
         *,
         node: Any = None,
         call: Call | None = None,
+        classification_precision: bool = False,
     ) -> None:
         """Record diagnostic scope without narrowing conservative rule coverage.
 
         A budget reason (see ``REASON_KINDS``) is an execution gap (rule coverage
         stays partial); a precision reason is a limit of the bounded model
-        (coverage limited).
+        (coverage limited). ``classification_precision`` exposes a precision
+        decision made only by result classification; it never unmutes budgets.
         """
-        if self.muted:
+        # A classification-only dispatch decision can expose a precision limit
+        # that the ordinary visit never needed. Execution gaps remain muted.
+        if self.muted and not (classification_precision and reason_kind(reason) == "precision"):
             return
         self.partial_events += 1
         self.reasons.add(reason)

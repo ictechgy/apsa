@@ -31,6 +31,19 @@ MODULES = (
 )
 
 
+def test_review22_classification_exposes_precision_without_unmuting_execution_gaps():
+    flow = native_flow.NativeFlow([])
+    flow.muted = 1
+    precision = "callable argument type identity unresolved"
+    flow.partial(precision)
+    flow.partial("closure value classification budget", classification_precision=True)
+    assert not flow.reasons
+    flow.partial(precision, classification_precision=True)
+    assert flow.reasons == {precision}
+    assert flow.partial_events == 1
+    assert flow.muted == 1
+
+
 def _strings(node: ast.expr) -> set[str] | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}

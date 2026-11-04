@@ -80,7 +80,19 @@ credential service was contacted.
   declaration's type context. String/numeric receiver hints share bounded,
   frame-local query facts, and numeric classification abstains on an unknown
   operand kind without recursive scalar-provenance evaluation. Unproven
-  alternatives in an implicit receiver tower remain explicitly limited.
+  numeric/String alternatives in an implicit receiver tower remain explicitly
+  limited, including shared operation names on directly evaluated calls. Other
+  incompatible or unknown receiver kinds are not a complete tower model.
+  Loop and when bindings exclude their own initialization expressions;
+  destructuring names block enclosing type facts. Element callback reference
+  facts retain simple declared standard-container element types. Static or
+  package-qualified class selection cannot borrow an instance field's type.
+  Branch reference results preserve nominal facts; unproven result expressions
+  abstain with a precision reason. Reference queries share facts within their
+  sixteen-level bound, and receiver queries share successful facts and depth-aware
+  unknowns within one frame. Ordinary unused type-hint cutoffs do not add a
+  precision reason. A content classification that lacks a scalar operand's kind
+  may retain a conservative helper finding with a visible precision limit.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and
