@@ -13715,3 +13715,1143 @@ def test_review26_nominal_and_nullable_boundaries(case, files, expected, mode):
     else:
         assert state == "limited" and mode in _reasons(report), (case, _reasons(report))
         assert not _budget(report), case
+
+
+@pytest.mark.parametrize(
+    "case,files,expected,mode",
+    [
+        (
+            "nullable-return-direct",
+            [
+                (
+                    "fixtures/Case0.kt",
+                    "package adversarial.c0\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    ' private fun value():kotlin.String?="fixed"\n'
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  value().run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nullable-return-copy",
+            [
+                (
+                    "fixtures/Case1.kt",
+                    "package adversarial.c1\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    ' private fun value():kotlin.String?="fixed"\n'
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  val holder=value(); holder.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nonnullable-return-direct-control",
+            [
+                (
+                    "fixtures/Case2.kt",
+                    "package adversarial.c2\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    ' private fun value():kotlin.String="fixed"\n'
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  value().run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "nullable-return-escaped-alias",
+            [
+                (
+                    "fixtures/Case3.kt",
+                    "package adversarial.c3\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "typealias `String`=kotlin.String?\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    ' private fun value():String="fixed"\n'
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  value().run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nullable-source-return",
+            [
+                (
+                    "fixtures/Case4.kt",
+                    "package adversarial.c4\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "class `String`\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " private fun value():String?=String()\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  value().run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nullable-field-qualified",
+            [
+                (
+                    "fixtures/Case5.kt",
+                    "package adversarial.c5\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    ' private val value:kotlin.String?="fixed"\n'
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  this.value.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nullable-field-unqualified-control",
+            [
+                (
+                    "fixtures/Case6.kt",
+                    "package adversarial.c6\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    ' private val value:kotlin.String?="fixed"\n'
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  value.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nullable-return-top-level",
+            [
+                (
+                    "fixtures/Case7.kt",
+                    "package adversarial.c7\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    'private fun value():kotlin.String?="fixed"\n'
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  value().run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nullable-safe-cast-copy-control",
+            [
+                (
+                    "fixtures/Case8.kt",
+                    "package adversarial.c8\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  val original=("fixed" as? kotlin.String); val holder=original; holder.run { '
+                    "db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nonnullable-cast-copy-control",
+            [
+                (
+                    "fixtures/Case9.kt",
+                    "package adversarial.c9\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  val original=("fixed" as kotlin.String); val holder=original; holder.run { '
+                    "db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "nullable-alias-cast-control",
+            [
+                (
+                    "fixtures/Case10.kt",
+                    "package adversarial.c10\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "typealias `String`=kotlin.String?\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  ("fixed" as String).run { db.execSQL(trim()) }\n'
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "escaped-source-constructor-copy-control",
+            [
+                (
+                    "fixtures/Case11.kt",
+                    "package adversarial.c11\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "class `String`\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  val original=String(); val holder=original; holder.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "postwrite-standard-test-control",
+            [
+                (
+                    "fixtures/Case12.kt",
+                    "package adversarial.c12\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    "\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " private fun format(locale:Regex):kotlin.String=captured\n"
+                    " fun scan(intent:Intent,initial:Any) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  var holder:Any=initial; holder="fixed"; if(holder is kotlin.String) { with(holder) { '
+                    "db.execSQL(format(locale=Locale.US)) } }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "boundary",
+        ),
+        (
+            "write-after-standard-test",
+            [
+                (
+                    "fixtures/Case13.kt",
+                    "package adversarial.c13\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    'class FakeLocale { val US:Regex=Regex("x") }\n'
+                    "class Source { val Locale:FakeLocale=FakeLocale() }\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " private fun format(locale:Regex):kotlin.String=captured\n"
+                    " fun scan(intent:Intent,initial:Any) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  var holder:Any=initial; if(holder is kotlin.String) { holder=Source(); with(holder) { "
+                    'with("fixed") { db.execSQL(format(locale=Locale.US)) } } }\n'
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "write-copy-no-test-control",
+            [
+                (
+                    "fixtures/Case14.kt",
+                    "package adversarial.c14\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    'class FakeLocale { val US:Regex=Regex("x") }\n'
+                    "class Source { val Locale:FakeLocale=FakeLocale() }\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " private fun format(locale:Regex):kotlin.String=captured\n"
+                    " fun scan(intent:Intent,initial:Any) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  var holder:Any=initial; holder=Source(); val copy=holder; with(copy) { with("fixed") { '
+                    "db.execSQL(format(locale=Locale.US)) } }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "qualified-source-escaped-String-field",
+            [
+                (
+                    "adjacent/Case0.kt",
+                    "package adjacent.c0\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class `String`\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " private val value:String=String()\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  this.value.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "qualified-nullable-numeric-field",
+            [
+                (
+                    "adjacent/Case1.kt",
+                    "package adjacent.c1\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " private val value:kotlin.Int?=1\n"
+                    " private fun minus(other:kotlin.Int):kotlin.String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  this.value.run { val text=minus(1); text.run { db.execSQL(trim()) } }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "qualified-source-String-copy",
+            [
+                (
+                    "adjacent/Case2.kt",
+                    "package adjacent.c2\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class String\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " private val value:String=String()\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  val holder=this.value; holder.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "qualified-nullable-String-parameter-field",
+            [
+                (
+                    "adjacent/Case3.kt",
+                    "package adjacent.c3\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Holder(val value:kotlin.String?)\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent,holder:Holder) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  holder.value.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "qualified-nonnullable-String-parameter-control",
+            [
+                (
+                    "adjacent/Case4.kt",
+                    "package adjacent.c4\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Holder(val value:kotlin.String)\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent,holder:Holder) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  holder.value.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "escaped-source-field-unqualified-control",
+            [
+                (
+                    "adjacent/Case5.kt",
+                    "package adjacent.c5\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class `String`\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " private val value:String=String()\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  value.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "cross-file-root-private-String",
+            [
+                (
+                    "adjacent/Case6.kt",
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "\n"
+                    "class Probe(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent,n:String) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  n.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                ),
+                ("adjacent/Case6Helper0.kt", "private class `String`\n"),
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "implicit-String-callable-property",
+            [
+                (
+                    "Factory.kt",
+                    "package adversarial.factory\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Payload\n"
+                    "class Factory(val String:()->Payload)\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " fun scan(intent:Intent,factory:Factory) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  with(factory) { String().run { db.execSQL(trim()) } }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nullable-safe-call",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent, n:kotlin.String?) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  n?.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "nullable-force-assert",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent, n:kotlin.String?) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  n!!.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "nullable-with-force-assert",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent, n:kotlin.String?) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  with(n!!) { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "safe-cast-safe-call",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent, n:Any) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  (n as? kotlin.String)?.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "nullable-member-force-assert",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Holder(val value:kotlin.String?)\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent, holder:Holder) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  holder.value!!.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "nullable-return-force-assert",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    ' private fun value():kotlin.String?="fixed"\n'
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  value()!!.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "cross-file-global-nullable",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  label.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                ),
+                ("Globals.kt", 'package synthetic\nvar label:kotlin.String?="fixed"\n'),
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "companion-nullable",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    'class Holder { companion object { var label:kotlin.String?="fixed" } }\n'
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  Holder.label.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "cross-file-global-nonnull",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  label.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                ),
+                ("Globals.kt", 'package synthetic\nvar label:kotlin.String="fixed"\n'),
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "companion-nonnull",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    'class Holder { companion object { var label:kotlin.String="fixed" } }\n'
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  Holder.label.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "escaped-supertype-extension",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    'open class Parent { protected var captured=""; fun '
+                    "kotlin.String.trim():kotlin.String=captured }\n"
+                    "class Notes(private val db:SQLiteDatabase):`Parent`() {\n"
+                    ' fun scan(intent:Intent) { captured=intent.getStringExtra("q") ?: ""; "fixed".run { '
+                    "db.execSQL(trim()) } }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "extension",
+        ),
+        (
+            "copied-receiver-before-later-test",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    'class FakeLocale { val US:Regex=Regex("x") }\n'
+                    "class Source { val Locale:FakeLocale=FakeLocale() }\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " private fun format(locale:Regex):kotlin.String=captured\n"
+                    " fun scan(intent:Intent, initial:Any) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  var h:Any=initial; h=Source(); val copy=h; h="fixed"; if(h is kotlin.String) with(copy) { '
+                    'with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n'
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "constructor-with-default-copy",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    'class String(val raw:kotlin.String="")\n'
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  val value=String(); value.run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "constructor",
+        ),
+        (
+            "constructor-with-default-direct",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    'class String(val raw:kotlin.String="")\n'
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  String().run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "constructor",
+        ),
+        (
+            "inferred-source-constructor-return",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    'class String(val raw:kotlin.String="")\n'
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " private fun value() = String()\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  value().run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "constructor",
+        ),
+        (
+            "nullable-conversion-plain-run",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    ' private fun trim():kotlin.String="fixed"\n'
+                    " private fun minus(other:kotlin.Int):kotlin.String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  "42".toIntOrNull().run { val s=minus(1); s.run { db.execSQL(trim()) } }\n'
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "nullable-conversion-safe-call",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    ' private fun trim():kotlin.String="fixed"\n'
+                    " private fun minus(other:kotlin.Int):kotlin.String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  "42".toIntOrNull()?.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n'
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "same-file-private-source-constructor",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "private class String\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " \n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  String().run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "inferred-captured-String-return",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    ' private fun trim():kotlin.String="fixed"\n'
+                    " private fun value()=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  value().run { db.execSQL(trim()) }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nullable-let",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " fun scan(intent:Intent, n:kotlin.String?) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  n.let { it.run { db.execSQL(trim()) } }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "nonnull-safe-let",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " fun scan(intent:Intent, n:kotlin.String?) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  n?.let { it.run { db.execSQL(trim()) } }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "nullable-list-element",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " fun scan(intent:Intent, items:List<kotlin.String?>) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  items.forEach { it.run { db.execSQL(trim()) } }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "aggregate",
+        ),
+        (
+            "nonnull-safe-element",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " fun scan(intent:Intent, items:List<kotlin.String?>) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  items.forEach { it?.run { db.execSQL(trim()) } }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "aggregate",
+        ),
+        (
+            "nullable-alias-let",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "typealias String=kotlin.String?\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " fun scan(intent:Intent, n:String) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  n.let { it.run { db.execSQL(trim()) } }\n"
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "literal-element-with-nullable-alias",
+            [
+                (
+                    "Caller.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "typealias String=kotlin.String?\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun trim():kotlin.String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  listOf("fixed").forEach { it.run { db.execSQL(trim()) } }\n'
+                    " }\n"
+                    "}\n",
+                )
+            ],
+            False,
+            "checked",
+        ),
+    ],
+)
+def test_review27_receiver_type_origin_and_nonnull_policy(case, files, expected, mode):
+    report = analyze_sources(files)
+    assert not any(row.get("parse_errors") for row in report["metadata"]["files"]), case
+    hit = _hit(report, SQL)
+    state = _state(report, SQL)
+    reasons = _reasons(report)
+    if mode == "boundary":
+        if hit:
+            assert state in {"limited", "partial"} and "object alias identity unavailable" in reasons
+        return
+    if mode == "extension":
+        assert state in {"limited", "partial"}
+        assert "Kotlin project extension receiver flow unavailable" in reasons
+        return
+    assert hit is expected, (case, reasons)
+    if mode == "checked":
+        assert state == "checked" and not reasons, (case, reasons)
+    else:
+        reason = {
+            "identity": "callable argument type identity unresolved",
+            "constructor": "constructor field mapping unavailable",
+            "aggregate": "aggregate reference ownership unavailable",
+        }[mode]
+        assert state == "limited" and reason in reasons, (case, reasons)
+        assert not _budget(report), case

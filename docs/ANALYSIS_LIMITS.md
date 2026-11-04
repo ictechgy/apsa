@@ -249,6 +249,40 @@ their absence proof after writes. This is conservative abstention rather than
 exact reassignment recovery. Unknown dependency/private callback controls may
 still retain input with their existing explicit precision/budget diagnostics.
 
+Positive receiver hints now validate declared returns and represented member
+origins, including copied member reads. An explicit nullable return cannot fall
+back to a content-only String header. Inferred expression-body returns use a
+bounded type query with formal type declarations and no borrowed argument
+values. Nonnullable String concatenation is established from a proven String
+left operand.
+
+Module-value candidates retain their declaring source, import/visibility
+context and type spelling; companion member lookup retains its own property
+declaration. Ordinary companions without supertypes can continue lexical type
+lookup after checking their own declarations. A named companion matching the
+type root or an inherited/unavailable companion still blocks absence proof.
+Unqualified String constructor hints also consult implicit receiver value heads;
+a callable property named String cannot become the builtin constructor.
+Cross-file private nominal declarations are excluded, while same-file private
+types remain source identities. Supertype spellings use the same supported
+ordinary-identifier canonicalization.
+
+Nullable receiver queries keep a separate policy for explicit non-null syntax
+(`?.` scope entry or `!!` assertion). Query memo keys include that policy, so a
+nullable rejection and a non-null proof do not reuse each other's entry.
+The policy applies to return/member/copy/cast facts, alias expansion and the
+modeled toIntOrNull/toLongOrNull results; scalar-content/reference compatibility
+remains separate. Standard scope and collection callback type hints retain
+their receiver, initial-value or element declaration origin where represented.
+Explicit generic/component callback forms remain bounded abstentions.
+A later test cannot retroactively narrow an earlier copied receiver.
+
+Type-origin queries do not execute property/module initialization or prove
+general CFG, generic assignability or unavailable dependency behavior.
+Represented constructors with default arguments and unresolved aggregate
+effects can retain explicit precision limits. The existing private callback and
+post-write object-alias conservative results are not claimed exact.
+
 ## Hybrid source and compiled artifacts
 
 JS, TS and Dart use token/block flow, not full compiler semantics. Analysis covers

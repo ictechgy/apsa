@@ -513,6 +513,17 @@ both inferred locals and direct receivers. Writes to local supertypes veto
 stale implicit-head/callback proof even without an is-test; established final
 standard declarations and literal-initialized final types remain usable.
 
+Receiver proof now checks declared returns and qualified/copied member origins
+before content hints. Module and companion values retain declaration context;
+implicit callable String properties and cross-file private types cannot borrow
+constructor/source identity. Inferred expression bodies use bounded type proof.
+Explicit non-null scope entry/assertion uses a separate query policy and cache
+key, including aliases, returns, members, copies, casts and modeled nullable
+conversions. Standard callback hints reuse represented receiver/element origins.
+Supertype spelling is canonicalized, and a later test cannot retype an earlier
+copy. Property/module initialization and full generic/CFG inference remain
+separate execution/precision limits.
+
 ## Remaining limits
 
 A callee does not bind a lambda's parameters when it calls the lambda, and a

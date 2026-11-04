@@ -6688,9 +6688,11 @@ class Analyzer:
         frame: Frame,
         depth: int = 0,
         *,
-        receiver_kinds: dict[tuple[int, int, int], str] | None = None,
+        receiver_kinds: dict[tuple[int, int, int, bool], str] | None = None,
+        allow_nullable: bool = False,
     ) -> str:
         """Memoize one bounded type query without recording unused hint failures."""
+        allow_nullable = allow_nullable or self.nonnull_expression(node)
         node = self.unwrap(node, preserve_cast=True)
         if node is None or depth > 8:
             return ""
@@ -6698,37 +6700,221 @@ class Analyzer:
             return ""
         if receiver_kinds is None:
             receiver_kinds = {}
-        established = node.id, id(frame), -1
+        established = node.id, id(frame), -1, allow_nullable
         if established in receiver_kinds:
             return receiver_kinds[established]
-        key = node.id, id(frame), depth
+        key = node.id, id(frame), depth, allow_nullable
         if key not in receiver_kinds:
             receiver_kinds[key] = ""
-            receiver_kinds[key] = self.known_value_type_result(node, frame, depth, receiver_kinds)
+            receiver_kinds[key] = self.known_value_type_result(
+                node, frame, depth, receiver_kinds, allow_nullable=allow_nullable
+            )
+            if self.language == "kotlin" and node.type in IDENTIFIERS:
+                binding = self.reference_binding(node, self.symbol_name(self.text(node)), frame=frame)
+                if binding is None:
+                    module_kind = self.reference_module_kind(
+                        node, frame, depth, receiver_kinds, allow_nullable=allow_nullable
+                    )
+                    if module_kind is not None:
+                        receiver_kinds[key] = module_kind
             if (
                 self.language == "kotlin"
-                and receiver_kinds[key] in MODELED_NOMINAL_TYPES
+                and (not receiver_kinds[key] or receiver_kinds[key] in MODELED_NOMINAL_TYPES)
                 and node.type in IDENTIFIERS
             ):
                 binding = self.reference_binding(node, self.symbol_name(self.text(node)), frame=frame)
                 if binding is not None:
                     origin, declared, expression = binding
                     if declared:
-                        receiver_kinds[key] = self.declared_modeled_type(declared, origin)
+                        receiver_kinds[key] = self.declared_modeled_type(
+                            declared, origin, allow_nullable=allow_nullable
+                        )
                     elif expression is not None and (
-                        expression.type in IDENTIFIERS
+                        expression.type in IDENTIFIERS | TEXT_LITERALS | NUMBERS
                         or self.call(expression) is not None
+                        or self.navigation(expression) is not None
                         or (
                             (unwrapped := self.unwrap(expression, preserve_cast=True)) is not None
                             and unwrapped.type in {"as_expression", "cast_expression"}
                         )
                     ):
                         receiver_kinds[key] = self.known_value_type(
-                            expression, frame, depth + 1, receiver_kinds=receiver_kinds
+                            expression,
+                            frame,
+                            depth + 1,
+                            receiver_kinds=receiver_kinds,
+                            allow_nullable=allow_nullable,
+                        )
+                    elif origin.type in CLOSURES:
+                        callback_kind = self.callback_reference_kind(
+                            node, origin, frame, depth, receiver_kinds, allow_nullable=allow_nullable
+                        )
+                        if callback_kind is not None:
+                            receiver_kinds[key] = callback_kind
+            if (
+                self.language == "kotlin"
+                and (not receiver_kinds[key] or receiver_kinds[key] in MODELED_NOMINAL_TYPES)
+                and self.navigation(node) is not None
+            ):
+                member = self.reference_member_binding(node, frame, depth)
+                if member is not None:
+                    context, origin, declared = member
+                    if declared:
+                        receiver_kinds[key] = self.declared_modeled_type(
+                            declared, origin, context=context, allow_nullable=allow_nullable
+                        )
+                    else:
+                        binding = context.declaration(origin)
+                        expression = binding[1] if binding is not None else None
+                        receiver_kinds[key] = (
+                            context.known_value_type(
+                                expression,
+                                frame if context is self else Frame(),
+                                depth + 1,
+                                receiver_kinds=receiver_kinds,
+                                allow_nullable=allow_nullable,
+                            )
+                            if expression is not None
+                            else ""
                         )
             if receiver_kinds[key]:
                 receiver_kinds[established] = receiver_kinds[key]
         return receiver_kinds[key]
+
+    def callback_reference_kind(
+        self,
+        use: Any,
+        closure: Any,
+        frame: Frame,
+        depth: int,
+        receiver_kinds: dict[tuple[int, int, int, bool], str],
+        *,
+        allow_nullable: bool = False,
+    ) -> str | None:
+        owner = self.closure_owner(closure)
+        if owner is None or not self.kotlin_scope_identity_known(owner.name, frame):
+            return None
+        name = owner.name.rsplit(".", 1)[-1]
+        if not self.simple_callback_reference_parameter(closure, self.symbol_name(self.text(use))):
+            return ""
+        if self.kotlin_repeat_callback(owner, frame):
+            return "Int"
+        if name in {"let", "also", "takeIf", "takeUnless", "use"} and owner.receiver is not None:
+            return self.known_value_type(
+                owner.receiver,
+                frame,
+                depth + 1,
+                receiver_kinds=receiver_kinds,
+                allow_nullable=allow_nullable or self.scope_receiver_nonnull(closure),
+            )
+        if name not in ELEMENT_FUNCTIONS or owner.receiver is None:
+            return None
+        parameters = self.closure_parameters(closure)
+        symbol = self.symbol_name(self.text(use))
+        ordinal = next((i for i, (n, _kind, _origin) in enumerate(parameters) if n == symbol), 0)
+        indexed = "Indexed" in name
+        if indexed and ordinal == 0:
+            return "Int"
+        if name in {"fold", "foldIndexed", "runningFold", "runningFoldIndexed", "scan", "scanIndexed"}:
+            if ordinal == (1 if indexed else 0) and owner.args:
+                return self.known_value_type(
+                    owner.args[0],
+                    frame,
+                    depth + 1,
+                    receiver_kinds=receiver_kinds,
+                    allow_nullable=allow_nullable,
+                )
+        element = self.reference_element_binding(owner.receiver, frame, depth)
+        if element is not None:
+            context, origin, declared = element
+            return self.declared_modeled_type(
+                declared, origin, context=context, allow_nullable=allow_nullable
+            )
+        collection = self.call(owner.receiver)
+        if (
+            collection is not None
+            and collection.receiver is None
+            and collection.name
+            in {
+                "listOf",
+                "mutableListOf",
+                "setOf",
+                "mutableSetOf",
+                "arrayOf",
+            }
+            and self.kotlin_scope_identity_known(collection.name, frame)
+        ):
+            callee = collection.node
+            for _ in range(4):
+                if any(part.type == "type_arguments" for part in callee.named_children):
+                    return ""
+                if callee.type != "call_expression" or not callee.named_children:
+                    break
+                callee = callee.named_children[0]
+            kinds = {
+                self.known_value_type(
+                    argument,
+                    frame,
+                    depth + 1,
+                    receiver_kinds=receiver_kinds,
+                    allow_nullable=allow_nullable,
+                )
+                for argument in collection.args
+            }
+            return kinds.pop() if len(kinds) == 1 else ""
+        return None
+
+    def reference_module_kind(
+        self,
+        node: Any,
+        frame: Frame,
+        depth: int,
+        receiver_kinds: dict[tuple[int, int, int, bool], str],
+        *,
+        allow_nullable: bool = False,
+    ) -> str | None:
+        flow = self.native_flow
+        if flow is None:
+            return None
+        symbol = self.symbol_name(self.text(node))
+        candidates = flow.module_value_bindings(self, symbol)
+        if not candidates:
+            return None
+        imported = flow.imported_symbols(self, symbol)
+        explicit = [
+            (source, origin)
+            for source, origin in candidates
+            if (declared := source.declaration(origin)) is not None
+            and ((flow.namespaces[id(source)] + ".") if flow.namespaces[id(source)] else "") + declared[0]
+            in imported
+        ]
+        candidates = explicit or candidates
+        kinds = set()
+        for source, origin in candidates:
+            binding = source.declaration(origin)
+            if binding is None:
+                kinds.add("")
+                continue
+            _name, expression, declared = binding
+            if declared:
+                kinds.add(
+                    self.declared_modeled_type(
+                        declared, origin, context=source, allow_nullable=allow_nullable
+                    )
+                )
+            elif expression is not None:
+                kinds.add(
+                    source.known_value_type(
+                        expression,
+                        frame if source is self else Frame(),
+                        depth + 1,
+                        receiver_kinds=receiver_kinds,
+                        allow_nullable=allow_nullable,
+                    )
+                )
+            else:
+                kinds.add("")
+        return kinds.pop() if len(kinds) == 1 else ""
 
     def declared_modeled_type(
         self, spelling: str, use: Any, *, context: Analyzer | None = None, allow_nullable: bool = False
@@ -6772,7 +6958,13 @@ class Analyzer:
         return ""
 
     def known_value_type_result(
-        self, node: Any, frame: Frame, depth: int, receiver_kinds: dict[tuple[int, int, int], str]
+        self,
+        node: Any,
+        frame: Frame,
+        depth: int,
+        receiver_kinds: dict[tuple[int, int, int, bool], str],
+        *,
+        allow_nullable: bool = False,
     ) -> str:
         """Small type facts used by modeled overloads, retaining visited local kinds."""
         node = self.unwrap(node, preserve_cast=True)
@@ -6780,7 +6972,11 @@ class Analyzer:
             return ""
         if self.language == "kotlin" and node.type in {"as_expression", "cast_expression"}:
             target, spelling = self.kotlin_cast_type(node)
-            return self.declared_modeled_type(spelling, target) if target is not None else ""
+            return (
+                self.declared_modeled_type(spelling, target, allow_nullable=allow_nullable)
+                if target is not None
+                else ""
+            )
         text = self.text(node).strip()
         if node.type in TEXT_LITERALS:
             return "String"
@@ -6804,6 +7000,8 @@ class Analyzer:
         if node.type in IDENTIFIERS:
             retained = self.visited_values.get((node.start_byte, node.end_byte, node.type))
             if retained is not None:
+                if retained.type_name.rstrip().endswith("?") and not allow_nullable:
+                    return ""
                 return self.modeled_type_name(retained.type_name) or (
                     "String" if retained.category == "text" else ""
                 )
@@ -6812,7 +7010,7 @@ class Analyzer:
             if not declared and name not in frame.local_names:
                 declared = self.field_types.get(name, "")
             if declared:
-                return self.declared_modeled_type(declared, node)
+                return self.declared_modeled_type(declared, node, allow_nullable=allow_nullable)
         call = self.call(node)
         if call is not None:
             if (
@@ -6828,14 +7026,33 @@ class Analyzer:
                 targets = self.native_flow.resolve(self, call, Value(), frame)[0]
                 returns = {
                     self.declared_modeled_type(
-                        self.declared_return(target), target.node, context=target.analyzer
+                        self.declared_return(target),
+                        target.node,
+                        context=target.analyzer,
+                        allow_nullable=allow_nullable,
                     )
                     for target in targets
                 }
                 if len(returns) == 1 and "" not in returns:
                     return returns.pop()
-                if targets and all(target.analyzer.string_function_header(target.node) for target in targets):
-                    return "String"
+                if targets and all(
+                    target.node.type
+                    in INITIALIZERS | {"class_declaration", "primary_constructor", "constructor_declaration"}
+                    for target in targets
+                ):
+                    owners = {target.owner for target in targets if target.owner}
+                    if len(owners) == 1:
+                        owner = owners.pop()
+                        return "@source:" + owner if owner in MODELED_NOMINAL_TYPES else owner
+                if targets and all(not self.declared_return(target) for target in targets):
+                    inferred = {
+                        target.analyzer.inferred_function_kind(
+                            target, depth, receiver_kinds, allow_nullable=allow_nullable
+                        )
+                        for target in targets
+                    }
+                    if len(inferred) == 1 and "" not in inferred:
+                        return inferred.pop()
                 if targets:
                     return ""  # a resolved project's unknown result cannot borrow a stdlib name hint
                 if (
@@ -6877,6 +7094,7 @@ class Analyzer:
                     or self.reference_binding(call.node, call.name) is not None
                     or self.native_flow is not None
                     and self.native_flow.module_value_present(self, call.name)
+                    or self.implicit_reference_head_shadow(call.node, call.name, frame)
                 ):
                     return ""
                 receiver = self.key(call.receiver)
@@ -6901,6 +7119,8 @@ class Analyzer:
                 "toFloat": "Float",
             }.get(name)
             if conversion:
+                if name in {"toIntOrNull", "toLongOrNull"} and not allow_nullable:
+                    return ""
                 return conversion
             receiver = self.key(call.receiver) if call is not None else ""
             numeric_class = receiver.rsplit(".", 1)[-1]
@@ -6970,6 +7190,12 @@ class Analyzer:
                 return kinds.pop() + "Range"
         operands = self.arithmetic_operands(node)
         if operands is not None:
+            if (
+                self.operator_between(*operands) == b"+"
+                and self.known_value_type(operands[0], frame, depth + 1, receiver_kinds=receiver_kinds)
+                == "String"
+            ):
+                return "String"
             kinds = {
                 self.known_value_type(part, frame, depth + 1, receiver_kinds=receiver_kinds)
                 for part in operands
@@ -6985,17 +7211,74 @@ class Analyzer:
         if value is None and node.type in IDENTIFIERS:
             value = frame.values.get(self.symbol_name(text))
         value = value or Value()
+        if value.type_name.rstrip().endswith("?") and not allow_nullable:
+            return ""
         return self.modeled_type_name(value.type_name) or ("String" if value.category == "text" else "")
+
+    def inferred_function_kind(
+        self,
+        target: Any,
+        depth: int,
+        receiver_kinds: dict[tuple[int, int, int, bool], str],
+        *,
+        allow_nullable: bool = False,
+    ) -> str:
+        """An expression body uses bounded type proof, not a nullable content-header hint."""
+        body = next((part for part in target.node.named_children if part.type == "function_body"), None)
+        if body is None or not body.children or body.children[0].type != "=":
+            return ""
+        expression = next((part for part in body.children[1:] if part.is_named), None)
+        frame = Frame(types={name: kind for name, kind, _ in self.parameters(target.node)})
+        return self.known_value_type(
+            expression,
+            frame,
+            depth + 1,
+            receiver_kinds=receiver_kinds,
+            allow_nullable=allow_nullable,
+        )
+
+    def nonnull_expression(self, node: Any) -> bool:
+        """Only explicit Kotlin assertion syntax changes a nullable type proof here."""
+        if self.language != "kotlin":
+            return False
+        for _ in range(8):
+            if node is None:
+                return False
+            if node.type in {"parenthesized_expression", "value_argument"} and node.named_children:
+                node = node.named_children[-1]
+                continue
+            return node.type not in TEXT_LITERALS and self.text(node).rstrip().endswith("!!")
+        return False
+
+    def scope_receiver_nonnull(self, scope: Any) -> bool:
+        subject = self.scope_receiver(scope)
+        if self.nonnull_expression(subject):
+            return True
+        owner = self.closure_owner(scope)
+        if owner is None or owner.receiver is None:
+            return False
+        raw = re.sub(
+            rb"/\*.*?\*/|//[^\n]*", b"", self.raw[owner.receiver.end_byte : owner.node.end_byte], flags=re.S
+        )
+        return raw.lstrip().startswith(b"?.")
 
     def scope_subject_kind(
         self,
         subject: Any,
         frame: Frame,
         depth: int,
-        receiver_kinds: dict[tuple[int, int, int], str] | None = None,
+        receiver_kinds: dict[tuple[int, int, int, bool], str] | None = None,
+        *,
+        scope: Any = None,
     ) -> str:
         """Receiver selection consumes bounded-out hints, so its uncertainty is visible."""
-        kind = self.known_value_type(subject, frame, depth + 1, receiver_kinds=receiver_kinds)
+        kind = self.known_value_type(
+            subject,
+            frame,
+            depth + 1,
+            receiver_kinds=receiver_kinds,
+            allow_nullable=scope is not None and self.scope_receiver_nonnull(scope),
+        )
         if depth >= 8 and self.native_flow is not None:
             self.native_flow.partial("callable argument type identity unresolved", self)
         return kind
@@ -7005,7 +7288,7 @@ class Analyzer:
         call: Call,
         frame: Frame,
         depth: int = 0,
-        receiver_kinds: dict[tuple[int, int, int], str] | None = None,
+        receiver_kinds: dict[tuple[int, int, int, bool], str] | None = None,
     ) -> str | None:
         current = call.node.parent
         if receiver_kinds is None:
@@ -7015,7 +7298,7 @@ class Analyzer:
                 break
             subject = self.scope_receiver(current) if current.type in CLOSURES else None
             if subject is not None:
-                kind = self.scope_subject_kind(subject, frame, depth, receiver_kinds)
+                kind = self.scope_subject_kind(subject, frame, depth, receiver_kinds, scope=current)
                 if (
                     not kind
                     and call.name.rsplit(".", 1)[-1] in NUMBER_OPERATIONS
@@ -7044,7 +7327,7 @@ class Analyzer:
         frame: Frame,
         depth: int = 0,
         *,
-        receiver_kinds: dict[tuple[int, int, int], str] | None = None,
+        receiver_kinds: dict[tuple[int, int, int, bool], str] | None = None,
     ) -> str | None:
         """An applicable numeric member's kind precedes an outer helper's return."""
         if receiver_kinds is None:
@@ -7097,7 +7380,7 @@ class Analyzer:
         frame: Frame,
         kinds: set[str],
         depth: int = 0,
-        receiver_kinds: dict[tuple[int, int, int], str] | None = None,
+        receiver_kinds: dict[tuple[int, int, int, bool], str] | None = None,
     ) -> bool:
         """Identify an unproven receiver-tower alternative; never select it as dispatch."""
         current = after.parent
@@ -7107,7 +7390,7 @@ class Analyzer:
             subject = self.scope_receiver(current) if current.type in CLOSURES else None
             if (
                 subject is not None
-                and self.scope_subject_kind(subject, frame, depth, receiver_kinds) in kinds
+                and self.scope_subject_kind(subject, frame, depth, receiver_kinds, scope=current) in kinds
             ):
                 return True
             current = current.parent
@@ -7123,7 +7406,7 @@ class Analyzer:
         argument_kinds: dict[int, str] | None = None,
         depth: int = 0,
         hints_only: bool = False,
-        receiver_kinds: dict[tuple[int, int, int], str] | None = None,
+        receiver_kinds: dict[tuple[int, int, int, bool], str] | None = None,
     ) -> bool:
         """Required arities, labels and known argument kinds before numeric precedence."""
         name = call.name.rsplit(".", 1)[-1]
@@ -7634,11 +7917,22 @@ class Analyzer:
                 target, spelling = self.kotlin_cast_type(base)
                 return target is not None and self.declared_modeled_type(spelling, target) == "String"
             if base.type in IDENTIFIERS:
+                if self.opaque_implicit_it(base, frame):
+                    return False
                 binding = self.reference_binding(base, self.symbol_name(self.text(base)), frame=frame)
+                if binding is None:
+                    module_kind = self.reference_module_kind(base, frame, depth, {})
+                    return module_kind == "String"
                 if binding is not None:
                     origin, declared, expression = binding
                     if declared:
                         return self.declared_modeled_type(declared, origin) == "String"
+                    if origin.type in CLOSURES:
+                        callback_kind = self.callback_reference_kind(base, origin, frame, depth, {})
+                        if callback_kind is not None:
+                            return callback_kind == "String"
+                        if self.reused(base, frame).type_name.rstrip().endswith("?"):
+                            return False
                     expression = self.unwrap(expression, preserve_cast=True)
                     if expression is not None and expression.type in IDENTIFIERS | {
                         "as_expression",
@@ -7649,9 +7943,12 @@ class Analyzer:
                         )
             elif self.navigation(base) is not None:
                 member = self.reference_member_binding(base, frame)
-                if member is not None and member[2]:
+                if member is not None:
                     context, origin, declared = member
-                    return self.declared_modeled_type(declared, origin, context=context) == "String"
+                    return (
+                        bool(declared)
+                        and self.declared_modeled_type(declared, origin, context=context) == "String"
+                    )
         if base is not None and (self.constant_text(base) or self.reused(base, frame).category == "text"):
             return True
         if base is None:
@@ -8945,6 +9242,7 @@ class Analyzer:
         base, member = navigation
         text = self.text(base).strip()
         candidates: list[tuple[Analyzer, Any]] = []
+        companion_only = False
         if text == "this" or text.startswith("this@"):
             label = self.symbol_name(text.partition("@")[2])
             if not label:
@@ -9015,10 +9313,24 @@ class Analyzer:
             if len(candidates) != 1:
                 return (self, node, "") if candidates else None
             if not bound and candidates[0][1].type != "object_declaration":
-                return self, node, ""  # static/companion selection is not an instance-field proof
+                companion_only = True
         context, nominal = candidates[0]
         body = next((child for child in nominal.named_children if child.type == "class_body"), None)
-        binding = context.reference_binding(node, member, scope=body or nominal, stop=nominal)
+        scopes = [] if companion_only else [body or nominal]
+        if body is not None:
+            scopes.extend(
+                next((part for part in child.named_children if part.type == "class_body"), child)
+                for child in body.named_children
+                if child.type == "companion_object"
+            )
+        binding = next(
+            (
+                binding
+                for scope in scopes
+                if (binding := context.reference_binding(node, member, scope=scope, stop=nominal)) is not None
+            ),
+            None,
+        )
         if binding is None:
             return context, nominal, ""
         origin, declared, _ = binding
@@ -9201,6 +9513,7 @@ class Analyzer:
             condition = target.parent
             if (
                 condition is not None
+                and condition.end_byte <= use.start_byte
                 and self.declared_modeled_type(kind, target) in MODELED_NOMINAL_TYPES
                 and not self.reference_written_between(origin, condition.end_byte, use.start_byte)
             ):
@@ -9267,6 +9580,7 @@ class Analyzer:
                         and parts[0].type in IDENTIFIERS
                         and self.symbol_name(self.text(parts[0])) == symbol
                         and self.operator_between(*parts) == b"is"
+                        and condition.end_byte <= subject.start_byte
                         and branches[0].start_byte <= use.start_byte < branches[0].end_byte
                     ):
                         tested = self.reference_binding(parts[0], symbol)
@@ -9778,7 +10092,7 @@ class Analyzer:
         frame: Frame,
         *,
         depth: int = 0,
-        receiver_kinds: dict[tuple[int, int, int], str] | None = None,
+        receiver_kinds: dict[tuple[int, int, int, bool], str] | None = None,
     ) -> Any:
         """Identified String reads precede an outer class or top-level helper.
 
@@ -9812,7 +10126,7 @@ class Analyzer:
                     owner = self.closure_owner(node)
                     if owner is None or not self.kotlin_scope_identity_known(owner.name, frame):
                         return None
-                    kind = self.scope_subject_kind(subject, frame, depth, receiver_kinds)
+                    kind = self.scope_subject_kind(subject, frame, depth, receiver_kinds, scope=node)
                     if (
                         kind == "String"
                         or not kind

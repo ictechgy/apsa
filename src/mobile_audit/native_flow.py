@@ -1900,7 +1900,7 @@ class NativeFlow:
             else:
                 return None
             for part in parts:
-                text = re.sub(r"\s+", "", analyzer.text(part))
+                text = re.sub(r"\s+", "", analyzer.canonical_type_spelling(analyzer.text(part)))
                 while (bare := re.sub(r"<[^<>]*>", "", text)) != text:
                     text = bare
                 if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", text):
@@ -2102,7 +2102,20 @@ class NativeFlow:
         }
         while scope is not None:
             boundary = self.scope_boundary(scope)
-            if boundary is not None and boundary.kind in {"anonymous", "unavailable"}:
+            if (
+                boundary is not None
+                and boundary.kind in {"anonymous", "unavailable"}
+                and not (
+                    analyzer.language == "kotlin"
+                    and boundary.node.type == "companion_object"
+                    and not any(part.type in INHERITED_TYPE_SCOPES for part in boundary.node.named_children)
+                    and not any(
+                        part.type in IDENTIFIERS | {"type_identifier"}
+                        and analyzer.symbol_name(analyzer.text(part)) == root
+                        for part in boundary.node.named_children
+                    )
+                )
+            ):
                 return boundary.node
             key = (id(analyzer), scope.id)
             if scope.type in FUNCTIONS | declarations:
@@ -2252,6 +2265,7 @@ class NativeFlow:
             definitions = self.class_definitions.get(owner, [])
             if any(
                 source.language == analyzer.language
+                and (source.path == analyzer.path or not source.has_modifier(nominal, "private"))
                 and (analyzer.language != "swift" or source.path == analyzer.path)
                 and (
                     not self.namespaces[id(analyzer)]
@@ -2265,7 +2279,7 @@ class NativeFlow:
                     or source.path == analyzer.path
                     or bool(imported)
                 )
-                for source, _ in definitions
+                for source, nominal in definitions
             ):
                 owners.add(owner)
         return owners
@@ -2337,6 +2351,13 @@ class NativeFlow:
 
     def module_value_present(self, analyzer: Analyzer, name: str, *, aliases: bool = False) -> bool:
         """A potential expression binding supplies uncertainty, never a value/type proof."""
+        return bool(self.module_value_bindings(analyzer, name, aliases=aliases))
+
+    def module_value_bindings(
+        self, analyzer: Analyzer, name: str, *, aliases: bool = False
+    ) -> list[tuple[Analyzer, Any]]:
+        """Visible module declarations retain their source and type origin."""
+        result = {}
         name = analyzer.symbol_name(name)
         imported = self.imported_symbols(analyzer, name)
         names = {name, *(symbol.rsplit(".", 1)[-1] for symbol in imported)}
@@ -2347,24 +2368,24 @@ class NativeFlow:
                     continue
                 if source is analyzer:
                     if source_name == name:
-                        return True
+                        result[id(source), node.id] = source, node
                     continue
                 if self.declaration_tokens(node) & {"private", "fileprivate"}:
                     continue
                 if analyzer.language == "swift":
                     # Compiler module membership is not represented by source inputs.
                     if source_name == name:
-                        return True
+                        result[id(source), node.id] = source, node
                     continue
                 namespace = self.namespaces[id(source)]
                 identity = (namespace + "." if namespace else "") + source_name
                 if source_name == name and (
                     namespace == self.namespaces[id(analyzer)] or namespace + ".*" in analyzer.imports
                 ):
-                    return True
+                    result[id(source), node.id] = source, node
                 if identity in imported:
-                    return True
-        return False
+                    result[id(source), node.id] = source, node
+        return list(result.values())
 
     def value_binding(self, analyzer: Analyzer, call: Call, frame: Frame) -> Value | None:
         """A current lexical value binds an unqualified callee before a member/type name."""
