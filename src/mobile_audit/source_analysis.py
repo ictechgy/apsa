@@ -6589,7 +6589,7 @@ class Analyzer:
     def modeled_type_name(spelling: str) -> str:
         name = re.sub(r"\s+", "", spelling).rstrip("?!")
         for prefix in ("kotlin.text.", "kotlin.ranges.", "kotlin.", "java.lang.", "Swift."):
-            if name.startswith(prefix) and "." not in name[len(prefix) :]:
+            if name.startswith(prefix) and "." not in name[len(prefix) :] and "<" not in name:
                 return name[len(prefix) :]
         return name
 
@@ -6634,6 +6634,9 @@ class Analyzer:
         if call is not None:
             if self.implicit_string_subject(call, frame) is not None:
                 return "List<String>" if call.name.rsplit(".", 1)[-1] == "lines" else "String"
+            numeric = self.implicit_numeric_result_type(call, frame)
+            if numeric:
+                return numeric
             targets = []
             if self.native_flow is not None:
                 targets = self.native_flow.resolve(self, call, Value(), frame)[0]
@@ -6772,6 +6775,34 @@ class Analyzer:
         value = value or Value()
         return self.modeled_type_name(value.type_name) or ("String" if value.category == "text" else "")
 
+    def numeric_receiver_kind(self, call: Call, frame: Frame) -> str:
+        current = call.node.parent
+        for _ in range(64):
+            if current is None or current.type in FUNCTIONS:
+                break
+            subject = self.scope_receiver(current) if current.type in CLOSURES else None
+            if subject is not None:
+                return self.known_value_type(subject, frame)
+            current = current.parent
+        return ""
+
+    def implicit_numeric_result_type(self, call: Call, frame: Frame) -> str:
+        """An applicable numeric member's kind precedes an outer helper's return."""
+        name = call.name.rsplit(".", 1)[-1]
+        if self.language != "kotlin" or call.receiver is not None or name not in NUMBER_OPERATIONS:
+            return ""
+        kind = self.numeric_receiver_kind(call, frame)
+        if kind not in {"Int", "Long", "Byte", "Short", "UInt", "ULong", "Float", "Double", "Boolean"}:
+            return ""
+        if not self.numeric_operation_applicable(call, frame, frozenset({"this"})):
+            return ""
+        if name == "toString":
+            return "String"
+        if name not in {"plus", "minus", "times", "div", "rem"}:
+            return kind
+        kinds = {kind, *(self.known_value_type(argument, frame) for argument in call.args)}
+        return next((item for item in ("Double", "Float", "ULong", "Long", "UInt") if item in kinds), "Int")
+
     def numeric_operation_applicable(self, call: Call, frame: Frame, scalars: frozenset[str]) -> bool:
         """Required arities, labels and known argument kinds before numeric precedence."""
         name = call.name.rsplit(".", 1)[-1]
@@ -6784,16 +6815,7 @@ class Analyzer:
             )
         ):
             return False
-        receiver_kind = ""
-        current = call.node.parent
-        for _ in range(64):
-            if current is None or current.type in FUNCTIONS:
-                break
-            subject = self.scope_receiver(current) if current.type in CLOSURES else None
-            if subject is not None:
-                receiver_kind = self.known_value_type(subject, frame)
-                break
-            current = current.parent
+        receiver_kind = self.numeric_receiver_kind(call, frame)
         if (
             receiver_kind == "Boolean"
             and (name != "toString" or call.args)
@@ -8046,21 +8068,108 @@ class Analyzer:
         )
 
     def library_reference_type(
-        self, kind: str, use: Any, qualified: str, *, default_import: bool = False
+        self,
+        kind: str,
+        use: Any,
+        qualified: str,
+        *,
+        default_import: bool = False,
+        context: Analyzer | None = None,
+        seen: frozenset[tuple[int, int]] = frozenset(),
     ) -> bool:
-        """A known nominal root, including a generic root or an imported type alias."""
+        """Resolve a nominal root in its lexical and alias-declaration context."""
         if not kind:
-            return True  # no type fact; leave the existing unknown-argument model intact
-        root = kind.partition("<")[0]
+            return True  # retain the existing unknown-argument model
+        context = context or self
+        spelling = re.sub(r"\s+", "", kind)
+        root = spelling.rstrip("?!").partition("<")[0]
+        flow = self.native_flow
+        if flow is not None:
+            binding = flow.lexical_type(context, root, use)
+            if binding is not None:
+                if binding.type in {"type_alias", "typealias_declaration"}:
+                    return self.library_alias_type(context, binding, qualified, default_import, seen)
+                if binding.type in {"type_parameter", "type_constraint"}:
+                    flow.partial("callable argument type identity unresolved", self)
+                return False
         if root == qualified:
+            if qualified == "kotlin.Array" and spelling.endswith("?") and flow is not None:
+                flow.partial("callable argument type identity unresolved", self)
+                return False
             return True
         simple = qualified.rsplit(".", 1)[-1]
-        if self.native_flow is None:
+        if flow is None:
             return default_import and root == simple
-        imported = self.native_flow.imported_symbols(self, root, classes=True)
+        imported = flow.imported_symbols(context, root, classes=True)
+        if imported == {qualified}:
+            return True
+        buckets: list[list[tuple[Analyzer, Any]]] = [[], [], [], []]
+        names = {root.rsplit(".", 1)[-1], *(name.rsplit(".", 1)[-1] for name in imported)}
+        for name in names:
+            for source, alias in flow.module_type_aliases.get(name, []):
+                if source.language != context.language:
+                    continue
+                if source is not context and flow.declaration_tokens(alias) & {"private", "fileprivate"}:
+                    continue
+                namespace = flow.namespaces[id(source)]
+                identity = (namespace + "." if namespace else "") + name
+                row = (source, alias)
+                if "." in root:
+                    if identity == root:
+                        buckets[0].append(row)
+                elif source is context and name == root:
+                    buckets[0].append(row)
+                elif imported:
+                    if identity in imported:
+                        buckets[1].append(row)
+                elif name == root:
+                    if namespace == flow.namespaces[id(context)]:
+                        buckets[2].append(row)
+                    elif namespace + ".*" in context.imports:
+                        buckets[3].append(row)
+        aliases = next((bucket for bucket in buckets if bucket), [])
+        if aliases:
+            if len(aliases) != 1:
+                flow.partial("callable argument type identity unresolved", self)
+                return False
+            source, alias = aliases[0]
+            return self.library_alias_type(source, alias, qualified, default_import, seen)
         if imported:
-            return imported == {qualified}
-        return default_import and root == simple and not self.native_flow.class_owners(self, root, use)
+            return False
+        return default_import and root == simple and not flow.class_owners(context, root, use)
+
+    def library_alias_type(
+        self,
+        source: Analyzer,
+        alias: Any,
+        qualified: str,
+        default_import: bool,
+        seen: frozenset[tuple[int, int]],
+    ) -> bool:
+        key = id(source), alias.id
+        if key in seen or len(seen) >= 16:
+            if self.native_flow is not None:
+                self.native_flow.partial("callable argument type identity unresolved", self)
+            return False
+        equal = next((part for part in alias.children if part.type == "="), None)
+        target = next(
+            (
+                part
+                for part in alias.named_children
+                if equal is not None and part.start_byte >= equal.end_byte
+            ),
+            None,
+        )
+        if target is None or target.type not in {"user_type", "nullable_type", "type_identifier"}:
+            return False
+        return self.library_reference_type(
+            source.text(target),
+            target,
+            qualified,
+            default_import=default_import,
+            context=source,
+            seen=seen | {key},
+        )
 
     def string_operation_applicable(self, call: Call, frame: Frame) -> bool:
         """The modeled String signature must accept labels and known argument kinds."""
@@ -8137,13 +8246,6 @@ class Analyzer:
             targets = self.native_flow.resolve(self, call, Value(), frame)[0]
             if any(self.native_flow.lexical_function(target.node) for target in targets):
                 return None
-            if name not in {"plus", "toString"} and self.project_extension(
-                name, call, {"String", "CharSequence", "Any"}, visible=True
-            ):
-                self.native_flow.partial(
-                    "Kotlin project extension receiver flow unavailable", self, call=call
-                )
-                return None
         node = call.node.parent
         for _ in range(64):
             if node is None or node.type in FUNCTIONS:
@@ -8156,6 +8258,18 @@ class Analyzer:
                         return None
                     kind = self.known_value_type(subject, frame)
                     if kind == "String" or not kind and self.string_template_root(subject, frame):
+                        if name not in {"plus", "toString"} and self.project_extension(
+                            name,
+                            call,
+                            {"String", "CharSequence", "Any", "Comparable", "Serializable"},
+                            visible=True,
+                            standard_string=True,
+                        ):
+                            if self.native_flow is not None:
+                                self.native_flow.partial(
+                                    "Kotlin project extension receiver flow unavailable", self, call=call
+                                )
+                            return None
                         return subject
                     return None
                 owner = self.closure_owner(node)
@@ -8553,7 +8667,15 @@ class Analyzer:
             for target in self.native_flow.by_name.get(alias, [])
         )
 
-    def project_extension(self, name: str, call: Call, receivers: set[str], *, visible: bool = False) -> bool:
+    def project_extension(
+        self,
+        name: str,
+        call: Call,
+        receivers: set[str],
+        *,
+        visible: bool = False,
+        standard_string: bool = False,
+    ) -> bool:
         """A Kotlin project extension function of this name on one of these receiver types."""
         if self.native_flow is None:
             return False
@@ -8603,11 +8725,69 @@ class Analyzer:
             )
             if receiver is None:
                 continue
-            if self.receiver_names(target.analyzer, target.node, receiver) & receivers and (
-                target.analyzer.accepts_arguments(target.node, len(call.args))
+            if target.analyzer.accepts_arguments(target.node, len(call.args)) and (
+                self.string_extension_receiver(target.analyzer, target.node, receiver)
+                if standard_string
+                else bool(self.receiver_names(target.analyzer, target.node, receiver) & receivers)
             ):
                 return True
         return False
+
+    def string_extension_receiver(self, source: Analyzer, function: Any, receiver: Any) -> bool:
+        """String's known supertypes, preserving Comparable's argument compatibility."""
+        parameters: dict[str, list[Any]] = {}
+        for group in function.named_children:
+            if group.type not in {"type_parameters", "type_constraints"}:
+                continue
+            for declaration in group.named_children:
+                if declaration.type not in {"type_parameter", "type_constraint"}:
+                    continue
+                name = next((part for part in declaration.named_children if part.type in IDENTIFIERS), None)
+                if name is not None:
+                    parameters.setdefault(source.text(name), []).extend(
+                        part
+                        for part in declaration.named_children
+                        if part.type in {"user_type", "nullable_type"}
+                    )
+
+        def parameter_accepts(name: str, seen: frozenset[str]) -> bool:
+            if name in seen:
+                return True  # test the recursive Comparable<T> bound with T instantiated as String
+            return all(accepts(source.text(bound), bound, seen | {name}) for bound in parameters[name])
+
+        def accepts(spelling: str, use: Any, seen: frozenset[str]) -> bool:
+            spelling = re.sub(r"<\s*in\s+", "<", spelling)
+            text = re.sub(r"\s+", "", spelling).rstrip("?!")
+            if text in parameters:
+                return parameter_accepts(text, seen)
+            for qualified, default in [
+                ("kotlin.String", True),
+                ("kotlin.CharSequence", True),
+                ("kotlin.Any", True),
+                ("java.io.Serializable", False),
+            ]:
+                if self.library_reference_type(text, use, qualified, default_import=default, context=source):
+                    return True
+            if not self.library_reference_type(
+                text, use, "kotlin.Comparable", default_import=True, context=source
+            ):
+                return False
+            match = re.search(r"<(.+)>", text)
+            if match is None:
+                return True  # an aliased generic argument remains conservatively limited by the caller
+            argument = match[1]
+            if argument == "*":
+                return True
+            if argument in parameters:
+                return parameter_accepts(argument, seen)
+            if argument.endswith("?"):
+                return False
+            return any(
+                self.library_reference_type(argument, use, kind, default_import=True, context=source)
+                for kind in ["kotlin.String", "kotlin.Nothing"]
+            )
+
+        return accepts(source.text(receiver), receiver, frozenset())
 
     def receiver_names(self, analyzer: Analyzer, function: Any, receiver: Any) -> set[str]:
         """The simple type names an extension's receiver spells: the type itself, a type

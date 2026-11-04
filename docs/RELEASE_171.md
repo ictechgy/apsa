@@ -58,6 +58,13 @@ credential service was contacted.
   String members `plus` and `toString` still precede extensions. Retained local
   kinds follow the selected modeled result, and untyped callback parameters
   clear inherited kinds. Proven non-receiver scope functions preserve outer `this`.
+  Qualified generic roots, lexical class shadows and visible source typealiases
+  are resolved in their declaring context with a bounded, cycle-safe lookup.
+  Compatible String supertype extensions include `Comparable<String>`, star and
+  contravariant projections, generic bounds and JVM `Serializable`; incompatible
+  concrete type arguments retain standard dispatch. Their incomplete receiver
+  flow is explicitly `limited`, only after a String subject is established.
+  Applicable numeric members retain their result kind before outer helper returns.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and

@@ -99,10 +99,18 @@ retained local kinds, and labels/arity for explicitly modeled operations. They
 distinguish known primitive operands and integral literal adaptation, but are
 not a compiler type system. Non-stdlib type qualifiers remain distinct in
 these hints; unknown types and arbitrary external overloads are not proven.
+Qualified generic roots and lexical type bindings are preserved. Visible source
+aliases are followed in their declaring files for at most 16 alias declarations;
+cycles, conflicting visible aliases and unproven type-parameter roots record
+`callable argument type identity unresolved`. Alias expansion establishes nominal
+roots, not a general generic-substitution or overload-resolution system.
 
 Project extension visibility checks package/import, owner and lexical access;
 incomplete receiver binding records `Kotlin project extension receiver flow unavailable`
-and leaves coverage `limited`. Unknown DSL receiver signatures with explicit
+and leaves coverage `limited` once a String receiver is established. Known compatible
+String supertypes include CharSequence, Any, Comparable and JVM Serializable;
+fixed incompatible Comparable arguments do not veto the standard String shortcut.
+Opaque alias generic arguments remain conservative and `limited`. Unknown DSL receiver signatures with explicit
 lambda parameters are not fully modeled. The documented branching-mix content
 limit also applies to supplied writes; a nested callback returning only a bare
 call result does not become new content merely because its closure carries traces.

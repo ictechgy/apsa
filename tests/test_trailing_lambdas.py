@@ -7827,3 +7827,425 @@ class Notes(private val db:SQLiteDatabase) {{
 """
     report = analyze_sources([("app/Notes.kt", source)])
     assert _hit(report, SQL) is expected, report["findings"]
+
+
+def _review19_dispatch_cases() -> list[dict]:
+    HEADER = """package synthetic
+    import android.content.Intent
+    import android.database.sqlite.SQLiteDatabase
+    """
+    CASES = []
+    for name, kind, nested, top, imports, factory, expected in [
+        ("nested-array", "Array<String>", "class Array<T>", "", "", "ProbeINDEX.Array<String>()", True),
+        (
+            "nested-import-alias",
+            "Values<String>",
+            "class Values<T>",
+            "",
+            "import kotlin.Array as Values\n",
+            "ProbeINDEX.Values<String>()",
+            True,
+        ),
+        (
+            "qualified-shadow",
+            "kotlin.Array<String>",
+            "",
+            "class Array<T>",
+            "",
+            'kotlin.arrayOf("fixed")',
+            False,
+        ),
+        (
+            "qualified-element-shadow",
+            "kotlin.Array<kotlin.String>",
+            "",
+            "class Array<T>",
+            "",
+            'kotlin.arrayOf("fixed")',
+            False,
+        ),
+        ("top-level-project-array", "Array<String>", "", "class Array<T>", "", "Array<String>()", True),
+    ]:
+        source = (
+            HEADER
+            + imports
+            + f"""
+    {top}
+    class Notes(private val db:SQLiteDatabase) {{
+     {nested}
+     private var captured=""
+     private fun format(args:{kind}):String=captured
+     fun scan(intent:Intent, values:{kind}) {{
+      captured=intent.getStringExtra("q") ?: ""
+      with("fixed") {{ db.execSQL(format(args=values)) }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id=name,
+                group="identity",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=expected,
+                factory=factory,
+            )
+        )
+    for receiver, compatible in [
+        ("Comparable<String>", True),
+        ("kotlin.Comparable<kotlin.String>", True),
+        ("Comparable<*>", True),
+        ("java.io.Serializable", True),
+        ("Comparable<Int>", False),
+        ("<T> Comparable<T>", True),
+        ("<T : Comparable<T>> T", True),
+    ]:
+        for tainted in [False, True]:
+            member = (
+                ('private var captured=""\n' if tainted else "")
+                + "private fun "
+                + receiver
+                + ".trim():String="
+                + ("captured" if tainted else '"fixed"')
+            )
+            body = (
+                'captured=intent.getStringExtra("q") ?: ""; "fixed".run { db.execSQL(trim()) }'
+                if tainted
+                else 'val q=intent.getStringExtra("q") ?: ""; q.run { db.execSQL(trim()) }'
+            )
+            source = (
+                HEADER
+                + f"class Notes(private val db:SQLiteDatabase) {{\n{member}\nfun scan(intent:Intent) {{ {body} }}\n}}"
+            )
+            CASES.append(
+                dict(
+                    id=f"supertype/{receiver}/{tainted}",
+                    group="supertype",
+                    files=[("app/Notes.kt", source)],
+                    rule="AST-SQL-CONCAT",
+                    expect=tainted if compatible else not tainted,
+                    factory="",
+                )
+            )
+    for alias in ["locale", "array"]:
+        for helper_tainted in [False, True]:
+            declaration = (
+                "typealias Loc = java.util.Locale"
+                if alias == "locale"
+                else "typealias Values<T> = kotlin.Array<T>"
+            )
+            kind = "Loc?" if alias == "locale" else "Values<String>"
+            parameter = "" if alias == "locale" else ", values:Values<String>"
+            initialization = "val values:Loc? = null\n" if alias == "locale" else ""
+            receiver = '"fixed"' if helper_tainted else "q"
+            source = (
+                HEADER
+                + f"""{declaration}
+    class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun format({alias if alias == "locale" else "args"}:{kind}):String={("captured" if helper_tainted else '"fixed"')}
+     fun scan(intent:Intent{parameter}) {{
+      val q=intent.getStringExtra("q") ?: ""
+      captured=q
+      {initialization}with({receiver}) {{ db.execSQL(format({alias if alias == "locale" else "args"}=values)) }}
+     }}
+    }}
+    """
+            )
+            CASES.append(
+                dict(
+                    id=f"source-alias/{alias}/{helper_tainted}",
+                    group="source-alias",
+                    files=[("app/Notes.kt", source)],
+                    rule="AST-SQL-CONCAT",
+                    expect=not helper_tainted,
+                    factory='kotlin.arrayOf("fixed")' if alias == "array" else "",
+                )
+            )
+    return CASES
+
+
+def _review19_numeric_cases() -> list[dict]:
+    HEADER = """package synthetic
+    import android.content.Intent
+    import android.database.sqlite.SQLiteDatabase
+    """
+    CASES = []
+    for argument, declaration, result, expected in [
+        ("1", "v:Int", "v.toString()", True),
+        ("1L", "v:Long", "v.toString()", True),
+        ('"1"', "v:String", '"fixed"', False),
+        ('"1"', "v:String", "captured", True),
+    ]:
+        source = (
+            HEADER
+            + f"""class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun minus({declaration}):String={result}
+     private fun trim():String=captured
+     fun scan(intent:Intent) {{
+      val q=intent.getStringExtra("q") ?: ""
+      captured=q
+      q.length.run {{ val s=minus({argument}); s.run {{ db.execSQL(trim()) }} }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id=f"numeric/{argument}/{result}",
+                group="claude",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=expected,
+                factory="",
+            )
+        )
+    for parameter in [False, True]:
+        member = "" if parameter else 'private var sep:Regex=Regex("a")'
+        params = ", sep:Regex" if parameter else ""
+        assignment = "" if parameter else 'sep="b".toRegex()'
+        source = (
+            HEADER
+            + f"""class Notes(private val db:SQLiteDatabase) {{
+     {member}
+     fun scan(intent:Intent{params}) {{
+      val q=intent.getStringExtra("q") ?: ""
+      {assignment}
+      with("safe") {{ buildString {{ append(q); db.execSQL(replace(sep,"c")) }} }}
+     }}
+    }}
+    """
+        )
+        CASES.append(
+            dict(
+                id=f"declared-regex/{parameter}",
+                group="claude",
+                files=[("app/Notes.kt", source)],
+                rule="AST-SQL-CONCAT",
+                expect=True,
+                factory='kotlin.text.Regex("b")' if parameter else "",
+            )
+        )
+    source = (
+        HEADER
+        + """fun String.format(vararg args:Any?):String=this
+    class Notes(private val db:SQLiteDatabase) {
+     private fun format(c:Long):String=c.toString()
+     fun scan(intent:Intent) { db.execSQL(format(5L)) }
+    }
+    """
+    )
+    CASES.append(
+        dict(
+            id="extension-without-string-subject",
+            group="claude",
+            files=[("app/Notes.kt", source)],
+            rule="AST-SQL-CONCAT",
+            expect=False,
+            factory="",
+            no_extension_reason=True,
+        )
+    )
+    return CASES
+
+
+@pytest.mark.parametrize(
+    "case", _review19_dispatch_cases() + _review19_numeric_cases(), ids=lambda case: case["id"]
+)
+def test_review19_nominal_identity_and_selected_return(case: dict) -> None:
+    report = analyze_sources(case["files"])
+    assert _hit(report, case["rule"]) is case["expect"], report["findings"]
+    extension_reason = "Kotlin project extension receiver flow unavailable"
+    if case["id"].startswith("supertype/") and "Comparable<Int>" not in case["id"]:
+        assert extension_reason in _reasons(report)
+        assert _state(report, SQL) == "limited"
+    if case.get("no_extension_reason"):
+        assert extension_reason not in _reasons(report)
+        assert _state(report, SQL) == "checked"
+
+
+def _review19_alias_cases() -> list[dict]:
+    CASES = []
+    for name, reference, imports, declarations, other, expected in [
+        ("same-file", "Values<String>", "", "typealias Values<T> = Array<T>", [], False),
+        (
+            "transitive",
+            "Values<String>",
+            "",
+            "typealias Base<T> = kotlin.Array<T>\ntypealias Values<T> = Base<T>",
+            [],
+            False,
+        ),
+        (
+            "stdlib-import-as",
+            "Values<String>",
+            "import kotlin.Array as Base",
+            "typealias Values<T> = Base<T>",
+            [],
+            False,
+        ),
+        (
+            "project-import-as",
+            "Values<String>",
+            "import helpers.Exported as Values",
+            "",
+            [
+                (
+                    "helpers/Alias.kt",
+                    "package helpers\nimport kotlin.Array as Base\ntypealias Exported<T> = Base<T>",
+                )
+            ],
+            False,
+        ),
+        (
+            "same-package",
+            "Values<String>",
+            "",
+            "",
+            [("app/Alias.kt", "package synthetic\ntypealias Values<T> = kotlin.Array<T>")],
+            False,
+        ),
+        (
+            "declaring-context",
+            "Values<String>",
+            "import helpers.Values",
+            "class Array<T>",
+            [("helpers/Alias.kt", "package helpers\ntypealias Values<T> = Array<T>")],
+            False,
+        ),
+        (
+            "project-target",
+            "Values<String>",
+            "",
+            "class ProjectArray<T>\ntypealias Values<T> = ProjectArray<T>",
+            [],
+            True,
+        ),
+        (
+            "qualified-alias",
+            "helpers.Exported<String>",
+            "",
+            "",
+            [("helpers/Alias.kt", "package helpers\ntypealias Exported<T> = kotlin.Array<T>")],
+            False,
+        ),
+        (
+            "private-invisible",
+            "Array<String>",
+            "",
+            "",
+            [
+                (
+                    "elsewhere/Alias.kt",
+                    "package elsewhere\nprivate typealias Array<T> = ProjectArray<T>\nclass ProjectArray<T>",
+                )
+            ],
+            False,
+        ),
+    ]:
+        source = f"""package synthetic
+    import android.content.Intent
+    import android.database.sqlite.SQLiteDatabase
+    {imports}
+    {declarations}
+    class Notes(private val db:SQLiteDatabase) {{
+     private var captured=""
+     private fun format(args:{reference}):String=captured
+     fun scan(intent:Intent, values:{reference}) {{
+      captured=intent.getStringExtra("q") ?: ""
+      with("fixed") {{ db.execSQL(format(args=values)) }}
+     }}
+    }}
+    """
+        CASES.append(
+            dict(
+                id="alias-control/" + name,
+                files=[("app/Notes.kt", source), *other],
+                rule="AST-SQL-CONCAT",
+                expect=expected,
+            )
+        )
+    return CASES
+
+
+def _review19_variance_cases() -> list[dict]:
+    HEADER = """package synthetic
+    import android.content.Intent
+    import android.database.sqlite.SQLiteDatabase
+    """
+    CASES = []
+    for receiver, compatible in [
+        ("Comparable<in String>", True),
+        ("Comparable<Nothing>", True),
+        ("Comparable<in Nothing>", True),
+        ("Comparable<CharSequence>", False),
+        ("<T : CharSequence> Comparable<T>", True),
+        ("<T : Int> Comparable<T>", False),
+    ]:
+        for tainted in [False, True]:
+            member = (
+                ('private var captured=""\n' if tainted else "")
+                + "private fun "
+                + receiver
+                + ".trim():String="
+                + ("captured" if tainted else '"fixed"')
+            )
+            body = (
+                'captured=intent.getStringExtra("q") ?: ""; "fixed".run { db.execSQL(trim()) }'
+                if tainted
+                else 'val q=intent.getStringExtra("q") ?: ""; q.run { db.execSQL(trim()) }'
+            )
+            source = (
+                HEADER
+                + f"class Notes(private val db:SQLiteDatabase) {{\n{member}\nfun scan(intent:Intent) {{ {body} }}\n}}"
+            )
+            CASES.append(
+                dict(
+                    id=f"supertype/{receiver}/{tainted}",
+                    group="super-extra",
+                    files=[("app/Notes.kt", source)],
+                    rule="AST-SQL-CONCAT",
+                    expect=tainted if compatible else not tainted,
+                    factory="",
+                )
+            )
+    return CASES
+
+
+@pytest.mark.parametrize(
+    "case", _review19_alias_cases() + _review19_variance_cases(), ids=lambda case: case["id"]
+)
+def test_review19_alias_context_and_variance(case: dict) -> None:
+    report = analyze_sources(case["files"])
+    assert _hit(report, case["rule"]) is case["expect"], report["findings"]
+    if case.get("group") == "super-extra" and case["expect"] == case["id"].endswith("/True"):
+        assert "Kotlin project extension receiver flow unavailable" in _reasons(report)
+        assert _state(report, SQL) == "limited"
+
+
+@pytest.mark.parametrize("cycle", [True, False])
+def test_review19_alias_expansion_limit_is_explicit(cycle: bool) -> None:
+    aliases = (
+        "typealias Values<T> = Next<T>\ntypealias Next<T> = Values<T>"
+        if cycle
+        else "typealias Values<T> = A0<T>\n"
+        + "\n".join(f"typealias A{i}<T> = A{i + 1}<T>" for i in range(17))
+        + "\ntypealias A17<T> = kotlin.Array<T>"
+    )
+    source = f"""package synthetic
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+{aliases}
+class Notes(private val db:SQLiteDatabase) {{
+    private fun format(args:Values<String>):String="fixed"
+    fun open(intent:Intent, values:Values<String>) {{
+        val q=intent.getStringExtra("q") ?: ""
+        with(q) {{ db.execSQL(format(args=values)) }}
+    }}
+}}
+"""
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert "callable argument type identity unresolved" in _reasons(report)
+    assert _state(report, SQL) == "limited"
