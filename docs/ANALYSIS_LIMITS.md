@@ -113,6 +113,17 @@ nominal facts. Numeric hints keep their eight-level depth bound, reuse computed
 operand kinds and abstain with a precision reason on an unproven numeric
 signature instead of borrowing a competing helper's return kind. Type-hint
 queries do not evaluate scalar provenance to fill missing operand kinds.
+The same restriction applies when numeric overloads are classified as content
+or scalar. Receiver-kind facts are shared only within one query and frame;
+they do not persist across calls. Lambda-body, loop, catch and when declarations
+block farther same-named bindings. Inferred loop-element types can remain
+unproven. Discarded lambda parameters do not bind implicit it, and plain
+constructor parameters are not instance fields. Qualified own/project member
+facts use represented declarations; unavailable, inherited, static/companion or
+untyped member origins may remain limited. An outer implicit receiver that
+could change a modeled operation's selection records
+unresolved callable identity or argument signature rather than claiming complete
+receiver-tower overload flow. This model is not a Kotlin compiler.
 
 Project extension visibility checks package/import, owner and lexical access;
 incomplete receiver binding records `Kotlin project extension receiver flow unavailable`

@@ -74,6 +74,13 @@ credential service was contacted.
   provenance to establish a missing type. Unproven numeric signatures do not
   borrow a helper return kind. Opaque Comparable alias arguments conservatively
   retain the documented project-extension precision limit.
+  Reference lookup includes lambda, loop, catch and when bindings; discarded
+  lambda parameters do not introduce implicit it. Plain constructor parameters
+  keep their initialization-only scope. Qualified field facts retain the owning
+  declaration's type context. String/numeric receiver hints share bounded,
+  frame-local query facts, and numeric classification abstains on an unknown
+  operand kind without recursive scalar-provenance evaluation. Unproven
+  alternatives in an implicit receiver tower remain explicitly limited.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and
