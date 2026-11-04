@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from typing import Any
 
 import pytest
 import tree_sitter
@@ -1618,7 +1619,7 @@ def test_dsl_writes_into_an_implicit_receiver_reach_the_call_value(build: str) -
 NINE = " + ".join(f'intent.getStringExtra("k{index}")!!' for index in range(9))
 
 
-def test_trace_cut_in_a_possible_closure_result_is_a_precision_limit() -> None:
+def test_distinct_source_loss_in_a_closure_result_remains_a_budget() -> None:
     unresolved = _kotlin(
         f"""class R(private val web: WebView) {{
     fun q(intent: Intent) {{
@@ -1647,10 +1648,9 @@ def test_trace_cut_in_a_possible_closure_result_is_a_precision_limit() -> None:
 """
     )
     assert _hit(unresolved, URL) and _hit(scope, URL) and _hit(direct, URL)
-    assert _budget(unresolved) == [] and "source trace abstention" in _reasons(unresolved)
-    # A scope block's result is recorded the same way (documented), unlike the direct value.
-    assert _budget(scope) == [] and "source trace abstention" in _reasons(scope)
-    assert _state(scope, URL) == "limited" and _state(direct, URL) == "partial"
+    for report in (unresolved, scope, direct):
+        assert "source trace budget" in _budget(report)
+        assert _state(report, URL) == "partial"
 
 
 def test_scope_block_with_an_own_call_in_a_component_stays_limited() -> None:
@@ -2357,7 +2357,7 @@ class Chip { void parameter(String k, String v) { } }
     assert _hit(report, URL)
 
 
-def test_function_typed_parameter_called_with_a_closure_keeps_the_cut_a_precision_limit() -> None:
+def test_function_typed_callback_keeps_a_distinct_source_budget_cut() -> None:
     report = _kotlin(
         f"""class R(private val web: WebView) {{
     fun open(intent: Intent, render: (() -> String) -> String) {{
@@ -2368,7 +2368,8 @@ def test_function_typed_parameter_called_with_a_closure_keeps_the_cut_a_precisio
 """
     )
     assert _hit(report, URL)
-    assert _budget(report) == [] and "source trace abstention" in _reasons(report)
+    assert "source trace budget" in _budget(report)
+    assert _state(report, URL) == "partial"
 
 
 def test_expression_body_callee_evaluates_its_calls_once() -> None:
@@ -11580,3 +11581,663 @@ def test_review23_callback_and_reference_boundaries(case_id, files, expected, un
         assert "callable argument type identity unresolved" in reasons, case_id
     if checked:
         assert state == "checked" and not reasons, case_id
+
+
+@pytest.mark.parametrize(
+    "case,files,expected,mode",
+    [
+        (
+            "inherited-lexical-Locale",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nclass FakeLocale { val US:Regex=Regex("x") }; open class Base { val Locale:FakeLocale=FakeLocale() }\nclass Notes(private val db: SQLiteDatabase): Base() {\n private var captured=""\n private fun format(locale:Regex):String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  with("fixed") { db.execSQL(format(locale=Locale.US)) }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "let-generic-widening",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent, values:Array<Regex>) {\n  captured=intent.getStringExtra("q") ?: ""\n  values.let<Any,Unit> { args -> with("fixed") { db.execSQL(format(args=args)) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "let-component-Regex",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, values:Array<Regex>) {\n  captured=intent.getStringExtra("q") ?: ""\n  values.let { (args) -> with("fixed") { db.execSQL(format(args=args)) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "also-component-Regex",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, values:Array<Regex>) {\n  captured=intent.getStringExtra("q") ?: ""\n  values.also { (args) -> with("fixed") { db.execSQL(format(args=args)) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "project-number-Int",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Int\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun scan(intent:Intent,n:Int) {\n  captured=intent.getStringExtra("q") ?: ""\n  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "project-number-synthetic.Int",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Int\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun scan(intent:Intent,n:synthetic.Int) {\n  captured=intent.getStringExtra("q") ?: ""\n  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "project-number-kotlin.Int",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Int\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun scan(intent:Intent,n:kotlin.Int) {\n  captured=intent.getStringExtra("q") ?: ""\n  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "plain-let-array",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent, values:Array<Regex>) {\n  captured=intent.getStringExtra("q") ?: ""\n  values.let { args -> with("fixed") { db.execSQL(format(args=args)) } }\n }\n}\n',
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "generic-let-explicit-Any",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent, values:Array<Regex>) {\n  captured=intent.getStringExtra("q") ?: ""\n  values.let<Any,Unit> { args:Any -> with("fixed") { db.execSQL(format(args=args)) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "typed-component-let",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, values:Array<Regex>) {\n  captured=intent.getStringExtra("q") ?: ""\n  values.let { (args):Array<Regex> -> with("fixed") { db.execSQL(format(args=args)) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "parser",
+        ),
+        (
+            "typed-component-also",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, values:Array<Regex>) {\n  captured=intent.getStringExtra("q") ?: ""\n  values.also { (args):Array<Regex> -> with("fixed") { db.execSQL(format(args=args)) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "parser",
+        ),
+        (
+            "private-inherited-Locale",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nclass FakeLocale { val US:Regex=Regex("x") }; open class Base { private val Locale:FakeLocale=FakeLocale() }\nclass Notes(private val db: SQLiteDatabase): Base() {\n private var captured=""\n private fun format(locale:Regex):String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  with("fixed") { db.execSQL(format(locale=Locale.US)) }\n }\n}\n',
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "no-inherited-Locale",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nopen class Base { val fixed=0 }\nclass Notes(private val db: SQLiteDatabase): Base() {\n private var captured=""\n private fun format(locale:Regex):String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  with("fixed") { db.execSQL(format(locale=Locale.US)) }\n }\n}\n',
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "inherited-lexical-kotlin",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nclass FakeKotlin { fun arrayOf():Regex=Regex("x") }; open class Base { val kotlin:FakeKotlin=FakeKotlin() }\nclass Notes(private val db: SQLiteDatabase): Base() {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  with("fixed") { db.execSQL(format(args=kotlin.arrayOf())) }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "numeric-inferred-constructor",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Int\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun scan(intent:Intent,unused:kotlin.Int) {\n  captured=intent.getStringExtra("q") ?: ""\n  val n=Int()\n  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "numeric-copy",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Int\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun scan(intent:Intent,n:Int) {\n  captured=intent.getStringExtra("q") ?: ""\n  val copy=n\n  copy.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "numeric-import-alias",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport helpers.Amount as Int\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun scan(intent:Intent,n:Int) {\n  captured=intent.getStringExtra("q") ?: ""\n  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                ),
+                ("Amount.kt", "package helpers; class Amount"),
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "numeric-standard-alias",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\ntypealias Int=kotlin.Int\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun scan(intent:Intent,n:Int) {\n  captured=intent.getStringExtra("q") ?: ""\n  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "numeric-project-alias",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Amount\ntypealias Int=Amount\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun scan(intent:Intent,n:Int) {\n  captured=intent.getStringExtra("q") ?: ""\n  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "numeric-type-parameter",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Amount\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun <Int> scan(intent:Intent,n:Int) {\n  captured=intent.getStringExtra("q") ?: ""\n  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "numeric-nullable-standard",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Int\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun scan(intent:Intent,n:kotlin.Int?) {\n  captured=intent.getStringExtra("q") ?: ""\n  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "numeric-return-context",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun minus(other:kotlin.Int):String=captured\n private fun trim():String="fixed"\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  val n=helpers.make()\n  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n }\n}\n',
+                ),
+                ("Numbers.kt", "package helpers; class Int; fun make():Int=Int()"),
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "cast-scope-as",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nclass FakeLocale { val US:Regex=Regex("x") }; class Source { val Locale:FakeLocale=FakeLocale() }\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(locale:Regex):String=captured\n fun scan(intent:Intent, holder:Any) {\n  captured=intent.getStringExtra("q") ?: ""\n  with(holder as Source) { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "cast-scope-safe-as",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nclass FakeLocale { val US:Regex=Regex("x") }; class Source { val Locale:FakeLocale=FakeLocale() }\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(locale:Regex):String=captured\n fun scan(intent:Intent, holder:Any) {\n  captured=intent.getStringExtra("q") ?: ""\n  (holder as? Source)?.run { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "cast-scope-smart-cast",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nclass FakeLocale { val US:Regex=Regex("x") }; class Source { val Locale:FakeLocale=FakeLocale() }\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(locale:Regex):String=captured\n fun scan(intent:Intent, holder:Any) {\n  captured=intent.getStringExtra("q") ?: ""\n  if (holder is Source) with(holder) { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "nonnull-widened-Locale",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(locale:Any):String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  with("fixed") { db.execSQL(format(locale=(java.util.Locale.US as Any)!!)) }\n }\n}\n',
+                )
+            ],
+            True,
+            "checked",
+        ),
+        (
+            "unknown-member-async",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, client:helpers.Client, items:List<kotlin.Array<String>>) {\n  captured=intent.getStringExtra("q") ?: ""\n  items.forEach { client.async { with("fixed") { db.execSQL(format(args=it)) } } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "unknown-member-run",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, client:helpers.Client, items:List<kotlin.Array<String>>) {\n  captured=intent.getStringExtra("q") ?: ""\n  items.forEach { client.run { with("fixed") { db.execSQL(format(args=it)) } } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "source-lazy-one-argument",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n private fun lazy(block:(Regex)->Unit) { block(Regex("x")) }\n fun scan(intent:Intent, items:List<kotlin.Array<String>>) {\n  captured=intent.getStringExtra("q") ?: ""\n  items.forEach { lazy { with("fixed") { db.execSQL(format(args=it)) } } }\n }\n}\n',
+                )
+            ],
+            True,
+            "flow",
+        ),
+        (
+            "unused-hint-extras",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  intent.extras.run { val label=toString(); db.execSQL("SELECT 1") }\n }\n}\n',
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "traced-zero-callback-runOnUiThread",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent, client:helpers.Client) {\n  captured=intent.getStringExtra("q") ?: ""\n  listOf(captured).forEach { client.runOnUiThread { println(it) }; db.execSQL("SELECT 1") }\n }\n}\n',
+                )
+            ],
+            False,
+            "flow",
+        ),
+        (
+            "traced-zero-callback-post",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent, client:helpers.Client) {\n  captured=intent.getStringExtra("q") ?: ""\n  listOf(captured).forEach { client.post { println(it) }; db.execSQL("SELECT 1") }\n }\n}\n',
+                )
+            ],
+            False,
+            "flow",
+        ),
+        (
+            "traced-zero-callback-execute",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent, client:helpers.Client) {\n  captured=intent.getStringExtra("q") ?: ""\n  listOf(captured).forEach { client.execute { println(it) }; db.execSQL("SELECT 1") }\n }\n}\n',
+                )
+            ],
+            False,
+            "flow",
+        ),
+        (
+            "unknown-run-member-it",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport helpers.Runner\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, values:List<Array<String>>, runner:Runner) {\n  captured=intent.getStringExtra("q") ?: ""\n  values.forEach { runner.run { with("fixed") { db.execSQL(format(args=it)) } } }\n }\n}\n',
+                )
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "distinct-source-budget-direct",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  val q0=intent.getStringExtra("q0") ?: ""\nval q1=intent.getStringExtra("q1") ?: ""\nval q2=intent.getStringExtra("q2") ?: ""\nval q3=intent.getStringExtra("q3") ?: ""\nval q4=intent.getStringExtra("q4") ?: ""\nval q5=intent.getStringExtra("q5") ?: ""\nval q6=intent.getStringExtra("q6") ?: ""\nval q7=intent.getStringExtra("q7") ?: ""\nval q8=intent.getStringExtra("q8") ?: ""\n val s=q0+q1+q2+q3+q4+q5+q6+q7+q8\n db.execSQL(s)\n }\n}\n',
+                )
+            ],
+            True,
+            "budget",
+        ),
+        (
+            "distinct-source-budget-run",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  val q0=intent.getStringExtra("q0") ?: ""\nval q1=intent.getStringExtra("q1") ?: ""\nval q2=intent.getStringExtra("q2") ?: ""\nval q3=intent.getStringExtra("q3") ?: ""\nval q4=intent.getStringExtra("q4") ?: ""\nval q5=intent.getStringExtra("q5") ?: ""\nval q6=intent.getStringExtra("q6") ?: ""\nval q7=intent.getStringExtra("q7") ?: ""\nval q8=intent.getStringExtra("q8") ?: ""\n val s=run { q0+q1+q2+q3+q4+q5+q6+q7+q8 }\n db.execSQL(s)\n }\n}\n',
+                )
+            ],
+            True,
+            "budget",
+        ),
+        (
+            "distinct-source-budget-let",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  val q0=intent.getStringExtra("q0") ?: ""\nval q1=intent.getStringExtra("q1") ?: ""\nval q2=intent.getStringExtra("q2") ?: ""\nval q3=intent.getStringExtra("q3") ?: ""\nval q4=intent.getStringExtra("q4") ?: ""\nval q5=intent.getStringExtra("q5") ?: ""\nval q6=intent.getStringExtra("q6") ?: ""\nval q7=intent.getStringExtra("q7") ?: ""\nval q8=intent.getStringExtra("q8") ?: ""\n val s="fixed".let { q0+q1+q2+q3+q4+q5+q6+q7+q8 }\n db.execSQL(s)\n }\n}\n',
+                )
+            ],
+            True,
+            "budget",
+        ),
+        (
+            "distinct-source-budget-unknown",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Any):String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  val q0=intent.getStringExtra("q0") ?: ""\nval q1=intent.getStringExtra("q1") ?: ""\nval q2=intent.getStringExtra("q2") ?: ""\nval q3=intent.getStringExtra("q3") ?: ""\nval q4=intent.getStringExtra("q4") ?: ""\nval q5=intent.getStringExtra("q5") ?: ""\nval q6=intent.getStringExtra("q6") ?: ""\nval q7=intent.getStringExtra("q7") ?: ""\nval q8=intent.getStringExtra("q8") ?: ""\n val s=helpers.render { q0+q1+q2+q3+q4+q5+q6+q7+q8 }\n db.execSQL(s)\n }\n}\n',
+                )
+            ],
+            True,
+            "budget",
+        ),
+        (
+            "Any-without-narrowing",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nclass FakeLocale { val US:Regex=Regex("x") }; class Source { val Locale:FakeLocale=FakeLocale() }\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(locale:Regex):String=captured\n fun scan(intent:Intent, holder:Any) {\n  captured=intent.getStringExtra("q") ?: ""\n  with(holder) { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n }\n}\n',
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "negative-is-arm",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nclass FakeLocale { val US:Regex=Regex("x") }; class Source { val Locale:FakeLocale=FakeLocale() }\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(locale:Regex):String=captured\n fun scan(intent:Intent, holder:Any) {\n  captured=intent.getStringExtra("q") ?: ""\n  if (holder !is Source) with(holder) { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n }\n}\n',
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "shadowed-is-binding",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nclass FakeLocale { val US:Regex=Regex("x") }; class Source { val Locale:FakeLocale=FakeLocale() }\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(locale:Regex):String=captured\n fun scan(intent:Intent, holder:Any) {\n  captured=intent.getStringExtra("q") ?: ""\n  if (holder is Source) { val holder:Any="fixed"; with(holder) { with("fixed") { db.execSQL(format(locale=Locale.US)) } } }\n }\n}\n',
+                )
+            ],
+            False,
+            "flow",
+        ),
+        (
+            "cast-widened-subject",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\nclass FakeLocale { val US:Regex=Regex("x") }; class Source { val Locale:FakeLocale=FakeLocale() }\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(locale:Regex):String=captured\n fun scan(intent:Intent, holder:Any) {\n  captured=intent.getStringExtra("q") ?: ""\n  with(holder as Any) { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n }\n}\n',
+                )
+            ],
+            False,
+            "checked",
+        ),
+        (
+            "standard-literal-run-outer-it",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, items:List<Array<String>>) {\n  captured=intent.getStringExtra("q") ?: ""\n  items.forEach { "fixed".run { with("fixed") { db.execSQL(format(args=it)) } } }\n }\n}\n',
+                )
+            ],
+            False,
+            "zero",
+        ),
+        (
+            "source-member-run-0",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, client:helpers.Client, items:List<Array<String>>) {\n  captured=intent.getStringExtra("q") ?: ""\n  items.forEach { client.run { with("fixed") { db.execSQL(format(args=it)) } } }\n }\n}\n',
+                ),
+                ("Client.kt", "package helpers; class Client { fun run(block:()->Unit) { block() } }"),
+            ],
+            False,
+            "zero",
+        ),
+        (
+            "source-member-run-1",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, client:helpers.Client, items:List<Array<String>>) {\n  captured=intent.getStringExtra("q") ?: ""\n  items.forEach { client.run { with("fixed") { db.execSQL(format(args=it)) } } }\n }\n}\n',
+                ),
+                (
+                    "Client.kt",
+                    'package helpers; class Client { fun run(block:(Regex)->Unit) { block(Regex("x")) } }',
+                ),
+            ],
+            True,
+            "identity",
+        ),
+        (
+            "source-member-async-0",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, client:helpers.Client, items:List<Array<String>>) {\n  captured=intent.getStringExtra("q") ?: ""\n  items.forEach { client.async { with("fixed") { db.execSQL(format(args=it)) } } }\n }\n}\n',
+                ),
+                ("Client.kt", "package helpers; class Client { fun async(block:()->Unit) { block() } }"),
+            ],
+            False,
+            "zero",
+        ),
+        (
+            "source-member-async-1",
+            [
+                (
+                    "Main.kt",
+                    'package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.util.Locale\n\nclass Notes(private val db: SQLiteDatabase) {\n private var captured=""\n private fun format(args:Regex):String=captured\n fun scan(intent:Intent, client:helpers.Client, items:List<Array<String>>) {\n  captured=intent.getStringExtra("q") ?: ""\n  items.forEach { client.async { with("fixed") { db.execSQL(format(args=it)) } } }\n }\n}\n',
+                ),
+                (
+                    "Client.kt",
+                    'package helpers; class Client { fun async(block:(Regex)->Unit) { block(Regex("x")) } }',
+                ),
+            ],
+            True,
+            "identity",
+        ),
+    ],
+)
+def test_review24_nominal_and_budget_boundaries(case, files, expected, mode):
+    report = analyze_sources(files)
+    state = _state(report, SQL)
+    if mode == "parser" and not _hit(report, SQL):
+        assert state == "partial"
+        assert any(row.get("parse_errors") for row in report["metadata"]["files"])
+        return
+    assert _hit(report, SQL) is expected, (case, _reasons(report))
+    if mode == "budget":
+        assert state == "partial"
+        assert "source trace budget" in _budget(report)
+        return
+    assert state in {"checked", "limited"}
+    if mode == "checked":
+        assert state == "checked" and not _reasons(report)
+    elif mode == "identity":
+        assert state == "limited"
+        assert "callable argument type identity unresolved" in _reasons(report)
+    elif mode == "zero":
+        assert "callable argument type identity unresolved" not in _reasons(report)
+
+
+_REVIEW24_HEADER = (
+    "package synthetic\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\n"
+)
+
+
+def _review24_work(size: int, mode: str) -> dict[str, Any]:
+    from unittest.mock import patch
+
+    from mobile_audit.native_flow import NativeFlow
+
+    counts = dict(result_walks=0, result_steps=0, resolve=0)
+    original_result = Analyzer.closure_value_expressions
+    original_work = Analyzer.closure_work
+    original_resolve = NativeFlow.resolve
+    active = 0
+
+    def results(self, closure):
+        nonlocal active
+        owner = self.closure_owner(closure)
+        selected = (
+            mode == "fold"
+            and owner is not None
+            and owner.name == "fold"
+            and self.closure_classification_work is None
+        )
+        if selected:
+            counts["result_walks"] += 1
+            active += 1
+        try:
+            return original_result(self, closure)
+        finally:
+            if selected:
+                active -= 1
+
+    def work(self):
+        if active:
+            counts["result_steps"] += 1
+        return original_work(self)
+
+    def resolve(self, *args, **kwargs):
+        counts["resolve"] += 1
+        return original_resolve(self, *args, **kwargs)
+
+    if mode == "fold":
+        body = (
+            'items.fold(arrayOf("safe")) { args, _ ->\n'
+            + "\n".join('with("fixed") { db.execSQL(format(args=args)) }' for _ in range(size))
+            + "\nargs\n}"
+        )
+        parameter = "items:List<Regex>"
+    else:
+        body = (
+            "listOf(captured).forEach { client.run { "
+            + ";".join("println(it)" for _ in range(size))
+            + ' } }; db.execSQL("SELECT 1")'
+        )
+        parameter = "client:helpers.Client"
+    source = (
+        _REVIEW24_HEADER
+        + """class Notes(private val db:SQLiteDatabase) {
+ private var captured=""
+ private fun format(args:Any):String=captured
+ fun scan(intent:Intent, """
+        + parameter
+        + """) {
+  captured=intent.getStringExtra("q") ?: ""
+  """
+        + body
+        + """
+ }
+}
+"""
+    )
+    with (
+        patch.object(Analyzer, "closure_value_expressions", results),
+        patch.object(Analyzer, "closure_work", work),
+        patch.object(NativeFlow, "resolve", resolve),
+    ):
+        report = analyze_sources([("Main.kt", source)])
+    return dict(
+        size=size,
+        counts=counts,
+        hit=any(f["rule_id"] == "AST-SQL-CONCAT" for f in report["findings"]),
+        state=next(r["state"] for r in report["coverage"] if r["rule_id"] == "AST-SQL-CONCAT"),
+        reasons=report["metadata"]["native_flow"]["reasons"],
+    )
+
+
+def test_review24_repeated_accumulator_consumers_have_linear_syntax_work():
+    rows = [_review24_work(size, "fold") for size in (8, 32, 64)]
+    assert all(not row["hit"] and row["state"] != "partial" for row in rows)
+    assert rows[0]["counts"]["result_steps"] > 0
+    assert rows[-1]["counts"]["result_steps"] <= 9 * rows[0]["counts"]["result_steps"]
+    assert rows[-1]["counts"]["resolve"] <= 9 * rows[0]["counts"]["resolve"]
+
+
+def test_review24_unknown_callback_reads_have_bounded_resolution_work():
+    rows = [_review24_work(size, "callback") for size in (8, 32, 64)]
+    assert all(not row["hit"] and row["state"] == "limited" for row in rows)
+    assert all("callable argument type identity unresolved" in row["reasons"] for row in rows)
+    assert rows[0]["counts"]["resolve"] > 0
+    assert rows[-1]["counts"]["resolve"] <= 9 * rows[0]["counts"]["resolve"]

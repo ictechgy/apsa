@@ -165,14 +165,15 @@ credential service was contacted.
   Swift's `try` operator do not hide it.
   The calls of the last expression are evaluated once, where the closure is
   followed, so an unresolved call's effects are not applied twice. When an
-  unresolved call's value includes a closure's result, a trace-budget cut in
-  that result, also one the closure only passes on, is recorded as a
-  precision limit there (`source trace abstention`, `limited`): the callee
-  may never return it. This also holds for a `let`, `run`, `with` or `use`
-  block's result, which is its call's result: an own call in it
+  unresolved call's value includes a closure's result, a duplicate-route-only
+  trace cut can be a precision limit there (`source trace abstention`,
+  `limited`): the callee may never return it. Actual loss of more than eight
+  distinct input locations remains `partial / source trace budget`, including
+  when the closure only passes it on. The duplicate-route exception also holds
+  for a `let`, `run`, `with` or `use` block's result: an own call in it
   (`x?.let { own(it) }` in an Activity) carries the field-round
   re-origination cut of unresolved own calls, and stays `limited` as in
-  1.7.0; a block whose own result overflows the trace cap is `limited` too.
+  1.7.0. A block whose result exceeds the distinct-source cap stays `partial`.
   `withContext { }`, `runCatching { }` and other results now carry their
   provenance. A predicate, comparator or per-element action (`filter`,
   `first`, `find`, `count`, `any`, `sortedBy`, `takeIf`, `forEach`, and the
@@ -460,10 +461,10 @@ passes `this` to an unresolved call, as their parenthesized forms did in
 1.7.0; with a wildcard import, `with` is not provably the standard function. A
 literal key or IV that is only named inside a closure is now reported; one a
 closure may fill (passed to a call or written element by element) is treated
-as filled. A closure result over the trace cap that a call's value includes
-(`Ext.io({ big })` with more than eight sources, or a `run { }` block's) is
-`limited` (`source trace abstention`), where 1.7.0 reported the parenthesized
-form `partial`. A local initialized from a string literal is a String, so
+as filled. A closure result that loses distinct input locations to the trace
+cap stays `partial`, including `Ext.io({ big })` and `run { }`. Only a cut from
+duplicate routes over at most eight input locations can be normalized to
+`limited / source trace abstention` when included in a possible result. A local initialized from a string literal is a String, so
 `var s = ""; s += q` concatenates where 1.7.0 recorded `compound assignment
 operator dispatch unavailable`. Kotlin `x!!` is the value of `x` for literal key and IV
 tracking, filled buffers and intent-target checks:
@@ -471,6 +472,19 @@ tracking, filled buffers and intent-target checks:
 `nextBytes(raw!!)` fills `raw`, and a component check on `nested!!` is
 credited. With `--strict-coverage`, `limited` exits 3 (a `--fail-on`
 threshold exits 4).
+
+Reference dispatch also checks enclosing lexical class ancestry for inherited
+Locale/kotlin values and preserves explicit cast targets through `!!`. Simple
+positive `is` guards apply only to the same binding in the true arm. Scope-callback
+reference facts use the same generic/component guards as element callbacks.
+Project numeric names retain declaration-file identity instead of becoming
+standard Int by spelling. Unknown dependency callbacks named run/async are not
+assumed parameterless; traced ambiguous it reads can add a specific precision
+reason even outside a modeled signature query. A no-op type hint without a
+competing resolved helper stays silent. Repeated accumulator reference queries
+share immutable result syntax; frame-dependent resolution is not retained across
+queries. Typed destructuring that the bundled grammar cannot parse remains an
+explicit parser execution gap, even when a Kotlin compiler accepts the source.
 
 ## Remaining limits
 

@@ -1300,7 +1300,8 @@ LIMITS_NOTE = (
 # sinks keep the original kind. Either marker keeps the trace unsafe.
 TRACE_PARTIAL = " [native-flow-partial]"
 TRACE_LIMITED = " [native-flow-limited]"
-TRACE_MARKERS = {TRACE_PARTIAL: "budget", TRACE_LIMITED: "precision"}
+TRACE_SOURCE_LOSS = " [native-flow-source-loss]"
+TRACE_MARKERS = {TRACE_PARTIAL: "budget", TRACE_LIMITED: "precision", TRACE_SOURCE_LOSS: "budget"}
 GuardKey = int | tuple[int, str]
 
 
@@ -1465,12 +1466,24 @@ def _union(values: list[Value], category: str = "unknown", type_name: str = "") 
     if len(kept) > 8:
         # Collapsing origins beyond the trace cap is a budget cut.
         last = kept[-1]
+        sources = {
+            (trace.source.location.get("path"), trace.source.location.get("offset"))
+            if isinstance(trace.source, SourceNode)
+            else ("@node", trace.source.id if trace.source is not None else None)
+            for trace in kept
+        }
+        description = last.description
+        if TRACE_SOURCE_LOSS not in description and (
+            len(sources) > 8 or any(TRACE_SOURCE_LOSS in trace.description for trace in kept)
+        ):
+            description += TRACE_SOURCE_LOSS
+        description += TRACE_PARTIAL
         kept = (
             *kept[:7],
             Trace(
                 hash(("trace-budget", tuple(traces))),
                 last.source,
-                last.description + TRACE_PARTIAL,
+                description,
                 last.steps,
             ),
         )
@@ -1853,6 +1866,7 @@ class Analyzer:
         # Functions declared in each class body (and its companion), by name.
         self.class_functions: dict[tuple[int, int], dict[str, list[Any]]] = {}
         self.class_members: dict[tuple[int, int], dict[str, bool]] = {}
+        self.callback_result_nodes: dict[int, tuple[Any, ...]] = {}
         self.closure_classification_work: int | None = None
         self.closure_classification_cut = False
         self.closure_contexts: dict[tuple[int, int, int, str], list[tuple[Frame, Any]]] = {}
@@ -2855,9 +2869,16 @@ class Analyzer:
             return None
         return text[1:-1] if text.startswith(('"', "'")) and text[-1:] == text[:1] else None
 
-    def unwrap(self, node: Any) -> Any:
+    def unwrap(self, node: Any, *, preserve_cast: bool = False) -> Any:
         """The expression inside parentheses, casts, force-unwraps, try and value-argument wrappers."""
         while node is not None:
+            if preserve_cast and (
+                self.language == "kotlin"
+                and node.type in {"as_expression", "cast_expression"}
+                or node.type == "try_expression"
+                and self.branching(node)
+            ):
+                return node
             if node.type == "value_argument":
                 node = _field(node, "value") or (node.named_children[-1] if node.named_children else None)
             elif (
@@ -3589,10 +3610,10 @@ class Analyzer:
     def possible_result(trace: Trace) -> Trace:
         """A closure result in an unresolved call's value, which the callee may never return.
 
-        Folding it in is an over-approximation, so a trace-cap cut in it is a precision
-        limit there, not an execution gap of the call.
+        Duplicate routes in that over-approximation can be a precision limit.
+        Actual loss of distinct input sources retains its execution-budget evidence.
         """
-        if TRACE_PARTIAL not in trace.description:
+        if TRACE_PARTIAL not in trace.description or TRACE_SOURCE_LOSS in trace.description:
             return trace
         description = trace.description.replace(TRACE_PARTIAL, "")
         if TRACE_LIMITED not in description:
@@ -6631,9 +6652,44 @@ class Analyzer:
         if key not in receiver_kinds:
             receiver_kinds[key] = ""
             receiver_kinds[key] = self.known_value_type_result(node, frame, depth, receiver_kinds)
+            if self.language == "kotlin" and receiver_kinds[key] in NUMBER_TYPES and node.type in IDENTIFIERS:
+                binding = self.reference_binding(node, self.symbol_name(self.text(node)), frame=frame)
+                if binding is not None:
+                    origin, declared, expression = binding
+                    if declared:
+                        receiver_kinds[key] = self.declared_modeled_type(declared, origin)
+                    elif expression is not None and (
+                        expression.type in IDENTIFIERS or self.call(expression) is not None
+                    ):
+                        receiver_kinds[key] = self.known_value_type(
+                            expression, frame, depth + 1, receiver_kinds=receiver_kinds
+                        )
             if receiver_kinds[key]:
                 receiver_kinds[established] = receiver_kinds[key]
         return receiver_kinds[key]
+
+    def declared_modeled_type(self, spelling: str, use: Any, *, context: Analyzer | None = None) -> str:
+        """Numeric precedence needs a standard identity at the declaration's origin."""
+        context = context or self
+        kind = self.modeled_type_name(spelling)
+        flow = self.native_flow
+        if context.language != "kotlin" or kind not in NUMBER_TYPES or flow is None:
+            return kind
+        if spelling.rstrip().endswith("?"):
+            return ""
+        java = {"Int": "Integer", "Bool": "Boolean"}.get(kind, kind)
+        if any(
+            self.library_reference_type(spelling, use, qualified, default_import=True, context=context)
+            for qualified in {"kotlin." + kind, "java.lang." + java}
+        ):
+            return kind
+        owners = flow.class_owners(context, spelling.rstrip("?!"), use)
+        if len(owners) == 1:
+            return owners.pop()
+        imported = flow.imported_symbols(context, spelling.rstrip("?!"), classes=True)
+        if len(imported) == 1 and not next(iter(imported)).startswith(("kotlin.", "java.lang.")):
+            return imported.pop()
+        return ""
 
     def known_value_type_result(
         self, node: Any, frame: Frame, depth: int, receiver_kinds: dict[tuple[int, int, int], str]
@@ -6673,7 +6729,7 @@ class Analyzer:
             if not declared and name not in frame.local_names:
                 declared = self.field_types.get(name, "")
             if declared:
-                return self.modeled_type_name(declared)
+                return self.declared_modeled_type(declared, node)
         call = self.call(node)
         if call is not None:
             if (
@@ -6687,7 +6743,12 @@ class Analyzer:
             targets = []
             if self.native_flow is not None:
                 targets = self.native_flow.resolve(self, call, Value(), frame)[0]
-                returns = {self.modeled_type_name(self.declared_return(target)) for target in targets}
+                returns = {
+                    self.declared_modeled_type(
+                        self.declared_return(target), target.node, context=target.analyzer
+                    )
+                    for target in targets
+                }
                 if len(returns) == 1 and "" not in returns:
                     return returns.pop()
                 if targets and all(target.analyzer.string_function_header(target.node) for target in targets):
@@ -6867,6 +6928,7 @@ class Analyzer:
                     not kind
                     and call.name.rsplit(".", 1)[-1] in NUMBER_OPERATIONS
                     and self.native_flow is not None
+                    and self.native_flow.resolve(self, call, Value(), frame)[0]
                 ):
                     self.native_flow.partial("callable argument type identity unresolved", self, call=call)
                 if (
@@ -8417,21 +8479,31 @@ class Analyzer:
         if owner is None:
             return False
         name = owner.name.rsplit(".", 1)[-1]
+        subject = self.unwrap(owner.receiver)
+        raw = "kotlin.String" if subject is not None and subject.type in TEXT_LITERALS else ""
+        if subject is not None and subject.type in IDENTIFIERS:
+            symbol = self.symbol_name(self.text(subject))
+            retained = (frame.values.get(symbol) if frame is not None else None) or Value()
+            raw = (
+                retained.type_name
+                or (frame.types.get(symbol, "") if frame is not None else "")
+                or self.parameter_types.get(symbol, "")
+            )
+            if not raw and retained.category == "text":
+                raw = "kotlin.String"
         if (
-            owner.receiver is None
-            and len(owner.args) == 1
+            len(owner.args) == 1
             and self.native_flow is not None
             and self.reference_binding(owner.node, name) is None
         ):
-            targets = self.native_flow.resolve(self, owner, Value(), frame or Frame())[0]
+            targets = self.native_flow.resolve(self, owner, Value(type_name=raw), frame or Frame())[0]
             if targets:
                 signatures = [target.analyzer.parameters(target.node) for target in targets]
-                if all(
+                return all(
                     len(parameters) == 1
                     and re.match(r"^(?:suspend\s+)?(?:[^()]+\.)?\(\s*\)\s*->", parameters[0][1].strip())
                     for parameters in signatures
-                ):
-                    return True
+                )
         if name not in {
             "run",
             "apply",
@@ -8454,6 +8526,33 @@ class Analyzer:
             return False
         if self.reference_binding(owner.node, name) is not None:
             return False
+        if owner.receiver is not None:
+            if subject is None:
+                return False
+            root = self.modeled_type_name(raw).partition("<")[0]
+            qualified = {
+                "String": "kotlin.String",
+                "Any": "kotlin.Any",
+                "Object": "java.lang.Object",
+                "Array": "kotlin.Array",
+                "List": "kotlin.collections.List",
+                "MutableList": "kotlin.collections.MutableList",
+                "Set": "kotlin.collections.Set",
+                "Map": "kotlin.collections.Map",
+                "Collection": "kotlin.collections.Collection",
+                **{kind: "kotlin." + kind for kind in NUMBER_TYPES},
+            }.get(root)
+            proven = qualified is not None and self.library_reference_type(
+                raw.rstrip("?"), subject, qualified, default_import=True
+            )
+            if not proven:
+                owners = (
+                    self.native_flow.class_owners(self, raw, subject)
+                    if self.native_flow is not None
+                    else set()
+                )
+                if not owners or self.nominal_reference_head_shadow(owner.node, name, owners):
+                    return False
         imported = self.native_flow.imported_symbols(self, name) if self.native_flow is not None else set()
         return all(symbol.startswith(("kotlin.", "kotlinx.coroutines.")) for symbol in imported)
 
@@ -8465,7 +8564,7 @@ class Analyzer:
             or self.symbol_name(self.text(node)) != "it"
         ):
             return False
-        binding = self.reference_binding(node, "it")
+        binding = self.reference_binding(node, "it", frame=frame)
         if binding is None or binding[0].type not in CLOSURES or self.closure_arity(binding[0]) is not None:
             return False
         owner = self.closure_owner(binding[0])
@@ -8482,7 +8581,7 @@ class Analyzer:
         )
 
     def reference_binding(
-        self, use: Any, name: str, *, scope: Any = None, stop: Any = None
+        self, use: Any, name: str, *, scope: Any = None, stop: Any = None, frame: Frame | None = None
     ) -> tuple[Any, str, Any] | None:
         """Find an argument's declaration before resolving its type spelling."""
         flow = self.native_flow
@@ -8592,7 +8691,7 @@ class Analyzer:
                 flow.reference_binding_cache[key] = entries
             for origin, kind, expression in reversed(flow.reference_binding_cache[key].get(name, [])):
                 if name == "it" and origin.type in CLOSURES and self.closure_arity(origin) is None:
-                    if self.kotlin_parameterless_callback(self.closure_owner(origin)):
+                    if self.kotlin_parameterless_callback(self.closure_owner(origin), frame):
                         continue
                 if scope.type == "for_statement":
                     body = next(
@@ -8771,7 +8870,7 @@ class Analyzer:
             return None
         context, origin, declared = self, node, ""
         if node.type in IDENTIFIERS:
-            binding = self.reference_binding(node, self.symbol_name(self.text(node)))
+            binding = self.reference_binding(node, self.symbol_name(self.text(node)), frame=frame)
             if binding is not None:
                 origin, declared, expression = binding
                 if not declared and expression is not None:
@@ -8811,6 +8910,74 @@ class Analyzer:
             return None
         return context, origin, element.removeprefix("out ").strip()
 
+    def nominal_reference_head_shadow(self, use: Any, name: str, owners: set[str]) -> bool:
+        """A bounded source hierarchy must not hide a value behind a standard head."""
+        flow = self.native_flow
+        if flow is None:
+            return False
+        for owner in owners:
+            ancestry = flow.project_ancestry(owner)
+            for ancestor in ancestry:
+                definitions = flow.class_definitions.get(ancestor, [])
+                if not definitions:
+                    return True
+                for source, nominal in definitions:
+                    references = flow.supertype_references(source, nominal)
+                    if references is None or any(
+                        not flow.class_owners(source, reference, nominal.parent)
+                        or not flow.class_owners(source, reference, nominal.parent) <= ancestry
+                        for reference in references
+                    ):
+                        return True
+                    body = next(
+                        (part for part in nominal.named_children if part.type == "class_body"), nominal
+                    )
+                    binding = source.reference_binding(use, name, scope=body, stop=nominal)
+                    if binding is None:
+                        continue
+                    if source.has_modifier(binding[0], "private"):
+                        current = use if source is self else None
+                        while current is not None and current.id != nominal.id:
+                            current = current.parent
+                        if current is None:
+                            continue
+                    return True
+        return False
+
+    def tested_reference_type(self, subject: Any, use: Any) -> tuple[Any, str] | None:
+        """A simple positive is-test narrows the same binding only in its true arm."""
+        if subject.type not in IDENTIFIERS:
+            return None
+        symbol = self.symbol_name(self.text(subject))
+        binding = self.reference_binding(subject, symbol)
+        current = use.parent
+        for _ in range(64):
+            if current is None or current.type in FUNCTIONS:
+                break
+            if current.type in {"if_expression", "if_statement"}:
+                condition = self.unwrap(_field(current, "condition"))
+                branches = [
+                    p
+                    for p in current.named_children
+                    if (condition is None or p.id != condition.id) and p.type not in COMMENTS
+                ]
+                if condition is not None and condition.type == "is_expression" and branches:
+                    parts = [p for p in condition.named_children if p.type not in COMMENTS]
+                    if (
+                        len(parts) == 2
+                        and parts[0].type in IDENTIFIERS
+                        and self.symbol_name(self.text(parts[0])) == symbol
+                        and self.operator_between(*parts) == b"is"
+                        and branches[0].start_byte <= use.start_byte < branches[0].end_byte
+                    ):
+                        tested = self.reference_binding(parts[0], symbol)
+                        if (binding is None and tested is None) or (
+                            binding is not None and tested is not None and binding[0].id == tested[0].id
+                        ):
+                            return parts[1], self.text(parts[1])
+            current = current.parent
+        return None
+
     def implicit_reference_head_shadow(self, use: Any, name: str, frame: Frame) -> bool:
         """Veto a class/package spelling when a represented receiver may supply the value."""
         flow = self.native_flow
@@ -8818,11 +8985,20 @@ class Analyzer:
             return False
         current = use.parent
         for _ in range(64):
-            if current is None or current.type in FUNCTIONS:
+            if current is None:
                 return False
+            boundary = flow.scope_boundary(current)
+            if boundary is not None and boundary.kind == "nominal":
+                if boundary.name is None:
+                    return True
+                owner = flow.owner(self, boundary.name)
+                if self.nominal_reference_head_shadow(use, name, {owner}):
+                    return True
+                if not self.has_modifier(current, "inner"):
+                    return False
             subject = self.scope_receiver(current) if current.type in CLOSURES else None
             if subject is not None:
-                subject = self.unwrap(subject)
+                subject = self.unwrap(subject, preserve_cast=True)
                 if subject is None:
                     return True
                 if subject.type in TEXT_LITERALS | NUMBERS:
@@ -8833,7 +9009,15 @@ class Analyzer:
                 fallback_origin = subject
                 fallback_allowed = True
                 for _ in range(8):
+                    if origin.type in {"as_expression", "cast_expression"}:
+                        target = origin.named_children[-1] if origin.named_children else None
+                        kind = context.text(target) if target is not None else ""
+                        break
                     if origin.type in IDENTIFIERS:
+                        tested = context.tested_reference_type(origin, use) if context is self else None
+                        if tested is not None:
+                            origin, kind = tested
+                            break
                         symbol = context.symbol_name(context.text(origin))
                         binding = context.reference_binding(origin, symbol)
                         retained = frame.values.get(symbol)
@@ -8889,29 +9073,10 @@ class Analyzer:
                     break
                 if not kind and fallback_allowed and fallback_kind:
                     context, origin, kind = self, fallback_origin, fallback_kind
-                represented = False
-                for owner in flow.class_owners(context, kind, origin) if kind else ():
-                    ancestry = flow.project_ancestry(owner)
-                    for ancestor in ancestry:
-                        definitions = flow.class_definitions.get(ancestor, [])
-                        if not definitions and ancestor != owner:
-                            return True
-                        for source, nominal in definitions:
-                            represented = True
-                            references = flow.supertype_references(source, nominal)
-                            if references is None or any(
-                                not flow.class_owners(source, reference, nominal.parent)
-                                or not flow.class_owners(source, reference, nominal.parent) <= ancestry
-                                for reference in references
-                            ):
-                                return True
-                            body = next(
-                                (part for part in nominal.named_children if part.type == "class_body"),
-                                nominal,
-                            )
-                            if source.reference_binding(use, name, scope=body, stop=nominal) is not None:
-                                return True
-                if not represented:
+                owners = flow.class_owners(context, kind, origin) if kind else set()
+                if self.nominal_reference_head_shadow(use, name, owners):
+                    return True
+                if not owners:
                     primitive = self.modeled_type_name(kind)
                     if primitive not in NUMBER_TYPES | {"String", "CharSequence", "Any", "Object", "Unit"}:
                         return True
@@ -9019,20 +9184,7 @@ class Analyzer:
         facts: dict[tuple[int, int, str, bool], bool | None] | None = None,
     ) -> bool:
         """Share reference signature facts within one query; never retain frame state."""
-        node = argument
-        while node is not None and node.type in {"value_argument", "parenthesized_expression"}:
-            node = (
-                _field(node, "value")
-                or _field(node, "expr")
-                or (node.named_children[-1] if node.named_children else None)
-            )
-        if node is not None and not (
-            node.type == "try_expression"
-            and self.branching(node)
-            or self.language == "kotlin"
-            and node.type in {"as_expression", "cast_expression"}
-        ):
-            node = self.unwrap(node)
+        node = self.unwrap(argument, preserve_cast=True)
         if node is None:
             return False
         if facts is None:
@@ -9049,6 +9201,14 @@ class Analyzer:
         )
         facts[key] = result
         return result
+
+    def callback_reference_results(self, closure: Any) -> tuple[Any, ...]:
+        """Share immutable result nodes without caching a classification-budget cut."""
+        if self.closure_classification_work is not None:
+            return tuple(self.closure_value_expressions(closure))
+        if closure.id not in self.callback_result_nodes:
+            self.callback_result_nodes[closure.id] = tuple(self.closure_value_expressions(closure))
+        return self.callback_result_nodes[closure.id]
 
     def library_argument_type_result(
         self,
@@ -9097,7 +9257,7 @@ class Analyzer:
         kind: str | None = None
         context, origin = self, node
         if node.type in IDENTIFIERS:
-            binding = self.reference_binding(node, self.symbol_name(self.text(node)))
+            binding = self.reference_binding(node, self.symbol_name(self.text(node)), frame=frame)
             if binding is not None:
                 origin, declared, expression = binding
                 if declared:
@@ -9127,6 +9287,12 @@ class Analyzer:
                         and owner.name in {"let", "also", "takeIf", "takeUnless", "use"}
                         and self.kotlin_scope_identity_known(owner.name, frame)
                     ):
+                        if not self.simple_callback_reference_parameter(
+                            origin, self.symbol_name(self.text(node))
+                        ):
+                            if self.native_flow is not None:
+                                self.native_flow.partial("callable argument type identity unresolved", self)
+                            return False
                         return self.library_argument_type(
                             owner.receiver,
                             frame,
@@ -9161,7 +9327,7 @@ class Analyzer:
                                     part.type == "type_arguments" for part in callee.named_children
                                 )
                                 callee = callee.named_children[0] if callee.named_children else None
-                            results = self.closure_value_expressions(origin)
+                            results = self.callback_reference_results(origin)
                             if (
                                 not explicit_types
                                 and results

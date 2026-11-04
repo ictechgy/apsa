@@ -29,11 +29,13 @@ its cut through later calls and sinks: a value the model abstained on (for
 example `constructor field mapping unavailable`) records
 `source trace abstention` when passed to a call and stays `limited`, while a
 trace cut by the trace cap (origins dropped when values merge, including at a
-sink) records `source trace budget` and stays `partial`, except in a followed
-closure's result that a call's value includes (an unresolved callee's closure,
-or a `let`/`run`/`with`/`use` block), where the cut records
-`source trace abstention`: the callee may never return that result, and an own
-call's field-round duplicates would otherwise make the idiom `partial`.
+sink) records `source trace budget` and stays `partial`. Loss of more than eight
+distinct input locations is identified before truncation and remains a budget
+inside a closure result too. A duplicate-route-only cut in a possible closure
+result can instead record `source trace abstention`: the unresolved callee may
+never return it, and an own call's field-round duplicates would otherwise make
+the idiom `partial`. This normalization also applies to duplicate routes in a
+`let`/`run`/`with`/`use` result, without demoting genuine distinct-source loss.
 Field summaries whose sources and contents stopped changing while derived trace
 identities still change record the precision reason
 `field summary fixed point unresolved`; contents still changing at the round cap
@@ -41,7 +43,7 @@ record the budget reason `field summary fixed-point budget`. Unknown calls
 re-derive trace origins each round, so a field can accumulate duplicate traces
 of the same source; whether those reach the trace cap before the round cap
 decides the kind, so the classification can depend on the round cap. A trace
-cap that is hit is a budget gap outside such a closure result; a round cap that is hit is a budget gap
+cap that is hit is a budget gap outside that duplicate-route exception; a round cap that is hit is a budget gap
 unless the field contents stopped changing in the last round. An unaffected file's empty
 diagnostic list does not make its rules globally complete.
 
@@ -152,9 +154,29 @@ general SDK return typing.
 Standard class/package heads also exclude represented values supplied by implicit
 receivers, including inherited fields. Project return spellings are resolved in
 the declaring file; incomplete ancestry cannot prove that a name is absent.
+The check includes enclosing lexical classes and their source ancestry, excluding
+inaccessible private fields. Cast subjects retain their target spelling; a simple
+positive `is` test narrows the same binding only in its true arm. This is not a
+general Kotlin smart-cast engine. Cast-preserving reference queries also traverse
+parentheses and `!!` without discarding an explicit widening cast.
+Numeric declaration and return hints require standard nominal identity before
+using numeric precedence. A source class named `Int` or an imported project alias
+does not become a standard number by its leaf name. Unknown aliases, type
+parameters and nullable numeric declarations can remain visibly conservative.
 Numeric dispatch distinguishes an absent receiver from a represented receiver
 whose kind is unproven. Consuming the latter records a precision limit rather than
 borrowing a competing helper's type, including after a bounded-out initializer.
+An unused hint with no competing resolved helper does not itself add that limit.
+Receiver-bearing names such as `run` or `async` do not prove a parameterless
+callback on an unknown dependency. Resolved source callback signatures decide
+their shape; established standard receiver facts can also preserve an outer it.
+Unknown callback bindings can record the type-identity precision reason on a
+traced it read even without a later modeled overload query. Other unresolved-call
+reasons may already limit such code; this is not exact dependency/SAM typing.
+Frame-dependent callback decisions remain query-local. Immutable accumulator
+result-node inventories are shared outside classification-budgeted walks; a
+budget-cut inventory is not retained as complete. Work guards cover both repeated
+fold consumers and repeated unknown-callback reads.
 The receiver-tower disclosure covers known numeric/String alternatives, including
 shared operation names and direct calls. Other incompatible or unknown receiver
 types are not a complete receiver-tower model. Covered alternatives record
