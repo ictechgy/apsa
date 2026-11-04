@@ -126,6 +126,15 @@ same-named bindings. Loop variables are visible only in their bodies, and when
 subjects only after their initializers. Known element callbacks bind implicit it;
 simple declared standard containers retain their element's declaration context.
 Opaque container aliases and inferred element types can remain unproven.
+Unshadowed top-level repeat binds an Int index. Proven parameterless or receiver
+callbacks preserve an outer it. Other call-argument lambdas with an implicit
+parameter of unproven identity block farther type facts; conservative findings
+can remain, with an explicit precision reason when that ambiguity is consumed.
+Callback reference facts distinguish element, accumulator and index positions.
+Accumulator initialization is used only for an identity-returning callback without
+explicit type arguments. Component patterns and explicit generic instantiation
+need independent facts. Represented cast target spellings and safe-cast nullability
+are retained by reference-signature queries.
 Discarded lambda parameters do not bind implicit it, and plain
 constructor parameters are not instance fields. Qualified own/project member
 facts use represented declarations; unavailable, inherited, static/companion or
@@ -140,6 +149,12 @@ Known Locale constants, constructors and selected static factories, and standard
 Array construction retain nominal reference kinds without treating a value or
 project type shadow as the standard class. This is a small library model, not
 general SDK return typing.
+Standard class/package heads also exclude represented values supplied by implicit
+receivers, including inherited fields. Project return spellings are resolved in
+the declaring file; incomplete ancestry cannot prove that a name is absent.
+Numeric dispatch distinguishes an absent receiver from a represented receiver
+whose kind is unproven. Consuming the latter records a precision limit rather than
+borrowing a competing helper's type, including after a bounded-out initializer.
 The receiver-tower disclosure covers known numeric/String alternatives, including
 shared operation names and direct calls. Other incompatible or unknown receiver
 types are not a complete receiver-tower model. Covered alternatives record

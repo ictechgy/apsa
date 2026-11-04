@@ -3197,6 +3197,13 @@ class Analyzer:
     def value(self, node: Any, frame: Frame) -> Value:
         if node is None or node.type in COMMENTS:
             return Value()
+        if (
+            self.opaque_implicit_it(node, frame)
+            and self.native_flow is not None
+            and frame.values.get("it") is not None
+            and frame.values["it"].traces
+        ):
+            self.native_flow.partial("callable argument type identity unresolved", self, node=node)
         if self.reuse_visited:
             visited = self.visited_values.get((node.start_byte, node.end_byte, node.type))
             if visited is not None:
@@ -5539,6 +5546,8 @@ class Analyzer:
             elif self.language == "swift" and name == "reduce":
                 positions, accumulator = (1,), 0  # Swift's accumulator starts as the initial value
             accumulator = ACCUMULATORS.get(name, accumulator)
+            if self.language == "kotlin" and self.kotlin_repeat_callback(owner, frame):
+                positions, element = (0,), Value(type_name="Int")
             if positions and owner.receiver is not None:
                 if receiver is None:
                     receiver = self.value(owner.receiver, frame)
@@ -5555,7 +5564,12 @@ class Analyzer:
         bindings: dict[str, Value] = {}
         for name, declared_type, index in parameters:
             value = element if index in positions else accumulated if index == accumulator else Value()
-            bindings[name] = Value(value.traces, value.category, declared_type or value.type_name)
+            inferred = value.type_name
+            if self.kotlin_repeat_callback(owner, frame) and not self.simple_callback_reference_parameter(
+                node, name
+            ):
+                inferred = ""
+            bindings[name] = Value(value.traces, value.category, declared_type or inferred)
         supplied = {
             name: bindings[name]
             for name, _, index in parameters
@@ -6606,6 +6620,8 @@ class Analyzer:
         node = self.unwrap(node)
         if node is None or depth > 8:
             return ""
+        if self.opaque_implicit_it(node, frame):
+            return ""
         if receiver_kinds is None:
             receiver_kinds = {}
         established = node.id, id(frame), -1
@@ -6826,9 +6842,10 @@ class Analyzer:
         receiver_kinds: dict[tuple[int, int, int], str] | None = None,
     ) -> str:
         """Receiver selection consumes bounded-out hints, so its uncertainty is visible."""
+        kind = self.known_value_type(subject, frame, depth + 1, receiver_kinds=receiver_kinds)
         if depth >= 8 and self.native_flow is not None:
             self.native_flow.partial("callable argument type identity unresolved", self)
-        return self.known_value_type(subject, frame, depth + 1, receiver_kinds=receiver_kinds)
+        return kind
 
     def numeric_receiver_kind(
         self,
@@ -6836,7 +6853,7 @@ class Analyzer:
         frame: Frame,
         depth: int = 0,
         receiver_kinds: dict[tuple[int, int, int], str] | None = None,
-    ) -> str:
+    ) -> str | None:
         current = call.node.parent
         if receiver_kinds is None:
             receiver_kinds = {}
@@ -6846,6 +6863,12 @@ class Analyzer:
             subject = self.scope_receiver(current) if current.type in CLOSURES else None
             if subject is not None:
                 kind = self.scope_subject_kind(subject, frame, depth, receiver_kinds)
+                if (
+                    not kind
+                    and call.name.rsplit(".", 1)[-1] in NUMBER_OPERATIONS
+                    and self.native_flow is not None
+                ):
+                    self.native_flow.partial("callable argument type identity unresolved", self, call=call)
                 if (
                     kind == "String"
                     and call.name.rsplit(".", 1)[-1] not in {"plus", "toString"}
@@ -6859,7 +6882,7 @@ class Analyzer:
                     )
                 return kind
             current = current.parent
-        return ""
+        return None
 
     def implicit_numeric_result_type(
         self,
@@ -6880,6 +6903,8 @@ class Analyzer:
                 self.native_flow.partial("callable argument type identity unresolved", self, call=call)
             return ""
         kind = self.numeric_receiver_kind(call, frame, depth, receiver_kinds)
+        if kind == "":
+            return ""  # an unproven represented receiver cannot borrow a helper kind
         if kind not in {"Int", "Long", "Byte", "Short", "UInt", "ULong", "Float", "Double", "Boolean"}:
             return None
         arguments: dict[int, str] = {}
@@ -7054,14 +7079,11 @@ class Analyzer:
                         break
                 elif kind not in NUMBER_TYPES - {"Boolean", "Bool"}:
                     if not kind and self.native_flow is not None:
-                        scalar_name = self.unwrap(argument)
                         self.native_flow.partial(
                             "callable argument type identity unresolved",
                             self,
                             call=call,
-                            classification_precision=scalar_name is not None
-                            and scalar_name.type in IDENTIFIERS
-                            and self.symbol_name(self.text(scalar_name)) in scalars,
+                            classification_precision=True,
                         )
                     matched = False
                     break
@@ -8376,6 +8398,89 @@ class Analyzer:
                 result.append((self.symbol_name(self.text(name)), None, self.text(kind)))
         return result
 
+    def kotlin_repeat_callback(self, owner: Call | None, frame: Frame) -> bool:
+        """Unshadowed top-level repeat supplies an Int index, independent of input text."""
+        return (
+            owner is not None
+            and owner.name == "repeat"
+            and owner.receiver is None
+            and self.kotlin_scope_identity_known("repeat", frame)
+            and self.reference_binding(owner.node, "repeat") is None
+            and (
+                self.native_flow is None
+                or not self.native_flow.imported_symbols(self, "repeat") - {"kotlin.repeat"}
+            )
+        )
+
+    def kotlin_parameterless_callback(self, owner: Call | None, frame: Frame | None = None) -> bool:
+        """Only established no-parameter/receiver callbacks leave an outer it visible."""
+        if owner is None:
+            return False
+        name = owner.name.rsplit(".", 1)[-1]
+        if (
+            owner.receiver is None
+            and len(owner.args) == 1
+            and self.native_flow is not None
+            and self.reference_binding(owner.node, name) is None
+        ):
+            targets = self.native_flow.resolve(self, owner, Value(), frame or Frame())[0]
+            if targets:
+                signatures = [target.analyzer.parameters(target.node) for target in targets]
+                if all(
+                    len(parameters) == 1
+                    and re.match(r"^(?:suspend\s+)?(?:[^()]+\.)?\(\s*\)\s*->", parameters[0][1].strip())
+                    for parameters in signatures
+                ):
+                    return True
+        if name not in {
+            "run",
+            "apply",
+            "with",
+            "buildString",
+            "runCatching",
+            "synchronized",
+            "lazy",
+            "launch",
+            "async",
+            "withContext",
+            "coroutineScope",
+            "supervisorScope",
+            "flow",
+            "sequence",
+            "produce",
+            "channelFlow",
+            "callbackFlow",
+        } or not self.kotlin_scope_identity_known(name, frame or Frame()):
+            return False
+        if self.reference_binding(owner.node, name) is not None:
+            return False
+        imported = self.native_flow.imported_symbols(self, name) if self.native_flow is not None else set()
+        return all(symbol.startswith(("kotlin.", "kotlinx.coroutines.")) for symbol in imported)
+
+    def opaque_implicit_it(self, node: Any, frame: Frame) -> bool:
+        """A call-argument lambda with unknown arity blocks a farther it type fact."""
+        if (
+            self.language != "kotlin"
+            or node.type not in IDENTIFIERS
+            or self.symbol_name(self.text(node)) != "it"
+        ):
+            return False
+        binding = self.reference_binding(node, "it")
+        if binding is None or binding[0].type not in CLOSURES or self.closure_arity(binding[0]) is not None:
+            return False
+        owner = self.closure_owner(binding[0])
+        if (
+            owner is None
+            or self.kotlin_parameterless_callback(owner, frame)
+            or self.kotlin_repeat_callback(owner, frame)
+        ):
+            return False
+        name = owner.name.rsplit(".", 1)[-1]
+        return not (
+            name in {"let", "also", "takeIf", "takeUnless", "use"} | set(ELEMENT_FUNCTIONS)
+            and self.kotlin_scope_identity_known(name, frame)
+        )
+
     def reference_binding(
         self, use: Any, name: str, *, scope: Any = None, stop: Any = None
     ) -> tuple[Any, str, Any] | None:
@@ -8399,12 +8504,7 @@ class Analyzer:
                     for symbol, kind, _ in parameters:
                         entries.setdefault(symbol, []).append((scope, kind, None))
                     owner = self.closure_owner(scope)
-                    if (
-                        self.closure_arity(scope) is None
-                        and owner is not None
-                        and owner.name
-                        in {"let", "also", "takeIf", "takeUnless", "use"} | set(ELEMENT_FUNCTIONS)
-                    ):
+                    if self.closure_arity(scope) is None and owner is not None:
                         entries.setdefault("it", []).append((scope, "", None))
                     for child in scope.named_children:
                         for symbol, expression, kind in self.reference_declarations(child):
@@ -8491,11 +8591,18 @@ class Analyzer:
                                     )
                 flow.reference_binding_cache[key] = entries
             for origin, kind, expression in reversed(flow.reference_binding_cache[key].get(name, [])):
+                if name == "it" and origin.type in CLOSURES and self.closure_arity(origin) is None:
+                    if self.kotlin_parameterless_callback(self.closure_owner(origin)):
+                        continue
                 if scope.type == "for_statement":
                     body = next(
                         (part for part in reversed(scope.named_children) if part.type not in COMMENTS), None
                     )
-                    if body is None or not body.start_byte <= use.start_byte < body.end_byte:
+                    if (
+                        body is None
+                        or not self.statement_step(body)
+                        or not body.start_byte <= use.start_byte < body.end_byte
+                    ):
                         continue
                 if (
                     scope.type == "when_expression"
@@ -8630,6 +8737,31 @@ class Analyzer:
             declared = declared.rstrip("?") + "?"
         return context, origin, declared
 
+    def simple_callback_reference_parameter(self, closure: Any, symbol: str) -> bool:
+        """Explicit generic instantiation and component patterns need independent type proof."""
+        owner = self.closure_owner(closure)
+        callee = owner.node if owner is not None else None
+        while callee is not None and callee.type == "call_expression":
+            if any(part.type == "type_arguments" for part in callee.named_children):
+                return False
+            callee = callee.named_children[0] if callee.named_children else None
+        parameters = next(
+            (
+                part
+                for part in closure.named_children
+                if part.type in {"lambda_parameters", "formal_parameters"}
+            ),
+            None,
+        )
+        if parameters is not None:
+            for pattern in _walk(parameters):
+                if pattern.type == "multi_variable_declaration" and any(
+                    part.type in IDENTIFIERS and self.symbol_name(self.text(part)) == symbol
+                    for part in _walk(pattern)
+                ):
+                    return False
+        return True
+
     def reference_element_binding(
         self, receiver: Any, frame: Frame, depth: int = 0
     ) -> tuple[Analyzer, Any, str] | None:
@@ -8679,24 +8811,140 @@ class Analyzer:
             return None
         return context, origin, element.removeprefix("out ").strip()
 
+    def implicit_reference_head_shadow(self, use: Any, name: str, frame: Frame) -> bool:
+        """Veto a class/package spelling when a represented receiver may supply the value."""
+        flow = self.native_flow
+        if flow is None:
+            return False
+        current = use.parent
+        for _ in range(64):
+            if current is None or current.type in FUNCTIONS:
+                return False
+            subject = self.scope_receiver(current) if current.type in CLOSURES else None
+            if subject is not None:
+                subject = self.unwrap(subject)
+                if subject is None:
+                    return True
+                if subject.type in TEXT_LITERALS | NUMBERS:
+                    current = current.parent
+                    continue
+                context, origin, kind = self, subject, ""
+                fallback_kind = ""
+                fallback_origin = subject
+                fallback_allowed = True
+                for _ in range(8):
+                    if origin.type in IDENTIFIERS:
+                        symbol = context.symbol_name(context.text(origin))
+                        binding = context.reference_binding(origin, symbol)
+                        retained = frame.values.get(symbol)
+                        fallback_kind = (
+                            retained.type_name
+                            if retained is not None and retained.type_name
+                            else frame.types.get(symbol, "")
+                            or (
+                                "kotlin.String"
+                                if retained is not None and retained.category == "text"
+                                else ""
+                            )
+                        )
+                        fallback_origin = origin
+                        if binding is not None:
+                            declared_at, declared, expression = binding
+                            if declared:
+                                origin, kind = declared_at, declared
+                                break
+                            if expression is not None:
+                                origin = expression
+                                continue
+                        kind = fallback_kind
+                        break
+                    call = context.call(origin)
+                    if call is not None:
+                        targets = flow.resolve(context, call, Value(), frame)[0]
+                        if len(targets) == 1 and self.declared_return(targets[0]):
+                            target = targets[0]
+                            kind, context, origin = self.declared_return(target), target.analyzer, target.node
+                            break
+                        if targets and not all(
+                            target.node.type in INITIALIZERS | {"class_declaration", "primary_constructor"}
+                            for target in targets
+                        ):
+                            fallback_allowed = False
+                            break
+                        receiver = context.key(call.receiver)
+                        constructor = (receiver + "." if receiver else "") + call.name
+                        kind = (
+                            constructor
+                            if any(
+                                flow.class_definitions.get(owner)
+                                for owner in flow.class_owners(context, constructor, origin)
+                            )
+                            else fallback_kind or constructor
+                        )
+                        break
+                    member = context.reference_member_binding(origin, frame)
+                    if member is not None:
+                        context, origin, kind = member
+                        fallback_allowed = False
+                    break
+                if not kind and fallback_allowed and fallback_kind:
+                    context, origin, kind = self, fallback_origin, fallback_kind
+                represented = False
+                for owner in flow.class_owners(context, kind, origin) if kind else ():
+                    ancestry = flow.project_ancestry(owner)
+                    for ancestor in ancestry:
+                        definitions = flow.class_definitions.get(ancestor, [])
+                        if not definitions and ancestor != owner:
+                            return True
+                        for source, nominal in definitions:
+                            represented = True
+                            references = flow.supertype_references(source, nominal)
+                            if references is None or any(
+                                not flow.class_owners(source, reference, nominal.parent)
+                                or not flow.class_owners(source, reference, nominal.parent) <= ancestry
+                                for reference in references
+                            ):
+                                return True
+                            body = next(
+                                (part for part in nominal.named_children if part.type == "class_body"),
+                                nominal,
+                            )
+                            if source.reference_binding(use, name, scope=body, stop=nominal) is not None:
+                                return True
+                if not represented:
+                    primitive = self.modeled_type_name(kind)
+                    if primitive not in NUMBER_TYPES | {"String", "CharSequence", "Any", "Object", "Unit"}:
+                        return True
+                    java = {"Int": "Integer", "Bool": "Boolean", "Any": "Object"}.get(primitive, primitive)
+                    if not any(
+                        self.library_reference_type(
+                            kind, origin, qualified, default_import=True, context=context
+                        )
+                        for qualified in {"kotlin." + primitive, "java.lang." + java}
+                    ):
+                        return True
+            current = current.parent
+        return True
+
     def standard_reference_kind(self, node: Any, frame: Frame) -> str:
         """Small standard reference facts; a class spelling must not denote a value."""
         flow = self.native_flow
         if flow is None:
             return ""
 
-        def standard(root: str, qualified: str) -> bool:
+        def unshadowed(root: str) -> bool:
             head = root.partition(".")[0].partition("<")[0]
-            if (
-                not root
-                or head in frame.values
+            return bool(root) and not (
+                head in frame.values
                 or head in frame.local_names
                 or self.reference_binding(node, head) is not None
                 or flow.module_value_present(self, head)
                 or any(flow.class_definitions.get(owner) for owner in flow.class_owners(self, head, node))
-            ):
-                return False
-            return self.library_reference_type(
+                or self.implicit_reference_head_shadow(node, head, frame)
+            )
+
+        def standard(root: str, qualified: str) -> bool:
+            return unshadowed(root) and self.library_reference_type(
                 root, node, qualified, default_import=qualified == "kotlin.Array"
             )
 
@@ -8742,6 +8990,15 @@ class Analyzer:
             return "java.util.Locale"
         if standard(root, "kotlin.Array"):
             return "kotlin.Array"
+        if call.name in {"arrayOf", "arrayOfNulls", "emptyArray"} and (
+            receiver == "kotlin"
+            and unshadowed(receiver)
+            or call.receiver is None
+            and unshadowed(call.name)
+            and self.kotlin_scope_identity_known(call.name, frame)
+            and not flow.imported_symbols(self, call.name) - {"kotlin." + call.name}
+        ):
+            return "kotlin.Array"
         if (
             call.name == "getDefault"
             and len(call.args) in {0, 1}
@@ -8769,7 +9026,12 @@ class Analyzer:
                 or _field(node, "expr")
                 or (node.named_children[-1] if node.named_children else None)
             )
-        if node is not None and not (node.type == "try_expression" and self.branching(node)):
+        if node is not None and not (
+            node.type == "try_expression"
+            and self.branching(node)
+            or self.language == "kotlin"
+            and node.type in {"as_expression", "cast_expression"}
+        ):
             node = self.unwrap(node)
         if node is None:
             return False
@@ -8806,6 +9068,18 @@ class Analyzer:
             if self.native_flow is not None:
                 self.native_flow.partial("callable argument type identity unresolved", self)
             return False
+        if self.language == "kotlin" and node.type in {"as_expression", "cast_expression"}:
+            target = node.named_children[-1] if len(node.named_children) >= 2 else None
+            if target is None or target.type == "non_nullable_type":
+                if self.native_flow is not None:
+                    self.native_flow.partial("callable argument type identity unresolved", self)
+                return False
+            spelling = self.text(target)
+            if any(
+                self.text(part).strip() == "as?" for part in node.children
+            ) and not spelling.rstrip().endswith("?"):
+                spelling = spelling.rstrip() + "?"
+            return self.library_reference_type(spelling, target, qualified, default_import=default_import)
         if node.type in BLOCKS | {"control_structure_body"}:
             values = [part for part in node.named_children if part.type not in COMMENTS]
             if values:
@@ -8839,6 +9113,14 @@ class Analyzer:
                     )
                 elif origin.type in CLOSURES:
                     owner = self.closure_owner(origin)
+                    if self.kotlin_repeat_callback(owner, frame):
+                        if self.simple_callback_reference_parameter(
+                            origin, self.symbol_name(self.text(node))
+                        ):
+                            return self.library_reference_type("kotlin.Int", origin, qualified)
+                        if self.native_flow is not None:
+                            self.native_flow.partial("callable argument type identity unresolved", self)
+                        return False
                     if (
                         owner is not None
                         and owner.receiver is not None
@@ -8863,13 +9145,55 @@ class Analyzer:
                                 "kotlin.sequences." + owner.name,
                             }
                         )
-                        element = self.reference_element_binding(owner.receiver, frame) if standard else None
+                        symbol = self.symbol_name(self.text(node))
+                        standard = standard and self.simple_callback_reference_parameter(origin, symbol)
+                        position = next(
+                            (index for name, _, index in self.closure_parameters(origin) if name == symbol),
+                            0 if self.closure_arity(origin) is None else None,
+                        )
+                        if standard and position == ACCUMULATORS.get(owner.name) and owner.args:
+                            # Initial kinds are valid only for an identity-returning
+                            # accumulator callback; widening returns/type arguments abstain.
+                            callee = owner.node
+                            explicit_types = False
+                            while callee is not None and callee.type == "call_expression":
+                                explicit_types = explicit_types or any(
+                                    part.type == "type_arguments" for part in callee.named_children
+                                )
+                                callee = callee.named_children[0] if callee.named_children else None
+                            results = self.closure_value_expressions(origin)
+                            if (
+                                not explicit_types
+                                and results
+                                and all(
+                                    result.type in IDENTIFIERS
+                                    and self.symbol_name(self.text(result)) == symbol
+                                    for result in results
+                                )
+                            ):
+                                return self.library_argument_type(
+                                    owner.args[0],
+                                    frame,
+                                    qualified,
+                                    default_import=default_import,
+                                    depth=depth + 1,
+                                    facts=facts,
+                                )
+                        element = (
+                            self.reference_element_binding(owner.receiver, frame)
+                            if standard and position in ELEMENT_FUNCTIONS.get(owner.name, ())
+                            else None
+                        )
                         if element is not None:
                             context, origin, kind = element
                         else:
                             if self.native_flow is not None:
                                 self.native_flow.partial("callable argument type identity unresolved", self)
                             return False
+                    if self.opaque_implicit_it(node, frame):
+                        if self.native_flow is not None:
+                            self.native_flow.partial("callable argument type identity unresolved", self)
+                        return False
                     # Retained per-node facts already exclude a stale enclosing parameter/field.
                 else:
                     if self.native_flow is not None:
@@ -8891,17 +9215,7 @@ class Analyzer:
             elif targets:
                 self.native_flow.partial("callable argument type identity unresolved", self)
                 return False
-            elif (
-                call is not None
-                and call.name in {"arrayOf", "arrayOfNulls", "emptyArray"}
-                and (
-                    self.key(call.receiver) == "kotlin"
-                    or call.receiver is None
-                    and self.kotlin_scope_identity_known(call.name, frame)
-                    and not self.native_flow.imported_symbols(self, call.name) - {"kotlin." + call.name}
-                )
-            ):
-                kind = "kotlin.Array"
+
         if kind is None:
             kind = self.standard_reference_kind(node, frame) or self.known_value_type(node, frame, depth + 1)
         if not kind:

@@ -92,7 +92,14 @@ credential service was contacted.
   sixteen-level bound, and receiver queries share successful facts and depth-aware
   unknowns within one frame. Ordinary unused type-hint cutoffs do not add a
   precision reason. A content classification that lacks a scalar operand's kind
-  may retain a conservative helper finding with a visible precision limit.
+  may retain a conservative helper finding with a visible precision limit,
+  including compound operand expressions. A represented numeric receiver with
+  an unproven kind also records that limit when consumed.
+  Empty-body for loops exclude the iterable from binder visibility. Callback
+  nominal facts distinguish elements, accumulators and indices; component and
+  explicit-generic patterns abstain without independent facts. Reference cast
+  queries retain target spelling and safe-cast nullability. Standard class heads
+  do not override represented implicit-receiver values or inherited fields.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and
@@ -129,8 +136,11 @@ credential service was contacted.
   did, and so do both parameters of `Map.forEach { key, value -> }` (also with
   `_`), Swift dictionary closures (`{ key, value in }`, `$1`) and a `reduce`
   accumulator; a `fold` accumulator carries the initial value and the
-  elements. For other callees an implicit `it` still refers to an enclosing
-  `it`. Declared parameter types are recorded (`entry: ZipEntry`). A Kotlin
+  elements. Unshadowed top-level repeat supplies an Int index. Established
+  parameterless/receiver callbacks keep an enclosing it; unknown call-argument
+  callback parameter identities abstain with a precision reason rather than
+  proving the enclosing binding's type. Their conservative provenance can still
+  retain an enclosing source. Declared parameter types are recorded (`entry: ZipEntry`). A Kotlin
   `when (val u = ...)` subject and Swift case patterns bind their names to
   the value they match, for their entries only (shadowing an outer name),
   also where the `when` or `switch` is a value outside closures (whose value

@@ -10534,3 +10534,1049 @@ class Notes(private val db:SQLiteDatabase) {
 
     for size in [2, 4, 6, 8, 16, 32]:
         measure(size)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "files", "expected", "uncertain", "checked"),
+    [
+        (
+            "empty-for/;",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(locale:Regex):String=captured\n"
+                    " fun scan(intent:Intent , locale:Regex) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  for(locale:java.util.Locale in listOf(java.util.Locale.US).also { with("fixed") { '
+                    "db.execSQL(format(locale=locale)) } });\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            True,
+        ),
+        (
+            "empty-for/{}",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(locale:Regex):String=captured\n"
+                    " fun scan(intent:Intent , locale:Regex) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  for(locale:java.util.Locale in listOf(java.util.Locale.US).also { with("fixed") { '
+                    "db.execSQL(format(locale=locale)) } }){}\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            True,
+        ),
+        (
+            "indexed-parameter",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(locale:Int):String=captured\n"
+                    " fun scan(intent:Intent , items:List<java.util.Locale>) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  items.forEachIndexed { locale, _ -> with("fixed") { db.execSQL(format(locale=locale)) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "array-accumulator/fold",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(args:kotlin.Array<String>):String=captured\n"
+                    " fun scan(intent:Intent , items:List<Regex>) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  items.fold(arrayOf("safe")) { args, _ -> with("fixed") { db.execSQL(format(args=args)) }; '
+                    "args }\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            False,
+            False,
+        ),
+        (
+            "array-accumulator/foldIndexed",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(args:kotlin.Array<String>):String=captured\n"
+                    " fun scan(intent:Intent , items:List<Regex>) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  items.foldIndexed(arrayOf("safe")) { _, args, _ -> with("fixed") { '
+                    "db.execSQL(format(args=args)) }; args }\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            False,
+            False,
+        ),
+        (
+            "regex-accumulator",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(locale:Regex):String=captured\n"
+                    " fun scan(intent:Intent , items:List<java.util.Locale>) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  items.fold(Regex("x")) { locale, _ -> with("fixed") { db.execSQL(format(locale=locale)) }; '
+                    "locale }\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "implicit-Locale",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    'class FakeLocale { val US:Regex=Regex("x") }\n'
+                    "class Source { val Locale:FakeLocale=FakeLocale() }\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(locale:Regex):String=captured\n"
+                    " fun scan(intent:Intent,source:Source) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  with(source) { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "kotlin-method",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    'class FakeKotlin { fun arrayOf():Regex=Regex("x") }\n'
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(args:Regex):String=captured\n"
+                    " fun scan(intent:Intent,kotlin:FakeKotlin) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  with("fixed") { db.execSQL(format(args=kotlin.arrayOf())) }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "kotlin-callable-property",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    'class Box { val arrayOf = { Regex("x") } }\n'
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(args:Regex):String=captured\n"
+                    " fun scan(intent:Intent,kotlin:Box) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  with("fixed") { db.execSQL(format(args=kotlin.arrayOf())) }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "ordinary-callable-property",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    'class Box { val arrayOf = { Regex("x") } }\n'
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(args:Regex):String=captured\n"
+                    " fun scan(intent:Intent,factory:Box) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  with("fixed") { db.execSQL(format(args=factory.arrayOf())) }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "classification/Int/False/n+1",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun minus(other:Int):String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  val s=Markup.render { b -> b.section { val n=q.indexOf("x").coerceAtLeast(0); q.length.run '
+                    '{ minus(n+1) } }; b.append("SELECT 1"); Unit }\n'
+                    "  db.execSQL(s)\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            True,
+            False,
+        ),
+        (
+            "classification/Int/False/-n",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun minus(other:Int):String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  val s=Markup.render { b -> b.section { val n=q.indexOf("x").coerceAtLeast(0); q.length.run '
+                    '{ minus(-n) } }; b.append("SELECT 1"); Unit }\n'
+                    "  db.execSQL(s)\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            True,
+            False,
+        ),
+        (
+            "classification/Int/False/n.coerceAtLeast(0)",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun minus(other:Int):String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  val s=Markup.render { b -> b.section { val n=q.indexOf("x").coerceAtLeast(0); q.length.run '
+                    '{ minus(n.coerceAtLeast(0)) } }; b.append("SELECT 1"); Unit }\n'
+                    "  db.execSQL(s)\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            True,
+            False,
+        ),
+        (
+            "classification/Int/True/n+1",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun minus(other:Int):String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  val s=Markup.render { b -> b.section { val n:Int=q.indexOf("x").coerceAtLeast(0); '
+                    'q.length.run { minus(n+1) } }; b.append("SELECT 1"); Unit }\n'
+                    "  db.execSQL(s)\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            True,
+            False,
+        ),
+        (
+            "classification/Int/True/-n",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun minus(other:Int):String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  val s=Markup.render { b -> b.section { val n:Int=q.indexOf("x").coerceAtLeast(0); '
+                    'q.length.run { minus(-n) } }; b.append("SELECT 1"); Unit }\n'
+                    "  db.execSQL(s)\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            True,
+            False,
+        ),
+        (
+            "classification/Int/True/n.coerceAtLeast(0)",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun minus(other:Int):String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  val s=Markup.render { b -> b.section { val n:Int=q.indexOf("x").coerceAtLeast(0); '
+                    'q.length.run { minus(n.coerceAtLeast(0)) } }; b.append("SELECT 1"); Unit }\n'
+                    "  db.execSQL(s)\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            True,
+            False,
+        ),
+        (
+            "classification/Boolean/False/n && true",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun minus(other:Boolean):String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    "  val s=Markup.render { b -> b.section { val n=q.isBlank(); q.length.run { minus(n && true) } "
+                    '}; b.append("SELECT 1"); Unit }\n'
+                    "  db.execSQL(s)\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "classification/Boolean/True/n && true",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun minus(other:Boolean):String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    "  val s=Markup.render { b -> b.section { val n:Boolean=q.isBlank(); q.length.run { minus(n && "
+                    'true) } }; b.append("SELECT 1"); Unit }\n'
+                    "  db.execSQL(s)\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "repeat-it",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(locale:Int):String=captured\n"
+                    " fun scan(intent:Intent,rows:List<java.util.Locale>) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  rows.forEach { repeat(1) { with("fixed") { db.execSQL(format(locale=it)) } } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "onSuccess-it",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(locale:Regex):String=captured\n"
+                    " fun scan(intent:Intent,rows:List<Regex>) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  rows.forEach { runCatching { java.util.Locale.US }.onSuccess { with("fixed") { '
+                    "db.execSQL(format(locale=it)) } } }\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            True,
+            False,
+        ),
+        (
+            "consumed-numeric-depth/8",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    ' private fun minus(value:Int):String="fixed"\n'
+                    " private fun trim():String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    "  val n=q.length+1+1+1+1+1+1+1\n"
+                    "  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            True,
+        ),
+        (
+            "consumed-numeric-depth/9",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    ' private fun minus(value:Int):String="fixed"\n'
+                    " private fun trim():String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    "  val n=q.length+1+1+1+1+1+1+1+1\n"
+                    "  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            True,
+        ),
+        (
+            "consumed-numeric-depth/16",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    ' private fun minus(value:Int):String="fixed"\n'
+                    " private fun trim():String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    "  val n=q.length+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1\n"
+                    "  n.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "classification/inline",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun minus(other:Int):String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    "  val s=Markup.render { b -> b.section { q.length.run { "
+                    'minus(q.indexOf("x").coerceAtLeast(0)) } }; b.append("SELECT 1"); Unit }\n'
+                    "  db.execSQL(s)\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            True,
+            False,
+        ),
+        (
+            "fold-explicit-widening",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(args:Any):String=captured\n"
+                    " fun scan(intent:Intent , items:List<Regex>) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  items.fold<Regex,Any>(arrayOf("safe")) { args,_ -> with("fixed") { '
+                    "db.execSQL(format(args=args)) }; args }\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "fold-initial-cast",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(args:Any):String=captured\n"
+                    " fun scan(intent:Intent , items:List<Regex>) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  items.fold(arrayOf("safe") as Any) { args,_ -> with("fixed") { '
+                    "db.execSQL(format(args=args)) }; args }\n"
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "element-explicit-widening",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(args:Any):String=captured\n"
+                    " fun scan(intent:Intent , items:List<kotlin.Array<String>>) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  items.forEach<Any> { args -> with("fixed") { db.execSQL(format(args=args)) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "destructured-array-element",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(args:Regex):String=captured\n"
+                    " fun scan(intent:Intent , items:List<kotlin.Array<Regex>>) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  items.forEach { (args) -> with("fixed") { db.execSQL(format(args=args)) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "cast-Locale-to-Any",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(locale:Any):String=captured\n"
+                    " fun scan(intent:Intent ) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  with("fixed") { db.execSQL(format(locale=java.util.Locale.US as Any)) }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            True,
+        ),
+        (
+            "source-parameterless",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun own(block:()->Unit) { block() }\n"
+                    " private fun format(args:Regex):String=captured\n"
+                    " fun scan(intent:Intent , items:List<kotlin.Array<String>>) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  items.forEach { own { with("fixed") { db.execSQL(format(args=it)) } } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            False,
+            False,
+        ),
+        (
+            "standard-run",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(args:Regex):String=captured\n"
+                    " fun scan(intent:Intent , items:List<kotlin.Array<String>>) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  items.forEach { run { with("fixed") { db.execSQL(format(args=it)) } } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            False,
+            False,
+        ),
+        (
+            "standard-runCatching",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " private fun format(args:Regex):String=captured\n"
+                    " fun scan(intent:Intent , items:List<kotlin.Array<String>>) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  items.forEach { runCatching { with("fixed") { db.execSQL(format(args=it)) } } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            False,
+            False,
+        ),
+        (
+            "repeat-scalar/",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " \n"
+                    " fun scan(intent:Intent ) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  q.let { repeat(1) {  db.execSQL("SELECT "+it) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            False,
+            True,
+        ),
+        (
+            "repeat-scalar/index ->",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " \n"
+                    " \n"
+                    " fun scan(intent:Intent ) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  q.let { repeat(1) { index -> db.execSQL("SELECT "+index) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            False,
+            True,
+        ),
+        (
+            "inherited-Locale",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    'class FakeLocale { val US:Regex=Regex("x") }\n'
+                    "open class Base { val Locale:FakeLocale=FakeLocale() }\n"
+                    "class Source:Base()\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(locale:Regex):String=captured\n"
+                    " fun scan(intent:Intent , source:Source) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  with(source) { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "receiver-no-shadow",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    "class Source { val other:Int=0 }\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(locale:Regex):String=captured\n"
+                    " fun scan(intent:Intent , source:Source) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  with(source) { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            False,
+            True,
+        ),
+        (
+            "text-receiver-no-shadow",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    "\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(locale:Regex):String=captured\n"
+                    " fun scan(intent:Intent ) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  q.run { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            False,
+            False,
+            True,
+        ),
+        (
+            "implicit-kotlin",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    'class Factory { fun arrayOf():Regex=Regex("x") }\n'
+                    "class Source { val kotlin:Factory=Factory() }\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(args:Regex):String=captured\n"
+                    " fun scan(intent:Intent , source:Source) {\n"
+                    '  val q=intent.getStringExtra("q") ?: ""\n'
+                    "  captured=q\n"
+                    '  with(source) { with("fixed") { db.execSQL(format(args=kotlin.arrayOf())) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "ancestry-bound-head",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    'class FakeLocale { val US:Regex=Regex("x") }\n'
+                    "open class Base39 { val Locale:FakeLocale=FakeLocale() }\n"
+                    "open class Base38:Base39()\n"
+                    "open class Base37:Base38()\n"
+                    "open class Base36:Base37()\n"
+                    "open class Base35:Base36()\n"
+                    "open class Base34:Base35()\n"
+                    "open class Base33:Base34()\n"
+                    "open class Base32:Base33()\n"
+                    "open class Base31:Base32()\n"
+                    "open class Base30:Base31()\n"
+                    "open class Base29:Base30()\n"
+                    "open class Base28:Base29()\n"
+                    "open class Base27:Base28()\n"
+                    "open class Base26:Base27()\n"
+                    "open class Base25:Base26()\n"
+                    "open class Base24:Base25()\n"
+                    "open class Base23:Base24()\n"
+                    "open class Base22:Base23()\n"
+                    "open class Base21:Base22()\n"
+                    "open class Base20:Base21()\n"
+                    "open class Base19:Base20()\n"
+                    "open class Base18:Base19()\n"
+                    "open class Base17:Base18()\n"
+                    "open class Base16:Base17()\n"
+                    "open class Base15:Base16()\n"
+                    "open class Base14:Base15()\n"
+                    "open class Base13:Base14()\n"
+                    "open class Base12:Base13()\n"
+                    "open class Base11:Base12()\n"
+                    "open class Base10:Base11()\n"
+                    "open class Base9:Base10()\n"
+                    "open class Base8:Base9()\n"
+                    "open class Base7:Base8()\n"
+                    "open class Base6:Base7()\n"
+                    "open class Base5:Base6()\n"
+                    "open class Base4:Base5()\n"
+                    "open class Base3:Base4()\n"
+                    "open class Base2:Base3()\n"
+                    "open class Base1:Base2()\n"
+                    "open class Base0:Base1()\n"
+                    "class Source:Base0()\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(locale:Regex):String=captured\n"
+                    " fun scan(intent:Intent,source:Source) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    '  with(source) { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n'
+                    " }\n"
+                    "}",
+                )
+            ],
+            True,
+            False,
+            False,
+        ),
+        (
+            "receiver-return-context",
+            [
+                (
+                    "app/Notes.kt",
+                    "package synthetic\n"
+                    "import android.content.Intent\n"
+                    "import android.database.sqlite.SQLiteDatabase\n"
+                    "import java.util.Locale\n"
+                    "import helpers.make\n"
+                    "class Notes(private val db:SQLiteDatabase) {\n"
+                    ' private var captured=""\n'
+                    " private fun format(locale:Regex):String=captured\n"
+                    " fun scan(intent:Intent) {\n"
+                    '  captured=intent.getStringExtra("q") ?: ""\n'
+                    "  val source=make()\n"
+                    '  with(source) { with("fixed") { db.execSQL(format(locale=Locale.US)) } }\n'
+                    " }\n"
+                    "}",
+                ),
+                (
+                    "helpers/Factory.kt",
+                    "package helpers\n"
+                    'class FakeLocale { val US:Regex=Regex("x") }\n'
+                    "class String { val Locale:FakeLocale=FakeLocale() }\n"
+                    "fun make():String=String()\n",
+                ),
+            ],
+            True,
+            False,
+            False,
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_review23_callback_and_reference_boundaries(case_id, files, expected, uncertain, checked):
+    report = analyze_sources(files)
+    hit = any(row["rule_id"] == "AST-SQL-CONCAT" for row in report["findings"])
+    state = next(row["state"] for row in report["coverage"] if row["rule_id"] == "AST-SQL-CONCAT")
+    reasons = report["metadata"]["native_flow"]["reasons"]
+    assert state in {"checked", "limited"}, case_id
+    if case_id == "consumed-numeric-depth/16":
+        assert state == "limited"
+        assert "callable argument type identity unresolved" in reasons
+    if hit is not expected:
+        assert uncertain and state == "limited", case_id
+        assert "callable argument type identity unresolved" in reasons, case_id
+    if checked:
+        assert state == "checked" and not reasons, case_id
