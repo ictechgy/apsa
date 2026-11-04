@@ -708,6 +708,19 @@ NUMBER_OPERATIONS = {
     "coerceAtMost",
     "coerceIn",
 }
+NUMBER_SIGNATURES = {
+    "toString": ((), ("radix",)),
+    "plus": (("other",),),
+    "minus": (("other",),),
+    "times": (("other",),),
+    "div": (("other",),),
+    "rem": (("other",),),
+    "inc": ((),),
+    "dec": ((),),
+    "coerceAtLeast": (("minimumValue",),),
+    "coerceAtMost": (("maximumValue",),),
+    "coerceIn": (("minimumValue", "maximumValue"), ("range",)),
+}
 # Declared types of a number or a flag (`val n: Int = repo.count(q)`, Swift `let ok: Bool`).
 NUMBER_TYPES = {
     "Int",
@@ -1821,7 +1834,7 @@ class Analyzer:
         self.closure_written: dict[tuple[int, int], Value] = {}
         self.closure_write_nodes: dict[tuple[int, int], tuple[Any, ...]] = {}
         self.implicit_formats: dict[tuple[int, int], Any] = {}
-        self.string_builder_results: set[tuple[int, int]] = set()
+        self.string_builder_results: dict[tuple[int, int], tuple[Any, ...]] = {}
         # The value each assignment inside a followed closure stored (by assignment span).
         self.assigned_values: dict[tuple[int, int], Value] = {}
         # result_position and statement_position per node: structural, so kept for the file.
@@ -3340,6 +3353,9 @@ class Analyzer:
             else:
                 receiver = self.value(call.receiver, frame)
                 args = [self.value(arg, frame) for arg in call.args]
+            string_receiver = self.implicit_string_receiver(call, frame)
+            if string_receiver is not None:
+                receiver = string_receiver
             database = self.sqlite_database_call(call, receiver, frame)
             follow, certain, returns, prefers, record = (
                 self.opener_follow,
@@ -3372,7 +3388,7 @@ class Analyzer:
                     # A source callable of that name may run instead; the flow cannot follow it.
                     self.native_flow.partial("opener receiver identity unresolved", self, call=call)
                 return Value(type_name=SQLITE_DATABASE)
-            elif self.native_flow is not None:
+            elif self.native_flow is not None and string_receiver is None:
                 result = self.native_flow.call(self, call, frame, receiver, args)
                 if result is not None:
                     return result
@@ -3389,10 +3405,17 @@ class Analyzer:
                 for builder in reversed(self.closure_effects):
                     if not builder.implicit:
                         continue
-                    if bound is not builder.outer_this or not builder.receiver_types:
+                    if (
+                        bound is not builder.outer_this and not self.outer_builder_replace(call, frame)
+                    ) or not builder.receiver_types:
                         break  # a nearer scope rebind or unknown DSL ends the known receiver tower
                     if self.builder_transform(call, builder.receiver_types, frame):
-                        receiver = _union(builder.values)
+                        receiver = (
+                            Value()
+                            if call.name.rsplit(".", 1)[-1] == "toString"
+                            and not builder.receiver_types & {"Appendable", "MutableCollection", "MutableMap"}
+                            else _union(builder.values)
+                        )
                         break
             if call.name == "getIntent" and (call.receiver is None or self.text(call.receiver) == "this"):
                 return self.source(node, "Activity Intent", "intent")
@@ -4605,6 +4628,12 @@ class Analyzer:
             else:
                 frame.constants.pop(name, None)
             value = self.reused(expression, frame)
+            inferred = self.known_value_type(expression, frame) if self.language == "kotlin" else ""
+            inferred = (
+                inferred
+                if inferred in {"Int", "Long", "UInt", "ULong", "Float", "Double", "Boolean", "Regex"}
+                else ""
+            )
             if self.closure_depth and expression is not None:
                 # Content classification happens later in the enclosing frame. Preserve
                 # computed initializers while this closure's own names are still bound.
@@ -4618,11 +4647,15 @@ class Analyzer:
             frame.values[name] = Value(
                 value.traces,
                 value.category,
-                type_name or value.type_name or ("String" if literal else ""),
+                type_name or inferred or value.type_name or ("String" if literal else ""),
                 value.identity,
             )
             if type_name:
                 frame.types[name] = type_name
+            elif inferred:
+                frame.types[name] = inferred
+            else:
+                frame.types.pop(name, None)
             if self.closure_effects and expression is not None:
                 self.alias_supplied(name, expression, frame)
             return
@@ -5064,6 +5097,7 @@ class Analyzer:
                     and not (
                         self.native_flow is not None
                         and self.native_flow.resolve(self, call, Value(), frame)[0]
+                        and self.implicit_string_receiver(call, frame) is None
                     )
                 ):
                     template = self.aliases["this"]
@@ -5078,6 +5112,11 @@ class Analyzer:
                             self.format_argument_offsets[(call.node.start_byte, call.node.end_byte)] = index
                             break
                 kept = [formatted[0], *formatted[1]] if formatted is not None else []
+                if (
+                    call.receiver is None
+                    and call.name.rsplit(".", 1)[-1] in STRING_TRANSFORMS | NUMBER_OPERATIONS
+                ):
+                    kept.extend(call.args)
                 if call.name.rsplit(".", 1)[-1] in TEMPLATE_FILLS:
                     kept.extend(self.inserted_arguments(call))
                 for argument in kept:
@@ -5601,7 +5640,7 @@ class Analyzer:
                         and self.native_flow.resolve(self, owner, Value(), frame)[0]
                     )
                 ):
-                    self.string_builder_results.add((node.start_byte, node.end_byte))
+                    self.string_builder_results[(node.start_byte, node.end_byte)] = ()
         self.visit_scope_lambda(
             node, frame, guards, conditions, "", None, optional=True, bindings=bindings, effects=effects
         )
@@ -5629,6 +5668,7 @@ class Analyzer:
             and owner is not None
             and frame.values.get("this") is not owner.outer_this
             and self.string_template_root(self.aliases["this"], frame)
+            and not self.outer_builder_replace(call, frame)
         )
         writes = (
             call.receiver is not None
@@ -6533,6 +6573,258 @@ class Analyzer:
             return False
         return True
 
+    @staticmethod
+    def modeled_type_name(spelling: str) -> str:
+        name = re.sub(r"\s+", "", spelling).rstrip("?!")
+        for prefix in ("kotlin.text.", "kotlin.ranges.", "kotlin.", "java.lang.", "Swift."):
+            if name.startswith(prefix) and "." not in name[len(prefix) :]:
+                return name[len(prefix) :]
+        return name
+
+    def known_value_type(self, node: Any, frame: Frame, depth: int = 0) -> str:
+        """Small type facts used by modeled overloads, retaining visited local kinds."""
+        node = self.unwrap(node)
+        if node is None or depth > 8:
+            return ""
+        text = self.text(node).strip()
+        if node.type in TEXT_LITERALS:
+            return "String"
+        if node.type in NUMBERS:
+            integer = re.fullmatch(r"(0[xX][\da-fA-F_]+|0[bB][01_]+|[\d_]+)([uU]?[lL]?|[uU])", text)
+            if integer is not None:
+                digits, suffix = integer.groups()
+                digits = digits.replace("_", "")
+                if digits.lower() in {"", "0x", "0b"} or len(digits) > 64:
+                    return ""  # malformed or out-of-range literal, not a modeled primitive kind
+                number = int(
+                    digits,
+                    16 if digits.lower().startswith("0x") else 2 if digits.lower().startswith("0b") else 10,
+                )
+                unsigned = "u" in suffix.lower()
+                long = "l" in suffix.lower() or number > (2**32 - 1 if unsigned else 2**31 - 1)
+                return ("ULong" if long else "UInt") if unsigned else ("Long" if long else "Int")
+            return "Float" if text.lower().endswith("f") else "Double"
+        if text in {"true", "false"}:
+            return "Boolean"
+        if node.type in IDENTIFIERS:
+            name = self.symbol_name(text)
+            declared = frame.types.get(name, "") or self.parameter_types.get(name, "")
+            if not declared and name not in frame.local_names:
+                declared = self.field_types.get(name, "")
+            if declared:
+                return self.modeled_type_name(declared)
+        call = self.call(node)
+        if call is not None:
+            targets = []
+            if self.native_flow is not None:
+                targets = self.native_flow.resolve(self, call, Value(), frame)[0]
+                returns = {self.modeled_type_name(self.declared_return(target)) for target in targets}
+                if len(returns) == 1 and "" not in returns:
+                    return returns.pop()
+                if targets and all(target.analyzer.string_function_header(target.node) for target in targets):
+                    return "String"
+                if (
+                    not targets
+                    and call.receiver is None
+                    and call.name in {"minOf", "maxOf"}
+                    and call.name not in frame.values
+                    and call.name not in frame.local_names
+                    and not self.native_flow.imported_symbols(self, call.name)
+                    and not self.native_flow.module_value_present(self, call.name)
+                ):
+                    kinds = {self.known_value_type(argument, frame, depth + 1) for argument in call.args}
+                    if len(kinds) == 1 and kinds <= NUMBER_TYPES - {"Boolean", "Bool"}:
+                        return kinds.pop()
+            name = call.name.rsplit(".", 1)[-1]
+            if name in {"Regex", "toRegex"} and not targets:
+                imported = (
+                    self.native_flow.imported_symbols(self, name) if self.native_flow is not None else set()
+                )
+                shadowed = call.receiver is None and (
+                    name in frame.values
+                    or name in frame.local_names
+                    or self.native_flow is not None
+                    and self.native_flow.module_value_present(self, name)
+                )
+                if (
+                    not shadowed
+                    and not imported - {"kotlin.text." + name}
+                    and (name != "Regex" or call.receiver is None or self.key(call.receiver) == "kotlin.text")
+                ):
+                    return "Regex"
+            if call.name == "String" or (
+                call.name.rsplit(".", 1)[-1] == "toString" and call.receiver is not None and not call.args
+            ):
+                return "String"
+        if self.flag_or_number(node):
+            navigation = self.navigation(node)
+            name = (
+                call.name.rsplit(".", 1)[-1]
+                if call is not None
+                else navigation[1]
+                if navigation is not None
+                else ""
+            )
+            conversion = {
+                "toInt": "Int",
+                "toIntOrNull": "Int",
+                "toLong": "Long",
+                "toLongOrNull": "Long",
+                "toDouble": "Double",
+                "toFloat": "Float",
+            }.get(name)
+            if conversion:
+                return conversion
+            return (
+                "Int"
+                if name
+                in {
+                    "length",
+                    "size",
+                    "count",
+                    "lastIndex",
+                    "indexOf",
+                    "lastIndexOf",
+                    "indexOfFirst",
+                    "indexOfLast",
+                    "compareTo",
+                    "compareToIgnoreCase",
+                    "hashCode",
+                }
+                else "Boolean"
+            )
+        parts = [part for part in node.named_children if part.type not in COMMENTS]
+        if node.type in {"unary_expression", "prefix_expression"} and text.startswith(("+", "-")) and parts:
+            kind = self.known_value_type(parts[-1], frame, depth + 1)
+            if kind in {"Int", "Long", "Float", "Double", "Short", "Byte"}:
+                return "Int" if kind in {"Short", "Byte"} else kind
+        if len(parts) == 2 and self.operator_between(parts[0], parts[1]) in {b"..", b"..<"}:
+            kinds = {self.known_value_type(part, frame, depth + 1) for part in parts}
+            if len(kinds) == 1 and kinds <= {"Int", "Long", "UInt", "ULong"}:
+                return kinds.pop() + "Range"
+        operands = self.arithmetic_operands(node)
+        if operands is not None:
+            kinds = {self.known_value_type(part, frame, depth + 1) for part in operands}
+            if kinds and kinds <= NUMBER_TYPES - {"Boolean", "Bool"}:
+                return next(
+                    (kind for kind in ("Double", "Float", "ULong", "Long", "UInt", "Int") if kind in kinds),
+                    "Int",
+                )
+        # Type hints read retained facts; they must not evaluate a member chain
+        # again just because its initializer has already been visited.
+        value = self.visited_values.get((node.start_byte, node.end_byte, node.type))
+        if value is None and node.type in IDENTIFIERS:
+            value = frame.values.get(self.symbol_name(text))
+        value = value or Value()
+        return self.modeled_type_name(value.type_name) or ("String" if value.category == "text" else "")
+
+    def numeric_operation_applicable(self, call: Call, frame: Frame, scalars: frozenset[str]) -> bool:
+        """Required arities, labels and known argument kinds before numeric precedence."""
+        name = call.name.rsplit(".", 1)[-1]
+        if (
+            name in frame.local_names
+            or self.native_flow is not None
+            and any(
+                self.native_flow.lexical_function(target.node)
+                for target in self.native_flow.resolve(self, call, Value(), frame)[0]
+            )
+        ):
+            return False
+        receiver_kind = ""
+        current = call.node.parent
+        for _ in range(64):
+            if current is None or current.type in FUNCTIONS:
+                break
+            subject = self.scope_receiver(current) if current.type in CLOSURES else None
+            if subject is not None:
+                receiver_kind = self.known_value_type(subject, frame)
+                break
+            current = current.parent
+        if (
+            receiver_kind == "Boolean"
+            and (name != "toString" or call.args)
+            or receiver_kind == "String"
+            and (name not in {"toString", "plus"} or name == "toString" and call.args)
+            or name == "toString"
+            and call.args
+            and receiver_kind in {"Float", "Double"}
+        ):
+            return False
+        for parameters in NUMBER_SIGNATURES.get(name, ()):
+            if len(parameters) != len(call.args):
+                continue
+            used: set[str] = set()
+            matched = True
+            for argument in call.args:
+                label = self.argument_label(argument)
+                slot = label or next((parameter for parameter in parameters if parameter not in used), "")
+                if slot not in parameters or slot in used:
+                    matched = False
+                    break
+                used.add(slot)
+                kind = self.known_value_type(argument, frame)
+                if kind in {"Boolean", "Bool"} or slot == "radix" and kind and kind not in {"Int", "int"}:
+                    matched = False
+                    break
+                if (
+                    name in {"coerceAtLeast", "coerceAtMost", "coerceIn"}
+                    and slot != "range"
+                    and receiver_kind in {"Byte", "Short", "Int", "Long", "UInt", "ULong", "Float", "Double"}
+                    and kind
+                    and kind != receiver_kind
+                ):
+                    # Integer literals adapt to an expected integral kind; an Int
+                    # variable or a Long-suffixed literal does not narrow with it.
+                    literal = self.text(self.unwrap(argument)).replace("_", "").strip()
+                    integer = re.fullmatch(r"([+-]?)(0[xX][\da-fA-F]+|0[bB][01]+|\d+)([uU]?)", literal)
+                    bits = {"Byte": 8, "Short": 16, "Int": 32, "Long": 64, "UInt": 32, "ULong": 64}
+                    adaptable = False
+                    if integer is not None and receiver_kind in bits:
+                        sign, digits, suffix = integer.groups()
+                        unsigned = receiver_kind.startswith("U")
+                        if bool(suffix) is unsigned and not (unsigned and sign == "-") and len(digits) <= 64:
+                            number = int(
+                                digits,
+                                16
+                                if digits.lower().startswith("0x")
+                                else 2
+                                if digits.lower().startswith("0b")
+                                else 10,
+                            )
+                            number = -number if sign == "-" else number
+                            width = bits[receiver_kind]
+                            adaptable = (
+                                0 <= number < 2**width
+                                if unsigned
+                                else -(2 ** (width - 1)) <= number < 2 ** (width - 1)
+                            )
+                    if not adaptable:
+                        matched = False
+                        break
+                if (
+                    name in {"plus", "minus", "times", "div", "rem"}
+                    and receiver_kind in {"Byte", "Short", "Int", "Long", "UInt", "ULong", "Float", "Double"}
+                    and kind in {"Byte", "Short", "Int", "Long", "UInt", "ULong", "Float", "Double"}
+                    and receiver_kind.startswith("U") != kind.startswith("U")
+                ):
+                    matched = False
+                    break
+                if slot == "range":
+                    if (
+                        receiver_kind not in {"Int", "Long", "UInt", "ULong"}
+                        or kind != receiver_kind + "Range"
+                    ):
+                        matched = False
+                        break
+                elif kind not in NUMBER_TYPES - {"Boolean", "Bool"} and not self.scalar_result(
+                    argument, scalars, frame
+                ):
+                    matched = False
+                    break
+            if matched:
+                return True
+        return False
+
     def project_transform_result(
         self, call: Call | None, frame: Frame | None, scalars: frozenset[str] = frozenset()
     ) -> tuple[bool, bool] | None:
@@ -6549,13 +6841,9 @@ class Analyzer:
             or call.name.rsplit(".", 1)[-1] not in STRING_TRANSFORMS | NUMBER_OPERATIONS
         ):
             return None
-        name = call.name.rsplit(".", 1)[-1]
-        if (
-            "this" in scalars
-            and name in NUMBER_OPERATIONS
-            and len(call.args) <= (2 if name == "coerceIn" else 1)
-            and all(self.scalar_result(argument, scalars, frame) for argument in call.args)
-        ):
+        if self.implicit_string_receiver(call, frame) is not None:
+            return None
+        if "this" in scalars and self.numeric_operation_applicable(call, frame, scalars):
             return None  # keep an applicable numeric receiver operation ahead of an outer helper
         targets = self.native_flow.resolve(self, call, Value(), frame)[0]
         if not targets:
@@ -6563,8 +6851,7 @@ class Analyzer:
         value = self.reused(call.node, frame)
         text = any(target.analyzer.string_function_header(target.node) for target in targets)
         numeric = all(
-            re.sub(r"\s+", "", self.declared_return(target)).rstrip("?!").rsplit(".", 1)[-1] in NUMBER_TYPES
-            for target in targets
+            self.modeled_type_name(self.declared_return(target)) in NUMBER_TYPES for target in targets
         )
         return bool(text and value.traces), numeric or not value.traces
 
@@ -6643,7 +6930,10 @@ class Analyzer:
                 and call.name.rsplit(".", 1)[-1] in NUMBER_OPERATIONS
                 and "this" in scalars
             ):
-                pending.extend(call.args)
+                if frame is not None and not self.numeric_operation_applicable(call, frame, scalars):
+                    return False
+                if frame is None:
+                    pending.extend(call.args)
                 continue
             numbers = self.number_values(current)
             if numbers is not None:
@@ -6696,7 +6986,11 @@ class Analyzer:
                 return False
             name = call.name.rsplit(".", 1)[-1]
             if call.receiver is None and "this" in scalars and name in STRING_TRANSFORMS:
-                if self.native_flow is not None and self.native_flow.resolve(self, call, Value(), frame)[0]:
+                if (
+                    self.native_flow is not None
+                    and self.native_flow.resolve(self, call, Value(), frame)[0]
+                    and self.implicit_string_receiver(call, frame) is None
+                ):
                     return False  # a resolved project helper does not transform numeric this
                 return not (
                     name in TEMPLATE_FILLS
@@ -7520,6 +7814,13 @@ class Analyzer:
                         for closure in builders
                     ):
                         return True
+                    for closure in builders:
+                        for expression in self.string_builder_results[(closure.start_byte, closure.end_byte)]:
+                            local_data, local_results, local_scalars = self.closure_value_context(
+                                closure, frame, data, results, scalars, expression
+                            )
+                            if self.outer_input(expression, frame, local_data, local_results, local_scalars):
+                                return True
                     continue  # buildString returns its written text, not append's receiver or capacity
                 implicit_result = (
                     call.receiver is None
@@ -7592,6 +7893,10 @@ class Analyzer:
             local_data, local_results, local_scalars = self.closure_value_context(
                 closure, frame, data, results, scalars, expression
             )
+            if self.reused(expression, frame).traces and self.value_result(
+                expression, frame, data=local_data, results=local_results, scalars=local_scalars
+            ):
+                return True
             if self.outer_input(expression, frame, local_data, local_results, local_scalars):
                 return True
         return False
@@ -7648,6 +7953,76 @@ class Analyzer:
         # A `with`/`apply` around the builder call bound `this` before the lambda: still its own.
         return owner is not None and frame.values.get("this") is owner.outer_this
 
+    def outer_builder_replace(self, call: Call, frame: Frame) -> bool:
+        """A rebound String cannot receive StringBuilder.replace(Int, Int, String)."""
+        return bool(
+            call.name.rsplit(".", 1)[-1] == "replace"
+            and len(call.args) == 3
+            and "this" in self.aliases
+            and self.string_template_root(self.aliases["this"], frame)
+            and self.builder_transform(call, frozenset({"StringBuilder"}), frame)
+        )
+
+    def implicit_string_receiver(self, call: Call, frame: Frame) -> Value | None:
+        """Identified String reads precede an outer class or top-level helper.
+
+        Local callables and project extensions keep their own dispatch. This recognizes
+        no-argument reads, String.plus and vararg String.format rather than assuming
+        arbitrary same-named calls are applicable.
+        """
+        name, count = call.name.rsplit(".", 1)[-1], len(call.args)
+        if (
+            self.language != "kotlin"
+            or call.receiver is not None
+            or not (
+                count == 0
+                and name
+                in {
+                    "toString",
+                    "trim",
+                    "trimStart",
+                    "trimEnd",
+                    "lowercase",
+                    "uppercase",
+                    "trimIndent",
+                    "trimMargin",
+                    "reversed",
+                    "orEmpty",
+                    "lines",
+                }
+                or name == "plus"
+                and count == 1
+                or name == "format"
+            )
+        ):
+            return None
+        if name in frame.local_names:
+            return None
+        if self.native_flow is not None:
+            targets = self.native_flow.resolve(self, call, Value(), frame)[0]
+            if any(self.native_flow.lexical_function(target.node) for target in targets):
+                return None
+            if self.project_extension(name, call, {"String", "CharSequence"}):
+                return None
+        node = call.node.parent
+        for _ in range(64):
+            if node is None or node.type in FUNCTIONS:
+                return None
+            if node.type in CLOSURES:
+                subject = self.scope_receiver(node)
+                if subject is not None:
+                    owner = self.closure_owner(node)
+                    if owner is None or not self.kotlin_scope_identity_known(owner.name, frame):
+                        return None
+                    kind = self.known_value_type(subject, frame)
+                    if kind == "String" or not kind and self.string_template_root(subject, frame):
+                        return self.reused(subject, frame)
+                    return None
+                if not self.closure_parameters(node):
+                    return None  # an unknown nearer DSL may supply its own receiver
+            node = node.parent
+        return None
+
     def builder_transform(self, call: Call, types: frozenset[str], frame: Frame) -> bool:
         """Whether a known builder can receive this modeled transform/overload.
 
@@ -7691,21 +8066,15 @@ class Analyzer:
             return 1 <= count <= 2
         if name not in {"replace", "replaceFirst"} or count < 2:
             return False
-        first = self.unwrap(call.args[0])
+        pattern = next(
+            (argument for argument in call.args if self.argument_label(argument) == "regex"),
+            call.args[0],
+        )
+        first = self.unwrap(pattern)
         if first is None:
             return False
-        value = self.reused(first, frame)
-        kind = value.type_name
-        if first.type in IDENTIFIERS:
-            local = self.symbol_name(self.text(first))
-            kind = frame.types.get(local, "") or self.parameter_types.get(local, "") or kind
-        kind = kind.rstrip("?").rsplit(".", 1)[-1]
-        constructor = self.call(first)
-        regex = (
-            self.argument_label(call.args[0]) == "regex"
-            or kind == "Regex"
-            or (constructor is not None and constructor.name.rsplit(".", 1)[-1] in {"Regex", "toRegex"})
-        )
+        kind = self.known_value_type(first, frame)
+        regex = kind == "Regex" or not kind and self.argument_label(pattern) == "regex"
         if regex:
             return count == 2
         # JVM StringBuilder.replace(start, end, text) is a member; the two-String
@@ -8712,6 +9081,10 @@ class Analyzer:
                 self.reuse_visited = reuse
             if last is not None:
                 values.append(last)
+                if (node.start_byte, node.end_byte) in self.string_builder_results:
+                    self.string_builder_results[(node.start_byte, node.end_byte)] = tuple(
+                        self.builder_extension_values(statements[-1])
+                    )
         if effects is None or not effects.values:
             self.closure_written.pop((node.start_byte, node.end_byte), None)
             self.closure_write_nodes.pop((node.start_byte, node.end_byte), None)
@@ -8730,6 +9103,30 @@ class Analyzer:
         if len(values) == 1:
             return values[0]
         return _union(values) if values else Value()
+
+    def builder_extension_values(self, node: Any) -> list[Any]:
+        """Final library-call leaves whose value supplements explicit builder writes."""
+        pending, values = [node], []
+        while pending:
+            current = pending.pop()
+            if current is None or current.type in STATEMENT_ONLY or self.declaration(current):
+                continue
+            if current.type in {"block", "statements", "control_structure_body"}:
+                pending.append(self.last_statement(current))
+                continue
+            branches = self.branch_bodies(current)
+            if branches is not None:
+                pending.extend(branches)
+                continue
+            root = self.chain_root(current)
+            if (
+                root is not None
+                and root.name not in NON_WRITERS
+                and (root.name[:1].islower() or root.name[:1] == "_")
+                and not self.implicit_write(root, current)
+            ):
+                values.append(current)
+        return values
 
     def builder_result(self, node: Any, frame: Frame) -> Value | None:
         """block_result for a standard builder's final statement: a value that is a call on an
@@ -9497,7 +9894,7 @@ class Analyzer:
         self.closure_written = {}
         self.closure_write_nodes = {}
         self.implicit_formats = {}
-        self.string_builder_results = set()
+        self.string_builder_results = {}
         self.guarded_paths = set()
         self.unguarded_paths = set()
         enclosing = function.parent

@@ -7062,3 +7062,416 @@ def test_review16_native_calls_restore_closure_provenance(body: str, expected: b
     )
     report = analyze_sources([("app/Notes.kt", source)])
     assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize("method", ["replace", "replaceFirst"])
+@pytest.mark.parametrize(
+    "arguments", ['Regex("a"), "b"', 'regex=Regex("a"), replacement="b"', 'replacement="b", regex=Regex("a")']
+)
+@pytest.mark.parametrize("inner_input", [True, False])
+def test_review17_named_regex_arguments_keep_the_receiver(
+    method: str, arguments: str, inner_input: bool
+) -> None:
+    outer, inner = ('"safe"', "q") if inner_input else ("q", '"safe"')
+    body = f"with({outer}) {{ buildString {{ append({inner}); db.execSQL({method}({arguments})) }} }}"
+    source = REVIEW13_KOTLIN.replace(
+        'val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }',
+        body + '; val s="safe"',
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is inner_input, report["findings"]
+
+
+@pytest.mark.parametrize("initializer", ["0", "minOf(0, 1)", "maxOf(0, 0)", "0 + 0"])
+@pytest.mark.parametrize("inner_input", [True, False])
+def test_review17_inferred_integer_indices_select_the_builder(initializer: str, inner_input: bool) -> None:
+    outer, inner = ('"safe"', "q") if inner_input else ("q", '"safe"')
+    body = f'with({outer}) {{ buildString {{ append({inner}); val idx={initializer}; db.execSQL(replace(idx,0,"fixed").toString()) }} }}'
+    source = REVIEW13_KOTLIN.replace(
+        'val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }',
+        body + '; val s="safe"',
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is inner_input, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ('val s2=buildString { with("safe") { replace(0,0,q) } }; db.execSQL(s2)', True),
+        ('val s2=buildString { with("safe") { replace(0,0,"fixed") } }; db.execSQL(s2)', False),
+        ('val s2=buildString { with("safe") { replace("a",q) } }; db.execSQL(s2)', False),
+        (
+            'with("safe") { buildString { append(q); with("safe") { db.execSQL(replace(0,0,"fixed").toString()) } } }',
+            True,
+        ),
+    ],
+)
+def test_review17_inapplicable_string_does_not_hide_builder_replace(body: str, expected: bool) -> None:
+    source = REVIEW13_KOTLIN.replace(
+        'val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }',
+        body + '; val s="safe"',
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "write", ["sb.append(VALUE)", "Fill.into(sb, VALUE)", "sb.append(buildString { append(VALUE) })"]
+)
+@pytest.mark.parametrize(
+    "value, expected", [("row", False), ("row.trim()", True), ("row.length", False), ("this.saved", True)]
+)
+def test_review17_written_content_keeps_transforms_and_qualified_fields(
+    write: str, value: str, expected: bool
+) -> None:
+    body = (
+        "val row=repo.find(q); (Ext.wrap(row) { sb -> "
+        + write.replace("VALUE", value)
+        + ' }+"x").escapeSql()'
+    )
+    source = (
+        REVIEW13_KOTLIN.replace("REVIEW_BODY", body)
+        .replace("    fun open(", '    private var saved=""\n    fun open(')
+        .replace("val s = Markup.render", "saved=q.trim(); val s = Markup.render")
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "tail, expected",
+    [
+        ("appendSql(q)", True),
+        ('if(strict) { appendSql(q) } else { append("safe") }', True),
+        ("append(row)", False),
+        ("append(q.length)", False),
+        ('appendSql("safe")', False),
+    ],
+)
+def test_review17_builder_final_extension_contributes_its_value(tail: str, expected: bool) -> None:
+    body = "val row=repo.find(q); (row + buildString { " + tail + " }).escapeSql()"
+    report = analyze_sources([("app/Notes.kt", REVIEW13_KOTLIN.replace("REVIEW_BODY", body))])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "method, member",
+    [("toString", 'override fun toString(): String="Notes"'), ("trim", 'private fun trim(): String="safe"')],
+)
+@pytest.mark.parametrize("scope", ["q.run { CALL }", "with(q) { CALL }"])
+def test_review17_string_receiver_precedes_outer_class_helper(method: str, member: str, scope: str) -> None:
+    source = REVIEW13_KOTLIN.replace("REVIEW_BODY", scope.replace("CALL", method + "()")).replace(
+        "    fun open(", "    " + member + "\n    fun open("
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL), report["findings"]
+
+
+def test_review17_local_function_precedes_string_receiver() -> None:
+    source = REVIEW13_KOTLIN.replace("REVIEW_BODY", "q.run { trim() }").replace(
+        "val s = Markup.render", 'fun trim():String="safe"; val s = Markup.render'
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert not _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize("fill, expected", [("q", True), ("q.length", False)])
+def test_review17_standard_format_precedes_outer_helper(fill: str, expected: bool) -> None:
+    source = REVIEW13_KOTLIN.replace("REVIEW_BODY", "template.run { format(" + fill + ") }").replace(
+        "    fun open(", '    private fun format(v: Any): String="safe"\n    fun open('
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        (
+            'val row=repo.find(q); val part=(Ext.wrap(row) { sb -> sb.append(row.trim()) }+"x").escapeSql(); ping(); part',
+            True,
+        ),
+        ("val row=repo.find(q); val part=(row+buildString { appendSql(q) }).escapeSql(); ping(); part", True),
+        ("val n=0; q.length.run { val n=q; toString(n) }", True),
+    ],
+)
+def test_review17_provenance_and_inferred_types_survive_scope_changes(body: str, expected: bool) -> None:
+    source = REVIEW13_KOTLIN.replace("REVIEW_BODY", body).replace(
+        "    fun open(",
+        '    private fun ping():String="safe"\n    private fun toString(v:String):String=v\n    fun open(',
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "member, call, expected",
+    [
+        ("private fun minus():String=captured", "minus()", True),
+        ("private fun coerceAtLeast():String=captured", "coerceAtLeast()", True),
+        ("private fun coerceIn():String=captured", "coerceIn()", True),
+        ("private fun inc(v:Int):String=captured", "inc(q.length)", True),
+        ("private fun dec(v:Int):String=captured", "dec(0)", True),
+        ("private fun minus(value:Int):String=captured", "minus(value=q.length)", True),
+        ("private fun minus(other:Int):String=captured", "minus(other=q.length)", False),
+        ("private fun toString(v:Boolean):String=captured", "toString(q.isNotEmpty())", True),
+        ("private fun toString(v:Double):String=captured", "toString(1.0)", True),
+        ("private fun coerceAtLeast(v:Boolean):String=captured", "coerceAtLeast(q.isNotEmpty())", True),
+        ("private fun coerceIn(v:Int):String=captured", "coerceIn(0)", True),
+        ("private fun coerceIn(range:IntRange):String=captured", "coerceIn(range=0..2)", False),
+    ],
+)
+def test_review17_numeric_precedence_requires_a_matching_signature(
+    member: str, call: str, expected: bool
+) -> None:
+    source = (
+        REVIEW13_KOTLIN.replace("REVIEW_BODY", "q.length.run { " + call + " }")
+        .replace("    fun open(", '    private var captured=""\n    ' + member + "\n    fun open(")
+        .replace("val s = Markup.render", "captured=q; val s = Markup.render")
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize(
+    "builder, writer", [("flow", "emit"), ("sequence", "yield"), ("buildJsonObject", 'put("value",')]
+)
+def test_review17_protocol_builder_string_does_not_read_emitted_values(builder: str, writer: str) -> None:
+    statement = writer + "q)" if writer.endswith(",") else writer + "(q)"
+    body = f'with("safe") {{ {builder} {{ {statement}; db.execSQL(toString()) }} }}'
+    source = REVIEW13_KOTLIN.replace(
+        'val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }',
+        body + '; val s="safe"',
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert not _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize("inner_input", [True, False])
+@pytest.mark.parametrize("kind", ["field", "local", "typed_local", "shadow"])
+def test_review17_regex_value_types_and_shadowing(kind: str, inner_input: bool) -> None:
+    outer, inner = ('"safe"', "q") if inner_input else ("q", '"safe"')
+    declaration = (
+        'val sep:Regex=Regex("a"); '
+        if kind == "typed_local"
+        else 'val sep=Regex("a"); '
+        if kind == "local"
+        else 'val sep="a"; '
+        if kind == "shadow"
+        else ""
+    )
+    prefix = 'val sep=Regex("x"); ' if kind == "shadow" else ""
+    body = (
+        prefix
+        + f'with({outer}) {{ buildString {{ append({inner}); {declaration}db.execSQL(replace(sep,"b")) }} }}'
+    )
+    source = REVIEW13_KOTLIN.replace(
+        'val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }',
+        body + '; val s="safe"',
+    )
+    if kind == "field":
+        source = source.replace("    fun open(", '    private val sep:Regex=Regex("a")\n    fun open(')
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is (not inner_input if kind == "shadow" else inner_input), report["findings"]
+
+
+def test_review17_local_numeric_named_function_keeps_precedence() -> None:
+    source = REVIEW13_KOTLIN.replace("REVIEW_BODY", "q.length.run { minus(q.length) }").replace(
+        "val s = Markup.render", "fun minus(other:Int):String=q; val s = Markup.render"
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "member,call,expected",
+    [
+        ("private fun coerceIn(range:CharRange):String=captured", "coerceIn(range='a'..'z')", True),
+        ("private fun toString(v:Long):String=captured", "toString(q.length.toLong())", True),
+        ("private fun toString(v:Int):String=captured", "toString(v=16)", True),
+        ("private fun toString(radix:Int):String=captured", "toString(radix=16)", False),
+    ],
+)
+def test_review17_numeric_kind_and_parameter_label_controls(member: str, call: str, expected: bool) -> None:
+    source = (
+        REVIEW13_KOTLIN.replace("REVIEW_BODY", "q.length.run { " + call + " }")
+        .replace("    fun open(", '    private var captured=""\n    ' + member + "\n    fun open(")
+        .replace("val s = Markup.render", "captured=q; val s = Markup.render")
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+def test_review17_qualified_project_object_is_not_a_numeric_return() -> None:
+    source = REVIEW13_KOTLIN.replace(
+        "REVIEW_BODY", "q.length.run { val box=trim(q); box.toString() }"
+    ).replace(
+        "    fun open(",
+        "    private fun trim(v:String): other.Int = other.Int(v)\n    fun open(",
+    )
+    holder = (
+        "package other\nclass Int(val raw:kotlin.String) { override fun toString(): kotlin.String = raw }\n"
+    )
+    report = analyze_sources([("app/Notes.kt", source), ("app/Holder.kt", holder)])
+    assert _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "method,member",
+    [("trim", 'private fun trim():String="safe"'), ("toString", 'override fun toString():String="Notes"')],
+)
+@pytest.mark.parametrize("scope", ["q.run { SINK }", "with(q) { SINK }"])
+def test_review17_direct_sink_uses_the_string_before_outer_helper(
+    method: str, member: str, scope: str
+) -> None:
+    body = scope.replace("SINK", "db.execSQL(" + method + "())")
+    source = REVIEW13_KOTLIN.replace(
+        'val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }',
+        body + '; val s="safe"',
+    ).replace("    fun open(", "    " + member + "\n    fun open(")
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL), report["findings"]
+
+
+@pytest.mark.parametrize(
+    "prefix,receiver,member,call,expected",
+    [
+        (
+            "",
+            "q.length",
+            "private fun coerceAtLeast(minimumValue:Long):String=captured",
+            "coerceAtLeast(0L)",
+            True,
+        ),
+        (
+            "",
+            "q.length.toLong()",
+            "private fun coerceAtLeast(minimumValue:Int):String=captured",
+            "coerceAtLeast(0)",
+            False,
+        ),
+        (
+            "",
+            "q.length.toDouble()",
+            "private fun coerceAtLeast(minimumValue:Int):String=captured",
+            "coerceAtLeast(0)",
+            True,
+        ),
+        (
+            "val small:Byte=1; ",
+            "small",
+            "private fun coerceAtLeast(minimumValue:Int):String=captured",
+            "coerceAtLeast(0)",
+            False,
+        ),
+        (
+            "val small:Byte=1; val n=q.length; ",
+            "small",
+            "private fun coerceAtLeast(minimumValue:Int):String=captured",
+            "coerceAtLeast(n)",
+            True,
+        ),
+        (
+            "val small:Byte=1; ",
+            "small",
+            "private fun coerceAtLeast(minimumValue:Int):String=captured",
+            "coerceAtLeast(128)",
+            True,
+        ),
+        (
+            "val small:Byte=1; ",
+            "small",
+            "private fun coerceAtLeast(minimumValue:Int):String=captured",
+            "coerceAtLeast(-128)",
+            False,
+        ),
+        (
+            "val small:Byte=1; ",
+            "small",
+            "private fun coerceAtLeast(minimumValue:Int):String=captured",
+            "coerceAtLeast(-129)",
+            True,
+        ),
+        (
+            "val n:UInt=1u; ",
+            "n",
+            "private fun coerceAtLeast(minimumValue:Int):String=captured",
+            "coerceAtLeast(0)",
+            True,
+        ),
+        (
+            "val n:UInt=1u; ",
+            "n",
+            "private fun coerceAtLeast(minimumValue:UInt):String=captured",
+            "coerceAtLeast(0u)",
+            False,
+        ),
+        (
+            "val n:ULong=1uL; ",
+            "n",
+            "private fun coerceAtLeast(minimumValue:UInt):String=captured",
+            "coerceAtLeast(0u)",
+            False,
+        ),
+        (
+            "",
+            "q.length",
+            "private fun coerceAtMost(maximumValue:Long):String=captured",
+            "coerceAtMost(0L)",
+            True,
+        ),
+        (
+            "",
+            "q.length",
+            "private fun coerceIn(minimumValue:Int,maximumValue:Long):String=captured",
+            "coerceIn(0,1L)",
+            True,
+        ),
+        ("", "true", "private fun toString(radix:Int):String=captured", "toString(10)", True),
+        ("", '"${q.length}"', "private fun toString(radix:Int):String=captured", "toString(10)", True),
+        ("", "q.length.toDouble()", "private fun toString(radix:Int):String=captured", "toString(10)", True),
+        (
+            "val small:Byte=1; ",
+            "small",
+            "private fun toString(radix:Int):String=captured",
+            "toString(10)",
+            False,
+        ),
+        ("", "q.length", "private fun plus(other:Long):String=captured", "plus(1L)", False),
+        ("", "q.length", "private fun plus(other:UInt):String=captured", "plus(1u)", True),
+        ("val n:UInt=1u; ", "n", "private fun plus(other:Int):String=captured", "plus(1)", True),
+    ],
+)
+def test_review17_primitive_overloads_keep_inapplicable_helpers(
+    prefix: str, receiver: str, member: str, call: str, expected: bool
+) -> None:
+    source = (
+        REVIEW13_KOTLIN.replace("REVIEW_BODY", prefix + receiver + ".run { " + call + " }")
+        .replace("    fun open(", '    private var captured=""\n    ' + member + "\n    fun open(")
+        .replace("val s = Markup.render", "captured=q; val s = Markup.render")
+    )
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is expected, report["findings"]
+
+
+@pytest.mark.parametrize("location", ["member", "top_level"])
+@pytest.mark.parametrize("inline", [False, True])
+@pytest.mark.parametrize("inner_input", [False, True])
+def test_review17_project_regex_named_helpers_keep_their_string_return(
+    location: str, inline: bool, inner_input: bool
+) -> None:
+    outer, inner = ('"safe"', "q") if inner_input else ("q", '"safe"')
+    declaration = "" if inline else 'val sep=Regex("a"); '
+    pattern = 'Regex("a")' if inline else "sep"
+    body = f'with({outer}) {{ buildString {{ append({inner}); {declaration}db.execSQL(replace({pattern},"b")) }} }}'
+    source = REVIEW13_KOTLIN.replace(
+        'val s = Markup.render { b -> b.section { REVIEW_BODY }; b.append("SELECT 1"); Unit }',
+        body + '; val s="safe"',
+    )
+    if location == "member":
+        source = source.replace("    fun open(", "    private fun Regex(v:String):String=v\n    fun open(")
+    else:
+        source += "\nprivate fun Regex(v:String):String=v\n"
+    report = analyze_sources([("app/Notes.kt", source)])
+    assert _hit(report, SQL) is not inner_input, report["findings"]

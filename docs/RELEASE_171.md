@@ -41,15 +41,27 @@ credential service was contacted.
   receiver for applicable CharSequence operations and Regex replacements. String-only
   operations keep their outer String receiver; an intervening collection owns its
   applicable operations, while a nested scope can rebind the receiver again.
+  Named Regex replacement arguments bind by label, and inferred local numeric
+  and Regex kinds participate in these checks. A rebound String leaves the
+  three-argument StringBuilder replacement to an applicable outer builder.
+  Resolved project returns precede same-named Regex factory hints.
   Resolved project helpers keep their actual return provenance and declared return
-  kind, including names shared with numeric operations when the numeric operation
-  cannot take those arguments.
+  kind. Recognized numeric signatures check required arity, argument labels and
+  compatible known kinds before taking precedence, including signed/unsigned
+  operands, min/max bounds, adaptive integral literals and radix receivers.
+  Identified String no-argument reads,
+  `plus` and `format` precede outer class and top-level helpers, while lexical
+  local functions and project extensions retain their own dispatch.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and
   Kotlin receiverless `run`/`with` templates. Input-free and numeric-only fills
   contribute no input text. Writes into supplied objects are classified at their
-  written expressions: an earlier call's result alone remains a call result.
+  written expressions: an earlier call's result alone remains a call result;
+  its recognized String transform and an input-bearing qualified field are
+  content. A known StringBuilder's final library-call contribution is preserved
+  separately from writing members' return receivers. Stringifying a protocol
+  receiver such as FlowCollector does not read its emitted payloads.
 - A call's receiver and data arguments are bound before its closures run: a
   callback that assigns an argument variable (`evaluateJavascript(js) { js = ... }`,
   `val r = attach(name) { name = ... }`) does not change that call's argument,

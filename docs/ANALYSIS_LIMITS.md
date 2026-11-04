@@ -94,6 +94,12 @@ node span; unrelated sibling callbacks are not scanned. Candidate context querie
 also consume classification work. An exhausted limit records `closure value classification budget`
 as a budget reason and leaves native-rule coverage `partial`.
 
+Kotlin overload hints use known literal, conversion and declared return kinds,
+retained local kinds, and labels/arity for explicitly modeled operations. They
+distinguish known primitive operands and integral literal adaptation, but are
+not a compiler type system. Non-stdlib type qualifiers remain distinct in
+these hints; unknown types and arbitrary external overloads are not proven.
+
 ## Hybrid source and compiled artifacts
 
 JS, TS and Dart use token/block flow, not full compiler semantics. Analysis covers
