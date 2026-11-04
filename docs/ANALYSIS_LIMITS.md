@@ -134,8 +134,9 @@ parameter of unproven identity block farther type facts; conservative findings
 can remain, with an explicit precision reason when that ambiguity is consumed.
 Callback reference facts distinguish element, accumulator and index positions.
 Accumulator initialization is used only for an identity-returning callback without
-explicit type arguments. Component patterns and explicit generic instantiation
-need independent facts. Represented cast target spellings and safe-cast nullability
+explicit type arguments. A standard collection factory's single explicit element
+type is checked at its lexical origin, including nullability. Component patterns
+and other explicit generic instantiation need independent facts. Represented cast target spellings and safe-cast nullability
 are retained by reference-signature queries.
 Discarded lambda parameters do not bind implicit it, and plain
 constructor parameters are not instance fields. Qualified own/project member
@@ -266,6 +267,25 @@ category cannot override a rejected nullable call return; a fallback project
 return proof also requires the retained text value, so an uncertain competing
 numeric dispatch is not replaced by a helper declaration alone. Represented
 qualified calls can use a bounded receiver type fact without executing it.
+
+Function-bound type queries require the expression's lexical function to match
+the active context. Detached initializer identifiers use fresh declaration
+facts; their calls and other unrepresented expressions abstain before library
+name hints. A resolver without an active function returns an unknown target,
+never an invented root owner. When such an inferred initializer or an untyped
+callback receiver is consumed, an unresolved origin keeps the callable
+type-identity precision reason. A proven nullable origin does not gain that
+reason merely because its nonnullable query was rejected. Unlisted callbacks
+such as runningFoldIndexed/scanIndexed can therefore remain conservative with
+a visible type-identity limitation.
+
+Receiver facts retain qualified source/import identity at their declaration
+origin. An ambiguous bare nominal or a root source spelling that cannot identify
+the same owner at the use site is not rebound in the caller's namespace.
+Receiver-proof fallbacks read retained values only, check declared return
+identity first and never visit an unobserved initializer. Represented module
+identifiers are not labeled missing lexical identities; a separate actual
+module value-flow inventory gap can still remain limited.
 
 Module-value candidates retain their declaring source, import/visibility
 context and type spelling; companion member lookup retains its own property
@@ -402,3 +422,7 @@ exception handlers limit that proof. Other legacy algorithm indicators retain
 their documented method/string heuristics; none proves whole-program dataflow,
 reachability or a vulnerability. The unified parser's OS isolation and the direct
 legacy CLI's in-process limits remain distinct as described in the threat model.
+
+Detached initializer queries may retain a unique source constructor's nominal identity
+from declaration syntax when no value, import or project callable competes with it.
+This does not execute the constructor or recover its field state.

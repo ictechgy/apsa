@@ -65,6 +65,13 @@ credential service was contacted.
   receiver; consuming safe entry and assertions retain their own policy.
   Retained text cannot erase nullable return identity, and indexed/fold callback
   hints keep original parameter positions across discarded `_` slots.
+  Detached initializer hints abstain before function-bound or library-name
+  inference and keep consumed uncertainty visible. Source/import receiver
+  identities remain tied to declarations rather than same-named caller types.
+  Receiver proofs only read retained values and do not execute unvisited calls.
+  Represented module types avoid an unrelated identity reason while retaining
+  any actual value-flow limit. Unlisted callback receiver types stay visibly
+  conservative; general initializer flow remains separately scoped.
   Qualified generic roots, lexical class shadows and visible source typealiases
   are resolved in their declaring context with a bounded, cycle-safe lookup.
   Compatible String supertype extensions include `Comparable<String>`, star and

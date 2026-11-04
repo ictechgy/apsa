@@ -15632,3 +15632,711 @@ object AppExecutors { val io=Executors.newSingleThreadExecutor() }
     assert not any(row.get("parse_errors") for row in report["metadata"]["files"])
     assert _state(report, SQL) in {"limited", "partial"}
     assert "unresolved callable identity or argument signature" in _reasons(report)
+
+
+_REVIEW29_CASES = [
+    (
+        "constructor-origin-qualified-owner-collision-nullable",
+        [
+            (
+                "Caller.kt",
+                'package adv.r28.c2\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Provider { private fun label():kotlin.String?="fixed"; fun value()=label() }\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val provider=Provider()\n private fun label():Other=Other()\n class Other\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  provider.value().run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        True,
+        "constructor-boundary",
+    ),
+    (
+        "constructor-origin-qualified-owner-collision-nonnull",
+        [
+            (
+                "Caller.kt",
+                'package adv.r28.c5\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Provider { private fun label():kotlin.String="fixed"; fun value()=label() }\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val provider=Provider()\n private fun label():Other=Other()\n class Other\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  provider.value().run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        False,
+        "constructor-boundary",
+    ),
+    (
+        "foreign-inferred-function-initializer-multiline",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  Values.value.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+            (
+                "Values.kt",
+                "package synthetic\n"
+                'private fun trim():kotlin.String="fixed"\n'
+                "object Values {\n"
+                " val value=trim()\n"
+                "}\n",
+            ),
+        ],
+        False,
+        "initializer-boundary",
+    ),
+    (
+        "foreign-declared-function-initializer-multiline",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  Values.value.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+            (
+                "Values.kt",
+                "package synthetic\n"
+                'private fun trim():kotlin.String="fixed"\n'
+                "object Values { val value:kotlin.String=trim()\n"
+                "}\n",
+            ),
+        ],
+        False,
+        "checked",
+    ),
+    (
+        "foreign-literal-initializer-control-multiline",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  Values.value.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+            (
+                "Values.kt",
+                "package synthetic\n"
+                'private fun trim():kotlin.String="fixed"\n'
+                "object Values {\n"
+                ' val value="fixed"\n'
+                "}\n",
+            ),
+        ],
+        False,
+        "checked",
+    ),
+    (
+        "declaring-return-owner-simple-name",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "import external.factory\n"
+                "class Holder { fun label():kotlin.Int=0 }\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun minus(other:Int):kotlin.String=captured\n"
+                ' private fun trim():kotlin.String="fixed"\n'
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  factory().label().run { val s=minus(1); s.run { db.execSQL(trim()) } }\n"
+                " }\n"
+                "}\n",
+            ),
+            (
+                "Library.kt",
+                "package external\n"
+                'class Holder { fun label():kotlin.String="fixed" }\n'
+                "fun factory():Holder=Holder()\n",
+            ),
+        ],
+        True,
+        "checked",
+    ),
+    (
+        "declaring-return-owner-qualified-control",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "import external.factory\n"
+                "class Holder { fun label():kotlin.Int=0 }\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun minus(other:Int):kotlin.String=captured\n"
+                ' private fun trim():kotlin.String="fixed"\n'
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  factory().label().run { val s=minus(1); s.run { db.execSQL(trim()) } }\n"
+                " }\n"
+                "}\n",
+            ),
+            (
+                "Library.kt",
+                "package external\n"
+                'class Holder { fun label():kotlin.String="fixed" }\n'
+                "fun factory():external.Holder=Holder()\n",
+            ),
+        ],
+        True,
+        "checked",
+    ),
+    (
+        "foreign-source-conversion-untyped",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun minus(other:Int):kotlin.String=captured\n"
+                ' private fun trim():kotlin.String="fixed"\n'
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  Globals.label.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n"
+                " }\n"
+                "}\n",
+            ),
+            ("Globals.kt", "package synthetic\nobject Globals { val label=Helper().toInt() }\n"),
+            ("Helper.kt", 'package synthetic\nclass Helper { fun toInt():kotlin.String="fixed" }\n'),
+        ],
+        True,
+        "identity",
+    ),
+    (
+        "foreign-source-conversion-typed",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun minus(other:Int):kotlin.String=captured\n"
+                ' private fun trim():kotlin.String="fixed"\n'
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  Globals.label.run { val s=minus(1); s.run { db.execSQL(trim()) } }\n"
+                " }\n"
+                "}\n",
+            ),
+            (
+                "Globals.kt",
+                "package synthetic\nobject Globals { val label:kotlin.String=Helper().toInt() }\n",
+            ),
+            ("Helper.kt", 'package synthetic\nclass Helper { fun toInt():kotlin.String="fixed" }\n'),
+        ],
+        True,
+        "checked",
+    ),
+    (
+        "readonly-receiver-proof-inferred",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                ' private fun reset():kotlin.String? { captured="fixed"; return null }\n'
+                " private val t=reset()\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  t.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+        ],
+        True,
+        "execution-boundary",
+    ),
+    (
+        "readonly-receiver-proof-declared",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                ' private fun reset():kotlin.String? { captured="fixed"; return null }\n'
+                " private val t:kotlin.String?=reset()\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  t.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+        ],
+        True,
+        "checked",
+    ),
+    (
+        "readonly-receiver-proof-literal",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                ' private fun reset():kotlin.String? { captured="fixed"; return null }\n'
+                " private val t:kotlin.String?=null\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  t.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+        ],
+        True,
+        "checked",
+    ),
+    (
+        "represented-module-inferred-return-nullable",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                " private fun value()=label\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  value().run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+            ("Globals.kt", 'package synthetic\nvar label:kotlin.String?="fixed"\n'),
+        ],
+        True,
+        "module-value",
+    ),
+    (
+        "represented-module-inferred-return-nonnull",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                " private fun value()=label\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  value().run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+            ("Globals.kt", 'package synthetic\nvar label:kotlin.String="fixed"\n'),
+        ],
+        False,
+        "module-value",
+    ),
+    (
+        "represented-module-nullable-direct",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                "\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  label.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+            ("Globals.kt", 'package synthetic\nvar label:kotlin.String?="fixed"\n'),
+        ],
+        True,
+        "checked",
+    ),
+    (
+        "member-declaration-owner-simple",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                'class Item { fun label():kotlin.String="fixed" }\n'
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                "\n"
+                " fun scan(intent:Intent,holder:support.Holder) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  holder.box.label().run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+            (
+                "Library.kt",
+                "package support\n"
+                "class Other\n"
+                "class Item { fun label():Other=Other() }\n"
+                "class Holder(val box:Item)\n",
+            ),
+        ],
+        True,
+        "checked",
+    ),
+    (
+        "member-declaration-owner-qualified",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                'class Item { fun label():kotlin.String="fixed" }\n'
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                "\n"
+                " fun scan(intent:Intent,holder:support.Holder) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  holder.box.label().run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+            (
+                "Library.kt",
+                "package support\n"
+                "class Other\n"
+                "class Item { fun label():Other=Other() }\n"
+                "class Holder(val box:support.Item)\n",
+            ),
+        ],
+        True,
+        "checked",
+    ),
+    (
+        "initializer-copy-caller-parameter-n",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "class Other\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                ' private val n:kotlin.String="fixed"\n'
+                " private val m=n\n"
+                " fun scan(intent:Intent,n:Other) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  m.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+        ],
+        False,
+        "checked",
+    ),
+    (
+        "initializer-copy-caller-parameter-other",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "class Other\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                ' private val n:kotlin.String="fixed"\n'
+                " private val m=n\n"
+                " fun scan(intent:Intent,other:Other) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  m.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+        ],
+        False,
+        "checked",
+    ),
+    (
+        "initializer-caller-method-inferred",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "class Other\n"
+                "private fun origin():Other=Other()\n"
+                "private val value=origin()\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                ' private fun origin():kotlin.String="fixed"\n'
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  value.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+        ],
+        True,
+        "identity",
+    ),
+    (
+        "initializer-caller-method-typed",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "class Other\n"
+                "private fun origin():Other=Other()\n"
+                "private val value:Other=origin()\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                ' private fun origin():kotlin.String="fixed"\n'
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  value.run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+        ],
+        True,
+        "checked",
+    ),
+    (
+        "qualified-return-import-alias-nullable",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "import helpers.value\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  value().run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+            ("Values.kt", 'package helpers\nimport kotlin.String as Text\nfun value():Text?="fixed"\n'),
+        ],
+        True,
+        "checked",
+    ),
+    (
+        "qualified-return-import-alias-nonnull",
+        [
+            (
+                "Caller.kt",
+                "package synthetic\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "import helpers.value\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                "  value().run { db.execSQL(trim()) }\n"
+                " }\n"
+                "}\n",
+            ),
+            ("Values.kt", 'package helpers\nimport kotlin.String as Text\nfun value():Text="fixed"\n'),
+        ],
+        False,
+        "checked",
+    ),
+    (
+        "callback-slots-runningFoldIndexed",
+        [
+            (
+                "Caller.kt",
+                "package adv.r28.c19\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                " \n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                '  listOf("fixed").runningFoldIndexed("fixed") { _, _, value -> value.run { db.execSQL(trim()) }; "fixed" }\n'
+                " }\n"
+                "}\n",
+            ),
+        ],
+        False,
+        "callback-boundary",
+    ),
+    (
+        "callback-slots-scanIndexed",
+        [
+            (
+                "Caller.kt",
+                "package adv.r28.c20\n"
+                "import android.content.Intent\n"
+                "import android.database.sqlite.SQLiteDatabase\n"
+                "\n"
+                "class Notes(private val db:SQLiteDatabase) {\n"
+                ' private var captured=""\n'
+                " private fun trim():kotlin.String=captured\n"
+                " \n"
+                " fun scan(intent:Intent) {\n"
+                '  captured=intent.getStringExtra("q") ?: ""\n'
+                '  listOf("fixed").scanIndexed("fixed") { _, _, value -> value.run { db.execSQL(trim()) }; "fixed" }\n'
+                " }\n"
+                "}\n",
+            ),
+        ],
+        False,
+        "callback-boundary",
+    ),
+]
+
+
+@pytest.mark.parametrize("case,files,expected,mode", _REVIEW29_CASES, ids=[row[0] for row in _REVIEW29_CASES])
+def test_review29_receiver_fact_origin_and_readonly_proofs(case, files, expected, mode):
+    report = analyze_sources(files)
+    assert not any(row.get("parse_errors") for row in report["metadata"]["files"]), case
+    hit, state, reasons = _hit(report, SQL), _state(report, SQL), _reasons(report)
+    if mode in {"initializer-boundary", "callback-boundary"}:
+        if hit is not expected:
+            assert state in {"limited", "partial"}
+            assert "callable argument type identity unresolved" in reasons
+        return
+    if mode == "module-value":
+        assert "callable argument type identity unresolved" not in reasons
+        if hit is not expected or state != "checked":
+            assert state in {"limited", "partial"}
+            assert "receiver field inventory unavailable" in reasons
+        return
+    assert hit is expected, (case, state, reasons)
+    if mode == "identity":
+        assert state in {"limited", "partial"}
+        assert "callable argument type identity unresolved" in reasons
+    elif mode == "constructor-boundary":
+        assert "callable argument type identity unresolved" not in reasons
+        if state != "checked":
+            assert state == "limited" and reasons == ["constructor field mapping unavailable"]
+    elif mode == "execution-boundary":
+        budget = report["metadata"]["native_flow"].get("budget_reasons", [])
+        if budget:
+            assert state == "partial"
+        elif state != "checked":
+            assert reasons
+    else:
+        assert state == "checked" and not reasons, (case, state, reasons)
+
+
+def test_review29_receiver_proof_does_not_execute_unvisited_initializers(monkeypatch):
+    from mobile_audit.native_flow import NativeFlow
+    from mobile_audit.source_analysis import Analyzer
+
+    original_root, original_call = Analyzer.string_template_root, NativeFlow.call
+    active = 0
+    seen = False
+
+    def root(self, *args, **kwargs):
+        nonlocal active, seen
+        proof = kwargs.get("receiver_proof", False)
+        seen = seen or proof
+        active += int(proof)
+        before = self.native_flow.evaluations if self.native_flow is not None else 0
+        try:
+            result = original_root(self, *args, **kwargs)
+            if proof and self.native_flow is not None:
+                assert self.native_flow.evaluations == before
+            return result
+        finally:
+            active -= int(proof)
+
+    def call(self, *args, **kwargs):
+        assert not active, "receiver proof entered project execution"
+        return original_call(self, *args, **kwargs)
+
+    monkeypatch.setattr(Analyzer, "string_template_root", root)
+    monkeypatch.setattr(NativeFlow, "call", call)
+    files = next(row[1] for row in _REVIEW29_CASES if row[0] == "readonly-receiver-proof-inferred")
+    report = analyze_sources(files)
+    assert _hit(report, SQL)
+    assert seen and active == 0
+
+
+def test_review29_represented_module_type_proof_adds_no_identity_gap(monkeypatch):
+    from mobile_audit.source_analysis import Analyzer
+
+    original = Analyzer.known_value_type
+    checked = False
+
+    def query(self, node, frame, *args, **kwargs):
+        nonlocal checked
+        result = original(self, node, frame, *args, **kwargs)
+        if not checked and self.text(node) == "value()" and not self.type_query_active:
+            checked = True
+            before = self.native_flow.partial_events
+            assert not self.string_template_root(node, frame, receiver_proof=True)
+            assert self.native_flow.partial_events == before
+        return result
+
+    monkeypatch.setattr(Analyzer, "known_value_type", query)
+    files = next(row[1] for row in _REVIEW29_CASES if row[0] == "represented-module-inferred-return-nullable")
+    report = analyze_sources(files)
+    assert _hit(report, SQL)
+    assert checked

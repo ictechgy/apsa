@@ -2842,6 +2842,8 @@ class NativeFlow:
     def resolve(
         self, analyzer: Analyzer, call: Call, receiver: Value, frame: Frame
     ) -> tuple[list[Callable], bool]:
+        if analyzer.function is None:
+            return [], True
         if self.value_binding(analyzer, call, frame) is not None:
             return [], True
         if call.receiver is None and self.module_value_present(analyzer, call.name, aliases=True):
