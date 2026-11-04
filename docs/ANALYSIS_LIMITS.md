@@ -323,9 +323,13 @@ post-write object-alias conservative results are not claimed exact.
 
 Detached initializer queries may retain a unique source constructor's nominal identity
 from declaration syntax when no value, import or project callable competes with it.
-Singleton invocation is not constructor proof; private primary constructors
-outside their declaring class are rejected. This does not execute the constructor
-or recover its field state.
+Only a concrete ordinary source class with a represented no-argument constructor
+can supply this detached fact. Singleton, abstract/interface and unproven
+constructor signatures abstain; private/protected primary constructors outside
+their declaring class are rejected. No constructor or initializer is executed,
+and the fact does not recover field state. Enclosing inner receivers and outer
+companions participate in competing-head checks; an outer instance member is
+not made visible to a static nested class.
 
 Source/import nominal facts that collide with modeled builtin names retain their
 source distinction, including root-package imports and aliases. Imported aliases
@@ -341,6 +345,16 @@ project-call results outside that context may remain unknown. If an unanchored r
 builder consumes an unrepresented initializer pattern type, the precision
 detail identifies the affected call. An unrelated diagnostic elsewhere does not
 justify a missing flow.
+
+Imported typealiases grant a standard receiver kind only through their declaring
+source; an unresolved alias is not an invented nominal class. A nullable receiver
+cannot borrow non-null member precedence when a represented visible project
+extension competes with toString. Standard nullable toString and explicit safe
+calls retain their separate controls. Default-package source identity markers
+also survive copied member lookup without rebinding in the caller's namespace.
+Optional initializer hint queries suppress unconsumed receiver-identity details;
+later modeled consumers still record the actual affected call. Existing value
+ownership/effect diagnostics remain independent of those optional hints.
 
 ## Hybrid source and compiled artifacts
 

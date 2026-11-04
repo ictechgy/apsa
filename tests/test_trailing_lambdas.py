@@ -17123,6 +17123,12 @@ def test_review30_source_nominal_identity_and_constructor_competition(case, file
     hit, state, reasons = _hit(report, SQL), _state(report, SQL), _reasons(report)
     details = report["metadata"]["native_flow"].get("partial_details", [])
     if mode in {"factory-boundary", "receiver-boundary"}:
+        if state == "partial":
+            assert report["metadata"]["native_flow"].get("budget_reasons")
+        elif state == "limited":
+            assert reasons
+        else:
+            assert state == "checked" and not reasons
         if hit is not expected:
             assert state in {"limited", "partial"}
             consumer = "replace" if mode == "factory-boundary" else "toString"
@@ -17147,3 +17153,338 @@ def test_review30_source_nominal_identity_and_constructor_competition(case, file
             assert set(reasons) <= set(allowed), (case, reasons)
     else:
         assert state == "checked" and not reasons, (case, state, reasons)
+
+
+_REVIEW31_CASES = [
+    (
+        "01-protected-primary",
+        [
+            (
+                "Caller.kt",
+                'package fresh.r30.protected_primary\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\nclass Thing protected constructor() {\n fun label():kotlin.String="fixed"\n companion object { operator fun invoke():Other=Other() }\n}\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Thing()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  value.label().run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        True,
+        "limited",
+        ["nominal callable scope unavailable"],
+    ),
+    (
+        "02-required-arity",
+        [
+            (
+                "Caller.kt",
+                'package fresh.r30.required_arity\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\nclass Thing(val required:Int) {\n fun label():kotlin.String="fixed"\n companion object { operator fun invoke():Other=Other() }\n}\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Thing()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  value.label().run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        True,
+        "limited",
+        ["nominal callable scope unavailable", "constructor field mapping unavailable"],
+    ),
+    (
+        "03-public-primary-control",
+        [
+            (
+                "Caller.kt",
+                'package fresh.r30.public_primary_control\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\nclass Thing public constructor() {\n fun label():kotlin.String="fixed"\n companion object { operator fun invoke():Other=Other() }\n}\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Thing()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  value.label().run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        False,
+        "limited",
+        ["nominal callable scope unavailable"],
+    ),
+    (
+        "04-root-alias-member-origin",
+        [
+            (
+                "Caller.kt",
+                'package fresh.r30.root_consumer\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport fresh.r30.root_model.Origin\nclass StringBuilder { fun label():kotlin.String="fixed" }\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val origin=Origin()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  origin.payload.label().run { db.execSQL(trim()) }\n }\n}\n',
+            ),
+            (
+                "Origin.kt",
+                "package fresh.r30.root_model\nimport StringBuilder as RootPayload\nclass Origin { val payload=RootPayload() }\n",
+            ),
+            ("Root.kt", "class StringBuilder { fun label():StringBuilder=StringBuilder() }\n"),
+        ],
+        True,
+        "limited",
+        [
+            "object alias identity unavailable",
+            "reachable field ownership unavailable",
+            "unresolved callable identity or argument signature",
+        ],
+    ),
+    (
+        "05-standard-alias-nonnull-control",
+        [
+            (
+                "Caller.kt",
+                'package fresh.r30.standard_alias_nonnull_control\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport fresh.r30.standard_alias_nonnull_control.kinds.OriginAny as Display\nclass Other\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Display?.toString():Other=Other()\n private val label:Display="fixed"\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) }\n }\n}\n',
+            ),
+            (
+                "Kinds.kt",
+                "package fresh.r30.standard_alias_nonnull_control.kinds\ntypealias OriginAny = kotlin.Any\n",
+            ),
+        ],
+        False,
+        "limited",
+        ["unresolved callable identity or argument signature"],
+    ),
+    (
+        "06-standard-alias-nullable",
+        [
+            (
+                "Caller.kt",
+                'package fresh.r30.standard_alias_nullable\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport fresh.r30.standard_alias_nullable.kinds.OriginAny as Display\nclass Other\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Display?.toString():Other=Other()\n private val label:Display?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) }\n }\n}\n',
+            ),
+            (
+                "Kinds.kt",
+                "package fresh.r30.standard_alias_nullable.kinds\ntypealias OriginAny = kotlin.Any\n",
+            ),
+        ],
+        True,
+        "identity",
+        ["unresolved callable identity or argument signature", "callable argument type identity unresolved"],
+    ),
+    (
+        "07-unanchored-thread-consumer",
+        [
+            (
+                "Caller.kt",
+                'package fresh.r30.thread_consumer\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Notes(private val db:SQLiteDatabase) {\n private fun trim():kotlin.String="fixed"\n fun scan(intent:Intent) {\n  val q=intent.getStringExtra("q") ?: ""\n  val label:java.lang.Thread=java.lang.Thread("review-"+q)\n  label.toString().run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        True,
+        "toString-boundary",
+        [],
+    ),
+    (
+        "08-copied-regex-consumer",
+        [
+            (
+                "Caller.kt",
+                'package fresh.r30.pattern_consumer\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Notes(private val db:SQLiteDatabase) {\n private val origin="never".toRegex()\n private val mask=origin\n fun scan(intent:Intent) {\n  val q=intent.getStringExtra("q") ?: ""\n  with("fixed") {\n   buildString {\n    append(q)\n    db.execSQL(replace(mask,"unchanged"))\n   }\n  }\n }\n}\n',
+            )
+        ],
+        True,
+        "replace-boundary",
+        [],
+    ),
+    (
+        "09-readonly-initializer-copy",
+        [
+            (
+                "Caller.kt",
+                'package fresh.r30.readonly_copy\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\n\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun clearBeforeScan():kotlin.String? { captured="CLEAR"; return null }\n private val origin=clearBeforeScan()\n private val mirror=origin\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  mirror.run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        True,
+        "execution-boundary",
+        [],
+    ),
+    (
+        "10-framework-io-control",
+        [
+            (
+                "Caller.kt",
+                'package fresh.r30.normal_io_control\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nimport java.io.File\nclass Notes(private val db:SQLiteDatabase) {\n fun scan(intent:Intent) {\n  val q=intent.getStringExtra("q") ?: ""\n  val file=File("fresh-synthetic.txt")\n  db.execSQL("SELECT "+file.path.length)\n  db.execSQL(q.trim())\n }\n}\n',
+            )
+        ],
+        True,
+        "framework-control",
+        [],
+    ),
+    (
+        "claude30-01-interface-invoke",
+        [
+            (
+                "Caller.kt",
+                'package fresh.claude30.interface_case\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\ninterface Thing {\n fun label():kotlin.String="fixed"\n companion object { operator fun invoke():Other=Other() }\n}\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val value=Thing()\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  value.label().run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        True,
+        "limited",
+        ["nominal callable scope unavailable", "receiver runtime dispatch unresolved"],
+    ),
+    (
+        "claude30-02-inner-outer-inherited-value",
+        [
+            (
+                "Caller.kt",
+                'package fresh.claude30.outer_inherited\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\nclass Thing { fun label():kotlin.String="fixed" }\nopen class Base { val Thing:()->Other={Other()} }\nclass Outer:Base() {\n inner class Notes(private val db:SQLiteDatabase) {\n  private var captured=""\n  private fun trim():kotlin.String=captured\n  private val value=Thing()\n  fun scan(intent:Intent) {\n   captured=intent.getStringExtra("q") ?: ""\n   value.label().run { db.execSQL(trim()) }\n  }\n }\n}\n',
+            )
+        ],
+        True,
+        "checked",
+        [],
+    ),
+    (
+        "claude30-03-nested-outer-companion-value",
+        [
+            (
+                "Caller.kt",
+                'package fresh.claude30.nested_companion\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\nclass Thing { fun label():kotlin.String="fixed" }\nclass Outer {\n companion object { val Thing:()->Other={Other()} }\n class Notes(private val db:SQLiteDatabase) {\n  private var captured=""\n  private fun trim():kotlin.String=captured\n  private val value=Thing()\n  fun scan(intent:Intent) {\n   captured=intent.getStringExtra("q") ?: ""\n   value.label().run { db.execSQL(trim()) }\n  }\n }\n}\n',
+            )
+        ],
+        True,
+        "checked",
+        [],
+    ),
+    (
+        "claude30-04-nullable-string-project-tostring",
+        [
+            (
+                "Caller.kt",
+                'package fresh.claude30.nullable_string_project_tostring\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:kotlin.String?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        True,
+        "identity",
+        ["callable argument type identity unresolved"],
+    ),
+    (
+        "claude30-05-nullable-string-standard-control",
+        [
+            (
+                "Caller.kt",
+                'package fresh.claude30.nullable_string_standard_control\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private val label:kotlin.String?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        False,
+        "checked",
+        [],
+    ),
+    (
+        "claude30-06-nullable-int-project-tostring",
+        [
+            (
+                "Caller.kt",
+                'package fresh.claude30.nullable_int_project_tostring\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():kotlin.String=captured\n private fun Any?.toString():Other=Other()\n private val label:kotlin.Int?=null\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  label.toString().run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        True,
+        "identity",
+        ["callable argument type identity unresolved"],
+    ),
+    (
+        "claude30-07-unused-char-throwable-list-tostring",
+        [
+            (
+                "Caller.kt",
+                'package fresh.claude30.unused_tostring\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Notes(private val db:SQLiteDatabase) {\n fun scan(intent:Intent) {\n  val letter:Char=\'x\'\n  val error:Throwable=IllegalStateException("fixed")\n  val entries:List<String> = listOf("fixed")\n  val a=letter.toString()\n  val b=error.toString()\n  val c=entries.toString()\n  db.execSQL("SELECT 1")\n }\n}\n',
+            )
+        ],
+        False,
+        "unused-hint",
+        [
+            "aggregate reference ownership unavailable",
+            "object alias identity unavailable",
+            "unresolved reference argument effects",
+        ],
+    ),
+    (
+        "claude30-08-default-root-holder-copy-control",
+        [
+            (
+                "Caller.kt",
+                'import android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Holder(\n val label:String="fixed"\n) {\n}\nclass Carrier(\n val item:Holder=Holder()\n) {\n}\nclass Notes(private val db:SQLiteDatabase) {\n private var captured=""\n private fun trim():String=captured\n fun scan(intent:Intent) {\n  captured=intent.getStringExtra("q") ?: ""\n  val carrier=Carrier()\n  val copy=carrier.item\n  copy.label.run { db.execSQL(trim()) }\n }\n}\n',
+            )
+        ],
+        False,
+        "limited",
+        ["constructor field mapping unavailable"],
+    ),
+    (
+        "inner-no-head-control",
+        [
+            (
+                "Caller.kt",
+                'package fresh.claude30.outer_inherited.parentcontrol\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\nclass Thing { fun label():kotlin.String="fixed" }\nopen class Base { }\nclass Outer:Base() {\n inner class Notes(private val db:SQLiteDatabase) {\n  private var captured=""\n  private fun trim():kotlin.String=captured\n  private val value=Thing()\n  fun scan(intent:Intent) {\n   captured=intent.getStringExtra("q") ?: ""\n   value.label().run { db.execSQL(trim()) }\n  }\n }\n}\n',
+            )
+        ],
+        False,
+        "checked",
+        [],
+    ),
+    (
+        "nested-outer-instance-control",
+        [
+            (
+                "Caller.kt",
+                'package fresh.claude30.nested_companion.parentcontrol\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\nclass Other { fun label():Other=Other() }\nclass Thing { fun label():kotlin.String="fixed" }\nclass Outer {\n val Thing:()->Other={Other()}\n class Notes(private val db:SQLiteDatabase) {\n  private var captured=""\n  private fun trim():kotlin.String=captured\n  private val value=Thing()\n  fun scan(intent:Intent) {\n   captured=intent.getStringExtra("q") ?: ""\n   value.label().run { db.execSQL(trim()) }\n  }\n }\n}\n',
+            )
+        ],
+        False,
+        "checked",
+        [],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "case,files,expected,mode,allowed", _REVIEW31_CASES, ids=[r[0] for r in _REVIEW31_CASES]
+)
+def test_review31_constructor_applicability_nullable_alias_and_consumed_proof(
+    case, files, expected, mode, allowed
+):
+    report = analyze_sources(files)
+    assert not any(row.get("parse_errors") for row in report["metadata"]["files"]), case
+    hit, state, reasons = _hit(report, SQL), _state(report, SQL), _reasons(report)
+    flow = report["metadata"]["native_flow"]
+    details = flow.get("partial_details", [])
+    if state == "partial":
+        assert flow.get("budget_reasons"), (case, state, reasons)
+    elif state == "limited":
+        assert reasons and not flow.get("budget_reasons"), (case, state, reasons)
+    else:
+        assert state == "checked" and not reasons, (case, state, reasons)
+    if mode in {"toString-boundary", "replace-boundary"}:
+        if hit is not expected:
+            consumer = mode.removesuffix("-boundary")
+            assert state in {"limited", "partial"}
+            assert any(
+                row.get("reason") == "callable argument type identity unresolved"
+                and row.get("call") == consumer
+                for row in details
+            ), (case, reasons, details)
+        return
+    assert hit is expected, (case, state, reasons)
+    if mode == "execution-boundary":
+        return
+    assert state != "partial", (case, state, reasons)
+    if mode in {"checked", "framework-control"}:
+        assert state == "checked" and not reasons, (case, state, reasons)
+    else:
+        assert set(reasons) <= set(allowed), (case, reasons)
+        if mode == "identity" and state == "limited":
+            assert any(
+                row.get("reason") == "callable argument type identity unresolved"
+                and row.get("call") == "toString"
+                for row in details
+            ), (case, details)
+        if mode == "unused-hint":
+            assert "callable argument type identity unresolved" not in reasons
+    if mode == "framework-control":
+        findings = [row for row in report["findings"] if row["rule_id"] == SQL]
+        assert len(findings) == 1
+        assert findings[0]["evidence"][0]["excerpt"].strip() == "db.execSQL(q.trim())"
+
+
+def test_review31_optional_initializer_hint_restores_diagnostics_after_failure(monkeypatch):
+    from mobile_audit.native_flow import NativeFlow
+    from mobile_audit.source_analysis import Frame
+
+    flow = NativeFlow([])
+    analyzer = object.__new__(Analyzer)
+    analyzer.native_flow = flow
+    flow.type_hint_depth = 1
+
+    def failed_hint(*args, **kwargs):
+        raise LookupError("synthetic type query failure")
+
+    monkeypatch.setattr(analyzer, "known_value_type", failed_hint)
+    with pytest.raises(LookupError, match="synthetic type query failure"):
+        analyzer.initializer_type_hint(None, Frame())
+    assert flow.type_hint_depth == 1
+    flow.type_hint_depth = 0
+    flow.partial("callable argument type identity unresolved")
+    assert flow.reasons == {"callable argument type identity unresolved"}

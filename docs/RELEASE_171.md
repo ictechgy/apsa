@@ -621,3 +621,12 @@ Non-null standard receiver identity is retained at its declaration. Strict
 receiver proofs do not borrow a detached initializer's caller names. Consumed
 unknown receiver or pattern facts identify the actual affected call in precision
 details without executing their initializers.
+
+Detached constructor hints now require a represented ordinary no-argument
+allocation; inaccessible or inapplicable constructors cannot replace companion
+invocation. Competing outer receiver/companion values retain their lexical
+visibility. Nullable imported aliases and nullable modeled receivers cannot
+borrow positive String proof over a visible project extension. Optional
+initializer hints do not add unconsumed receiver-identity details, and copied
+default-package members retain their exact source owner. These remain bounded
+static declaration proofs without initializer execution.

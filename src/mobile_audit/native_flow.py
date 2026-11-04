@@ -397,6 +397,7 @@ class NativeFlow:
         # Above zero while Analyzer re-reads visited code to classify content.
         # Ordinary diagnostics are muted; classification-only precision can opt in.
         self.muted = 0
+        self.type_hint_depth = 0  # optional initializer hints do not consume receiver identity
         self.namespace_names: set[str] = set()
         self.owners_with_constructor: set[str] = set()
         self.partial_details: set[tuple] = set()

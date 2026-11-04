@@ -4710,7 +4710,7 @@ class Analyzer:
             else:
                 frame.constants.pop(name, None)
             value = self.reused(expression, frame)
-            inferred = self.known_value_type(expression, frame) if self.language == "kotlin" else ""
+            inferred = self.initializer_type_hint(expression, frame) if self.language == "kotlin" else ""
             inferred = (
                 inferred
                 if inferred
@@ -6732,13 +6732,19 @@ class Analyzer:
         constructor = self.call(node)
         if flow is None or constructor is None or constructor.receiver is not None:
             return ""
-        lexical_owner = flow.owner(self, node)
         choices = flow.by_name.get(constructor.name, ())
+        barrier = next(
+            (
+                body.parent
+                for body in self.class_bodies(node)
+                if body.parent is not None and not self.has_modifier(body.parent, "inner")
+            ),
+            None,
+        )
         if (
-            self.reference_binding(node, constructor.name, frame=Frame()) is not None
-            or self.nominal_reference_head_shadow(
-                node, constructor.name, {lexical_owner} if lexical_owner else set()
-            )
+            self.reference_binding(node, constructor.name, stop=barrier, frame=Frame()) is not None
+            or flow.module_value_present(self, constructor.name)
+            or self.implicit_reference_head_shadow(node, constructor.name, Frame())
             or any(
                 target.node.type not in {"constructor_declaration", "primary_constructor"}
                 for target in choices
@@ -6763,14 +6769,45 @@ class Analyzer:
         context, nominal = definitions[0]
         if nominal.type in {"object_declaration", "companion_object"}:
             return ""
+        # Only a no-argument allocation with a represented ordinary constructor
+        # establishes this detached fact. Other signatures remain unknown.
+        if constructor.args or any(
+            context.has_modifier(nominal, modifier)
+            for modifier in {"abstract", "sealed", "inner", "enum", "annotation"}
+        ):
+            return ""
+        if context.language == "kotlin" and not any(part.type == "class" for part in nominal.children):
+            return ""
         primary = next((part for part in nominal.named_children if part.type == "primary_constructor"), None)
-        if primary is not None and context.has_modifier(primary, "private"):
+        if primary is not None and any(
+            part.named_children for part in primary.named_children if part.type == "class_parameters"
+        ):
+            return ""
+        body = next((part for part in nominal.named_children if part.type == "class_body"), None)
+        if body is not None and any(
+            part.type in {"secondary_constructor", "constructor_declaration"} for part in body.named_children
+        ):
+            return ""
+        if primary is not None and any(
+            context.has_modifier(primary, modifier) for modifier in {"private", "protected"}
+        ):
             current = node if context is self else None
             while current is not None and current.id != nominal.id:
                 current = current.parent
             if current is None:
                 return ""
         return "@source:" + owner if "." not in owner else owner
+
+    def initializer_type_hint(self, expression: Any, frame: Frame) -> str:
+        """An optional retained hint does not consume a modeled receiver proof."""
+        flow = self.native_flow
+        if flow is not None:
+            flow.type_hint_depth += 1
+        try:
+            return self.known_value_type(expression, frame)
+        finally:
+            if flow is not None:
+                flow.type_hint_depth -= 1
 
     def known_value_type(
         self,
@@ -7096,9 +7133,19 @@ class Analyzer:
                 ):
                     return "@source:" + identity if "." not in identity else identity
                 imported_kind = self.modeled_type_name(identity)
-                standard = self.standard_receiver_type(imported_kind, spelling, use, context=context)
-                if standard:
-                    return standard
+                # An imported alias is not itself a nominal class. Prove a
+                # standard target at the alias declaration, preserving nullability.
+                aliases = any(
+                    source.language == context.language
+                    and flow.namespaces[id(source)] == identity.rpartition(".")[0]
+                    for source, _alias in flow.module_type_aliases.get(identity.rsplit(".", 1)[-1], ())
+                )
+                for candidate in KOTLIN_STANDARD_RECEIVER_TYPES if aliases else (imported_kind,):
+                    standard = self.standard_receiver_type(candidate, spelling, use, context=context)
+                    if standard:
+                        return standard
+                if aliases:
+                    return ""
                 if imported_kind in MODELED_NOMINAL_TYPES:
                     if spelling.rstrip().endswith("?") and not allow_nullable:
                         return ""
@@ -7217,6 +7264,7 @@ class Analyzer:
             if numeric is not None:
                 return numeric
             targets = []
+            receiver_kind = ""
             if self.native_flow is not None and self.function is not None:
                 receiver_kind = (
                     self.known_value_type(
@@ -7229,10 +7277,27 @@ class Analyzer:
                     if call.receiver is not None
                     else ""
                 )
-                resolved_kind = self.resolved_receiver_kind(call.receiver, receiver_kind, frame)
+                name = call.name.rsplit(".", 1)[-1]
+                nullable_text = (
+                    name == "toString"
+                    and not call.args
+                    and not self.project_extension(
+                        name,
+                        call,
+                        {self.modeled_type_name(receiver_kind).rsplit(".", 1)[-1], "Any", "Object"},
+                        visible=True,
+                        standard_string=receiver_kind in {"String", "kotlin.String"},
+                    )
+                )
+                resolved_kind = self.resolved_receiver_kind(
+                    call.receiver,
+                    receiver_kind,
+                    frame,
+                    allow_nullable=self.safe_receiver_access(node) or nullable_text,
+                )
                 if receiver_kind and not resolved_kind:
                     name = call.name.rsplit(".", 1)[-1]
-                    if (
+                    if not self.native_flow.type_hint_depth and (
                         name in {"toString", "toRegex"}
                         or name in {"toInt", "toIntOrNull", "toLong", "toLongOrNull", "toDouble", "toFloat"}
                         and self.flag_or_number(node)
@@ -7321,6 +7386,12 @@ class Analyzer:
                 receiver = self.key(call.receiver)
                 return self.declared_modeled_type((receiver + "." if receiver else "") + call.name, call.node)
             if call.name.rsplit(".", 1)[-1] == "toString" and call.receiver is not None and not call.args:
+                if self.language == "kotlin" and self.native_flow is not None and not receiver_kind:
+                    if not self.native_flow.type_hint_depth:
+                        self.native_flow.partial(
+                            "callable argument type identity unresolved", self, call=call
+                        )
+                    return ""
                 return "String"
         if self.flag_or_number(node):
             navigation = self.navigation(node)
@@ -7436,11 +7507,17 @@ class Analyzer:
             return ""
         return self.modeled_type_name(value.type_name) or ("String" if value.category == "text" else "")
 
-    def resolved_receiver_kind(self, node: Any, kind: str, frame: Frame) -> str:
+    def resolved_receiver_kind(
+        self, node: Any, kind: str, frame: Frame, *, allow_nullable: bool = False
+    ) -> str:
         """Only pass a nominal fact whose identity is valid at this resolution site."""
         flow = self.native_flow
         if self.language != "kotlin" or flow is None or not kind:
             return kind.removeprefix("@source:")
+        if node is not None and node.type in IDENTIFIERS:
+            binding = self.reference_binding(node, self.symbol_name(self.text(node)), frame=frame)
+            if not allow_nullable and binding is not None and binding[1].rstrip().endswith("?"):
+                return ""
         if kind.startswith("@source:"):
             owner = kind.removeprefix("@source:")
             return owner if flow.class_owners(self, owner, node) == {owner} else ""
@@ -9690,7 +9767,7 @@ class Analyzer:
                 target = targets[0]
                 declared, context, origin = self.declared_return(target), target.analyzer, target.node
             root = re.sub(r"<.*|[?!]|\s+", "", declared or self.key(base))
-            lexical = flow.lexical_type(context, root, origin)
+            lexical = None if root.startswith("@source:") else flow.lexical_type(context, root, origin)
             if (
                 lexical is not None
                 and "." not in root
@@ -9698,7 +9775,11 @@ class Analyzer:
             ):
                 candidates.append((context, lexical))
             else:
-                owners = flow.class_owners(context, root, origin)
+                owners = (
+                    {root.removeprefix("@source:")}
+                    if root.startswith("@source:")
+                    else flow.class_owners(context, root, origin)
+                )
                 candidates = [
                     (source, nominal)
                     for owner in owners
@@ -9813,7 +9894,13 @@ class Analyzer:
         return context, origin, element.removeprefix("out ").strip()
 
     def nominal_reference_head_shadow(
-        self, use: Any, name: str, owners: set[str], *, callback_shape: bool = False
+        self,
+        use: Any,
+        name: str,
+        owners: set[str],
+        *,
+        callback_shape: bool = False,
+        companion_only: bool = False,
     ) -> bool:
         """A bounded source hierarchy must not hide a value behind a standard head."""
         flow = self.native_flow
@@ -9836,7 +9923,7 @@ class Analyzer:
                     body = next(
                         (part for part in nominal.named_children if part.type == "class_body"), nominal
                     )
-                    bodies = [body]
+                    bodies = [] if companion_only else [body]
                     bodies.extend(
                         next((part for part in child.named_children if part.type == "class_body"), child)
                         for child in body.named_children
@@ -10010,7 +10097,18 @@ class Analyzer:
                 if self.nominal_reference_head_shadow(use, name, {owner}, callback_shape=callback_shape):
                     return True
                 if not self.has_modifier(current, "inner"):
-                    return False
+                    # A static nested class still sees enclosing companions,
+                    # while outer instance members require an inner boundary.
+                    return any(
+                        self.nominal_reference_head_shadow(
+                            use,
+                            name,
+                            {flow.owner(self, body)},
+                            callback_shape=callback_shape,
+                            companion_only=True,
+                        )
+                        for body in self.class_bodies(current)
+                    )
             subject = self.scope_receiver(current) if current.type in CLOSURES else None
             if subject is not None:
                 subject = self.unwrap(subject, preserve_cast=True)
