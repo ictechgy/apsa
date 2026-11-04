@@ -58,6 +58,13 @@ credential service was contacted.
   String members `plus` and `toString` still precede extensions. Retained local
   kinds follow the selected modeled result, and untyped callback parameters
   clear inherited kinds. Proven non-receiver scope functions preserve outer `this`.
+  Inferred return queries isolate the declaring function from caller owner,
+  parameter, field and retained-value state, restoring it after failure. Unknown
+  inherited return identifiers remain visibly limited. Safe member results
+  preserve Kotlin nullability, including an unnecessary safe call on a nonnull
+  receiver; consuming safe entry and assertions retain their own policy.
+  Retained text cannot erase nullable return identity, and indexed/fold callback
+  hints keep original parameter positions across discarded `_` slots.
   Qualified generic roots, lexical class shadows and visible source typealiases
   are resolved in their declaring context with a bounded, cycle-safe lookup.
   Compatible String supertype extensions include `Comparable<String>`, star and

@@ -1815,6 +1815,7 @@ class Analyzer:
         # Functions the file declares to return a String (`fun displayName(): String`).
         self.string_functions: set[str] = set()
         self.parameter_types: dict[str, str] = {}
+        self.type_query_active = False
         self.activity_scope = False
         self.imports: set[str] = set()
         self.class_names: set[str] = set()
@@ -5856,6 +5857,16 @@ class Analyzer:
 
     def reused(self, node: Any, frame: Frame) -> Value:
         """value() of a node the visit just walked: its calls keep the values they were visited with."""
+        if self.type_query_active:
+            if node is None:
+                return Value()
+            retained = self.visited_values.get((node.start_byte, node.end_byte, node.type))
+            if retained is not None:
+                return retained
+            if node.type in IDENTIFIERS:
+                name = self.symbol_name(self.text(node))
+                return frame.values.get(name, Value(type_name=frame.types.get(name, "")))
+            return Value()
         reuse = self.reuse_visited
         self.reuse_visited = True
         try:
@@ -6696,6 +6707,8 @@ class Analyzer:
         node = self.unwrap(node, preserve_cast=True)
         if node is None or depth > 8:
             return ""
+        if self.safe_receiver_access(node) and not allow_nullable:
+            return ""
         if self.opaque_implicit_it(node, frame):
             return ""
         if receiver_kinds is None:
@@ -6811,7 +6824,7 @@ class Analyzer:
             return None
         parameters = self.closure_parameters(closure)
         symbol = self.symbol_name(self.text(use))
-        ordinal = next((i for i, (n, _kind, _origin) in enumerate(parameters) if n == symbol), 0)
+        ordinal = next((index for n, _kind, index in parameters if n == symbol), 0)
         indexed = "Indexed" in name
         if indexed and ordinal == 0:
             return "Int"
@@ -7022,8 +7035,20 @@ class Analyzer:
             if numeric is not None:
                 return numeric
             targets = []
-            if self.native_flow is not None:
-                targets = self.native_flow.resolve(self, call, Value(), frame)[0]
+            if self.native_flow is not None and self.function is not None:
+                receiver_kind = (
+                    self.known_value_type(
+                        call.receiver,
+                        frame,
+                        depth + 1,
+                        receiver_kinds=receiver_kinds,
+                        allow_nullable=True,
+                    )
+                    if call.receiver is not None
+                    else ""
+                )
+                receiver = Value(type_name=receiver_kind.removeprefix("@source:"))
+                targets = self.native_flow.resolve(self, call, receiver, frame)[0]
                 returns = {
                     self.declared_modeled_type(
                         self.declared_return(target),
@@ -7215,6 +7240,13 @@ class Analyzer:
             return ""
         return self.modeled_type_name(value.type_name) or ("String" if value.category == "text" else "")
 
+    @staticmethod
+    def inferred_function_expression(target: Any) -> Any:
+        body = next((part for part in target.node.named_children if part.type == "function_body"), None)
+        if body is None or not body.children or body.children[0].type != "=":
+            return None
+        return next((part for part in body.children[1:] if part.is_named), None)
+
     def inferred_function_kind(
         self,
         target: Any,
@@ -7224,18 +7256,48 @@ class Analyzer:
         allow_nullable: bool = False,
     ) -> str:
         """An expression body uses bounded type proof, not a nullable content-header hint."""
-        body = next((part for part in target.node.named_children if part.type == "function_body"), None)
-        if body is None or not body.children or body.children[0].type != "=":
+        expression = self.inferred_function_expression(target)
+        if expression is None:
             return ""
-        expression = next((part for part in body.children[1:] if part.is_named), None)
-        frame = Frame(types={name: kind for name, kind, _ in self.parameters(target.node)})
-        return self.known_value_type(
-            expression,
-            frame,
-            depth + 1,
-            receiver_kinds=receiver_kinds,
-            allow_nullable=allow_nullable,
+        parameters = {name: kind for name, kind, _ in self.parameters(target.node)}
+        frame = Frame(
+            types=parameters.copy(),
+            values={name: Value(type_name=kind) for name, kind in parameters.items()},
+            local_names=set(parameters),
         )
+        # Resolution and lexical visibility read the active function as well as
+        # the frame. Query declaration facts without visiting field initializers
+        # or borrowing the caller's parameters, fields and retained node values.
+        saved = {
+            name: getattr(self, name)
+            for name in (
+                "function",
+                "function_source",
+                "scope",
+                "parameter_types",
+                "field_types",
+                "visited_values",
+                "type_query_active",
+            )
+        }
+        try:
+            self.function = target.node
+            self.function_source = self.text(target.node)
+            self.scope = target.name
+            self.parameter_types = parameters
+            self.field_types = {}
+            self.visited_values = {}
+            self.type_query_active = True
+            return self.known_value_type(
+                expression,
+                frame,
+                depth + 1,
+                receiver_kinds=receiver_kinds,
+                allow_nullable=allow_nullable,
+            )
+        finally:
+            for name, value in saved.items():
+                setattr(self, name, value)
 
     def nonnull_expression(self, node: Any) -> bool:
         """Only explicit Kotlin assertion syntax changes a nullable type proof here."""
@@ -7250,17 +7312,23 @@ class Analyzer:
             return node.type not in TEXT_LITERALS and self.text(node).rstrip().endswith("!!")
         return False
 
+    def safe_receiver_access(self, node: Any) -> bool:
+        if self.language != "kotlin" or node is None:
+            return False
+        call = self.call(node)
+        navigation = self.navigation(node) if call is None else None
+        receiver = call.receiver if call is not None else navigation[0] if navigation is not None else None
+        if receiver is None:
+            return False
+        raw = re.sub(rb"/\*.*?\*/|//[^\n]*", b"", self.raw[receiver.end_byte : node.end_byte], flags=re.S)
+        return raw.lstrip().startswith(b"?.")
+
     def scope_receiver_nonnull(self, scope: Any) -> bool:
         subject = self.scope_receiver(scope)
         if self.nonnull_expression(subject):
             return True
         owner = self.closure_owner(scope)
-        if owner is None or owner.receiver is None:
-            return False
-        raw = re.sub(
-            rb"/\*.*?\*/|//[^\n]*", b"", self.raw[owner.receiver.end_byte : owner.node.end_byte], flags=re.S
-        )
-        return raw.lstrip().startswith(b"?.")
+        return owner is not None and self.safe_receiver_access(owner.node)
 
     def scope_subject_kind(
         self,
@@ -7909,6 +7977,8 @@ class Analyzer:
         """A literal or lexically resolved String root, including an implicit scope receiver."""
         base = self.unwrap(base, preserve_cast=receiver_proof)
         if receiver_proof and self.language == "kotlin" and base is not None:
+            if self.safe_receiver_access(base):
+                return False
             if depth >= 16:
                 if self.native_flow is not None:
                     self.native_flow.partial("callable argument type identity unresolved", self)
@@ -7934,10 +8004,14 @@ class Analyzer:
                         if self.reused(base, frame).type_name.rstrip().endswith("?"):
                             return False
                     expression = self.unwrap(expression, preserve_cast=True)
-                    if expression is not None and expression.type in IDENTIFIERS | {
-                        "as_expression",
-                        "cast_expression",
-                    }:
+                    if expression is not None and (
+                        expression.type in IDENTIFIERS | {"as_expression", "cast_expression"}
+                        or self.navigation(expression) is not None
+                    ):
+                        return self.string_template_root(
+                            expression, frame, data, receiver_proof=True, depth=depth + 1
+                        )
+                    if expression is not None and self.call(expression) is not None:
                         return self.string_template_root(
                             expression, frame, data, receiver_proof=True, depth=depth + 1
                         )
@@ -7949,6 +8023,40 @@ class Analyzer:
                         bool(declared)
                         and self.declared_modeled_type(declared, origin, context=context) == "String"
                     )
+            elif (call := self.call(base)) is not None:
+                targets = (
+                    self.native_flow.resolve(self, call, Value(), frame)[0]
+                    if self.native_flow is not None
+                    else []
+                )
+                # A rejected hint can retain a declared project return proof,
+                # but a content category cannot erase its nullable declaration.
+                if (
+                    self.native_flow is not None
+                    and targets
+                    and any(
+                        not self.declared_return(target)
+                        and (expression := target.analyzer.inferred_function_expression(target)) is not None
+                        and expression.type in IDENTIFIERS
+                        and target.analyzer.reference_binding(
+                            expression, target.analyzer.symbol_name(target.analyzer.text(expression))
+                        )
+                        is None
+                        for target in targets
+                    )
+                ):
+                    self.native_flow.partial("callable argument type identity unresolved", self, call=call)
+                return (
+                    bool(targets)
+                    and self.reused(base, frame).category == "text"
+                    and all(
+                        self.declared_modeled_type(
+                            self.declared_return(target), target.node, context=target.analyzer
+                        )
+                        == "String"
+                        for target in targets
+                    )
+                )
         if base is not None and (self.constant_text(base) or self.reused(base, frame).category == "text"):
             return True
         if base is None:

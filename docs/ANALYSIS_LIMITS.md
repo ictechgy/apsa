@@ -256,6 +256,17 @@ bounded type query with formal type declarations and no borrowed argument
 values. Nonnullable String concatenation is established from a proven String
 left operand.
 
+Expression-return queries select the declaring function for owner and lexical
+resolution. Caller parameters, fields and retained node facts are isolated and
+restored even if a query fails. Reads inside this query use retained facts;
+they do not execute calls or initialize fields. An unresolved identifier in an
+inferred return, such as an unrepresented inherited field, retains the callable
+type-identity precision reason when consumed as a receiver. A retained text
+category cannot override a rejected nullable call return; a fallback project
+return proof also requires the retained text value, so an uncertain competing
+numeric dispatch is not replaced by a helper declaration alone. Represented
+qualified calls can use a bounded receiver type fact without executing it.
+
 Module-value candidates retain their declaring source, import/visibility
 context and type spelling; companion member lookup retains its own property
 declaration. Ordinary companions without supertypes can continue lexical type
@@ -276,6 +287,13 @@ remains separate. Standard scope and collection callback type hints retain
 their receiver, initial-value or element declaration origin where represented.
 Explicit generic/component callback forms remain bounded abstentions.
 A later test cannot retroactively narrow an earlier copied receiver.
+
+A Kotlin safe member access has a nullable result even if its receiver is
+already nonnullable. Safe-call and safe-property results therefore require a
+consuming `?.` scope entry or `!!` assertion before supplying a nonnullable
+receiver kind. This includes `toString`, conversions, scalar properties and
+declared project returns. Callback element/accumulator proof uses original
+parameter positions, retaining discarded `_` slots in indexed and fold calls.
 
 Type-origin queries do not execute property/module initialization or prove
 general CFG, generic assignability or unavailable dependency behavior.
