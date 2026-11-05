@@ -7578,10 +7578,34 @@ class Analyzer:
             == self.modeled_type_name(
                 (self.key(call.receiver) + "." if call.receiver is not None else "") + call.name
             )
-            and self.implicit_reference_head_shadow(
-                call.node, (self.key(call.receiver) or call.name).partition(".")[0], frame
+            and (
+                (
+                    retained_head_shadow := self.implicit_reference_head_shadow(
+                        call.node, (self.key(call.receiver) or call.name).partition(".")[0], frame
+                    )
+                )
+                or self.native_flow is not None
+                and self.native_flow.imported_namespace_shadow(
+                    self,
+                    (self.key(call.receiver) + "." if call.receiver is not None else "") + call.name,
+                    call.node,
+                    source_types=False,
+                )
             )
         ):
+            if (
+                not retained_head_shadow
+                and self.native_flow is not None
+                and value.identity == self.native_flow.binding_identity(self, call.node, "allocation")
+            ):
+                owners = self.native_flow.class_owners(
+                    self,
+                    (self.key(call.receiver) + "." if call.receiver is not None else "") + call.name,
+                    call.node,
+                )
+                if len(owners) == 1:
+                    owner = next(iter(owners))
+                    return owner if "." in owner else "@source:" + owner
             if self.native_flow is not None and not self.native_flow.type_hint_depth:
                 self.native_flow.partial("callable argument type identity unresolved", self, call=call)
             return ""
@@ -10772,7 +10796,7 @@ class Analyzer:
             return "kotlin.Array"
         if call.name in {"arrayOf", "arrayOfNulls", "emptyArray"} and (
             receiver == "kotlin"
-            and unshadowed(receiver)
+            and unshadowed(root)
             or call.receiver is None
             and unshadowed(call.name)
             and self.kotlin_scope_identity_known(call.name, frame)
@@ -11645,7 +11669,12 @@ class Analyzer:
                     break
                 receiver = parts[0]
             else:
-                receiver = None
+                if receiver is not None and receiver.type in {
+                    "parenthesized_type",
+                    "nullable_type",
+                    "non_nullable_type",
+                }:
+                    receiver = None
             unknown_receiver = (
                 receiver is None
                 and declared is not None
@@ -11654,7 +11683,7 @@ class Analyzer:
                     for child in target.node.children
                 )
             )
-            if receiver is None and not unknown_receiver:
+            if receiver is None and not (unknown_receiver and (visible or nullable_receiver)):
                 continue
             if visible:
                 if not self.native_flow.lexical_visible(self, target, call, allow_extensions=True):

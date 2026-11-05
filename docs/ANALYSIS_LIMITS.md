@@ -431,9 +431,27 @@ values or claim their runtime ownership.
 Supported escaped generic names use canonical declaration/use identities in the
 String path, including Comparable arguments. Bounded receiver-wrapper lookup
 unwraps parentheses, nullable types and definitely-non-null intersections while
-preserving declaration origin and outer nullability. A proven bare non-null
-receiver does not compete with a proven nullable subject. Unsupported or capped
-receiver shapes keep competing rather than establishing head absence.
+preserving declaration origin and outer nullability. Queries that explicitly
+supply a proven nullable subject exclude a proven bare definitely-non-null
+receiver. Other head queries can remain conservative; this is not a whole-program
+nullable-overload proof. The unwrap bound accepts 16 wrappers when the resulting
+terminal is represented. Unsupported or capped shapes compete in visible head
+and nullable queries rather than establishing head absence. An unrelated unknown
+receiver is not introduced into the separate builder receiver lookup.
+The source-type namespace exception checks the complete written qualifier.
+Represented ordinary qualified source callables can veto uppercase allocation
+heuristics using declaration visibility, arity, labels and literal incompatibility,
+without executing their bodies. This includes exact package-qualified callables;
+it does not add general companion or instance-field execution. Actual nested
+source allocations retain their source owner identity, never a library identity
+borrowed from an alias spelling. Existing implicit-receiver uncertainty still
+takes precedence. Declared return facts remain available before the retained-value
+fallback; inferred library-reference returns through ordinary source factories
+can remain diagnosed conservative candidates. A fresh fixed-runtime factory
+control loses its earlier spelling-based apparent clearance under this stricter
+rule. That is a precision limit, not restored factory-return inference.
+Qualified Kotlin array factories check the complete call head, so an object-member
+value imported as kotlin cannot become the standard kotlin.Array factory.
 Type-parameter extension receivers use their represented bounds without a
 redundant library-identity probe that would diagnose an already rejected candidate.
 Head queries follow inline/where bounds and parameter chains for at most 16 links,

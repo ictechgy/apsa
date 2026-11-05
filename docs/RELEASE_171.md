@@ -692,3 +692,15 @@ receiver wrappers keep their declaration origin and nullability; unresolved shap
 cannot establish constructor-head absence. Explicit imported expression roots,
 including object-member imports, do not become package namespaces. Same-file
 aliases to modeled primitive parameters use exact declaration-origin Kotlin proofs.
+
+Qualified source object values and ordinary uppercase callables retain source
+identity instead of borrowing a library constructor name. Exact source namespaces,
+private/arity/literal controls, default and vararg callables, and real nested
+source allocations remain distinct. A kotlin expression import cannot supply a
+standard array factory fact. Visible head and nullable queries keep unsupported
+extension receivers conservative; unrelated unknown receivers no longer add a
+checked builder candidate. Sixteen supported type wrappers reach their terminal.
+Nullable/DNN exclusion applies only to queries carrying the proven nullable
+subject. Inferred library-reference factory returns remain a documented precision
+limit; a fixed-runtime control now has a diagnosed candidate rather than clearance
+based on its qualified spelling.

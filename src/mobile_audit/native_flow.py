@@ -2305,6 +2305,10 @@ class NativeFlow:
                 )
             ):
                 return None
+            if call.node.type != "object_creation_expression" and self.qualified_callable_present(
+                analyzer, call, namespace
+            ):
+                return None
             name = namespace + "." + name
         leaf = name.rsplit(".", 1)[-1]
         if call.node.type == "object_creation_expression" or (
@@ -2369,19 +2373,60 @@ class NativeFlow:
         """A potential expression binding supplies uncertainty, never a value/type proof."""
         return bool(self.module_value_bindings(analyzer, name, aliases=aliases))
 
-    def imported_namespace_shadow(self, analyzer: Analyzer, spelling: str, use: Any) -> bool:
+    def imported_namespace_shadow(
+        self, analyzer: Analyzer, spelling: str, use: Any, *, source_types: bool = True
+    ) -> bool:
         """An imported expression root cannot silently stand for the written package prefix."""
         spelling = analyzer.canonical_type_spelling(spelling).partition("<")[0]
         root, separator, _tail = spelling.partition(".")
         if not separator:
             return False
+        if not source_types and (
+            self.class_owners(analyzer, root, use)
+            or self.class_owners(analyzer, spelling.rsplit(".", 1)[0], use)
+        ):
+            return True
         imported = self.imported_symbols(analyzer, root)
         if not imported or any(
             spelling == symbol or spelling.startswith(symbol + ".") for symbol in imported
         ):
             return False
         # A represented source type still permits its own nested-type/member lookup.
-        return not self.class_owners(analyzer, root, use)
+        return not source_types or not self.class_owners(analyzer, spelling, use)
+
+    def qualified_callable_present(self, analyzer: Analyzer, call: Call, namespace: str) -> bool:
+        """A represented ordinary namespace member competes before allocation heuristics."""
+        owners = self.class_owners(analyzer, namespace, call.node)
+        classes = {ancestor for owner in owners for ancestor in self.project_ancestry(owner)}
+        singleton = any(
+            node.type in {"object_declaration", "companion_object"}
+            for owner in owners
+            for _source, node in self.class_definitions.get(owner, [])
+        )
+        labels = [analyzer.argument_label(arg) for arg in call.args if analyzer.argument_label(arg)]
+        for target in self.by_name.get(call.name, []):
+            if target.analyzer.language != analyzer.language or target.node.type in (
+                INITIALIZERS | {"class_declaration", "primary_constructor", "constructor_declaration"}
+            ):
+                continue
+            if target.owner:
+                if target.owner not in classes or not (singleton or self.type_member(target)):
+                    continue
+                if "private" in self.declaration_tokens(target.node) and target.owner not in {
+                    self.owner(analyzer, body) for body in analyzer.class_bodies(call.node)
+                }:
+                    continue
+            elif owners or self.namespaces[id(target.analyzer)] != namespace:
+                continue
+            if (
+                self.lexical_visible(analyzer, target, call)
+                and target.analyzer.accepts_arguments(target.node, len(call.args))
+                and len(labels) == len(set(labels))
+                and set(labels) <= {name for name, _kind, _node in target.parameters}
+                and not analyzer.literal_string_argument_conflict(target.analyzer, target.node, call)
+            ):
+                return True
+        return False
 
     def module_value_bindings(
         self, analyzer: Analyzer, name: str, *, aliases: bool = False

@@ -22814,3 +22814,1646 @@ def test_review38_bare_dnn_is_incompatible_with_a_proven_nullable_receiver(monke
     monkeypatch.setattr(Analyzer, "record_visited", observe)
     analyze_sources(_REVIEW38_DNN_PROGRAMS["dnn"])
     assert observations == {(False, False)}, observations
+
+
+# R39 exact compiler-accepted synthetic fixtures; evidence remains outside the package.
+_REVIEW39_PROGRAMS = {
+    "code38-unknown_string_bound": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.unknown_string_bound\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import fresh.r38.dependencies.UnknownString\n"
+            "\n"
+            "\n"
+            "fun <T:UnknownString> "
+            'T.Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_unknown_string_bound")) '
+            "}\n",
+        ]
+    ],
+    "code38-unknown_string_bound_escaped": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.unknown_string_bound_escaped\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import fresh.r38.dependencies.UnknownString\n"
+            "\n"
+            "\n"
+            "fun <`T`:UnknownString> "
+            '`T`.Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=Locale("en"))) } // SINK\n'
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_unknown_string_bound_escaped")) '
+            "}\n",
+        ]
+    ],
+    "code38-wrapped_nullable_subject": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.wrapped_nullable_subject\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            'val subject:String?="fixed"\n'
+            'fun ((String)?).Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with(subject) { db.execSQL(format(locale=Locale("en"))) } '
+            "// SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_wrapped_nullable_subject")) '
+            "}\n",
+        ]
+    ],
+    "code38-private_wrapped_extension": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.private_wrapped_extension\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) '
+            "} // SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_private_wrapped_extension")) '
+            "}\n",
+        ],
+        [
+            "Extension.kt",
+            "package fresh.r38.code.private_wrapped_extension\n"
+            "private fun "
+            '(String).Locale(language:String):String="extension"\n',
+        ],
+    ],
+    "code38-wrongarity_wrapped_extension": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.wrongarity_wrapped_extension\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "fun (String).Locale(language:String, "
+            'other:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=Locale("en"))) } // SINK\n'
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_wrongarity_wrapped_extension")) '
+            "}\n",
+        ]
+    ],
+    "code38-wrapped_dnn_number": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.wrapped_dnn_number\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "fun <T:Number?> (((T & "
+            'Any))).Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_wrapped_dnn_number")) '
+            "}\n",
+        ]
+    ],
+    "code38-imported_source_object_value": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.imported_source_object_value\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import fresh.r38.objects.JavaRoot as java\n"
+            "\n"
+            "\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_imported_source_object_value")) '
+            "}\n",
+        ],
+        [
+            "Objects.kt",
+            "package fresh.r38.objects\n"
+            "class Factory { fun "
+            'Locale(language:String):String="member" }\n'
+            "object JavaRoot { val util=Factory() }\n",
+        ],
+    ],
+    "code38-parenthesized_Number_bound": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.parenthesized_Number_bound\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "fun <T:(Number)> "
+            'T.Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) '
+            "} // SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_parenthesized_Number_bound")) '
+            "}\n",
+        ]
+    ],
+    "code38-source_object_no_scope": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.source_object_no_scope\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import fresh.r38.objects.JavaRoot as java\n"
+            "\n"
+            "\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  db.execSQL(format(locale=java.util.Locale("en"))) // SINK\n'
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_source_object_no_scope")) '
+            "}\n",
+        ],
+        [
+            "Objects.kt",
+            "package fresh.r38.objects\n"
+            'class Factory { fun Locale(language:String):String="member" '
+            "}\n"
+            "object JavaRoot { val util=Factory() }\n",
+        ],
+    ],
+    "code38-source_object_no_import": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.source_object_no_import\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // SINK\n'
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_source_object_no_import")) '
+            "}\n",
+        ],
+        [
+            "Objects.kt",
+            "package fresh.r38.objects\n"
+            'class Factory { fun Locale(language:String):String="member" '
+            "}\n"
+            "object JavaRoot { val util=Factory() }\n",
+        ],
+    ],
+    "code38-source_object_nested_callable": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.source_object_nested_callable\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import fresh.r38.objects_nested.JavaRoot as java\n"
+            "\n"
+            "\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_source_object_nested_callable")) '
+            "}\n",
+        ],
+        [
+            "Objects.kt",
+            "package fresh.r38.objects_nested\n"
+            "object JavaRoot { object util { fun "
+            'Locale(language:String):String="member" } }\n',
+        ],
+    ],
+    "code38-source_nested_constructor": [
+        [
+            "Caller.kt",
+            "package fresh.r38.code.source_nested_constructor\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import fresh.r38.objects_constructor.JavaRoot as java\n"
+            "\n"
+            "\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:java.util.Locale):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R38_source_nested_constructor")) '
+            "}\n",
+        ],
+        [
+            "Objects.kt",
+            "package fresh.r38.objects_constructor\n"
+            "object JavaRoot { class util { class Locale(val "
+            "language:String) } }\n",
+        ],
+    ],
+    "adversarial38-java_static_field": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import adversarial.jroots.Roots.java\n"
+            "\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            "\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n",
+        ],
+        [
+            "Roots.java",
+            "package adversarial.jroots;\n"
+            "public class Roots {\n"
+            " public static final Namespace java=new Namespace();\n"
+            " public static class Namespace { public final Factory "
+            "util=new Factory(); }\n"
+            " public static class Factory { public String Locale(String "
+            'language) { return "member"; } }\n'
+            "}\n",
+        ],
+    ],
+    "adversarial38-object_import_root": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import adversarial.roots.SourceRoot as java\n"
+            "\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            "\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n",
+        ],
+        [
+            "Roots.kt",
+            "package adversarial.roots\n"
+            "class Factory { fun "
+            'Locale(language:String):String="member" }\n'
+            "class Namespace { val util=Factory() }\n"
+            "object SourceRoot { val util=Factory() }\n"
+            "class CompanionRoot { companion object { val "
+            "util=Factory() } }\n"
+            "class NestedRoot { class util { class Locale(val "
+            "language:String) } }\n"
+            "object Objects { val origin=Namespace() }\n",
+        ],
+    ],
+    "adversarial38-companion_value_root": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import adversarial.roots.CompanionRoot as java\n"
+            "\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            "\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n",
+        ],
+        [
+            "Roots.kt",
+            "package adversarial.roots\n"
+            "class Factory { fun "
+            'Locale(language:String):String="member" }\n'
+            "class Namespace { val util=Factory() }\n"
+            "object SourceRoot { val util=Factory() }\n"
+            "class CompanionRoot { companion object { val "
+            "util=Factory() } }\n"
+            "class NestedRoot { class util { class Locale(val "
+            "language:String) } }\n"
+            "object Objects { val origin=Namespace() }\n",
+        ],
+    ],
+    "adversarial38-represented_nested_type": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import adversarial.roots.NestedRoot as java\n"
+            "\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:java.util.Locale):String=captured\n"
+            "\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } '
+            "// SINK\n"
+            " }\n"
+            "}\n",
+        ],
+        [
+            "Roots.kt",
+            "package adversarial.roots\n"
+            "class Factory { fun "
+            'Locale(language:String):String="member" }\n'
+            "class Namespace { val util=Factory() }\n"
+            "object SourceRoot { val util=Factory() }\n"
+            "class CompanionRoot { companion object { val "
+            "util=Factory() } }\n"
+            "class NestedRoot { class util { class Locale(val "
+            "language:String) } }\n"
+            "object Objects { val origin=Namespace() }\n",
+        ],
+    ],
+    "adversarial38-wrapped_alias_nullable": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "typealias Text=CharSequence\n"
+            "fun "
+            '((Text)?).Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            "\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=Locale("en"))) } // SINK\n'
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "adversarial38-wrapped_dnn_alias": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "typealias Text=CharSequence\n"
+            "fun <`Element`:Text?> ((`Element` & "
+            'Any)).Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            "\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) } '
+            "// SINK\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "adversarial38-escaped_where_wrapped": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "fun <`Base`,`Text`> "
+            "((`Text`)).Locale(language:String):String where "
+            '`Text`:`Base`,`Base`:CharSequence = "extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            "\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=Locale("en"))) } // SINK\n'
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "adversarial38-escaped_comparable_incompatible": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import "
+            "android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "fun <`Text`:Comparable<in Int>> "
+            '(`Text`).Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            "\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "adversarial38-nullable_subject_nullable_generic": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import "
+            "android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "fun <`Text`:CharSequence> "
+            '((`Text`)?).Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            "\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: '
+            '""\n'
+            "  with(null as String?) { "
+            'db.execSQL(format(locale=Locale("en"))) } '
+            "// SINK\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "adversarial38-samefile_Boolean_alias": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "typealias Flag=kotlin.Boolean\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            ' fun Locale(language:Flag):String="member"\n'
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=Locale("en"))) } // SINK\n'
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "adversarial38-samefile_alias_chain_Byte": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "\n"
+            "typealias ByteCode=kotlin.Byte\n"
+            "typealias Code=ByteCode\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            ' fun Locale(language:Code):String="member"\n'
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=Locale("en"))) } // SINK\n'
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "adversarial38-samefile_object_member_alias": [
+        [
+            "Caller.kt",
+            "package adversarial.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import adversarial.caller.Objects.origin as "
+            "java\n"
+            "\n"
+            "class Factory { fun "
+            'Locale(language:String):String="member" }\n'
+            "class Namespace { val util=Factory() }\n"
+            "object Objects { val origin=Namespace() }\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            "\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) '
+            "} // SINK\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "claude38-f1_import_original": [
+        [
+            "Caller.kt",
+            "package calibration.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import calibration.objects.Objects.kotlin\n"
+            "\n"
+            "fun proof():Regex=kotlin.arrayOf()\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(args:Regex):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(args=kotlin.arrayOf())) } '
+            "// SINK\n"
+            " }\n"
+            "}\n",
+        ],
+        [
+            "Objects.kt",
+            "package calibration.objects\n"
+            'class Factory { fun arrayOf():Regex=Regex("x") }\n'
+            "object Objects { val kotlin=Factory() }\n",
+        ],
+    ],
+    "claude38-f1_import_alias": [
+        [
+            "Caller.kt",
+            "package calibration.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import calibration.objects.Objects.origin as kotlin\n"
+            "\n"
+            "fun proof():Regex=kotlin.arrayOf()\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(args:Regex):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(args=kotlin.arrayOf())) } // '
+            "SINK\n"
+            " }\n"
+            "}\n",
+        ],
+        [
+            "Objects.kt",
+            "package calibration.objects\n"
+            'class Factory { fun arrayOf():Regex=Regex("x") }\n'
+            "object Objects { val origin=Factory() }\n",
+        ],
+    ],
+    "claude38-f1_genuine_array": [
+        [
+            "Caller.kt",
+            "package calibration.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "\n"
+            'fun proof():Array<String> = kotlin.arrayOf("a")\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(args:Regex):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(args=kotlin.arrayOf("a"))) } '
+            "// SINK\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "claude38-f2_private_unrelated": [
+        [
+            "Caller.kt",
+            "package calibration.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            " fun tag(s:String) {}\n"
+            " fun scan(intent:Intent) {\n"
+            '  val q=intent.getStringExtra("q") ?: ""\n'
+            '  db.execSQL(buildString { tag(q); append("SELECT 1") }) // '
+            "SINK\n"
+            " }\n"
+            "}\n",
+        ],
+        ["Other.kt", "package calibration.unrelated\nprivate fun (() -> Unit).tag(s:String) {}\n"],
+    ],
+    "claude38-f2_no_extension": [
+        [
+            "Caller.kt",
+            "package calibration.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            " fun tag(s:String) {}\n"
+            " fun scan(intent:Intent) {\n"
+            '  val q=intent.getStringExtra("q") ?: ""\n'
+            '  db.execSQL(buildString { tag(q); append("SELECT 1") }) // SINK\n'
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "claude38-f2_visible_builder": [
+        [
+            "Caller.kt",
+            "package calibration.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import calibration.extensions.tag\n"
+            "\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            " fun tag(s:String) {}\n"
+            " fun scan(intent:Intent) {\n"
+            '  val q=intent.getStringExtra("q") ?: ""\n'
+            '  db.execSQL(buildString { tag(q); append("SELECT 1") }) // '
+            "SINK\n"
+            " }\n"
+            "}\n",
+        ],
+        ["Extensions.kt", "package calibration.extensions\nfun StringBuilder.tag(s:String) { append(s) }\n"],
+    ],
+    "claude38-f3_wrappers_15": [
+        [
+            "Caller.kt",
+            "package calibration.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "fun "
+            '(((((((((((((((Int))))))))))))))).Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "claude38-f3_wrappers_16": [
+        [
+            "Caller.kt",
+            "package calibration.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "fun "
+            '((((((((((((((((Int)))))))))))))))).Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "claude38-f3_wrappers_17": [
+        [
+            "Caller.kt",
+            "package calibration.caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "\n"
+            "fun "
+            '(((((((((((((((((Int))))))))))))))))).Locale(language:String):String="extension"\n'
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "arch38-uppercase": [
+        [
+            "Caller.kt",
+            "package probe.callable\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import probe.root.Statics as java\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            " fun scan(intent:Intent) {\n"
+            '  with("fixed") { java.util.Locale(db,intent.getStringExtra("q") ?: "") }\n'
+            " }\n"
+            "}\n",
+        ],
+        [
+            "Root.kt",
+            "package probe.root\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Statics {\n"
+            " object util {\n"
+            "  fun Locale(db:SQLiteDatabase, language:String) { db.execSQL(language) }\n"
+            " }\n"
+            "}\n",
+        ],
+    ],
+    "arch38-lowercase": [
+        [
+            "Caller.kt",
+            "package probe.callable\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import probe.root.Statics as java\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            " fun scan(intent:Intent) {\n"
+            '  with("fixed") { java.util.locale(db,intent.getStringExtra("q") ?: "") }\n'
+            " }\n"
+            "}\n",
+        ],
+        [
+            "Root.kt",
+            "package probe.root\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Statics {\n"
+            " object util {\n"
+            "  fun locale(db:SQLiteDatabase, language:String) { db.execSQL(language) }\n"
+            " }\n"
+            "}\n",
+        ],
+    ],
+    "preservation39-declared_real_return": [
+        [
+            "Caller.kt",
+            "package fresh.r39.declared_real_return\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import fresh.r39.declared_real_return.roots.JavaRoot as "
+            "java\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R39_declared_real_return")) '
+            "}\n",
+        ],
+        [
+            "Root.kt",
+            "package fresh.r39.declared_real_return.roots\n"
+            "object JavaRoot { object util {\n"
+            " fun Locale(language:String):java.util.Locale = "
+            "java.util.Locale(language)\n"
+            "} }\n",
+        ],
+    ],
+    "preservation39-inferred_real_return": [
+        [
+            "Caller.kt",
+            "package fresh.r39.inferred_real_return\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import fresh.r39.inferred_real_return.roots.JavaRoot as "
+            "java\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R39_inferred_real_return")) '
+            "}\n",
+        ],
+        [
+            "Root.kt",
+            "package fresh.r39.inferred_real_return.roots\n"
+            "object JavaRoot { object util {\n"
+            " fun Locale(language:String) = "
+            "java.util.Locale(language)\n"
+            "} }\n",
+        ],
+    ],
+    "preservation39-nested_wrong_arity": [
+        [
+            "Caller.kt",
+            "package fresh.r39.nested_wrong_arity\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import fresh.r39.nested_wrong_arity.roots.JavaRoot as "
+            "java\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:java.util.Locale):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R39_nested_wrong_arity")) '
+            "}\n",
+        ],
+        [
+            "Root.kt",
+            "package fresh.r39.nested_wrong_arity.roots\n"
+            "object JavaRoot { object util {\n"
+            " class Locale(val language:String)\n"
+            " fun Locale(language:String, "
+            'other:String):String="member"\n'
+            "} }\n",
+        ],
+    ],
+    "preservation39-nested_primitive_overload": [
+        [
+            "Caller.kt",
+            "package fresh.r39.nested_primitive_overload\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import "
+            "fresh.r39.nested_primitive_overload.roots.JavaRoot "
+            "as java\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun "
+            "format(locale:java.util.Locale):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) '
+            "} // SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R39_nested_primitive_overload")) '
+            "}\n",
+        ],
+        [
+            "Root.kt",
+            "package fresh.r39.nested_primitive_overload.roots\n"
+            "object JavaRoot { object util {\n"
+            " class Locale(val language:String)\n"
+            ' fun Locale(language:Int):String="member"\n'
+            "} }\n",
+        ],
+    ],
+    "preservation39-nested_private_overload": [
+        [
+            "Caller.kt",
+            "package fresh.r39.nested_private_overload\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import "
+            "fresh.r39.nested_private_overload.roots.JavaRoot as "
+            "java\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun "
+            "format(locale:java.util.Locale):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } '
+            "// SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R39_nested_private_overload")) '
+            "}\n",
+        ],
+        [
+            "Root.kt",
+            "package fresh.r39.nested_private_overload.roots\n"
+            "object JavaRoot { object util {\n"
+            " class Locale(val language:String)\n"
+            ' private fun Locale(language:Any):String="member"\n'
+            "} }\n",
+        ],
+    ],
+    "preservation39-default_named_callable": [
+        [
+            "Caller.kt",
+            "package fresh.r39.default_named_callable\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import "
+            "fresh.r39.default_named_callable.roots.JavaRoot as "
+            "java\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale(language="en"))) '
+            "} // SINK\n"
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R39_default_named_callable")) '
+            "}\n",
+        ],
+        [
+            "Root.kt",
+            "package fresh.r39.default_named_callable.roots\n"
+            "object JavaRoot { object util {\n"
+            " fun Locale(language:String, "
+            'unused:Int=0):String="member"\n'
+            "} }\n",
+        ],
+    ],
+    "preservation39-vararg_callable": [
+        [
+            "Caller.kt",
+            "package fresh.r39.vararg_callable\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import fresh.r39.vararg_callable.roots.JavaRoot as java\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // SINK\n'
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R39_vararg_callable")) '
+            "}\n",
+        ],
+        [
+            "Root.kt",
+            "package fresh.r39.vararg_callable.roots\n"
+            "object JavaRoot { object util {\n"
+            ' fun Locale(vararg language:String):String="member"\n'
+            "} }\n",
+        ],
+    ],
+    "preservation39-package_qualified_callable": [
+        [
+            "Caller.kt",
+            "package fresh.r39.package_caller\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            " fun scan(intent:Intent) {\n"
+            '  with("fixed") { '
+            'fresh.r39.callables.Locale(db,intent.getStringExtra("q") '
+            '?: "") }\n'
+            " }\n"
+            "}\n"
+            "fun main() { "
+            'Notes(SQLiteDatabase()).scan(Intent("SYNTHETIC_R39_package_qualified_callable")) '
+            "}\n",
+        ],
+        [
+            "Root.kt",
+            "package fresh.r39.callables\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun Locale(db:SQLiteDatabase, language:String) { "
+            "db.execSQL(language) } // SINK\n",
+        ],
+    ],
+}
+
+_REVIEW39_ROWS = [
+    ("code38-unknown_string_bound", "Caller.kt", 14, True, "exact"),
+    ("code38-unknown_string_bound_escaped", "Caller.kt", 14, True, "exact"),
+    ("code38-wrapped_nullable_subject", "Caller.kt", 13, True, "exact"),
+    ("code38-private_wrapped_extension", "Caller.kt", 13, False, "exact"),
+    ("code38-wrongarity_wrapped_extension", "Caller.kt", 13, False, "exact"),
+    ("code38-wrapped_dnn_number", "Caller.kt", 13, False, "exact"),
+    ("code38-imported_source_object_value", "Caller.kt", 14, True, "exact"),
+    ("code38-parenthesized_Number_bound", "Caller.kt", 13, False, "permit-diagnosed-fp"),
+    ("code38-source_object_no_scope", "Caller.kt", 14, True, "exact"),
+    ("code38-source_object_no_import", "Caller.kt", 13, False, "exact"),
+    ("code38-source_object_nested_callable", "Caller.kt", 14, True, "exact"),
+    ("code38-source_nested_constructor", "Caller.kt", 14, True, "exact"),
+    ("adversarial38-java_static_field", "Caller.kt", 14, True, "exact"),
+    ("adversarial38-object_import_root", "Caller.kt", 14, True, "exact"),
+    ("adversarial38-companion_value_root", "Caller.kt", 14, True, "exact"),
+    ("adversarial38-represented_nested_type", "Caller.kt", 14, True, "exact"),
+    ("adversarial38-wrapped_alias_nullable", "Caller.kt", 15, True, "exact"),
+    ("adversarial38-wrapped_dnn_alias", "Caller.kt", 15, True, "exact"),
+    ("adversarial38-escaped_where_wrapped", "Caller.kt", 14, True, "exact"),
+    ("adversarial38-escaped_comparable_incompatible", "Caller.kt", 14, False, "permit-diagnosed-fp"),
+    ("adversarial38-nullable_subject_nullable_generic", "Caller.kt", 14, True, "exact"),
+    ("adversarial38-samefile_Boolean_alias", "Caller.kt", 14, False, "exact"),
+    ("adversarial38-samefile_alias_chain_Byte", "Caller.kt", 15, False, "exact"),
+    ("adversarial38-samefile_object_member_alias", "Caller.kt", 16, True, "exact"),
+    ("claude38-f1_import_original", "Caller.kt", 12, True, "exact"),
+    ("claude38-f1_import_alias", "Caller.kt", 12, True, "exact"),
+    ("claude38-f1_genuine_array", "Caller.kt", 11, False, "exact"),
+    ("claude38-f2_private_unrelated", "Caller.kt", 9, False, "exact"),
+    ("claude38-f2_no_extension", "Caller.kt", 9, False, "exact"),
+    ("claude38-f2_visible_builder", "Caller.kt", 10, True, "exact"),
+    ("claude38-f3_wrappers_15", "Caller.kt", 12, False, "exact"),
+    ("claude38-f3_wrappers_16", "Caller.kt", 12, False, "exact"),
+    ("claude38-f3_wrappers_17", "Caller.kt", 12, False, "permit-diagnosed-fp"),
+    ("arch38-uppercase", "Root.kt", 5, True, "exact"),
+    ("arch38-lowercase", "Root.kt", 5, True, "exact"),
+    ("preservation39-declared_real_return", "Caller.kt", 11, False, "exact"),
+    ("preservation39-inferred_real_return", "Caller.kt", 11, False, "permit-diagnosed-fp"),
+    ("preservation39-nested_wrong_arity", "Caller.kt", 11, True, "exact"),
+    ("preservation39-nested_primitive_overload", "Caller.kt", 11, True, "exact"),
+    ("preservation39-nested_private_overload", "Caller.kt", 11, True, "exact"),
+    ("preservation39-default_named_callable", "Caller.kt", 11, True, "exact"),
+    ("preservation39-vararg_callable", "Caller.kt", 11, True, "exact"),
+    ("preservation39-package_qualified_callable", "Root.kt", 3, True, "exact"),
+]
+
+_REVIEW39_PROOFS = [
+    ("code38-unknown_string_bound", "Caller.kt", 14, "Locale", "java.util.Locale", False, "", None, None),
+    (
+        "code38-unknown_string_bound_escaped",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    ("code38-wrapped_nullable_subject", "Caller.kt", 13, "Locale", "java.util.Locale", False, "", None, None),
+    (
+        "code38-private_wrapped_extension",
+        "Caller.kt",
+        13,
+        "Locale",
+        "java.util.Locale",
+        True,
+        "java.util.Locale",
+        "Locale",
+        None,
+    ),
+    (
+        "code38-wrongarity_wrapped_extension",
+        "Caller.kt",
+        13,
+        "Locale",
+        "java.util.Locale",
+        True,
+        "java.util.Locale",
+        "Locale",
+        None,
+    ),
+    (
+        "code38-wrapped_dnn_number",
+        "Caller.kt",
+        13,
+        "Locale",
+        "java.util.Locale",
+        True,
+        "java.util.Locale",
+        "Locale",
+        None,
+    ),
+    (
+        "code38-imported_source_object_value",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    (
+        "code38-parenthesized_Number_bound",
+        "Caller.kt",
+        13,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    ("code38-source_object_no_scope", "Caller.kt", 14, "Locale", "java.util.Locale", False, "", None, None),
+    (
+        "code38-source_object_no_import",
+        "Caller.kt",
+        13,
+        "Locale",
+        "java.util.Locale",
+        True,
+        "java.util.Locale",
+        "java.util.Locale",
+        None,
+    ),
+    (
+        "code38-source_object_nested_callable",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    (
+        "code38-source_nested_constructor",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        "java.util.Locale",
+        "fresh.r38.objects_constructor.JavaRoot.util.Locale",
+    ),
+    ("adversarial38-java_static_field", "Caller.kt", 14, "Locale", "java.util.Locale", False, "", None, None),
+    (
+        "adversarial38-object_import_root",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    (
+        "adversarial38-companion_value_root",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    (
+        "adversarial38-represented_nested_type",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        "java.util.Locale",
+        "adversarial.roots.NestedRoot.util.Locale",
+    ),
+    (
+        "adversarial38-wrapped_alias_nullable",
+        "Caller.kt",
+        15,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    ("adversarial38-wrapped_dnn_alias", "Caller.kt", 15, "Locale", "java.util.Locale", False, "", None, None),
+    (
+        "adversarial38-escaped_where_wrapped",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    (
+        "adversarial38-escaped_comparable_incompatible",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    (
+        "adversarial38-nullable_subject_nullable_generic",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    (
+        "adversarial38-samefile_Boolean_alias",
+        "Caller.kt",
+        14,
+        "Locale",
+        "java.util.Locale",
+        True,
+        "java.util.Locale",
+        "Locale",
+        None,
+    ),
+    (
+        "adversarial38-samefile_alias_chain_Byte",
+        "Caller.kt",
+        15,
+        "Locale",
+        "java.util.Locale",
+        True,
+        "java.util.Locale",
+        "Locale",
+        None,
+    ),
+    (
+        "adversarial38-samefile_object_member_alias",
+        "Caller.kt",
+        16,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    ("claude38-f1_import_original", "Caller.kt", 12, "arrayOf", "kotlin.Array", False, "", None, None),
+    ("claude38-f1_import_alias", "Caller.kt", 12, "arrayOf", "kotlin.Array", False, "", None, None),
+    (
+        "claude38-f1_genuine_array",
+        "Caller.kt",
+        11,
+        "arrayOf",
+        "kotlin.Array",
+        True,
+        "kotlin.Array",
+        None,
+        None,
+    ),
+    (
+        "claude38-f3_wrappers_15",
+        "Caller.kt",
+        12,
+        "Locale",
+        "java.util.Locale",
+        True,
+        "java.util.Locale",
+        "Locale",
+        None,
+    ),
+    (
+        "claude38-f3_wrappers_16",
+        "Caller.kt",
+        12,
+        "Locale",
+        "java.util.Locale",
+        True,
+        "java.util.Locale",
+        "Locale",
+        None,
+    ),
+    ("claude38-f3_wrappers_17", "Caller.kt", 12, "Locale", "java.util.Locale", False, "", None, None),
+    ("arch38-uppercase", "Caller.kt", 8, "Locale", "java.util.Locale", False, "", None, None),
+    (
+        "preservation39-declared_real_return",
+        "Caller.kt",
+        11,
+        "Locale",
+        "java.util.Locale",
+        True,
+        "",
+        None,
+        None,
+    ),
+    (
+        "preservation39-inferred_real_return",
+        "Caller.kt",
+        11,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    (
+        "preservation39-nested_wrong_arity",
+        "Caller.kt",
+        11,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        "java.util.Locale",
+        "fresh.r39.nested_wrong_arity.roots.JavaRoot.util.Locale",
+    ),
+    (
+        "preservation39-nested_primitive_overload",
+        "Caller.kt",
+        11,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        "java.util.Locale",
+        "fresh.r39.nested_primitive_overload.roots.JavaRoot.util.Locale",
+    ),
+    (
+        "preservation39-nested_private_overload",
+        "Caller.kt",
+        11,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        "java.util.Locale",
+        "fresh.r39.nested_private_overload.roots.JavaRoot.util.Locale",
+    ),
+    (
+        "preservation39-default_named_callable",
+        "Caller.kt",
+        11,
+        "Locale",
+        "java.util.Locale",
+        False,
+        "",
+        None,
+        None,
+    ),
+    ("preservation39-vararg_callable", "Caller.kt", 11, "Locale", "java.util.Locale", False, "", None, None),
+]
+
+
+@pytest.mark.parametrize(
+    "program,path,line,expected,mode", _REVIEW39_ROWS, ids=[r[0] for r in _REVIEW39_ROWS]
+)
+def test_review39_qualified_source_calls_and_receiver_boundaries(program, path, line, expected, mode):
+    report = analyze_sources(_REVIEW39_PROGRAMS[program])
+    assert not any(r.get("parse_errors") for r in report["metadata"]["files"])
+    hits = {(e["path"], e["line"]) for f in report["findings"] if f["rule_id"] == SQL for e in f["evidence"]}
+    flow = report["metadata"]["native_flow"]
+    state = _state(report, SQL)
+    if mode == "permit-diagnosed-fp" and (path, line) in hits:
+        # Coverage limits are explicit; recovery is permitted, an FP is never required.
+        assert state == "limited" and not flow["budget_reasons"]
+        assert any(
+            d["path"] == path
+            and d["line"] == line
+            and d["call"] in {"Locale", "format"}
+            and d["kind"] == "precision"
+            for d in flow["partial_details"]
+        ), flow
+    else:
+        assert ((path, line) in hits) is expected, (program, hits, report)
+    if program in {
+        "claude38-f2_private_unrelated",
+        "claude38-f2_no_extension",
+        "claude38-f2_visible_builder",
+    }:
+        assert state == "checked" and not _reasons(report), flow
+    elif state == "partial":
+        assert flow["budget_reasons"], flow
+    elif state == "limited":
+        assert _reasons(report) and not flow["budget_reasons"], flow
+    else:
+        assert state == "checked" and not _reasons(report), flow
+
+
+@pytest.mark.parametrize(
+    "program,path,line,call_name,qualified,proof,standard,constructor,source_kind",
+    _REVIEW39_PROOFS,
+    ids=[r[0] for r in _REVIEW39_PROOFS],
+)
+def test_review39_post_call_library_identity_preserves_source_origins(
+    monkeypatch, program, path, line, call_name, qualified, proof, standard, constructor, source_kind
+):
+    original = Analyzer.record_visited
+    observations = set()
+    active = False
+
+    def observe(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if (
+            not active
+            and self.path == path
+            and self.location(call.node)["line"] == line
+            and call.name == call_name
+        ):
+            active = True
+            before = self.native_flow.evaluations, self.native_flow.type_hint_depth, repr(frame)
+            try:
+                observations.add(
+                    (
+                        self.library_argument_type(
+                            call.node, frame, qualified, default_import=qualified == "kotlin.Array"
+                        ),
+                        self.standard_reference_kind(call.node, frame),
+                    )
+                )
+                if source_kind:
+                    assert self.known_value_type(call.node, frame) == source_kind
+            finally:
+                active = False
+            assert before == (self.native_flow.evaluations, self.native_flow.type_hint_depth, repr(frame))
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", observe)
+    analyze_sources(_REVIEW39_PROGRAMS[program])
+    assert observations == {(proof, standard)}, observations
+
+
+@pytest.mark.parametrize(
+    "program,path,line,call_name,qualified,proof,standard,constructor,source_kind",
+    _REVIEW39_PROOFS,
+    ids=[r[0] for r in _REVIEW39_PROOFS],
+)
+def test_review39_ordinary_source_callables_do_not_become_allocations(
+    monkeypatch, program, path, line, call_name, qualified, proof, standard, constructor, source_kind
+):
+    from mobile_audit.native_flow import NativeFlow
+
+    original = NativeFlow.constructor_type
+    observations = set()
+
+    def observe(self, analyzer, call, frame):
+        before = self.evaluations, self.type_hint_depth, repr(frame)
+        result = original(self, analyzer, call, frame)
+        if analyzer.path == path and analyzer.location(call.node)["line"] == line and call.name == call_name:
+            observations.add(result)
+        assert before == (self.evaluations, self.type_hint_depth, repr(frame))
+        return result
+
+    monkeypatch.setattr(NativeFlow, "constructor_type", observe)
+    analyze_sources(_REVIEW39_PROGRAMS[program])
+    assert observations == {constructor}, observations
