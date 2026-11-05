@@ -8632,8 +8632,18 @@ class Notes(private val db:SQLiteDatabase) {
         report = analyze_sources([("app/Notes.kt", source)])
         assert count <= 8 * size + 32
         if size >= 16:
-            assert "callable argument type identity unresolved" in _reasons(report)
-            assert _state(report, SQL) in {"limited", "partial"}
+            flow = report["metadata"]["native_flow"]
+            assert "callable argument type identity unresolved" not in _reasons(report)
+            assert _state(report, SQL) == "partial"
+            assert "source trace budget" in flow.get("budget_reasons", [])
+            sink_line = next(line for line, text in enumerate(source.splitlines(), 1) if "db.execSQL" in text)
+            assert any(
+                detail.get("reason") == "source trace budget"
+                and detail.get("call") == "execSQL"
+                and detail.get("path") == "app/Notes.kt"
+                and detail.get("line") == sink_line
+                for detail in flow.get("partial_details", [])
+            ), flow
 
 
 def _review20_smartcast_cases() -> list[dict]:
@@ -19299,3 +19309,733 @@ def test_review34_retained_possible_constructor_cannot_prove_library_argument(mo
     analyze_sources(_REVIEW34_PROGRAMS["retained34-unavailable-dependency"])
     for line, wanted in expected.items():
         assert observations.get(line) == {(wanted, "java.util.Locale" if wanted else "")}, observations
+
+
+# Compiler-accepted escaped/qualified callable and required-vararg regressions.
+_REVIEW35_PROGRAMS = {
+    "review34-p01_alias_callable": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale as Lang\n"
+            "import java.util.Locale\n"
+            "open class AliasBase { fun "
+            'Lang(seed:kotlin.String="en"):kotlin.String="member" }\n'
+            "class AliasNotes(val db:SQLiteDatabase):AliasBase() {\n"
+            ' var captured:kotlin.String=""\n'
+            " fun format(locale:kotlin.String):kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Lang())) } // '
+            "ROW:6101\n"
+            " }\n"
+            " fun qualified(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "ROW:6102\n"
+            " }\n"
+            " fun static(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Lang.US)) } // '
+            "ROW:6103\n"
+            " }\n"
+            "}\n"
+            "class AliasVararg(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            ' fun Lang(vararg words:kotlin.String):kotlin.String="member"\n'
+            " fun format(locale:kotlin.String):kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Lang("en","US"))) } '
+            "// ROW:6104\n"
+            " }\n"
+            "}\n"
+            "class AliasArity(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            " fun "
+            'Lang(first:kotlin.String,second:kotlin.String,third:kotlin.String):kotlin.String="member"\n'
+            " fun format(locale:kotlin.String):kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Lang("en"))) } // '
+            "ROW:6105\n"
+            " }\n"
+            "}\n"
+            "open class PrivateAliasBase { private fun "
+            'Lang(seed:kotlin.String):kotlin.String="member" }\n'
+            "class AliasPrivate(val db:SQLiteDatabase):PrivateAliasBase() {\n"
+            ' var captured:kotlin.String=""\n'
+            " fun format(locale:kotlin.String):kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Lang("en"))) } // '
+            "ROW:6106\n"
+            " }\n"
+            "}\n"
+            "class CallbackSeparation(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            " fun run(block:()->Unit) { block() }\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  run { db.execSQL(captured) } // ROW:6107\n"
+            " }\n"
+            "}\n"
+            "class EscapedNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            ' fun `Locale`():kotlin.String="member"\n'
+            " fun format(locale:kotlin.String):kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale())) } // '
+            "ROW:6108\n"
+            " }\n"
+            "}\n"
+            "class RequiredVarargNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            " fun Locale(first:kotlin.Int,second:kotlin.Int,vararg "
+            'rest:kotlin.String):kotlin.String="member"\n'
+            " fun format(locale:kotlin.String):kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) } // '
+            "ROW:6109\n"
+            " }\n"
+            "}\n"
+            "class RequiredControlNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            " fun "
+            'Locale(first:kotlin.Int,second:kotlin.Int):kotlin.String="member"\n'
+            " fun format(locale:kotlin.String):kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) } // '
+            "ROW:6110\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "review34-p02_detached_interference": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import models.Candidate as ImportedCandidate\n"
+            "class Token { fun label():Token=Token() }\n"
+            "class UnrelatedHead { fun ImportedCandidate(vararg "
+            "words:kotlin.String):Token=Token() }\n"
+            "class FixedNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            " private val original=ImportedCandidate()\n"
+            " private val copy=original\n"
+            " fun trim():kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  copy.label().run { db.execSQL(trim()) } // ROW:6201\n"
+            " }\n"
+            "}\n"
+            "open class PrivateHead { private fun "
+            "ImportedCandidate():Token=Token() }\n"
+            "class PrivateNotes(val db:SQLiteDatabase):PrivateHead() "
+            "{\n"
+            ' var captured:kotlin.String=""\n'
+            " private val original=ImportedCandidate()\n"
+            " fun trim():kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  original.label().run { db.execSQL(trim()) } // "
+            "ROW:6202\n"
+            " }\n"
+            "}\n"
+            "class CallableNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            " fun ImportedCandidate():Token=Token()\n"
+            " private val original=ImportedCandidate()\n"
+            " fun trim():kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  original.label().run { db.execSQL(trim()) } // "
+            "ROW:6203\n"
+            " }\n"
+            "}\n"
+            "class ArityNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            " fun "
+            "ImportedCandidate(word:kotlin.String):Token=Token()\n"
+            " private val original=ImportedCandidate()\n"
+            " fun trim():kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  original.label().run { db.execSQL(trim()) } // "
+            "ROW:6204\n"
+            " }\n"
+            "}\n",
+        ),
+        ("Candidate.kt", 'package models\nclass Candidate { fun label():kotlin.String="fixed" }\n'),
+        ("Private.kt", 'package unrelated\nprivate fun ImportedCandidate():kotlin.String="unused"\n'),
+    ],
+    "review34-p03_property_receivers": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "open class PropertyBase { fun "
+            'Locale(seed:kotlin.String="en"):kotlin.String="member" }\n'
+            "class PropertyNotes(val db:SQLiteDatabase):PropertyBase() "
+            "{\n"
+            ' var captured:kotlin.String=""\n'
+            " fun format(locale:kotlin.String):kotlin.String=captured\n"
+            " val member:kotlin.Unit\n"
+            '  get() { with("fixed") { '
+            "db.execSQL(format(locale=Locale())) } } // ROW:6301\n"
+            " fun scan(intent:Intent) { "
+            'captured=intent.getStringExtra("q") ?: ""; member }\n'
+            "}\n"
+            "val PropertyNotes.extension:kotlin.Unit\n"
+            ' get() { with("fixed") { '
+            "db.execSQL(format(locale=Locale())) } } // ROW:6302\n"
+            "var PropertyNotes.submission:kotlin.String\n"
+            ' get() = "fixed"\n'
+            ' set(input) { captured=input; with("fixed") { '
+            "db.execSQL(format(locale=Locale())) } } // ROW:6303\n"
+            "val PropertyNotes.fixed:kotlin.Unit\n"
+            ' get() { with("fixed") { '
+            "db.execSQL(format(locale=java.util.Locale.US)) } } // "
+            "ROW:6304\n"
+            "fun extensionScan(notes:PropertyNotes,intent:Intent) {\n"
+            ' notes.captured=intent.getStringExtra("q") ?: ""\n'
+            " notes.extension\n"
+            "}\n"
+            "fun setterScan(notes:PropertyNotes,intent:Intent) { "
+            'notes.submission=intent.getStringExtra("q") ?: "" }\n'
+            "fun fixedScan(notes:PropertyNotes,intent:Intent) {\n"
+            ' notes.captured=intent.getStringExtra("q") ?: ""\n'
+            " notes.fixed\n"
+            "}\n",
+        )
+    ],
+    "review34-p04_omitted_dependency": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "import vendor.Hidden\n"
+            "import vendor.HiddenQualified\n"
+            "fun Hidden.scan(intent:Intent) {\n"
+            ' captured=intent.getStringExtra("q") ?: ""\n'
+            " val first=(Locale()) // PRODUCER:6401\n"
+            " val second=first\n"
+            ' with("fixed") { db.execSQL(format(locale=second)) } // '
+            "ROW:6401\n"
+            "}\n"
+            "fun Hidden.inline(intent:Intent) {\n"
+            ' captured=intent.getStringExtra("q") ?: ""\n'
+            ' with("fixed") { db.execSQL(format(locale=Locale())) } // '
+            "ROW:6402\n"
+            "}\n"
+            "fun Hidden.qualified(intent:Intent) {\n"
+            ' captured=intent.getStringExtra("q") ?: ""\n'
+            ' with("fixed") { '
+            "db.execSQL(format(locale=java.util.Locale.US)) } // "
+            "ROW:6403\n"
+            "}\n"
+            "fun plain(db:SQLiteDatabase) {\n"
+            ' with("fixed") { db.execSQL(format(locale=Locale("en"))) } '
+            "// ROW:6404\n"
+            "}\n"
+            "class UtilHead { fun "
+            'Locale(language:kotlin.String):kotlin.String="member" }\n'
+            "class JavaHead { val util=UtilHead() }\n"
+            "class QualifiedNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            " val java=JavaHead()\n"
+            " fun format(locale:kotlin.String):kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "ROW:6405\n"
+            " }\n"
+            "}\n"
+            "fun HiddenQualified.qualifiedChain(intent:Intent) {\n"
+            ' captured=intent.getStringExtra("q") ?: ""\n'
+            ' with("fixed") { '
+            'db.execSQL(format(locale=java.util.Locale("en"))) } // '
+            "ROW:6406\n"
+            "}\n",
+        )
+    ],
+    "review34-p05_optional_generic": [
+        (
+            "Nullable.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class OptionalGeneric(val db:SQLiteDatabase) {\n"
+            ' private fun <T> T?.toString():kotlin.String="fixed"\n'
+            " fun unused(intent:Intent) {\n"
+            "  val number:kotlin.Int?=null\n"
+            "  val first=number.toString() // OPTIONAL:6501\n"
+            "  val copy=first\n"
+            '  db.execSQL("fixed") // ROW:6501\n'
+            " }\n"
+            " fun consumed(intent:Intent) {\n"
+            "  val number:kotlin.Int?=null\n"
+            "  val first=number.toString() // CONSUMED:6502\n"
+            "  db.execSQL(first) // ROW:6502\n"
+            " }\n"
+            "}\n",
+        ),
+        (
+            "Nonnull.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class NonnullGeneric(val db:SQLiteDatabase) {\n"
+            ' private fun <T> T?.toString():kotlin.String="fixed"\n'
+            " fun scan(intent:Intent) {\n"
+            "  val number:kotlin.Int=7\n"
+            "  val first=number.toString() // OPTIONAL:6503\n"
+            '  db.execSQL("fixed") // ROW:6503\n'
+            " }\n"
+            "}\n",
+        ),
+        (
+            "Plain.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class PlainNotes(val db:SQLiteDatabase) {\n"
+            " fun scan(intent:Intent) {\n"
+            "  val number:kotlin.Int?=null\n"
+            "  val first=number.toString()\n"
+            '  db.execSQL("fixed") // ROW:6504\n'
+            " }\n"
+            "}\n",
+        ),
+    ],
+    "review34-p06_query_isolation": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "class QueryNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            ' fun initialize():kotlin.String? { captured="RESET"; return '
+            "null }\n"
+            " private val origin=initialize()\n"
+            " private val copy=origin\n"
+            " fun trim():kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  copy.run { db.execSQL(trim()) } // ROW:6601\n"
+            " }\n"
+            " fun proofControl(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale("en"))) } // '
+            "ROW:6602\n"
+            " }\n"
+            " fun plainTaint(intent:Intent) {\n"
+            '  db.execSQL(intent.getStringExtra("q") ?: "") // ROW:6603\n'
+            " }\n"
+            "}\n"
+            "class FixedQuery(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            ' private val origin="fixed"\n'
+            " private val copy=origin\n"
+            " fun trim():kotlin.String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  copy.run { db.execSQL(trim()) } // ROW:6604\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "parent35-eight": [
+        (
+            "Numeric8.kt",
+            "package fresh.r35.hints\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun numeric8(db:SQLiteDatabase) {\n"
+            " with(1) {\n"
+            "  val unused=plus(plus(plus(plus(plus(plus(plus(plus(1))))))))\n"
+            '  db.execSQL("fixed") // ROW:7101\n'
+            " }\n"
+            "}\n",
+        )
+    ],
+    "parent35-nine": [
+        (
+            "Numeric9.kt",
+            "package fresh.r35.hints\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun numeric9(db:SQLiteDatabase) {\n"
+            " with(1) {\n"
+            "  val unused=plus(plus(plus(plus(plus(plus(plus(plus(plus(1)))))))))\n"
+            '  db.execSQL("fixed") // ROW:7102\n'
+            " }\n"
+            "}\n",
+        )
+    ],
+    "parent35-callback": [
+        (
+            "Callback.kt",
+            "package fresh.r35.hints\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class ScopeRun { fun run(block:()->Unit) { block() } }\n"
+            "fun callback(scope:ScopeRun,intent:Intent,db:SQLiteDatabase) {\n"
+            " with(scope) {\n"
+            '  listOf(intent.getStringExtra("q") ?: "").forEach {\n'
+            "   run { db.execSQL(it) } // ROW:7103\n"
+            "  }\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "claude34-p01_implicit_extensions": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "class Token { fun label():Token=Token() }\n"
+            'class Candidate { fun label():String="constant" }\n'
+            "class Other\n"
+            "fun Notes.Candidate():Token=Token()\n"
+            "fun Other.Candidate():Token=Token()\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun trim():String=captured\n"
+            " private val subject=Candidate()\n"
+            " fun detached(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  subject.label().run { db.execSQL(trim()) } // ROW:7101\n"
+            " }\n"
+            " fun inFunction(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  val subject=Candidate()\n"
+            "  subject.label().run { db.execSQL(trim()) } // ROW:7102\n"
+            " }\n"
+            "}\n"
+            "class PlainNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun trim():String=captured\n"
+            " private val subject=Candidate()\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  subject.label().run { db.execSQL(trim()) } // ROW:7103\n"
+            " }\n"
+            "}\n"
+            'fun CallableSource.Locale():String="text"\n'
+            "class CallableSource(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale())) } // '
+            "ROW:7104\n"
+            " }\n"
+            " fun qualified(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            "db.execSQL(format(locale=java.util.Locale.US)) } // "
+            "ROW:7105\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "claude34-p02_type_inapplicable": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "class TypedNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun Locale(language:Int):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  db.execSQL("SELECT "+Locale("en")) // ROW:7201\n'
+            " }\n"
+            " fun valid(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  db.execSQL("SELECT "+Locale(7)) // ROW:7203\n'
+            " }\n"
+            "}\n"
+            "class NoMember(val db:SQLiteDatabase) {\n"
+            " fun scan(intent:Intent) {\n"
+            '  db.execSQL("SELECT "+Locale("en")) // ROW:7202\n'
+            " }\n"
+            "}\n",
+        )
+    ],
+    "claude34-p03_file_holder": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            'class Holder { val value:String="fixed" }\n'
+            "class FileNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " fun trim():String=captured\n"
+            " fun scoped(intent:Intent,file:java.io.File) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  with(file) {\n"
+            "   val h=Holder()\n"
+            "   h.value.run { db.execSQL(trim()) } // ROW:7301\n"
+            "  }\n"
+            " }\n"
+            " fun plain(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  val h=Holder()\n"
+            "  h.value.run { db.execSQL(trim()) } // ROW:7302\n"
+            " }\n"
+            " fun typed(intent:Intent,file:java.io.File) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  with(file) {\n"
+            "   val h:Holder=Holder()\n"
+            "   h.value.run { db.execSQL(trim()) } // ROW:7303\n"
+            "  }\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "claude34-p04_property_function": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "class SharedNotes(val db:SQLiteDatabase) {\n"
+            ' var captured:String=""\n'
+            " val Locale:java.util.Locale=java.util.Locale.US\n"
+            ' fun Locale():String="text"\n'
+            " fun format(locale:String):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=Locale())) } // '
+            "ROW:7401\n"
+            " }\n"
+            " fun qualified(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            "db.execSQL(format(locale=java.util.Locale.US)) } // "
+            "ROW:7402\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "parent35-literal-implicit-extension-heads": [
+        (
+            "Caller.kt",
+            "package fresh.r35.primitives\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            "fun "
+            'kotlin.String.Locale():kotlin.String="member"\n'
+            'fun kotlin.Int.Locale():kotlin.String="member"\n'
+            "class Other\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured:kotlin.String=""\n'
+            " fun "
+            "format(locale:kotlin.String):kotlin.String=captured\n"
+            " fun text(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            "db.execSQL(format(locale=Locale())) } // "
+            "ROW:7501\n"
+            " }\n"
+            " fun number(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  with(1) { db.execSQL(format(locale=Locale())) } "
+            "// ROW:7502\n"
+            " }\n"
+            " fun control(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  with(Other()) { "
+            'db.execSQL("fixed".format(locale=Locale("en"))) } '
+            "// ROW:7503\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+}
+
+_REVIEW35_ROWS = [
+    ("review34-p01_alias_callable", "6101", "Caller.kt", 11, True, "exact"),
+    ("review34-p01_alias_callable", "6102", "Caller.kt", 15, False, "exact"),
+    ("review34-p01_alias_callable", "6103", "Caller.kt", 19, False, "exact"),
+    ("review34-p01_alias_callable", "6104", "Caller.kt", 28, True, "exact"),
+    ("review34-p01_alias_callable", "6105", "Caller.kt", 37, False, "exact"),
+    ("review34-p01_alias_callable", "6106", "Caller.kt", 46, False, "exact"),
+    ("review34-p01_alias_callable", "6107", "Caller.kt", 54, True, "exact"),
+    ("review34-p01_alias_callable", "6108", "Caller.kt", 63, True, "exact"),
+    ("review34-p01_alias_callable", "6109", "Caller.kt", 72, False, "exact"),
+    ("review34-p01_alias_callable", "6110", "Caller.kt", 81, False, "exact"),
+    ("review34-p02_detached_interference", "6201", "Caller.kt", 13, False, "exact"),
+    ("review34-p02_detached_interference", "6202", "Caller.kt", 23, False, "exact"),
+    ("review34-p02_detached_interference", "6203", "Caller.kt", 33, True, "exact"),
+    ("review34-p02_detached_interference", "6204", "Caller.kt", 43, False, "exact"),
+    ("review34-p03_property_receivers", "6301", "Caller.kt", 9, True, "exact"),
+    ("review34-p03_property_receivers", "6302", "Caller.kt", 13, True, "extension-format"),
+    ("review34-p03_property_receivers", "6303", "Caller.kt", 16, True, "extension-format"),
+    ("review34-p03_property_receivers", "6304", "Caller.kt", 18, False, "exact"),
+    ("review34-p04_omitted_dependency", "6401", "Caller.kt", 10, True, "unknown-dependency"),
+    ("review34-p04_omitted_dependency", "6402", "Caller.kt", 14, True, "unknown-dependency"),
+    ("review34-p04_omitted_dependency", "6403", "Caller.kt", 18, False, "exact"),
+    ("review34-p04_omitted_dependency", "6404", "Caller.kt", 21, False, "exact"),
+    ("review34-p04_omitted_dependency", "6405", "Caller.kt", 31, True, "exact"),
+    ("review34-p04_omitted_dependency", "6406", "Caller.kt", 36, True, "unknown-dependency"),
+    ("review34-p05_optional_generic", "6501", "Nullable.kt", 9, False, "exact"),
+    ("review34-p05_optional_generic", "6502", "Nullable.kt", 14, False, "exact"),
+    ("review34-p05_optional_generic", "6503", "Nonnull.kt", 8, False, "exact"),
+    ("review34-p05_optional_generic", "6504", "Plain.kt", 7, False, "exact"),
+    ("review34-p06_query_isolation", "6601", "Caller.kt", 12, True, "exact"),
+    ("review34-p06_query_isolation", "6602", "Caller.kt", 16, False, "exact"),
+    ("review34-p06_query_isolation", "6603", "Caller.kt", 19, True, "exact"),
+    ("review34-p06_query_isolation", "6604", "Caller.kt", 29, False, "exact"),
+    ("parent35-eight", "7101", "Numeric8.kt", 6, False, "unused-numeric-hint"),
+    ("parent35-nine", "7102", "Numeric9.kt", 6, False, "unused-numeric-hint"),
+    ("parent35-callback", "7103", "Callback.kt", 8, True, "exact"),
+    ("claude34-p01_implicit_extensions", "7101", "Caller.kt", 15, True, "exact"),
+    ("claude34-p01_implicit_extensions", "7102", "Caller.kt", 20, True, "exact"),
+    ("claude34-p01_implicit_extensions", "7103", "Caller.kt", 29, False, "exact"),
+    ("claude34-p01_implicit_extensions", "7104", "Caller.kt", 38, True, "exact"),
+    ("claude34-p01_implicit_extensions", "7105", "Caller.kt", 42, False, "exact"),
+    ("claude34-p02_type_inapplicable", "7201", "Caller.kt", 9, False, "exact"),
+    ("claude34-p02_type_inapplicable", "7203", "Caller.kt", 13, True, "exact"),
+    ("claude34-p02_type_inapplicable", "7202", "Caller.kt", 18, False, "exact"),
+    ("claude34-p03_file_holder", "7301", "Caller.kt", 11, False, "exact"),
+    ("claude34-p03_file_holder", "7302", "Caller.kt", 17, False, "exact"),
+    ("claude34-p03_file_holder", "7303", "Caller.kt", 23, False, "exact"),
+    ("claude34-p04_property_function", "7401", "Caller.kt", 11, True, "exact"),
+    ("claude34-p04_property_function", "7402", "Caller.kt", 15, False, "exact"),
+    ("parent35-literal-implicit-extension-heads", "7501", "Caller.kt", 13, True, "exact"),
+    ("parent35-literal-implicit-extension-heads", "7502", "Caller.kt", 17, True, "exact"),
+    ("parent35-literal-implicit-extension-heads", "7503", "Caller.kt", 21, False, "exact"),
+]
+
+
+@pytest.mark.parametrize(
+    "program,marker,path,line,expected,mode", _REVIEW35_ROWS, ids=[r[0] + ":" + r[1] for r in _REVIEW35_ROWS]
+)
+def test_review35_normalized_qualified_and_vararg_constructor_heads(
+    program, marker, path, line, expected, mode
+):
+    report = analyze_sources(_REVIEW35_PROGRAMS[program])
+    assert not any(r.get("parse_errors") for r in report["metadata"]["files"])
+    hits = {
+        (ev["path"], ev["line"]) for f in report["findings"] if f["rule_id"] == SQL for ev in f["evidence"]
+    }
+    hit = (path, line) in hits
+    state, reasons = _state(report, SQL), _reasons(report)
+    flow = report["metadata"]["native_flow"]
+    if state == "partial":
+        assert flow.get("budget_reasons"), (program, marker, reasons)
+    elif state == "limited":
+        assert reasons and not flow.get("budget_reasons"), (program, marker, reasons)
+    else:
+        assert state == "checked" and not reasons, (program, marker, state, reasons)
+    if hit is not expected and mode in {"extension-format", "unknown-dependency"}:
+        assert state in {"limited", "partial"} and any(
+            d.get("reason") == "unresolved callable identity or argument signature"
+            and d.get("call") == "format"
+            and d.get("path") == path
+            and d.get("line") == line
+            for d in flow.get("partial_details", [])
+        ), (program, marker, flow)
+    else:
+        assert hit is expected, (program, marker, state, reasons, hits)
+    if mode == "unused-numeric-hint":
+        assert state == "checked" and not reasons, report
+
+
+@pytest.mark.parametrize(
+    "program,expected",
+    [
+        ("review34-p01_alias_callable", {63: False, 72: True, 81: True}),
+        ("review34-p04_omitted_dependency", {31: False, 36: False, 21: True}),
+        ("claude34-p01_implicit_extensions", {38: False, 42: True}),
+        ("claude34-p04_property_function", {11: False, 15: True}),
+        ("parent35-literal-implicit-extension-heads", {13: False}),
+    ],
+)
+def test_review35_escaped_and_qualified_library_proof_controls(monkeypatch, program, expected):
+    argument, standard = Analyzer.library_argument_type, Analyzer.standard_reference_kind
+    observations = {}
+
+    def observe(self, node, frame, qualified, **kwargs):
+        before = self.native_flow.evaluations
+        result = argument(self, node, frame, qualified, **kwargs)
+        line = self.location(node)["line"]
+        if qualified == "java.util.Locale" and line in expected:
+            observations.setdefault(line, set()).add((result, standard(self, node, frame)))
+        assert self.native_flow.evaluations == before
+        return result
+
+    monkeypatch.setattr(Analyzer, "library_argument_type", observe)
+    analyze_sources(_REVIEW35_PROGRAMS[program])
+    for line, wanted in expected.items():
+        assert observations.get(line) == {(wanted, "java.util.Locale" if wanted else "")}, observations
+
+
+@pytest.mark.parametrize(
+    "program,expected",
+    [
+        ("review34-p01_alias_callable", {63: None, 72: "Locale", 81: "Locale"}),
+        ("review34-p04_omitted_dependency", {31: None, 36: "java.util.Locale", 21: "Locale"}),
+    ],
+)
+def test_review35_constructor_names_preserve_value_namespace_and_real_controls(
+    monkeypatch, program, expected
+):
+    from mobile_audit.native_flow import NativeFlow
+
+    constructor = NativeFlow.constructor_type
+    observations = {}
+
+    def observe(self, analyzer, call, frame):
+        before = self.evaluations
+        result = constructor(self, analyzer, call, frame)
+        line = analyzer.location(call.node)["line"]
+        if call.name == "Locale" and line in expected:
+            observations.setdefault(line, set()).add(result)
+        assert self.evaluations == before
+        return result
+
+    monkeypatch.setattr(NativeFlow, "constructor_type", observe)
+    analyze_sources(_REVIEW35_PROGRAMS[program])
+    assert observations == {line: {kind} for line, kind in expected.items()}, observations
+
+
+def test_review35_optional_identity_suppression_keeps_execution_budgets_and_consumed_queries():
+    from mobile_audit.native_flow import NativeFlow
+
+    flow = NativeFlow([])
+    flow.type_hint_depth = 1
+    flow.partial("callable argument type identity unresolved", classification_precision=True)
+    assert not flow.reasons and flow.partial_events == 0
+    flow.partial("source trace budget")
+    assert flow.reasons == {"source trace budget"} and flow.partial_events == 1
+    flow.type_hint_depth = 0
+    flow.partial("callable argument type identity unresolved")
+    assert flow.reasons == {"source trace budget", "callable argument type identity unresolved"}
+    assert flow.partial_events == 2
+
+
+def test_review35_external_receiver_constructor_caution_has_concrete_context():
+    report = analyze_sources(_REVIEW35_PROGRAMS["claude34-p03_file_holder"])
+    assert not any(f["rule_id"] == SQL for f in report["findings"])
+    assert _state(report, SQL) == "limited"
+    flow = report["metadata"]["native_flow"]
+    assert not flow.get("budget_reasons")
+    assert any(
+        d.get("reason") == "callable argument type identity unresolved"
+        and d.get("path") == "Caller.kt"
+        and d.get("line") == 10
+        and d.get("call") == "Holder"
+        for d in flow.get("partial_details", [])
+    ), flow

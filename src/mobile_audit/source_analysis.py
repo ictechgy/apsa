@@ -7574,7 +7574,10 @@ class Analyzer:
             self.language == "kotlin"
             and call is not None
             and value.type_name
-            and self.modeled_type_name(value.type_name) == self.modeled_type_name(call.name)
+            and self.modeled_type_name(value.type_name)
+            == self.modeled_type_name(
+                (self.key(call.receiver) + "." if call.receiver is not None else "") + call.name
+            )
             and self.implicit_reference_head_shadow(
                 call.node, (self.key(call.receiver) or call.name).partition(".")[0], frame
             )
@@ -9970,6 +9973,78 @@ class Analyzer:
             return None
         return context, origin, element.removeprefix("out ").strip()
 
+    def literal_string_argument_conflict(self, source: Analyzer, function: Any, call: Call) -> bool:
+        """A literal String cannot satisfy a proven non-null primitive parameter."""
+        if source.language != "kotlin" or any(self.argument_label(arg) for arg in call.args):
+            return False
+        for (_name, kind, parameter), argument in zip(source.parameters(function), call.args, strict=False):
+            node = self.unwrap(argument)
+            if node is not None and node.type in TEXT_LITERALS and self.text(node).lstrip().startswith('"'):
+                expected = self.declared_modeled_type(kind, parameter, context=source, qualify_source=True)
+                if expected in {
+                    "Boolean",
+                    "Byte",
+                    "Short",
+                    "Int",
+                    "Long",
+                    "Float",
+                    "Double",
+                    "Char",
+                    "UByte",
+                    "UShort",
+                    "UInt",
+                    "ULong",
+                }:
+                    return True
+        return False
+
+    def reference_head_extension(
+        self,
+        use: Any,
+        name: str,
+        receivers: set[str],
+        *,
+        source_owners: set[str],
+        standard_string: bool = False,
+        callable_heads: set[int] | None = None,
+    ) -> bool:
+        call = self.call(use)
+        return bool(
+            call is not None
+            and call.receiver is None
+            and call.name.rsplit(".", 1)[-1] == name
+            and self.project_extension(
+                name,
+                call,
+                receivers,
+                visible=True,
+                standard_string=standard_string,
+                source_owners=source_owners,
+                callable_heads=callable_heads,
+            )
+        )
+
+    def primitive_reference_head_extension(
+        self,
+        use: Any,
+        name: str,
+        kind: str,
+        callable_heads: set[int] | None,
+    ) -> bool:
+        receivers = {kind, "Any", "Object"}
+        if kind in NUMBER_TYPES - {"Boolean", "Bool", "Char"}:
+            receivers.add("Number")
+        if kind in NUMBER_TYPES | {"String", "CharSequence"}:
+            receivers.update({"Comparable", "Serializable"})
+        return self.reference_head_extension(
+            use,
+            name,
+            receivers,
+            source_owners=set(),
+            standard_string=kind == "String",
+            callable_heads=callable_heads,
+        )
+
     def nominal_reference_head_shadow(
         self,
         use: Any,
@@ -9999,6 +10074,18 @@ class Analyzer:
                 for _source, nominal in flow.class_definitions.get(owner, ())
             )
             ancestry = flow.project_ancestry(owner)
+            if (
+                instance_bodies
+                and head_arity is not None
+                and self.reference_head_extension(
+                    use,
+                    name,
+                    {ancestor.rsplit(".", 1)[-1] for ancestor in ancestry} | {"Any", "Object"},
+                    source_owners=ancestry,
+                    callable_heads=callable_heads,
+                )
+            ):
+                return True
             for ancestor in ancestry:
                 definitions = flow.class_definitions.get(ancestor, [])
                 if not definitions:
@@ -10048,11 +10135,12 @@ class Analyzer:
                                 )
                             ]
                         )
-                        if head_arity is not None:
+                        if head_arity is not None and call is not None:
                             declarations.extend(
                                 function
                                 for function in functions
                                 if source.accepts_arguments(function, head_arity)
+                                and not self.literal_string_argument_conflict(source, function, call)
                             )
                         for declared in declarations:
                             if source.has_modifier(declared, "private"):
@@ -10090,9 +10178,13 @@ class Analyzer:
         if primitive not in NUMBER_TYPES | {"String", "CharSequence", "Any", "Object", "Unit"}:
             return True
         java = {"Int": "Integer", "Bool": "Boolean", "Any": "Object"}.get(primitive, primitive)
-        return not any(
-            self.library_reference_type(kind, origin, qualified, default_import=True, context=context)
-            for qualified in {"kotlin." + primitive, "java.lang." + java}
+        return (
+            not any(
+                self.library_reference_type(kind, origin, qualified, default_import=True, context=context)
+                for qualified in {"kotlin." + primitive, "java.lang." + java}
+            )
+            or not callback_shape
+            and self.primitive_reference_head_extension(use, name, primitive, callable_heads)
         )
 
     def reference_write_invalidates_type(
@@ -10217,6 +10309,7 @@ class Analyzer:
                 part.type in FUNCTIONS
                 and self.symbol_name(self.text(_field(part, "name"))) == name
                 and self.accepts_arguments(part, len(call.args))
+                and not self.literal_string_argument_conflict(self, part, call)
                 for part in body.named_children
             ):
                 return False
@@ -10313,6 +10406,15 @@ class Analyzer:
                 if subject is None:
                     return True
                 if subject.type in TEXT_LITERALS | NUMBERS:
+                    kind = (
+                        "Char"
+                        if self.text(subject).lstrip().startswith("'")
+                        else self.known_value_type(subject, frame)
+                    )
+                    if not callback_shape and self.primitive_reference_head_extension(
+                        use, name, kind, callable_heads
+                    ):
+                        return True
                     current = current.parent
                     continue
                 context, origin, kind = self, subject, ""
@@ -11295,6 +11397,8 @@ class Analyzer:
         visible: bool = False,
         standard_string: bool = False,
         nullable_receiver: str = "",
+        source_owners: set[str] | None = None,
+        callable_heads: set[int] | None = None,
     ) -> bool:
         """A Kotlin project extension function of this name on one of these receiver types."""
         if self.native_flow is None:
@@ -11304,8 +11408,10 @@ class Analyzer:
             *(symbol.rsplit(".", 1)[-1] for symbol in self.native_flow.imported_symbols(self, name)),
         }
         for target in (target for alias in aliases for target in self.native_flow.by_name.get(alias, [])):
-            if target.analyzer.language != "kotlin" or not target.analyzer.accepts_arguments(
-                target.node, len(call.args)
+            if (
+                target.analyzer.language != "kotlin"
+                or not target.analyzer.accepts_arguments(target.node, len(call.args))
+                or self.literal_string_argument_conflict(target.analyzer, target.node, call)
             ):
                 continue
             declared = _field(target.node, "name")
@@ -11358,6 +11464,12 @@ class Analyzer:
             if receiver is None:
                 return True  # represented extension syntax, unresolved nullable compatibility
             spelling = target.analyzer.text(receiver)
+            if source_owners is not None:
+                declared_owners = self.native_flow.class_owners(
+                    target.analyzer, spelling.rstrip("?"), receiver
+                )
+                if declared_owners and not declared_owners & source_owners:
+                    continue
             canonical = {
                 qualified
                 for kind in receivers
@@ -11419,6 +11531,8 @@ class Analyzer:
                 )
             )
             if target.analyzer.accepts_arguments(target.node, len(call.args)) and compatible:
+                if callable_heads is not None:
+                    callable_heads.add(target.node.id)
                 return True
         return False
 
@@ -11564,7 +11678,7 @@ class Analyzer:
             if declared is not None and not any(
                 child.type == "." for child in member.children if child.end_byte <= declared.start_byte
             ):
-                functions.setdefault(self.text(declared), []).append(member)
+                functions.setdefault(self.symbol_name(self.text(declared)), []).append(member)
         self.class_functions[key] = functions
         return functions
 
@@ -11575,20 +11689,24 @@ class Analyzer:
         )
         if parameters is None:
             return count == 0
-        declared = [part for part in parameters.named_children if part.type == "parameter"]
-        if any(
-            part.type == "parameter_modifiers" and "vararg" in self.text(part)
-            for part in parameters.named_children
-        ):
-            return True
-        defaults = len(
-            [
-                part
-                for part in parameters.named_children
-                if part.type not in {"parameter", "parameter_modifiers"} | COMMENTS
-            ]
-        )
-        return len(declared) - defaults <= count <= len(declared)
+        total = required = 0
+        variadic = pending_vararg = False
+        for part in parameters.named_children:
+            if part.type == "parameter_modifiers":
+                pending_vararg = any(
+                    "annotation" not in child.type and self.text(child).strip() == "vararg"
+                    for child in part.children
+                )
+            elif part.type == "parameter":
+                total += 1
+                variadic = variadic or pending_vararg
+                sibling = part.next_sibling
+                while sibling is not None and sibling.type in COMMENTS:
+                    sibling = sibling.next_sibling
+                if not pending_vararg and (sibling is None or sibling.type != "="):
+                    required += 1
+                pending_vararg = False
+        return required <= count and (variadic or count <= total)
 
     def call_input_values(self, call: Call, frame: Frame) -> tuple[Value, dict[int, Value]]:
         """A call's receiver and data argument values, bound before any of its closures runs."""

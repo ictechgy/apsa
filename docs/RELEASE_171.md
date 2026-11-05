@@ -114,6 +114,15 @@ credential service was contacted.
   explicit-generic patterns abstain without independent facts. Reference cast
   queries retain target spelling and safe-cast nullability. Standard class heads
   do not override represented implicit-receiver values or inherited fields.
+  Escaped function names share normalized lookup keys. Required parameters still
+  constrain vararg candidates, and literal String arguments exclude proven
+  incompatible primitive parameters. Compatible visible extension heads on
+  represented implicit receivers prevent false constructor facts. Qualified
+  retained hints check their complete spelling and value namespace roots.
+  Optional numeric identity queries retain real execution budgets without
+  reporting unconsumed identity uncertainty. Conservative constructor identity
+  checks also apply outside library arguments and can leave fixed source members
+  visibly limited under an unavailable external receiver.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and

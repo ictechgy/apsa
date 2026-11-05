@@ -643,6 +643,8 @@ class NativeFlow:
         """
         # A classification-only dispatch decision can expose a precision limit
         # that the ordinary visit never needed. Execution gaps remain muted.
+        if self.type_hint_depth and reason == "callable argument type identity unresolved":
+            return
         if self.muted and not (classification_precision and reason_kind(reason) == "precision"):
             return
         self.partial_events += 1
@@ -2291,10 +2293,11 @@ class NativeFlow:
         name = call.name
         if call.receiver is not None:
             namespace = analyzer.key(call.receiver)
-            if (
-                namespace in frame.values
-                or namespace in analyzer.parameter_types
-                or namespace in analyzer.field_types
+            root = namespace.partition(".")[0]
+            if root in {"this", "self"} or any(
+                key in bindings
+                for key in {namespace, root}
+                for bindings in (frame.values, analyzer.parameter_types, analyzer.field_types)
             ):
                 return None
             name = namespace + "." + name

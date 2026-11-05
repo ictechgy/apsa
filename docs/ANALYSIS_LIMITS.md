@@ -396,6 +396,28 @@ constructor-like hint against the expression's head before accepting it. Consume
 uncertainty identifies that call; optional initializer hints suppress the detail.
 The generic type-parameter identity probe follows the same optional-hint rule.
 
+Callable names use the same normalized spelling for escaped declarations and
+calls. Arity checks count required parameters before accepting a vararg function;
+the vararg alone does not make earlier mandatory parameters optional. A literal
+String excludes a candidate whose corresponding parameter has a proven non-null
+Kotlin primitive type. Other argument compatibility remains conservative; this
+is not full overload resolution.
+
+Visible project extension heads also participate when their represented implicit
+receiver is compatible, including source instances and known String or numeric
+scope receivers. Unrelated source receiver types do not compete. This lookup
+records declaration identities without running extension bodies. Retained
+constructor hints check the complete qualified expression spelling, and a value
+at a qualified head's root prevents treating that chain as a package allocation.
+
+Optional type hints suppress only unconsumed callable-identity details, including
+numeric queries. They preserve execution and source-trace budget diagnostics;
+consumed uncertainty still identifies the affected call. The retained-constructor
+check applies to all consumers of known-value type facts. An unavailable external
+implicit receiver can therefore leave a source allocation such as `Holder()`
+visibly `limited`, even when its later String member has no input. This is a
+conservative identity limit rather than evidence of a tainted member.
+
 ## Hybrid source and compiled artifacts
 
 JS, TS and Dart use token/block flow, not full compiler semantics. Analysis covers
