@@ -400,15 +400,33 @@ Callable names use the same normalized spelling for escaped declarations and
 calls. Arity checks count required parameters before accepting a vararg function;
 the vararg alone does not make earlier mandatory parameters optional. A literal
 String excludes a candidate whose corresponding parameter has a proven non-null
-Kotlin primitive type. Other argument compatibility remains conservative; this
-is not full overload resolution.
+Kotlin primitive type. Only unambiguous positional bindings before the first
+vararg are compared; later vararg elements are not mapped to trailing defaulted
+parameters. Other argument compatibility remains conservative; this is not full
+overload resolution.
+Primitive-looking generic parameters and aliases are not primitive proof.
+Unmodeled primitive spellings require an additional non-null Kotlin identity
+proof at the parameter's declaration. This optional applicability query suppresses
+its own unused identity uncertainty and restores its query depth after failure.
 
 Visible project extension heads also participate when their represented implicit
 receiver is compatible, including source instances and known String or numeric
 scope receivers. Unrelated source receiver types do not compete. This lookup
 records declaration identities without running extension bodies. Retained
 constructor hints check the complete qualified expression spelling, and a value
-at a qualified head's root prevents treating that chain as a package allocation.
+at a qualified head's root prevents treating that chain as a package allocation,
+including visible module values and imported value aliases. An alias-expanded
+extension candidate must match the imported callable's full identity; an import
+alias for a class does not also alias an unrelated same-leaf extension function.
+Type-parameter extension receivers use their represented bounds without a
+redundant library-identity probe that would diagnose an already rejected candidate.
+CharSequence does not acquire Comparable or Serializable as known supertypes.
+Numeric Comparable argument compatibility remains conservative, so an incompatible
+generic extension can withhold a constructor fact. The bounded model still has
+preexisting false positives when a locally constructed receiver's String result
+is consumed inside nested numeric or CharSequence scopes, including controls
+without an extension. Some of those controls remain checked; these constructor
+head changes do not establish complete project-instance or receiver-tower flow.
 
 Optional type hints suppress only unconsumed callable-identity details, including
 numeric queries. They preserve execution and source-trace budget diagnostics;

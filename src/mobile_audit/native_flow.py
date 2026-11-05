@@ -2294,10 +2294,14 @@ class NativeFlow:
         if call.receiver is not None:
             namespace = analyzer.key(call.receiver)
             root = namespace.partition(".")[0]
-            if root in {"this", "self"} or any(
-                key in bindings
-                for key in {namespace, root}
-                for bindings in (frame.values, analyzer.parameter_types, analyzer.field_types)
+            if (
+                root in {"this", "self"}
+                or self.module_value_present(analyzer, root)
+                or any(
+                    key in bindings
+                    for key in {namespace, root}
+                    for bindings in (frame.values, analyzer.parameter_types, analyzer.field_types)
+                )
             ):
                 return None
             name = namespace + "." + name

@@ -9978,6 +9978,18 @@ class Analyzer:
         if source.language != "kotlin" or any(self.argument_label(arg) for arg in call.args):
             return False
         for (_name, kind, parameter), argument in zip(source.parameters(function), call.args, strict=False):
+            modifiers = parameter.prev_sibling
+            while modifiers is not None and modifiers.type in COMMENTS:
+                modifiers = modifiers.prev_sibling
+            if (
+                modifiers is not None
+                and modifiers.type == "parameter_modifiers"
+                and any(
+                    "annotation" not in child.type and source.text(child).strip() == "vararg"
+                    for child in modifiers.children
+                )
+            ):
+                break
             node = self.unwrap(argument)
             if node is not None and node.type in TEXT_LITERALS and self.text(node).lstrip().startswith('"'):
                 expected = self.declared_modeled_type(kind, parameter, context=source, qualify_source=True)
@@ -9995,6 +10007,24 @@ class Analyzer:
                     "UInt",
                     "ULong",
                 }:
+                    if expected not in KOTLIN_MODEL_TYPES:
+                        flow = self.native_flow
+                        if flow is None:
+                            continue
+                        depth = flow.type_hint_depth
+                        flow.type_hint_depth += 1
+                        try:
+                            if not self.library_reference_type(
+                                kind,
+                                parameter,
+                                "kotlin." + expected,
+                                default_import=True,
+                                context=source,
+                                require_nonnullable=True,
+                            ):
+                                continue
+                        finally:
+                            flow.type_hint_depth = depth
                     return True
         return False
 
@@ -10034,7 +10064,7 @@ class Analyzer:
         receivers = {kind, "Any", "Object"}
         if kind in NUMBER_TYPES - {"Boolean", "Bool", "Char"}:
             receivers.add("Number")
-        if kind in NUMBER_TYPES | {"String", "CharSequence"}:
+        if kind in NUMBER_TYPES | {"String"}:
             receivers.update({"Comparable", "Serializable"})
         return self.reference_head_extension(
             use,
@@ -11408,6 +11438,12 @@ class Analyzer:
             *(symbol.rsplit(".", 1)[-1] for symbol in self.native_flow.imported_symbols(self, name)),
         }
         for target in (target for alias in aliases for target in self.native_flow.by_name.get(alias, [])):
+            namespace = target.owner or self.native_flow.namespaces[id(target.analyzer)]
+            if target.name != name and (
+                (namespace + "." if namespace else "") + target.name
+                not in self.native_flow.imported_symbols(self, name)
+            ):
+                continue
             if (
                 target.analyzer.language != "kotlin"
                 or not target.analyzer.accepts_arguments(target.node, len(call.args))
@@ -11470,9 +11506,12 @@ class Analyzer:
                 )
                 if declared_owners and not declared_owners & source_owners:
                     continue
+            binding = self.native_flow.lexical_type(target.analyzer, spelling, receiver)
+            parameter_receiver = binding is not None and binding.type in {"type_parameter", "type_constraint"}
             canonical = {
                 qualified
                 for kind in receivers
+                if not parameter_receiver
                 for qualified in KOTLIN_MODEL_TYPES.get(kind, KOTLIN_STANDARD_RECEIVER_TYPES.get(kind, ()))
             }
             if nullable_receiver and (

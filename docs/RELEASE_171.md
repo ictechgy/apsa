@@ -123,6 +123,15 @@ credential service was contacted.
   reporting unconsumed identity uncertainty. Conservative constructor identity
   checks also apply outside library arguments and can leave fixed source members
   visibly limited under an unavailable external receiver.
+  Positional literal checks stop at varargs instead of binding their later
+  elements to defaulted parameters. Qualified allocations also exclude visible
+  module-value roots. Import aliases compete only with the actual imported
+  callable identity, preserving genuine constructor aliases and extension aliases.
+  Primitive-looking generic parameters and aliases require declaration-origin
+  proof before literal arguments can exclude their callables. Rejected generic
+  extension candidates do not emit unused identity diagnostics. CharSequence
+  no longer assumes Comparable or Serializable supertypes; broader numeric
+  generic compatibility and project-instance receiver flow remain bounded.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and
