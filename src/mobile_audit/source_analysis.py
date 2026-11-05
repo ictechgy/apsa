@@ -9974,58 +9974,66 @@ class Analyzer:
         return context, origin, element.removeprefix("out ").strip()
 
     def literal_string_argument_conflict(self, source: Analyzer, function: Any, call: Call) -> bool:
-        """A literal String cannot satisfy a proven non-null primitive parameter."""
-        if source.language != "kotlin" or any(self.argument_label(arg) for arg in call.args):
+        """Exclude a positional literal String only with a proven primitive parameter."""
+        flow = self.native_flow
+        if flow is None or source.language != "kotlin" or any(self.argument_label(arg) for arg in call.args):
             return False
-        for (_name, kind, parameter), argument in zip(source.parameters(function), call.args, strict=False):
+        for index, (_name, kind, parameter) in enumerate(source.parameters(function)):
+            if index >= len(call.args):
+                break
             modifiers = parameter.prev_sibling
             while modifiers is not None and modifiers.type in COMMENTS:
                 modifiers = modifiers.prev_sibling
-            if (
+            variadic = (
                 modifiers is not None
                 and modifiers.type == "parameter_modifiers"
                 and any(
                     "annotation" not in child.type and source.text(child).strip() == "vararg"
                     for child in modifiers.children
                 )
-            ):
+            )
+            arguments = call.args[index:] if variadic else call.args[index : index + 1]
+            strings = any(
+                (node := self.unwrap(argument)) is not None
+                and node.type in TEXT_LITERALS
+                and self.text(node).lstrip().startswith('"')
+                for argument in arguments
+            )
+            if kind and strings:
+                depth = flow.type_hint_depth
+                flow.type_hint_depth += 1
+                try:
+                    expected = self.declared_modeled_type(
+                        kind, parameter, context=source, qualify_source=True
+                    )
+                    if expected in {
+                        "Boolean",
+                        "Byte",
+                        "Short",
+                        "Int",
+                        "Long",
+                        "Float",
+                        "Double",
+                        "UInt",
+                        "ULong",
+                    }:
+                        return True
+                    if expected not in KOTLIN_MODEL_TYPES and any(
+                        self.library_reference_type(
+                            kind,
+                            parameter,
+                            "kotlin." + primitive,
+                            default_import=True,
+                            context=source,
+                            require_nonnullable=True,
+                        )
+                        for primitive in ("Char", "UByte", "UShort")
+                    ):
+                        return True
+                finally:
+                    flow.type_hint_depth = depth
+            if variadic:
                 break
-            node = self.unwrap(argument)
-            if node is not None and node.type in TEXT_LITERALS and self.text(node).lstrip().startswith('"'):
-                expected = self.declared_modeled_type(kind, parameter, context=source, qualify_source=True)
-                if expected in {
-                    "Boolean",
-                    "Byte",
-                    "Short",
-                    "Int",
-                    "Long",
-                    "Float",
-                    "Double",
-                    "Char",
-                    "UByte",
-                    "UShort",
-                    "UInt",
-                    "ULong",
-                }:
-                    if expected not in KOTLIN_MODEL_TYPES:
-                        flow = self.native_flow
-                        if flow is None:
-                            continue
-                        depth = flow.type_hint_depth
-                        flow.type_hint_depth += 1
-                        try:
-                            if not self.library_reference_type(
-                                kind,
-                                parameter,
-                                "kotlin." + expected,
-                                default_import=True,
-                                context=source,
-                                require_nonnullable=True,
-                            ):
-                                continue
-                        finally:
-                            flow.type_hint_depth = depth
-                    return True
         return False
 
     def reference_head_extension(
@@ -10036,6 +10044,7 @@ class Analyzer:
         *,
         source_owners: set[str],
         standard_string: bool = False,
+        standard_kind: str = "",
         callable_heads: set[int] | None = None,
     ) -> bool:
         call = self.call(use)
@@ -10050,6 +10059,7 @@ class Analyzer:
                 visible=True,
                 standard_string=standard_string,
                 source_owners=source_owners,
+                standard_kind=standard_kind,
                 callable_heads=callable_heads,
             )
         )
@@ -10072,8 +10082,128 @@ class Analyzer:
             receivers,
             source_owners=set(),
             standard_string=kind == "String",
+            standard_kind=kind,
             callable_heads=callable_heads,
         )
+
+    def extension_bound_compatibility(
+        self,
+        source: Analyzer,
+        receiver: Any,
+        *,
+        receivers: set[str],
+        source_owners: set[str],
+        standard_kind: str,
+    ) -> bool | None:
+        """Bounded declaration facts: unresolved bounds continue to compete."""
+        flow = self.native_flow
+        if flow is None:
+            return None
+        canonical = {
+            qualified
+            for kind in receivers
+            if standard_kind or kind in {"Any", "Object"}
+            for qualified in KOTLIN_MODEL_TYPES.get(kind, KOTLIN_STANDARD_RECEIVER_TYPES.get(kind, ()))
+        }
+        known = {
+            *KOTLIN_CALLBACK_TYPES.values(),
+            *(qualified for types in KOTLIN_STANDARD_RECEIVER_TYPES.values() for qualified in types),
+            *(qualified for types in KOTLIN_MODEL_TYPES.values() for qualified in types),
+            "kotlin.Char",
+            "kotlin.UByte",
+            "kotlin.UShort",
+        }
+
+        def complete_ancestry() -> bool:
+            if not source_owners:
+                return False
+            for owner in source_owners:
+                definitions = flow.class_definitions.get(owner, ())
+                if len(definitions) != 1:
+                    return False
+                context, nominal = definitions[0]
+                references = flow.supertype_references(context, nominal)
+                if references is None:
+                    return False
+                for reference in references:
+                    bases = flow.class_owners(context, reference, nominal.parent)
+                    if bases and bases <= source_owners:
+                        continue
+                    if not any(
+                        self.library_reference_type(
+                            reference, nominal.parent, target, context=context, default_import=True
+                        )
+                        for target in ("kotlin.Any", "java.lang.Object")
+                    ):
+                        return False
+            return True
+
+        def accepts(node: Any, seen: frozenset[int]) -> bool | None:
+            if len(seen) >= 16:
+                return None
+            spelling = source.text(node)
+            binding = flow.lexical_type(source, spelling, node)
+            if binding is not None and binding.type in {"type_parameter", "type_constraint"}:
+                if binding.id in seen:
+                    return None
+                name = next((part for part in binding.named_children if part.type in IDENTIFIERS), None)
+                if name is None or binding.parent is None or binding.parent.parent is None:
+                    return None
+                owner = binding.parent.parent
+                bounds = []
+                for group in owner.named_children:
+                    if group.type not in {"type_parameters", "type_constraints"}:
+                        continue
+                    for declaration in group.named_children:
+                        identifier = next(
+                            (part for part in declaration.named_children if part.type in IDENTIFIERS), None
+                        )
+                        if identifier is not None and source.symbol_name(
+                            source.text(identifier)
+                        ) == source.symbol_name(source.text(name)):
+                            bounds.extend(
+                                part
+                                for part in declaration.named_children
+                                if part.id != identifier.id
+                                and part.type
+                                in {
+                                    "user_type",
+                                    "nullable_type",
+                                    "type_identifier",
+                                    "parenthesized_type",
+                                    "function_type",
+                                    "non_nullable_type",
+                                }
+                            )
+                if not bounds:
+                    return None if ":" in source.text(binding) else True
+                results = [accepts(bound, seen | {binding.id}) for bound in bounds]
+                return False if False in results else None if None in results else True
+            if any(
+                self.library_reference_type(spelling, node, target, context=source, default_import=True)
+                for target in canonical
+            ):
+                return True
+            owners = flow.class_owners(source, spelling.rstrip("?!"), node)
+            if owners & source_owners:
+                return True
+            if (standard_kind or complete) and (
+                owners
+                or any(
+                    self.library_reference_type(spelling, node, target, context=source, default_import=True)
+                    for target in known
+                )
+            ):
+                return False
+            return None
+
+        depth = flow.type_hint_depth
+        flow.type_hint_depth += 1
+        try:
+            complete = complete_ancestry()
+            return accepts(receiver, frozenset())
+        finally:
+            flow.type_hint_depth = depth
 
     def nominal_reference_head_shadow(
         self,
@@ -11428,6 +11558,7 @@ class Analyzer:
         standard_string: bool = False,
         nullable_receiver: str = "",
         source_owners: set[str] | None = None,
+        standard_kind: str = "",
         callable_heads: set[int] | None = None,
     ) -> bool:
         """A Kotlin project extension function of this name on one of these receiver types."""
@@ -11561,6 +11692,15 @@ class Analyzer:
             compatible = (
                 self.string_extension_receiver(target.analyzer, target.node, receiver)
                 if standard_string
+                else self.extension_bound_compatibility(
+                    target.analyzer,
+                    receiver,
+                    receivers=receivers,
+                    source_owners=source_owners,
+                    standard_kind=standard_kind,
+                )
+                is not False
+                if parameter_receiver and source_owners is not None
                 else bool(self.receiver_names(target.analyzer, target.node, receiver) & receivers)
                 or any(
                     self.library_reference_type(

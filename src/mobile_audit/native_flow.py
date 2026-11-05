@@ -2381,8 +2381,10 @@ class NativeFlow:
             for source, node in bindings.get(source_name, []):
                 if source.language != analyzer.language:
                     continue
+                namespace = self.namespaces[id(source)]
+                identity = (namespace + "." if namespace else "") + source_name
                 if source is analyzer:
-                    if source_name == name:
+                    if source_name == name or identity in imported:
                         result[id(source), node.id] = source, node
                     continue
                 if self.declaration_tokens(node) & {"private", "fileprivate"}:
@@ -2392,8 +2394,6 @@ class NativeFlow:
                     if source_name == name:
                         result[id(source), node.id] = source, node
                     continue
-                namespace = self.namespaces[id(source)]
-                identity = (namespace + "." if namespace else "") + source_name
                 if source_name == name and (
                     namespace == self.namespaces[id(analyzer)] or namespace + ".*" in analyzer.imports
                 ):

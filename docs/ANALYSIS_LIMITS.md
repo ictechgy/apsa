@@ -400,14 +400,16 @@ Callable names use the same normalized spelling for escaped declarations and
 calls. Arity checks count required parameters before accepting a vararg function;
 the vararg alone does not make earlier mandatory parameters optional. A literal
 String excludes a candidate whose corresponding parameter has a proven non-null
-Kotlin primitive type. Only unambiguous positional bindings before the first
-vararg are compared; later vararg elements are not mapped to trailing defaulted
-parameters. Other argument compatibility remains conservative; this is not full
-overload resolution.
+Kotlin primitive type. Fixed positional parameters and remaining unnamed literal
+vararg elements are compared with their parameter or element type; elements are
+not mapped to trailing defaulted parameters. Spread/unknown arguments do not
+establish a literal conflict. Other compatibility remains conservative; this is
+not full overload resolution.
 Primitive-looking generic parameters and aliases are not primitive proof.
-Unmodeled primitive spellings require an additional non-null Kotlin identity
-proof at the parameter's declaration. This optional applicability query suppresses
-its own unused identity uncertainty and restores its query depth after failure.
+The finite unmodeled primitive targets also use non-null Kotlin identity proof at
+the parameter declaration, including imported renamed aliases. The whole
+applicability query, including modeled-name classification, is optional: it
+suppresses its own unused identity uncertainty and restores depth after failure.
 
 Visible project extension heads also participate when their represented implicit
 receiver is compatible, including source instances and known String or numeric
@@ -418,8 +420,17 @@ at a qualified head's root prevents treating that chain as a package allocation,
 including visible module values and imported value aliases. An alias-expanded
 extension candidate must match the imported callable's full identity; an import
 alias for a class does not also alias an unrelated same-leaf extension function.
+Same-file value import aliases use the same exact imported identity as cross-file
+aliases. Same-file private declarations remain visible; cross-file private values
+do not become package-looking expression roots.
 Type-parameter extension receivers use their represented bounds without a
 redundant library-identity probe that would diagnose an already rejected candidate.
+Head queries follow inline/where bounds and parameter chains for at most16 links,
+resolving concrete aliases at their declaration. Unknown/cyclic/capped bounds
+continue to compete. Only proven incompatibility rejects a bound: standard
+receiver profiles come from established identities, and source nonintersection
+requires a complete represented ancestry. String keeps its separate variance
+checks. These declaration queries neither execute callees nor retain frames.
 CharSequence does not acquire Comparable or Serializable as known supertypes.
 Numeric Comparable argument compatibility remains conservative, so an incompatible
 generic extension can withhold a constructor fact. The bounded model still has

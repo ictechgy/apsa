@@ -132,6 +132,10 @@ credential service was contacted.
   extension candidates do not emit unused identity diagnostics. CharSequence
   no longer assumes Comparable or Serializable supertypes; broader numeric
   generic compatibility and project-instance receiver flow remain bounded.
+  Same-file imported value aliases now block false package allocations. Parameter
+  applicability probes include modeled names in their optional context, resolve
+  renamed primitive aliases, and check vararg elements. Generic head competition
+  follows alias and parameter bounds with a bounded, conservative query.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and
