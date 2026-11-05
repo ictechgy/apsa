@@ -738,9 +738,20 @@ ordinary callable supplies a declared result; an exact String argument alone doe
 not defeat an applicable Any or nullable String constructor. Nonnull assertions
 retain their explicit argument proof.
 
-Package-level value imports no longer establish absence of a binary classifier.
+Package-level or source-member value imports do not establish absence of an
+overlapping binary package classifier.
 Unknown type roots withhold library identity and add precision at the consuming
-String operation, with bounded declaration-origin details. Closed represented
-member-value imports keep their separate type-namespace behavior. These changes
+String operation, with bounded declaration-origin details. Explicit standard
+aliases and aliases resolved in their own uncontested declaration context remain
+positive. Unknown String-extension receiver identities retain competition rather
+than becoming incompatibility proof. These changes
 do not add binary classpath inventory, general overload ranking or constructor
 initializer execution.
+
+Private nested nominal visibility and private constructor visibility keep their
+different lexical boundaries. Incomplete default/trailing-lambda binding cannot
+exclude a plausible construction. Source-object scope entry vetoes implicit and
+inherited value shadows with bounded, restored query state; a proven modeled
+Intent receiver can exclude unrelated source dispatch. Custom builder extension
+argument-write approximations identify their effect limit at the consuming call,
+so fixed-body candidates do not become checked through ownership alone.

@@ -24378,9 +24378,18 @@ def test_review39_qualified_source_calls_and_receiver_boundaries(program, path, 
     if program in {
         "claude38-f2_private_unrelated",
         "claude38-f2_no_extension",
-        "claude38-f2_visible_builder",
     }:
         assert state == "checked" and not _reasons(report), flow
+    elif program == "claude38-f2_visible_builder":
+        assert state == "limited" and not flow["budget_reasons"], flow
+        assert any(
+            d.get("path") == "Caller.kt"
+            and d.get("line") == 10
+            and d.get("call") == "tag"
+            and d["reason"] == "Kotlin custom builder extension effects unavailable"
+            and d["kind"] == "precision"
+            for d in flow["partial_details"]
+        ), flow
     elif state == "partial":
         assert flow["budget_reasons"], flow
     elif state == "limited":
@@ -27543,10 +27552,10 @@ _REVIEW41_ROWS = [
     ("claude40-f2_vararg_lower", "Caller.java", 6, True, "permit-diagnosed-miss"),
     ("claude40-f2_explicit_new", "Caller.java", 9, True, "exact"),
     ("claude40-f2_explicit_new", "Caller.java", 11, False, "exact"),
-    ("claude40-f3_value_java_type", "Caller.kt", 12, False, "exact"),
+    ("claude40-f3_value_java_type", "Caller.kt", 12, False, "permit-type-namespace-precision"),
     ("claude40-f3_value_kotlin_primitive", "Caller.kt", 7, True, "exact"),
     ("claude40-f3_value_kotlin_primitive", "Caller.kt", 8, False, "exact"),
-    ("claude40-f3_value_kotlin_array", "Caller.kt", 12, False, "exact"),
+    ("claude40-f3_value_kotlin_array", "Caller.kt", 12, False, "permit-type-namespace-precision"),
     ("claude40-f3_classifier_negative", "Caller.kt", 10, True, "exact"),
     ("claude40-f4_pick_inferred", "Caller.kt", 12, True, "exact"),
     ("claude40-f4_conditional_local", "Caller.kt", 13, True, "exact"),
@@ -27746,7 +27755,7 @@ _REVIEW41_PROOFS = [
     ),
     (
         "claude40-f3_value_java_type",
-        {"call": "format", "subject": "argument", "qualified": "java.util.Locale", "expected_proof": True},
+        {"call": "format", "subject": "argument", "qualified": "java.util.Locale", "expected_proof": False},
     ),
     (
         "claude40-f3_value_kotlin_primitive",
@@ -27760,7 +27769,7 @@ _REVIEW41_PROOFS = [
     ),
     (
         "claude40-f3_value_kotlin_array",
-        {"call": "format", "subject": "argument", "qualified": "kotlin.Array", "expected_proof": True},
+        {"call": "format", "subject": "argument", "qualified": "kotlin.Array", "expected_proof": False},
     ),
     (
         "claude40-f3_classifier_negative",
@@ -27880,7 +27889,19 @@ def test_review41_compiler_runtime_polarity_and_affected_coverage(program, path,
     hit = (path, line) in hits
     flow = report["metadata"]["native_flow"]
     state = _state(report, SQL)
-    if mode == "permit-diagnosed-miss" and not hit:
+    if mode == "permit-type-namespace-precision" and hit:
+        # Runtime remains fixed; source-only imports cannot close a binary package namespace.
+        assert not expected and state == "limited" and not flow["budget_reasons"], flow
+        assert any(
+            d.get("path") == path
+            and d.get("line") == line
+            and d.get("call") == "format"
+            and d["reason"] == "callable argument type identity unresolved"
+            and d["kind"] == "precision"
+            and d.get("type_origins")
+            for d in flow["partial_details"]
+        ), flow
+    elif mode == "permit-diagnosed-miss" and not hit:
         # Existing Java vararg dispatch may improve; never require the miss.
         assert state == "limited" and not flow["budget_reasons"], flow
         assert any(
@@ -30522,7 +30543,13 @@ _REVIEW42_ROWS = [
         False,
         (4, "appendSql", "callable argument type identity unresolved"),
     ),
-    ("adversarial41-type_value_import", "Case.kt", 7, False, None),
+    (
+        "adversarial41-type_value_import",
+        "Case.kt",
+        7,
+        False,
+        (7, "format", "callable argument type identity unresolved"),
+    ),
     ("adversarial41-type_classifier_import", "Case.kt", 6, True, None),
     ("adversarial41-java_upper", "Case.java", 5, True, None),
     ("adversarial41-java_lower", "Case.java", 5, True, None),
@@ -30918,3 +30945,1223 @@ def test_review42_inferred_string_arguments_do_not_consume_unresolved_callable_p
         and d["reason"] == "unresolved callable identity or argument signature"
         for d in details
     )
+
+
+# R43: compiler-calibrated source facts; runtime truth is distinct from diagnosed approximations.
+_REVIEW43_PROGRAMS = {
+    "adversarial42-fixed_body_minimal": [
+        [
+            "Case.kt",
+            "package fresh.r42.fixed_body_minimal\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object FixedFmt {\n"
+            ' fun StringBuilder.appendSql(q:String) { append("FIXED") }\n'
+            "}\n"
+            "object TaintFmt {\n"
+            " fun StringBuilder.appendSql(q:String) { append(q) }\n"
+            "}\n"
+            "object Other { fun appendSql(q:String) {} }\n"
+            "fun appendSql(q:String) {}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(with(FixedFmt) { with(Other) { buildString { appendSql(q) "
+            "} } }) // SQL_ROW\n"
+            " db.execSQL(with(TaintFmt) { with(Other) { buildString { appendSql(q) "
+            "} } }) // SQL_ROW\n"
+            "}\n",
+        ]
+    ],
+    "adversarial42-private_nominal": [
+        [
+            "Case.kt",
+            "package fresh.r42.private_nominal\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Root {\n"
+            " private class Locale(val db:Any,val q:Any)\n"
+            " fun Locale(db:SQLiteDatabase,q:String) {\n"
+            "  db.execSQL(q) // SQL_ROW\n"
+            " }\n"
+            "}\n"
+            "object Safe {\n"
+            " private class Locale(val db:Any,val q:Any)\n"
+            " fun Locale(db:SQLiteDatabase,q:String) {\n"
+            '  db.execSQL("FIXED") // SQL_ROW\n'
+            " }\n"
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " Root.Locale(db,q)\n"
+            " Safe.Locale(db,q)\n"
+            "}\n",
+        ]
+    ],
+    "code42-overlapping-member-binary": [
+        [
+            "Caller.kt",
+            "package witness.boundary\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import witness.boundary.Holder.java\n"
+            "object Holder { val java=1 }\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured=""\n'
+            " fun format(locale:java.util.Locale):String { "
+            'println("SELECT|ordinary"); return captured }\n'
+            " fun scan(intent:Intent,loc:java.util.Locale) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL(format(locale=loc)) }\n'
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "member43-member-function": [
+        [
+            "Caller.kt",
+            "package calibration43.function_member\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import calibration43.function_member.Values.java\n"
+            "object Values { fun java()=1 }\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured=""\n'
+            " fun format(locale:java.util.Locale):String { "
+            'println("SELECT|MF43|ordinary-tainted"); return captured }\n'
+            " fun scan(intent:Intent,loc:java.util.Locale) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL("MF43_T|"+format(locale=loc)) } // SQL_TAINT\n'
+            " }\n"
+            "}\n"
+            "class FixedNotes(val db:SQLiteDatabase) {\n"
+            " fun format(locale:java.util.Locale):String { "
+            'println("SELECT|MF43|ordinary-fixed"); return "SAFE" }\n'
+            " fun scan(loc:java.util.Locale) {\n"
+            '  with("fixed") { db.execSQL("MF43_F|"+format(locale=loc)) } // SQL_FIXED\n'
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "member43-renamed-property": [
+        [
+            "Caller.kt",
+            "package calibration43.renamed_member\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import calibration43.renamed_member.Values.origin as java\n"
+            "object Values { val origin=1 }\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured=""\n'
+            " fun format(locale:java.util.Locale):String { "
+            'println("SELECT|RP43|ordinary-tainted"); return captured }\n'
+            " fun scan(intent:Intent,loc:java.util.Locale) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL("RP43_T|"+format(locale=loc)) } // SQL_TAINT\n'
+            " }\n"
+            "}\n"
+            "class FixedNotes(val db:SQLiteDatabase) {\n"
+            " fun format(locale:java.util.Locale):String { "
+            'println("SELECT|RP43|ordinary-fixed"); return "SAFE" }\n'
+            " fun scan(loc:java.util.Locale) {\n"
+            '  with("fixed") { db.execSQL("RP43_F|"+format(locale=loc)) } // SQL_FIXED\n'
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "member43-genuine-jdk-alias": [
+        [
+            "Caller.kt",
+            "package calibration43.lang_member\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import calibration43.lang_member.Values.origin as java\n"
+            "import java.util.Locale as Lang\n"
+            "object Values { val origin=1 }\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured=""\n'
+            ' fun format(locale:Lang):String { println("SELECT|LA43|ordinary-tainted"); '
+            "return captured }\n"
+            " fun scan(intent:Intent,loc:Lang) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL("LA43_T|"+format(locale=loc)) } // SQL_TAINT\n'
+            " }\n"
+            "}\n"
+            "class FixedNotes(val db:SQLiteDatabase) {\n"
+            ' fun format(locale:Lang):String { println("SELECT|LA43|ordinary-fixed"); '
+            'return "SAFE" }\n'
+            " fun scan(loc:Lang) {\n"
+            '  with("fixed") { db.execSQL("LA43_F|"+format(locale=loc)) } // SQL_FIXED\n'
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "member43-cross-file-typealias": [
+        [
+            "Caller.kt",
+            "package calibration43.clean_member\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import calibration43.clean_member.Values.origin as java\n"
+            "object Values { val origin=1 }\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured=""\n'
+            " fun format(locale:CleanLocale):String { "
+            'println("SELECT|CA43|ordinary-tainted"); return captured }\n'
+            " fun scan(intent:Intent,loc:CleanLocale) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { db.execSQL("CA43_T|"+format(locale=loc)) } // '
+            "SQL_TAINT\n"
+            " }\n"
+            "}\n"
+            "class FixedNotes(val db:SQLiteDatabase) {\n"
+            " fun format(locale:CleanLocale):String { "
+            'println("SELECT|CA43|ordinary-fixed"); return "SAFE" }\n'
+            " fun scan(loc:CleanLocale) {\n"
+            '  with("fixed") { db.execSQL("CA43_F|"+format(locale=loc)) } // '
+            "SQL_FIXED\n"
+            " }\n"
+            "}\n",
+        ],
+        ["Types.kt", "package calibration43.clean_member\ntypealias CleanLocale = java.util.Locale\n"],
+    ],
+    "private43-f1_nested_private_inside_owner": [
+        [
+            "Case.kt",
+            "package preserve43.owner\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Root {\n"
+            " private class Locale(val db:Any,val language:Any) {\n"
+            '  init { println("MARKER|F1_CTOR|"+language) }\n'
+            " }\n"
+            " fun "
+            "Locale(db:SQLiteDatabase,language:String):java.util.Locale {\n"
+            '  db.execSQL("F1_ORDINARY|"+language) // SQL:F1_ORDINARY\n'
+            "  return java.util.Locale.US\n"
+            " }\n"
+            " fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            '  val q:String=intent.getStringExtra("q") ?: ""\n'
+            "  "
+            'db.execSQL("F1_UNSAFE|"+Root.Locale(db,q).language.toString()) '
+            "// SQL:F1_UNSAFE PROOF:F1_UNSAFE\n"
+            "  "
+            'db.execSQL("F1_SAFE|"+Root.Locale(db,"FIXED").language.toString()) '
+            "// SQL:F1_SAFE PROOF:F1_SAFE\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "private43-f3_top_private_other_file": [
+        [
+            "Hidden.kt",
+            "package preserve43.otherfile\n"
+            "private class Locale(val db:Any,val language:Any) {\n"
+            ' init { println("MARKER|F3_INACCESSIBLE_CTOR|"+language) }\n'
+            "}\n"
+            "private class SafeLocale(val db:Any,val language:Any) {\n"
+            ' init { println("MARKER|F3_INACCESSIBLE_SAFE_CTOR|"+language) }\n'
+            "}\n",
+        ],
+        [
+            "Api.kt",
+            "package preserve43.otherfile\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun Locale(db:SQLiteDatabase,language:String):java.util.Locale {\n"
+            ' db.execSQL("F3_ORDINARY_UNSAFE|"+language) // '
+            "SQL:F3_ORDINARY_UNSAFE\n"
+            " return java.util.Locale.US\n"
+            "}\n"
+            "fun SafeLocale(db:SQLiteDatabase,language:String):java.util.Locale "
+            "{\n"
+            ' db.execSQL("F3_ORDINARY_SAFE|"+language) // SQL:F3_ORDINARY_SAFE\n'
+            " return java.util.Locale.US\n"
+            "}\n",
+        ],
+        [
+            "Caller.kt",
+            "package preserve43.otherfile\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " val first=preserve43.otherfile.Locale(db,q) // PROOF:F3_UNSAFE\n"
+            ' db.execSQL("F3_RESULT_UNSAFE|"+first.language) // '
+            "SQL:F3_RESULT_UNSAFE\n"
+            ' val second=preserve43.otherfile.SafeLocale(db,"FIXED") // '
+            "PROOF:F3_SAFE\n"
+            ' db.execSQL("F3_RESULT_SAFE|"+second.language) // '
+            "SQL:F3_RESULT_SAFE\n"
+            "}\n",
+        ],
+    ],
+    "private43-f4_private_primary_inside_companion": [
+        [
+            "Case.kt",
+            "package preserve43.companion\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Root {\n"
+            " class Locale private constructor(val db:Any,val "
+            "language:Any) {\n"
+            '  init { println("MARKER|F4_CTOR|"+language) }\n'
+            "  companion object {\n"
+            "   fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            '    val q:String=intent.getStringExtra("q") ?: ""\n'
+            "    "
+            'db.execSQL("F4_UNSAFE|"+Root.Locale(db,q).language.toString()) '
+            "// SQL:F4_UNSAFE PROOF:F4_UNSAFE\n"
+            "    "
+            'db.execSQL("F4_SAFE|"+Root.Locale(db,"FIXED").language.toString()) '
+            "// SQL:F4_SAFE PROOF:F4_SAFE\n"
+            "   }\n"
+            "  }\n"
+            " }\n"
+            " fun "
+            "Locale(db:SQLiteDatabase,language:String):java.util.Locale "
+            "{\n"
+            '  db.execSQL("F4_ORDINARY|"+language) // SQL:F4_ORDINARY\n'
+            "  return java.util.Locale.US\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "private43-f2_top_private_same_file": [
+        [
+            "Case.kt",
+            "package preserve43.samefile\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "private class Locale(val db:SQLiteDatabase,val language:String) {\n"
+            ' init { println("MARKER|F2_CTOR|"+language) }\n'
+            "}\n"
+            "fun Locale(db:SQLiteDatabase,language:Any):java.util.Locale {\n"
+            ' db.execSQL("F2_ORDINARY|"+language) // SQL:F2_ORDINARY\n'
+            " return java.util.Locale.US\n"
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " "
+            'db.execSQL("F2_UNSAFE|"+preserve43.samefile.Locale(db,q).language.toString()) '
+            "// SQL:F2_UNSAFE PROOF:F2_UNSAFE\n"
+            " "
+            'db.execSQL("F2_SAFE|"+preserve43.samefile.Locale(db,"FIXED").language.toString()) '
+            "// SQL:F2_SAFE PROOF:F2_SAFE\n"
+            "}\n",
+        ]
+    ],
+    "claude42-scope-m2_receiver_property_shadows": [
+        [
+            "Case.kt",
+            "package claude42.m2\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Fmt {\n"
+            " fun StringBuilder.appendSql(s:String) { append(s) }\n"
+            "}\n"
+            "object Root {\n"
+            " object Fmt {\n"
+            "  fun StringBuilder.appendSql(s:String) { append(s) }\n"
+            " }\n"
+            "}\n"
+            "object Other\n"
+            "object OtherRoot { val Fmt=Other }\n"
+            "class Holder {\n"
+            " val Fmt=Other\n"
+            " val Root=OtherRoot\n"
+            "}\n"
+            "open class Base { val Fmt=Other }\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            " fun appendSql(s:String) {}\n"
+            " fun scan(intent:Intent,holder:Holder) {\n"
+            '  val q:String=intent.getStringExtra("q") ?: ""\n'
+            "  with(holder) {\n"
+            '   db.execSQL("M2_DIRECT|"+buildString { with(Fmt) { '
+            'appendSql(q) };append("FIXED") }) // SQL:M2_DIRECT\n'
+            '   db.execSQL("M2_PAREN|"+buildString { with((Fmt)) { '
+            'appendSql(q) };append("FIXED") }) // SQL:M2_PAREN\n'
+            '   db.execSQL("M2_QUALIFIED|"+buildString { with(Root.Fmt) '
+            '{ appendSql(q) };append("FIXED") }) // SQL:M2_QUALIFIED\n'
+            '   db.execSQL("M2_GENUINE|"+buildString { '
+            "with(claude42.m2.Fmt) { appendSql(q) } }) // "
+            "SQL:M2_GENUINE\n"
+            '   db.execSQL("M2_FIXED_TWIN|"+buildString { '
+            'with(claude42.m2.Fmt) { appendSql("FIXED") } }) // '
+            "SQL:M2_FIXED_TWIN\n"
+            "  }\n"
+            " }\n"
+            "}\n"
+            "class InheritedNotes(val db:SQLiteDatabase):Base() {\n"
+            " fun appendSql(s:String) {}\n"
+            " fun scanInherited(intent:Intent) {\n"
+            '  val q:String=intent.getStringExtra("q") ?: ""\n'
+            '  db.execSQL("M2_INHERITED|"+buildString { with(Fmt) { '
+            'appendSql(q) };append("FIXED") }) // SQL:M2_INHERITED\n'
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "claude42-scope-m3_known_intent_scope": [
+        [
+            "Case.kt",
+            "package claude42.m3\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class Other {\n"
+            " fun StringBuilder.appendSql(s:String) { append(s) }\n"
+            "}\n"
+            "class Fmt2 {\n"
+            ' fun String.trim():String="x"\n'
+            "}\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            " fun appendSql(s:String) {}\n"
+            " fun scan(intent:Intent) {\n"
+            '  val q:String=intent.getStringExtra("q") ?: ""\n'
+            "  with(intent) {\n"
+            '   db.execSQL("M3_BUILDER|"+buildString { '
+            'appendSql(q);append("FIXED") }) // SQL:M3_BUILDER\n'
+            '   q.run { db.execSQL("M3_TRIM|"+trim()) } // SQL:M3_TRIM\n'
+            '   val fixed=" FIXED "\n'
+            '   fixed.run { db.execSQL("M3_TRIM_SAFE|"+trim()) } // '
+            "SQL:M3_TRIM_SAFE\n"
+            '   db.execSQL("M3_BUILDER_SAFE|"+buildString { '
+            'appendSql("FIXED");append("FIXED") }) // SQL:M3_BUILDER_SAFE\n'
+            "  }\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "claude42-scope-l1_top_extension_nearer_member": [
+        [
+            "Case.kt",
+            "package claude42.l1\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun StringBuilder.appendSql(s:String) { append(s) }\n"
+            "object Other {\n"
+            " fun appendSql(s:String) {}\n"
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' db.execSQL("L1_NEARER_MEMBER|"+buildString { with(Other) '
+            '{ appendSql(q) };append("FIXED") }) // '
+            "SQL:L1_NEARER_MEMBER\n"
+            ' db.execSQL("L1_TOP_EXTENSION|"+buildString { '
+            "appendSql(q) }) // SQL:L1_TOP_EXTENSION\n"
+            ' db.execSQL("L1_FIXED_TWIN|"+buildString { with(Other) { '
+            'appendSql("FIXED") };append("FIXED") }) // '
+            "SQL:L1_FIXED_TWIN\n"
+            "}\n",
+        ]
+    ],
+    "claude42-scope-l2_unknown_value_qualifier_serializable": [
+        [
+            "Case.kt",
+            "package claude42.l2\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Token as java\n"
+            "fun java.io.Serializable.trim():String {\n"
+            " "
+            'println("MARKER|L2_SERIALIZABLE_EXTENSION|"+this)\n'
+            ' return "FIXED"\n'
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("L2_CUSTOM_TRIM|"+trim()) } '
+            "// SQL:L2_CUSTOM_TRIM\n"
+            ' val fixed=" FIXED "\n'
+            ' fixed.run { db.execSQL("L2_FIXED_TWIN|"+trim()) '
+            "} // SQL:L2_FIXED_TWIN\n"
+            ' db.execSQL("L2_DIRECT_UNSAFE|"+q) // '
+            "SQL:L2_DIRECT_UNSAFE\n"
+            "}\n",
+        ],
+        ["Values.kt", 'package external\nfun Token(value:Int):String="VALUE"\n'],
+    ],
+    "claude42-core-h1-exact": [
+        [
+            "Caller.kt",
+            "package fresh.r43.trailingdefault\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Root {\n"
+            "  class Locale(val language:String, val n:Int=0, val done:()->Unit) { override "
+            "fun toString()=language }\n"
+            '  fun Locale(language:String, done:()->Unit):String="FIXED"\n'
+            "}\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase) {\n"
+            '  val q:String=intent.getStringExtra("q") ?: ""\n'
+            "  db.execSQL(Root.Locale(q) { }.toString())   // SQL_H1_EXACT\n"
+            "}\n"
+            "fun fixed(db:SQLiteDatabase) {\n"
+            '  db.execSQL("H1_FIXED|"+Root.Locale("SAFE") { }.toString()) // SQL_H1_FIXED\n'
+            "}\n",
+        ]
+    ],
+    "claude42-core-m1-no-invoke": [
+        [
+            "Caller.kt",
+            "package fresh.r43.objectsibling.no_invoke\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Root {\n"
+            " object Locale\n"
+            ' fun Locale(db:SQLiteDatabase,q:String) { db.execSQL("M1_FUNCTION|"+q) } // '
+            "SQL_M1_FUNCTION\n"
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " Root.Locale(db,q)\n"
+            "}\n"
+            'fun fixed(db:SQLiteDatabase) { db.execSQL("M1_FIXED|SAFE") } // '
+            "SQL_M1_FIXED\n",
+        ]
+    ],
+    "claude42-core-m1-extension-invoke-only": [
+        [
+            "Caller.kt",
+            "package fresh.r43.objectsibling.extension_invoke_only\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Root {\n"
+            " object Locale\n"
+            ' fun Locale(q:Int):String="UNUSED"\n'
+            "}\n"
+            "operator fun Root.Locale.invoke(db:SQLiteDatabase,q:String) { "
+            'db.execSQL("M1_EXTENSION|"+q) } // SQL_M1_EXTENSION\n'
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " Root.Locale(db,q)\n"
+            "}\n"
+            'fun fixed(db:SQLiteDatabase) { db.execSQL("M1_FIXED|SAFE") } // '
+            "SQL_M1_FIXED\n",
+        ]
+    ],
+    "claude42-core-m4-generic-run-apply-with": [
+        [
+            "Caller.kt",
+            "package fresh.r43.scopeentry\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T> touch(x:T,db:SQLiteDatabase) {\n"
+            ' x.run { db.execSQL("M4_RUN|SELECT 1") } // SQL_M4_RUN\n'
+            ' x.apply { db.execSQL("M4_APPLY|SELECT 1") } // SQL_M4_APPLY\n'
+            ' with(x) { db.execSQL("M4_WITH|SELECT 1") } // SQL_M4_WITH\n'
+            "}\n",
+        ]
+    ],
+    "claude42-core-h1-jdk-context": [
+        [
+            "Caller.kt",
+            "package fresh.r43.trailingjdkcontext\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Root {\n"
+            " class Locale(val language:String,val n:Int=0,val done:()->Unit)\n"
+            " fun "
+            "Locale(language:String,done:()->Unit):java.util.Locale=java.util.Locale.US\n"
+            "}\n"
+            "class Notes(val db:SQLiteDatabase) {\n"
+            ' var captured=""\n'
+            " fun format(locale:Root.Locale):String=captured\n"
+            " fun scan(intent:Intent) {\n"
+            '  val q:String=intent.getStringExtra("q") ?: ""\n'
+            "  captured=q\n"
+            '  with("fixed") { db.execSQL("H1_CONTEXT|"+format(locale=Root.Locale(q) { '
+            "})) } // SQL_H1_CONTEXT_TAINT\n"
+            " }\n"
+            " fun fixed() {\n"
+            '  captured="SAFE"\n'
+            '  with("fixed") { '
+            'db.execSQL("H1_CONTEXT_FIXED|"+format(locale=Root.Locale("SAFE") { })) } '
+            "// SQL_H1_CONTEXT_FIXED\n"
+            " }\n"
+            "}\n",
+        ]
+    ],
+    "claude42-core-m1-member-both-applicable-multiline": [
+        [
+            "Caller.kt",
+            "package "
+            "fresh.r43.objectsibling.member_both_applicable_multiline\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Root {\n"
+            " object Locale {\n"
+            "  operator fun invoke(db:SQLiteDatabase,q:String) {\n"
+            '   db.execSQL("M1_MEMBER|"+q) // SQL_M1_MEMBER\n'
+            "  }\n"
+            " }\n"
+            " fun Locale(db:SQLiteDatabase,q:String) {\n"
+            '  db.execSQL("M1_FUNCTION|"+q) // SQL_M1_FUNCTION\n'
+            " }\n"
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " Root.Locale(db,q)\n"
+            "}\n"
+            "fun fixed(db:SQLiteDatabase) {\n"
+            ' db.execSQL("M1_FIXED|SAFE") // SQL_M1_FIXED\n'
+            "}\n",
+        ]
+    ],
+    "claude42-core-m1-member-invoke-only-multiline": [
+        [
+            "Caller.kt",
+            "package "
+            "fresh.r43.objectsibling.member_invoke_only_multiline\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "object Root {\n"
+            " object Locale {\n"
+            "  operator fun invoke(db:SQLiteDatabase,q:String) {\n"
+            '   db.execSQL("M1_MEMBER|"+q) // SQL_M1_MEMBER\n'
+            "  }\n"
+            " }\n"
+            ' fun Locale(q:Int):String="UNUSED"\n'
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " Root.Locale(db,q)\n"
+            "}\n"
+            "fun fixed(db:SQLiteDatabase) {\n"
+            ' db.execSQL("M1_FIXED|SAFE") // SQL_M1_FIXED\n'
+            "}\n",
+        ]
+    ],
+    "parent43-intent_alias_and_source_homonym": [
+        [
+            "Caller.kt",
+            "package preserve43.scopealias\n"
+            "import android.content.Intent as Launch\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "typealias Input = Launch\n"
+            'class Other { fun String.trim():String="FIXED" }\n'
+            "class Intent { fun StringBuilder.appendSql(s:String) { "
+            "append(s) } }\n"
+            "fun "
+            "scan(input:android.content.Intent,intent:Input,db:SQLiteDatabase) "
+            "{\n"
+            ' val q:String=input.getStringExtra("q") ?: ""\n'
+            ' with(intent) { q.run { db.execSQL("ALIAS|"+trim()) } }\n'
+            "}\n"
+            "fun "
+            "custom(input:android.content.Intent,scope:Intent,db:SQLiteDatabase) "
+            "{\n"
+            ' val q:String=input.getStringExtra("q") ?: ""\n'
+            ' db.execSQL("SOURCE|"+with(scope) { buildString { appendSql(q) '
+            "} })\n"
+            "}\n",
+        ]
+    ],
+    "parent43-unknown_and_incompatible_intersection": [
+        [
+            "Caller.kt",
+            "package preserve43.intersection\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import preserve43.intersection.Values.origin as java\n"
+            "object Values { val origin=1 }\n"
+            "fun <T> T.trim():String where "
+            'T:java.io.Serializable,T:Number="FIXED"\n'
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("U|"+trim()) }\n'
+            ' "SAFE".run { db.execSQL("S|"+trim()) }\n'
+            "}\n",
+        ]
+    ],
+}
+
+_REVIEW43_ROWS = [
+    (
+        "adversarial42-fixed_body_minimal",
+        "Case.kt",
+        14,
+        False,
+        (14, "appendSql", "Kotlin custom builder extension effects unavailable"),
+    ),
+    ("adversarial42-fixed_body_minimal", "Case.kt", 15, True, None),
+    ("adversarial42-private_nominal", "Case.kt", 7, True, None),
+    ("adversarial42-private_nominal", "Case.kt", 13, False, None),
+    ("code42-overlapping-member-binary", "Caller.kt", 11, True, None),
+    ("member43-member-function", "Caller.kt", 11, True, None),
+    ("member43-member-function", "Caller.kt", 17, False, None),
+    ("member43-renamed-property", "Caller.kt", 11, True, None),
+    ("member43-renamed-property", "Caller.kt", 17, False, None),
+    ("member43-genuine-jdk-alias", "Caller.kt", 12, False, None),
+    ("member43-genuine-jdk-alias", "Caller.kt", 18, False, None),
+    ("member43-cross-file-typealias", "Caller.kt", 11, False, None),
+    ("member43-cross-file-typealias", "Caller.kt", 17, False, None),
+    ("private43-f1_nested_private_inside_owner", "Case.kt", 9, False, None),
+    ("private43-f1_nested_private_inside_owner", "Case.kt", 14, True, None),
+    (
+        "private43-f1_nested_private_inside_owner",
+        "Case.kt",
+        15,
+        False,
+        (15, "Locale", "unresolved callable identity or argument signature"),
+    ),
+    ("private43-f3_top_private_other_file", "Api.kt", 5, True, None),
+    ("private43-f3_top_private_other_file", "Api.kt", 9, False, None),
+    (
+        "private43-f3_top_private_other_file",
+        "Caller.kt",
+        7,
+        False,
+        (6, "Locale", "receiver field inventory unavailable"),
+    ),
+    ("private43-f3_top_private_other_file", "Caller.kt", 9, False, None),
+    ("private43-f4_private_primary_inside_companion", "Case.kt", 10, True, None),
+    (
+        "private43-f4_private_primary_inside_companion",
+        "Case.kt",
+        11,
+        False,
+        (11, "Locale", "unresolved callable identity or argument signature"),
+    ),
+    ("private43-f4_private_primary_inside_companion", "Case.kt", 16, False, None),
+    ("private43-f2_top_private_same_file", "Case.kt", 8, False, None),
+    ("private43-f2_top_private_same_file", "Case.kt", 13, True, None),
+    ("private43-f2_top_private_same_file", "Case.kt", 14, False, None),
+    (
+        "claude42-scope-m2_receiver_property_shadows",
+        "Case.kt",
+        24,
+        False,
+        (24, "appendSql", "Kotlin custom builder extension effects unavailable"),
+    ),
+    (
+        "claude42-scope-m2_receiver_property_shadows",
+        "Case.kt",
+        25,
+        False,
+        (25, "appendSql", "Kotlin custom builder extension effects unavailable"),
+    ),
+    (
+        "claude42-scope-m2_receiver_property_shadows",
+        "Case.kt",
+        26,
+        False,
+        (26, "appendSql", "Kotlin custom builder extension effects unavailable"),
+    ),
+    ("claude42-scope-m2_receiver_property_shadows", "Case.kt", 27, True, None),
+    ("claude42-scope-m2_receiver_property_shadows", "Case.kt", 28, False, None),
+    (
+        "claude42-scope-m2_receiver_property_shadows",
+        "Case.kt",
+        36,
+        False,
+        (36, "appendSql", "Kotlin custom builder extension effects unavailable"),
+    ),
+    ("claude42-scope-m3_known_intent_scope", "Case.kt", 15, False, None),
+    ("claude42-scope-m3_known_intent_scope", "Case.kt", 16, True, None),
+    ("claude42-scope-m3_known_intent_scope", "Case.kt", 18, False, None),
+    ("claude42-scope-m3_known_intent_scope", "Case.kt", 19, False, None),
+    (
+        "claude42-scope-l1_top_extension_nearer_member",
+        "Case.kt",
+        10,
+        False,
+        (10, "appendSql", "Kotlin custom builder extension effects unavailable"),
+    ),
+    ("claude42-scope-l1_top_extension_nearer_member", "Case.kt", 11, True, None),
+    ("claude42-scope-l1_top_extension_nearer_member", "Case.kt", 12, False, None),
+    ("claude42-scope-l2_unknown_value_qualifier_serializable", "Case.kt", 11, False, None),
+    ("claude42-scope-l2_unknown_value_qualifier_serializable", "Case.kt", 13, False, None),
+    ("claude42-scope-l2_unknown_value_qualifier_serializable", "Case.kt", 14, True, None),
+    ("claude42-core-h1-exact", "Caller.kt", 10, True, None),
+    ("claude42-core-h1-exact", "Caller.kt", 13, False, None),
+    (
+        "claude42-core-m1-no-invoke",
+        "Caller.kt",
+        6,
+        True,
+        (10, "Locale", "unresolved callable identity or argument signature"),
+    ),
+    ("claude42-core-m1-no-invoke", "Caller.kt", 12, False, None),
+    (
+        "claude42-core-m1-extension-invoke-only",
+        "Caller.kt",
+        8,
+        True,
+        (11, "Locale", "constructor field mapping unavailable"),
+    ),
+    ("claude42-core-m1-extension-invoke-only", "Caller.kt", 13, False, None),
+    ("claude42-core-m4-generic-run-apply-with", "Caller.kt", 4, False, None),
+    ("claude42-core-m4-generic-run-apply-with", "Caller.kt", 5, False, None),
+    ("claude42-core-m4-generic-run-apply-with", "Caller.kt", 6, False, None),
+    ("claude42-core-h1-jdk-context", "Caller.kt", 14, True, None),
+    ("claude42-core-h1-jdk-context", "Caller.kt", 18, False, None),
+    ("claude42-core-m1-member-both-applicable-multiline", "Caller.kt", 11, False, None),
+    (
+        "claude42-core-m1-member-both-applicable-multiline",
+        "Caller.kt",
+        7,
+        True,
+        (16, "Locale", "constructor field mapping unavailable"),
+    ),
+    ("claude42-core-m1-member-both-applicable-multiline", "Caller.kt", 19, False, None),
+    (
+        "claude42-core-m1-member-invoke-only-multiline",
+        "Caller.kt",
+        7,
+        True,
+        (14, "Locale", "constructor field mapping unavailable"),
+    ),
+    ("claude42-core-m1-member-invoke-only-multiline", "Caller.kt", 17, False, None),
+    ("parent43-intent_alias_and_source_homonym", "Caller.kt", 9, True, None),
+    ("parent43-intent_alias_and_source_homonym", "Caller.kt", 13, True, None),
+    ("parent43-unknown_and_incompatible_intersection", "Caller.kt", 9, True, None),
+    ("parent43-unknown_and_incompatible_intersection", "Caller.kt", 10, False, None),
+]
+
+
+@pytest.mark.parametrize(
+    "program,path,line,expected,anchor", _REVIEW43_ROWS, ids=[r[0] + ":" + str(r[2]) for r in _REVIEW43_ROWS]
+)
+def test_review43_compiler_sql_sites_require_affected_precision_for_retained_mismatches(
+    program, path, line, expected, anchor
+):
+    report = analyze_sources(_REVIEW43_PROGRAMS[program])
+    assert not any(f.get("parse_errors") for f in report["metadata"]["files"])
+    flow = report["metadata"]["native_flow"]
+    assert not flow["budget_reasons"], flow
+    hits = {(e["path"], e["line"]) for f in report["findings"] if f["rule_id"] == SQL for e in f["evidence"]}
+    if ((path, line) in hits) is not expected:
+        assert anchor is not None and _state(report, SQL) == "limited", (program, hits, flow)
+        at, call, reason = anchor
+        assert any(
+            d.get("path") == path
+            and d.get("line") == at
+            and d.get("call") == call
+            and d["kind"] == "precision"
+            and d["reason"] == reason
+            for d in flow["partial_details"]
+        ), flow
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
+        "code42-overlapping-member-binary",
+        "member43-member-function",
+        "member43-renamed-property",
+        "member43-genuine-jdk-alias",
+        "member43-cross-file-typealias",
+    ],
+)
+def test_review43_member_import_namespace_and_explicit_alias_queries_are_pure(monkeypatch, program):
+    original = Analyzer.record_visited
+    active = False
+    seen = []
+    genuine = program in {"member43-genuine-jdk-alias", "member43-cross-file-typealias"}
+
+    def observe(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if active or self.scope != "scan" or call.name != "format":
+            return result
+        active = True
+        flow = self.native_flow
+        try:
+            before = (
+                flow.evaluations,
+                flow.type_hint_depth,
+                repr(frame),
+                flow.partial_events,
+                repr(flow.partial_details),
+                repr(self.reference_type_evidence),
+            )
+            assert self.library_argument_type(call.args[0], frame, "java.util.Locale") is genuine
+            if not genuine:
+                assert flow.type_namespace_shadow(self, "java.util.Locale", call.node) is None
+                assert not self.string_operation_applicable(call, frame)
+            assert before == (
+                flow.evaluations,
+                flow.type_hint_depth,
+                repr(frame),
+                flow.partial_events,
+                repr(flow.partial_details),
+                repr(self.reference_type_evidence),
+            )
+            seen.append(True)
+        finally:
+            active = False
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", observe)
+    report = analyze_sources(_REVIEW43_PROGRAMS[program])
+    assert seen
+    if not genuine:
+        assert any(
+            d.get("call") == "format"
+            and d["reason"] == "callable argument type identity unresolved"
+            and d.get("type_origins")
+            for d in report["metadata"]["native_flow"]["partial_details"]
+        )
+
+
+def test_review43_opaque_builder_effect_precision_is_committed_after_pure_visibility_queries(monkeypatch):
+    original = Analyzer.record_visited
+    seen = []
+
+    def observe(self, call, frame, value):
+        if self.scope == "scan" and call.name == "appendSql":
+            flow = self.native_flow
+            before = (
+                flow.evaluations,
+                flow.type_hint_depth,
+                flow.partial_events,
+                repr(flow.partial_details),
+                repr(frame),
+                repr(self.aliases),
+                repr(self.active_object_scopes),
+            )
+            assert self.implicit_write(call)
+            assert before == (
+                flow.evaluations,
+                flow.type_hint_depth,
+                flow.partial_events,
+                repr(flow.partial_details),
+                repr(frame),
+                repr(self.aliases),
+                repr(self.active_object_scopes),
+            )
+            seen.append(True)
+        return original(self, call, frame, value)
+
+    monkeypatch.setattr(Analyzer, "record_visited", observe)
+    report = analyze_sources(_REVIEW43_PROGRAMS["adversarial42-fixed_body_minimal"])
+    assert seen and _state(report, SQL) == "limited"
+    assert {
+        d["line"]
+        for d in report["metadata"]["native_flow"]["partial_details"]
+        if d["reason"] == "Kotlin custom builder extension effects unavailable"
+    } == {14, 15}
+
+
+def test_review43_generic_scope_entry_has_no_unconsumed_type_identity_diagnostics():
+    report = analyze_sources(_REVIEW43_PROGRAMS["claude42-core-m4-generic-run-apply-with"])
+    assert not _hit(report, SQL) and _state(report, SQL) == "checked", report
+    assert not _reasons(report)
+
+
+_REVIEW43_PROOFS = [
+    (
+        "private43-f1_nested_private_inside_owner",
+        "Case.kt",
+        14,
+        "scan",
+        "Locale",
+        False,
+        False,
+        "Root.Locale",
+        True,
+    ),
+    (
+        "private43-f1_nested_private_inside_owner",
+        "Case.kt",
+        15,
+        "scan",
+        "Locale",
+        False,
+        False,
+        "Root.Locale",
+        True,
+    ),
+    ("private43-f3_top_private_other_file", "Caller.kt", 6, "scan", "Locale", True, True, None, False),
+    ("private43-f3_top_private_other_file", "Caller.kt", 8, "scan", "SafeLocale", True, True, None, False),
+    (
+        "private43-f4_private_primary_inside_companion",
+        "Case.kt",
+        10,
+        "scan",
+        "Locale",
+        False,
+        False,
+        "Root.Locale",
+        True,
+    ),
+    (
+        "private43-f4_private_primary_inside_companion",
+        "Case.kt",
+        11,
+        "scan",
+        "Locale",
+        False,
+        False,
+        "Root.Locale",
+        True,
+    ),
+    (
+        "private43-f2_top_private_same_file",
+        "Case.kt",
+        13,
+        "scan",
+        "Locale",
+        False,
+        False,
+        "preserve43.samefile.Locale",
+        True,
+    ),
+    (
+        "private43-f2_top_private_same_file",
+        "Case.kt",
+        14,
+        "scan",
+        "Locale",
+        False,
+        False,
+        "preserve43.samefile.Locale",
+        True,
+    ),
+    ("adversarial42-private_nominal", "Case.kt", 18, "scan", "Locale", True, False, None, False),
+    ("adversarial42-private_nominal", "Case.kt", 19, "scan", "Locale", True, False, None, False),
+    ("claude42-core-h1-exact", "Caller.kt", 10, "scan", "Locale", False, False, "Root.Locale", True),
+    ("claude42-core-h1-exact", "Caller.kt", 13, "fixed", "Locale", False, False, "Root.Locale", True),
+    ("claude42-core-h1-jdk-context", "Caller.kt", 14, "scan", "Locale", False, False, "Root.Locale", True),
+    ("claude42-core-h1-jdk-context", "Caller.kt", 18, "fixed", "Locale", False, False, "Root.Locale", True),
+]
+
+
+@pytest.mark.parametrize(
+    "program,path,line,scope,name,ordinary,library,constructor,uncertain",
+    _REVIEW43_PROOFS,
+    ids=[r[0] + ":" + str(r[2]) for r in _REVIEW43_PROOFS],
+)
+def test_review43_private_nominal_and_trailing_default_public_facts(
+    monkeypatch, program, path, line, scope, name, ordinary, library, constructor, uncertain
+):
+    original = Analyzer.record_visited
+    active = False
+    seen = set()
+
+    def observe(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if (
+            active
+            or self.path != path
+            or self.scope != scope
+            or call.name != name
+            or self.location(call.node)["line"] != line
+        ):
+            return result
+        active = True
+        flow = self.native_flow
+        previous = flow.type_hint_depth
+        try:
+            for mode in (0, 9):
+                flow.type_hint_depth = mode
+                before = (
+                    flow.evaluations,
+                    flow.type_hint_depth,
+                    repr(frame),
+                    repr(self.aliases),
+                    repr(self.active_object_scopes),
+                )
+                selected = flow.qualified_callable_present(self, call, self.key(call.receiver), frame=frame)
+                assert (selected is True) if ordinary else selected is not True
+                kind = flow.constructor_type(self, call, frame)
+                if uncertain:
+                    if kind is not None:
+                        assert flow.class_owners(self, kind, call.node) == flow.class_owners(
+                            self, constructor, call.node
+                        )
+                else:
+                    assert kind == constructor
+                assert self.library_argument_type(call.node, frame, "java.util.Locale") is library
+                if not library:
+                    assert self.standard_reference_kind(call.node, frame) != "java.util.Locale"
+                assert before == (
+                    flow.evaluations,
+                    flow.type_hint_depth,
+                    repr(frame),
+                    repr(self.aliases),
+                    repr(self.active_object_scopes),
+                )
+                seen.add(mode)
+        finally:
+            flow.type_hint_depth = previous
+            active = False
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", observe)
+    analyze_sources(_REVIEW43_PROGRAMS[program])
+    assert seen == {0, 9}
+
+
+def test_review43_implicit_and_inherited_values_do_not_become_object_owners(monkeypatch):
+    original = Analyzer.visit_scope_lambda
+    seen = set()
+
+    def observe(self, node, frame, guards, conditions, scope, receiver, *args, **kwargs):
+        if receiver is not None:
+            at = self.location(receiver)["line"]
+            if at in {24, 25, 26, 27, 28, 36}:
+                flow = self.native_flow
+                before = (
+                    flow.evaluations,
+                    flow.type_hint_depth,
+                    repr(frame),
+                    repr(self.aliases),
+                    repr(self.active_object_scopes),
+                    self.type_query_active,
+                    repr(self.scope_owner_head_queries),
+                )
+                owner = self.supplied_object_scope_owner(
+                    receiver, frame, nonnull=self.scope_receiver_nonnull(node)
+                )
+                if at in {27, 28}:
+                    assert owner == "claude42.m2.Fmt"
+                else:
+                    assert owner not in {"claude42.m2.Fmt", "claude42.m2.Root.Fmt"}
+                assert before == (
+                    flow.evaluations,
+                    flow.type_hint_depth,
+                    repr(frame),
+                    repr(self.aliases),
+                    repr(self.active_object_scopes),
+                    self.type_query_active,
+                    repr(self.scope_owner_head_queries),
+                )
+                seen.add(at)
+        return original(self, node, frame, guards, conditions, scope, receiver, *args, **kwargs)
+
+    monkeypatch.setattr(Analyzer, "visit_scope_lambda", observe)
+    analyze_sources(_REVIEW43_PROGRAMS["claude42-scope-m2_receiver_property_shadows"])
+    assert seen == {24, 25, 26, 27, 28, 36}
+
+
+@pytest.mark.parametrize("throw", [False, True])
+def test_review43_object_head_queries_restore_flags_and_recurrence_is_unknown(monkeypatch, throw):
+    scope_original = Analyzer.visit_scope_lambda
+    veto_original = Analyzer.implicit_reference_head_shadow
+    active = False
+    seen = []
+
+    def veto(self, use, name, frame, **kwargs):
+        if active:
+            assert self.scope_owner_expression_shadow(use, name, frame) is None
+            if throw:
+                raise RuntimeError("synthetic object-head query")
+        return veto_original(self, use, name, frame, **kwargs)
+
+    def scope(self, node, frame, guards, conditions, name, receiver, *args, **kwargs):
+        nonlocal active
+        if receiver is not None and self.location(receiver)["line"] == 24 and not seen:
+            flow = self.native_flow
+            before = (
+                flow.evaluations,
+                flow.type_hint_depth,
+                self.type_query_active,
+                repr(frame),
+                repr(self.aliases),
+                repr(self.active_object_scopes),
+                repr(self.scope_owner_head_queries),
+            )
+            active = True
+            try:
+                if throw:
+                    with pytest.raises(RuntimeError, match="synthetic object-head query"):
+                        self.scope_owner_expression_shadow(self.unwrap(receiver), "Fmt", frame)
+                else:
+                    assert self.scope_owner_expression_shadow(self.unwrap(receiver), "Fmt", frame) is True
+                assert before == (
+                    flow.evaluations,
+                    flow.type_hint_depth,
+                    self.type_query_active,
+                    repr(frame),
+                    repr(self.aliases),
+                    repr(self.active_object_scopes),
+                    repr(self.scope_owner_head_queries),
+                )
+                seen.append(True)
+            finally:
+                active = False
+        return scope_original(self, node, frame, guards, conditions, name, receiver, *args, **kwargs)
+
+    monkeypatch.setattr(Analyzer, "implicit_reference_head_shadow", veto)
+    monkeypatch.setattr(Analyzer, "visit_scope_lambda", scope)
+    analyze_sources(_REVIEW43_PROGRAMS["claude42-scope-m2_receiver_property_shadows"])
+    assert seen
+
+
+def test_review43_modeled_intent_alias_excludes_foreign_owner_but_source_homonym_does_not(monkeypatch):
+    original = Analyzer.visit_scope_lambda
+    seen = {}
+
+    def observe(self, node, frame, guards, conditions, scope, receiver, *args, **kwargs):
+        if (
+            receiver is not None
+            and self.scope in {"scan", "custom"}
+            and self.text(receiver) in {"intent", "scope"}
+        ):
+            flow = self.native_flow
+            before = (
+                flow.evaluations,
+                flow.type_hint_depth,
+                repr(frame),
+                repr(self.aliases),
+                self.type_query_active,
+                repr(self.scope_owner_head_queries),
+            )
+            result = self.supplied_object_scope_owner(receiver, frame)
+            if self.scope == "scan":
+                assert result == ""
+            else:
+                assert result is None
+            assert before == (
+                flow.evaluations,
+                flow.type_hint_depth,
+                repr(frame),
+                repr(self.aliases),
+                self.type_query_active,
+                repr(self.scope_owner_head_queries),
+            )
+            seen[self.scope] = result
+        return original(self, node, frame, guards, conditions, scope, receiver, *args, **kwargs)
+
+    monkeypatch.setattr(Analyzer, "visit_scope_lambda", observe)
+    analyze_sources(_REVIEW43_PROGRAMS["parent43-intent_alias_and_source_homonym"])
+    assert seen == {"scan": "", "custom": None}
+
+
+def test_review43_known_incompatible_intersection_wins_over_unknown_classifier_bound(monkeypatch):
+    original = Analyzer.record_visited
+    seen = []
+
+    def observe(self, call, frame, value):
+        result = original(self, call, frame, value)
+        if self.scope == "scan" and call.name == "trim":
+            flow = self.native_flow
+            target = next(t for t in flow.by_name["trim"] if t.analyzer is self)
+            name = target.node.child_by_field_name("name")
+            assert name is not None
+            receiver = next(
+                n
+                for n in target.node.named_children
+                if n.end_byte <= name.start_byte and n.type in {"user_type", "type_identifier"}
+            )
+            before = (
+                flow.evaluations,
+                flow.type_hint_depth,
+                flow.partial_events,
+                repr(frame),
+                repr(self.reference_type_evidence),
+            )
+            assert self.string_extension_receiver(self, target.node, receiver) is False
+            assert before == (
+                flow.evaluations,
+                flow.type_hint_depth,
+                flow.partial_events,
+                repr(frame),
+                repr(self.reference_type_evidence),
+            )
+            seen.append(True)
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", observe)
+    report = analyze_sources(_REVIEW43_PROGRAMS["parent43-unknown_and_incompatible_intersection"])
+    assert seen and _state(report, SQL) == "checked", report

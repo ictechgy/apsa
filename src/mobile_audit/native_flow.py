@@ -65,6 +65,7 @@ REASON_KINDS = {
     "Kotlin non-local return context unavailable": "precision",
     "Kotlin scope import identity unavailable": "precision",
     "Kotlin project extension receiver flow unavailable": "precision",
+    "Kotlin custom builder extension effects unavailable": "precision",
     "Swift inout writeback unavailable": "precision",
     "aggregate reference ownership unavailable": "precision",
     "ambiguous class identity": "precision",
@@ -2459,7 +2460,7 @@ class NativeFlow:
             self.classifier_import_identities = frozenset(classifiers)
         imported = self.imported_symbols(analyzer, root)
         if imported and imported <= self.value_import_identities:
-            return False
+            return None  # source members cannot exclude an overlapping binary package classifier
         if imported & self.classifier_import_identities:
             return True
         return None  # package-level value presence cannot close the binary classifier namespace
@@ -2555,6 +2556,11 @@ class NativeFlow:
             source, nominal = definitions[0]
             if source.language != "kotlin":
                 return False
+            accessible = self.nominal_construction_accessible(analyzer, source, nominal, call)
+            if accessible is False:
+                continue
+            if accessible is None:
+                return False
             body = next((part for part in nominal.named_children if part.type == "class_body"), None)
             members = body.named_children if body is not None else ()
             if any(part.type == "companion_object" for part in members):
@@ -2586,10 +2592,52 @@ class NativeFlow:
                 return False
             bindings = analyzer.bound_parameter_arguments(source, primary, call)
             if bindings is None:
+                if call.trailing:
+                    required = sum(
+                        not any(token.type == "=" for token in parameter.children)
+                        for _name, _kind, parameter in parameters
+                    )
+                    labels = [
+                        analyzer.argument_label(argument)
+                        for argument in call.args
+                        if analyzer.argument_label(argument)
+                    ]
+                    if (
+                        required <= len(call.args) <= len(parameters)
+                        and len(labels) == len(set(labels))
+                        and set(labels) <= {name for name, _kind, _parameter in parameters}
+                    ):
+                        return False  # trailing lambdas can skip defaulted positional parameters
                 continue  # complete fixed signature proves an arity/label mismatch
             if analyzer.literal_string_argument_conflict(source, primary, call, frame=frame):
                 continue
             return False
+        return True
+
+    def nominal_construction_accessible(
+        self, analyzer: Analyzer, source: Analyzer, nominal: Any, call: Call
+    ) -> bool | None:
+        """Read private nominal gates in their source AST, separately from constructor access."""
+        ancestors = []
+        current = nominal
+        for _ in range(64):
+            if current is None:
+                break
+            ancestors.append(current)
+            current = current.parent
+        else:
+            return None
+        declarations = NOMINAL_DECLARATIONS | UNAVAILABLE_NOMINAL_DECLARATIONS
+        for index, gate in enumerate(ancestors):
+            if gate.type not in declarations or not source.has_modifier(gate, "private"):
+                continue
+            if source is not analyzer:
+                return False  # private top-level declarations are source-file scoped
+            declaring = next((node for node in ancestors[index + 1 :] if node.type in declarations), None)
+            if declaring is not None and not (
+                declaring.start_byte <= call.node.start_byte and call.node.end_byte <= declaring.end_byte
+            ):
+                return False  # nested privacy belongs to the declaring owner, not the nested class
         return True
 
     def module_value_bindings(

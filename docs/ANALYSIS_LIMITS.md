@@ -474,8 +474,12 @@ type-inference query. Unknown applicability preserves possible source constructi
 with precision at the competing call; it does not prove the sibling's declared
 return or a library identity. A represented ordinary callable is selected only
 after excluding its competing construction. Bounded exclusions cover ordinary
-interfaces, inaccessible primary constructors, implicit/primary arity and labels,
-and proven primitive incompatibility. A String argument does not by itself
+interfaces, inaccessible private nominal declarations or primary constructors,
+complete implicit/primary arity and labels, and proven primitive incompatibility.
+Private nested declarations are checked in their declaring owner's AST scope;
+top-level private declarations remain source-file scoped. These enclosing-gate
+queries stop after 64 nodes. A failed positional binder does not exclude a
+plausible trailing-lambda call that can skip defaulted parameters. A String argument does not by itself
 exclude an applicable Any or nullable String constructor. Secondary, companion,
 variadic and otherwise unmodeled construction remains unknown. Explicit `!!`
 syntax retains its nonnull proof before argument wrappers are removed.
@@ -483,10 +487,12 @@ General vararg/constructor ranking remains unknown. Java method invocations are
 never allocations merely because their names start uppercase; explicit new
 expressions keep their constructor path. Unresolved Java vararg dispatch can still
 miss flow with precision at the invocation. This is not general overload ranking
-or compiler-wide applicability inference.
-In Kotlin TYPE positions, a value-only import from a uniquely represented nominal
-owner with complete member ancestry does not hide a package qualifier. A package
-function or property cannot prove that a same-name binary classifier is absent.
+or compiler-wide applicability inference. Capitalized source-object value calls,
+including member and project-extension `invoke`, retain preexisting diagnosed
+dispatch limits; their nominal approximations are not proof of allocation or a
+declared library result. This does not add general value-call execution.
+In Kotlin TYPE positions, neither package values nor uniquely represented nominal
+members can prove that an overlapping binary package classifier is absent.
 Such unresolved imports withhold library identity even in the no-dependency
 twin. A consumed String-overload uncertainty is recorded at the affected call;
 up to eight declaration-origin locations supplement that detail. Optional queries
@@ -499,11 +505,21 @@ Active source-object scopes retain ordered dispatch owners across nested builder
 and receiver scopes, including parenthesized and qualified object expressions.
 Explicit singleton types and at most eight immutable-local alias links can supply
 an owner. Proven final scalars can exclude an owner without establishing one.
-Nearer applicable source members compete in receiver order. Queries inspect at
+Nearer applicable source members compete in receiver order for object-owned
+member-extension candidates. Known builder members and top-level extensions keep
+separate, narrower dispatch approximations. A compatible custom builder extension
+is not proof of its write effects: treating its arguments as receiver writes
+records precision at that actual call, including fixed-body candidates.
+Queries inspect at
 most 64 active scope facts and check their source, function and lexical span;
 unknown ownership stays conservative at a consuming builder call. Scope exit and
 detached function inference restore the caller state. Unrelated objects,
-shadowing local values and inaccessible private members do not gain that owner.
+shadowing local, implicit-receiver and inherited member values, and inaccessible
+private members do not gain that owner. Expression-head vetoes use at most eight
+active queries, restore flags in `finally`, and can reuse proven enclosing object
+facts. Scalar probes are optional type queries; they do not emit unconsumed type
+uncertainty. An exact modeled Intent declaration can exclude an unrelated source
+dispatch owner without establishing a source object or complete SDK inventory.
 This path does not infer arbitrary instance or factory receiver ownership.
 Type-parameter extension receivers use their represented bounds without a
 redundant library-identity probe that would diagnose an already rejected candidate.
@@ -513,6 +529,10 @@ continue to compete. Only proven incompatibility rejects a bound: standard
 receiver profiles come from established identities, and source nonintersection
 requires a complete represented ancestry. String keeps its separate variance
 checks. These declaration queries neither execute callees nor retain frames.
+For String extension receivers, unresolved classifier identity retains competition;
+it is not evidence of incompatibility. Intersection bounds preserve a separately
+proven incompatibility, while a proven alternative can establish compatibility.
+Query-local origin collectors are restored before consuming diagnostics are recorded.
 CharSequence does not acquire Comparable or Serializable as known supertypes.
 Numeric Comparable argument compatibility remains conservative, so an incompatible
 generic extension can withhold a constructor fact. Some generic Number parameters

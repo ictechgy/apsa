@@ -1869,6 +1869,7 @@ class Analyzer:
         # Kotlin lambda parameters bound to the receiver of let/also/use, for Intent text lookups.
         self.aliases: dict[str, Any] = {}
         self.active_object_scopes: list[ObjectScope] = []
+        self.scope_owner_head_queries: set[tuple[int, int, int, int, str, str]] = set()
         self.reference_type_evidence: list[set[tuple[str, int, str]]] = []
         # A receiverless opener that resolves to project code, which is always followed.
         self.opener_follow = False
@@ -5804,6 +5805,21 @@ class Analyzer:
             and self.supplied(call.receiver, frame)
             or (call.receiver is None and not bound_transform and self.implicit_write(call))
         )
+        if (
+            writes
+            and self.language == "kotlin"
+            and call.receiver is None
+            and owner is not None
+            and owner.receiver_types
+            and name not in owner.members
+            and self.native_flow is not None
+        ):
+            self.native_flow.partial(
+                "Kotlin custom builder extension effects unavailable",
+                self,
+                call=call,
+                classification_precision=True,
+            )
         # `append("<p>").append(q)` and `this.append(q)` write into the implicit receiver.
         chain = (
             []
@@ -10743,6 +10759,7 @@ class Analyzer:
         callback_shape: bool = False,
         lexical: bool = True,
         callable_heads: set[int] | None = None,
+        known_scope_objects: bool = False,
     ) -> bool:
         """Veto a class/package spelling when a represented receiver may supply the value."""
         flow = self.native_flow
@@ -10821,6 +10838,27 @@ class Analyzer:
                     )
             subject = self.scope_receiver(current) if current.type in CLOSURES else None
             if subject is not None:
+                if known_scope_objects:
+                    owner = next(
+                        (
+                            fact.owner
+                            for fact in reversed(self.active_object_scopes[-64:])
+                            if fact.owner
+                            and fact.scope == current.id
+                            and fact.source == id(self.raw)
+                            and fact.function == (self.function.id if self.function is not None else 0)
+                            and fact.start <= use.start_byte
+                            and use.end_byte <= fact.end
+                        ),
+                        None,
+                    )
+                    if owner is not None:
+                        if self.nominal_reference_head_shadow(
+                            use, name, {owner}, callback_shape=callback_shape, callable_heads=callable_heads
+                        ):
+                            return True
+                        current = current.parent
+                        continue
                 subject = self.unwrap(subject, preserve_cast=True)
                 if subject is None:
                     return True
@@ -11844,6 +11882,33 @@ class Analyzer:
             for target in self.native_flow.by_name.get(alias, [])
         )
 
+    def scope_owner_expression_shadow(self, node: Any, root: str, frame: Frame) -> bool | None:
+        """Veto expression heads with bounded, ephemeral receiver lookup state."""
+        flow = self.native_flow
+        if flow is None:
+            return None
+        key = (
+            id(self.raw),
+            self.function.id if self.function is not None else 0,
+            node.start_byte,
+            node.end_byte,
+            root,
+            "scope-expression",
+        )
+        active = self.scope_owner_head_queries
+        if key in active or len(active) >= 8:
+            return None
+        active.add(key)
+        previous_depth, previous_query = flow.type_hint_depth, self.type_query_active
+        flow.type_hint_depth += 1
+        self.type_query_active = True
+        try:
+            return self.implicit_reference_head_shadow(node, root, frame, known_scope_objects=True)
+        finally:
+            self.type_query_active = previous_query
+            flow.type_hint_depth = previous_depth
+            active.remove(key)
+
     def supplied_object_scope_owner(
         self, receiver: Any, frame: Frame, *, nonnull: bool = False, depth: int = 0
     ) -> str | None:
@@ -11910,6 +11975,8 @@ class Analyzer:
                 or flow.module_value_present(self, symbol)
                 or flow.imported_namespace_shadow(self, symbol, node)
             ):
+                if self.scope_owner_expression_shadow(node, symbol, frame) is not False:
+                    return None
                 spelling = symbol
         elif node.type == "navigation_expression":
             text = self.text(node)
@@ -11928,6 +11995,8 @@ class Analyzer:
                     or flow.imported_namespace_shadow(self, spelling, node)
                 ):
                     spelling = ""
+                elif self.scope_owner_expression_shadow(node, root, frame) is not False:
+                    return None
         if spelling:
             owners = flow.class_owners(self, spelling, origin)
             if len(owners) == 1:
@@ -11941,22 +12010,34 @@ class Analyzer:
                         and not nominal.has_error
                     ):
                         return owner
-        if any(
-            self.established_argument_type(receiver, frame, "kotlin." + kind)
-            for kind in ("String", "Boolean", "Int", "Long", "UInt", "ULong", "Float", "Double")
-        ):
-            return ""  # a proven final scalar is not a supplied source object
-        if node.type in IDENTIFIERS and self.initializer_type_hint(receiver, frame) in {
-            "String",
-            "Boolean",
-            "Int",
-            "Long",
-            "UInt",
-            "ULong",
-            "Float",
-            "Double",
-        }:
-            return ""  # inferred final scalars can exclude owners, never establish one
+        previous_hint_depth = flow.type_hint_depth
+        flow.type_hint_depth += 1
+        try:
+            if (
+                spelling
+                and origin is not node
+                and not flow.class_owners(self, spelling.rstrip("?"), origin)
+                and self.library_reference_type(spelling, origin, "android.content.Intent")
+            ):
+                return ""  # exact modeled declaration identity excludes a source dispatch owner
+            if any(
+                self.established_argument_type(receiver, frame, "kotlin." + kind)
+                for kind in ("String", "Boolean", "Int", "Long", "UInt", "ULong", "Float", "Double")
+            ):
+                return ""  # a proven final scalar is not a supplied source object
+            if node.type in IDENTIFIERS and self.initializer_type_hint(receiver, frame) in {
+                "String",
+                "Boolean",
+                "Int",
+                "Long",
+                "UInt",
+                "ULong",
+                "Float",
+                "Double",
+            }:
+                return ""  # inferred final scalars can exclude owners, never establish one
+        finally:
+            flow.type_hint_depth = previous_hint_depth
         return None
 
     def active_object_extension_visibility(
@@ -12228,7 +12309,7 @@ class Analyzer:
                     return True
                 continue
             compatible = (
-                self.string_extension_receiver(target.analyzer, target.node, receiver)
+                self.string_extension_receiver(target.analyzer, target.node, receiver) is not False
                 if standard_string
                 else self.extension_bound_compatibility(
                     target.analyzer,
@@ -12260,7 +12341,7 @@ class Analyzer:
                 return True
         return False
 
-    def string_extension_receiver(self, source: Analyzer, function: Any, receiver: Any) -> bool:
+    def string_extension_receiver(self, source: Analyzer, function: Any, receiver: Any) -> bool | None:
         """String's known supertypes, preserving Comparable's argument compatibility."""
         parameters: dict[str, list[Any]] = {}
         for group in function.named_children:
@@ -12277,46 +12358,57 @@ class Analyzer:
                         if part.type in {"user_type", "nullable_type"}
                     )
 
-        def parameter_accepts(name: str, seen: frozenset[str]) -> bool:
+        def parameter_accepts(name: str, seen: frozenset[str]) -> bool | None:
             if name in seen:
-                return True  # test the recursive Comparable<T> bound with T instantiated as String
-            return all(accepts(source.text(bound), bound, seen | {name}) for bound in parameters[name])
+                return True  # test a recursive Comparable<T> with T instantiated as String
+            results = [accepts(source.text(bound), bound, seen | {name}) for bound in parameters[name]]
+            if any(result is False for result in results):
+                return False
+            return None if any(result is None for result in results) else True
 
-        def accepts(spelling: str, use: Any, seen: frozenset[str]) -> bool:
+        def accepts(spelling: str, use: Any, seen: frozenset[str]) -> bool | None:
             spelling = source.canonical_type_spelling(spelling)
             spelling = re.sub(r"<\s*in\s+", "<", spelling)
             text = re.sub(r"\s+", "", spelling).rstrip("?!")
             if text in parameters:
                 return parameter_accepts(text, seen)
-            for qualified, default in [
-                ("kotlin.String", True),
-                ("kotlin.CharSequence", True),
-                ("kotlin.Any", True),
-                ("java.io.Serializable", False),
-            ]:
-                if self.library_reference_type(text, use, qualified, default_import=default, context=source):
+            unknown: set[tuple[str, int, str]] = set()
+            self.reference_type_evidence.append(unknown)
+            try:
+                for qualified, default in [
+                    ("kotlin.String", True),
+                    ("kotlin.CharSequence", True),
+                    ("kotlin.Any", True),
+                    ("java.io.Serializable", False),
+                ]:
+                    if self.library_reference_type(
+                        text, use, qualified, default_import=default, context=source
+                    ):
+                        return True
+                expanded: list[tuple[int, int]] = []
+                if not self.library_reference_type(
+                    text, use, "kotlin.Comparable", default_import=True, context=source, expanded=expanded
+                ):
+                    return None if unknown else False
+                if expanded:
+                    return True  # alias arguments remain opaque; the consumer records precision
+                match = re.search(r"<(.+)>", text)
+                if match is None:
                     return True
-            expanded: list[tuple[int, int]] = []
-            if not self.library_reference_type(
-                text, use, "kotlin.Comparable", default_import=True, context=source, expanded=expanded
-            ):
-                return False
-            if expanded:
-                return True  # alias parameters are opaque; the caller records limited receiver flow
-            match = re.search(r"<(.+)>", text)
-            if match is None:
-                return True  # an aliased generic argument remains conservatively limited by the caller
-            argument = match[1]
-            if argument == "*":
-                return True
-            if argument in parameters:
-                return parameter_accepts(argument, seen)
-            if argument.endswith("?"):
-                return False
-            return any(
-                self.library_reference_type(argument, use, kind, default_import=True, context=source)
-                for kind in ["kotlin.String", "kotlin.Nothing"]
-            )
+                argument = match[1]
+                if argument == "*":
+                    return True
+                if argument in parameters:
+                    return parameter_accepts(argument, seen)
+                if argument.endswith("?"):
+                    return False
+                unknown.clear()  # the root proof succeeded; only argument uncertainty matters now
+                for kind in ("kotlin.String", "kotlin.Nothing"):
+                    if self.library_reference_type(argument, use, kind, default_import=True, context=source):
+                        return True
+                return None if unknown else False
+            finally:
+                self.reference_type_evidence.pop()
 
         return accepts(source.text(receiver), receiver, frozenset())
 
