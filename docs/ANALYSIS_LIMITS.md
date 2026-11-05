@@ -478,9 +478,11 @@ interfaces, inaccessible private nominal declarations or primary constructors,
 complete implicit/primary arity and labels, and proven primitive incompatibility.
 Private nested declarations are checked in their declaring owner's AST scope;
 top-level private declarations remain source-file scoped. These enclosing-gate
-queries stop after 64 nodes. For a supported fixed signature, one syntactic
+queries stop after 64 nodes. For declaration-only applicability and constructor
+exclusion with a supported fixed signature, one syntactic
 trailing lambda binds to the final non-vararg parameter, skipping preceding
-defaults. The binder does not search backward past a final vararg. Independent
+defaults. This proof does not add callee following through skipped defaults.
+The binder does not search backward past a final vararg. Independent
 String or literal-lambda incompatibility with a proven nonnull primitive/String
 parameter can exclude construction; lambdas are not blanket-excluded from Any,
 SAM interfaces or unknown types. A String argument does not by itself
@@ -502,8 +504,10 @@ twin. A consumed String-overload uncertainty is recorded at the affected call;
 up to eight declaration-origin locations supplement that detail. Optional queries
 do not emit this consumed uncertainty. Expression roots keep their stricter
 value-shadow rules. This distinction does not execute imported values.
-Kotlin explicit imports can identify represented default-package classifiers
-across source files. The imported root is checked before an exact qualified
+An explicit Kotlin import of a dotless default-package root can identify its
+represented nested classifiers across source files. That exception matches the
+current owner to the resolved imported root plus the written remainder; a dotted
+SDK import does not qualify merely because an import exists. The root is checked before an exact qualified
 spelling supplies a library fact; Java/Swift and unimported/private source gates
 remain separate. The import cache inventories classifiers, not value absence.
 Represented builder extension candidates now check
@@ -518,8 +522,12 @@ member-extension candidates. Known builder members and top-level extensions keep
 separate, narrower dispatch approximations. A compatible custom builder extension
 is not proof of its write effects: treating its arguments as receiver writes
 records precision at that actual call, including fixed-body candidates.
+An eligible represented project-extension candidate retains the custom-extension
+reason. Other opaque or unmodeled contributions use a generic builder-chain
+effect limit; absence of a represented extension does not prove the effects.
+This distinction chooses the reason, not whether precision is recorded.
 This also covers plain `this` and recognized implicit chains: each opaque link
-gets its own call location, while known outer builder members remain precise.
+gets its own call location, while registered outer builder members remain precise.
 Effect routing and diagnostics share the same supplied-object identity check;
 a foreign callback parameter cannot borrow an enclosing builder's receiver type.
 Labeled builder receivers retain a separate preexisting flow limit and are not
@@ -554,6 +562,11 @@ declaration context and stops after 16 links; ambiguity, cycles, and a qualified
 selection through only an alias prefix do not prove incompatibility. The same
 distinction applies to Comparable's argument. These proofs emit no diagnostics
 or callee effects themselves.
+An explicit Kotlin type import precedes a same-file package-level classifier;
+that package declaration cannot re-enter through the alias-selection fallback.
+Function-local, class-member and type-parameter bindings retain their stronger
+lexical scope, and unknown ancestry remains conservative. This is a type lookup
+rule, not a change to expression/value import resolution.
 CharSequence does not acquire Comparable or Serializable as known supertypes.
 Numeric Comparable argument compatibility remains conservative, so an incompatible
 generic extension can withhold a constructor fact. Some generic Number parameters

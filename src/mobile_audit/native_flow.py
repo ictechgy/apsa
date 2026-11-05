@@ -66,6 +66,7 @@ REASON_KINDS = {
     "Kotlin scope import identity unavailable": "precision",
     "Kotlin project extension receiver flow unavailable": "precision",
     "Kotlin custom builder extension effects unavailable": "precision",
+    "Kotlin builder chain effects unavailable": "precision",
     "Swift inout writeback unavailable": "precision",
     "aggregate reference ownership unavailable": "precision",
     "ambiguous class identity": "precision",
@@ -2087,7 +2088,7 @@ class NativeFlow:
         )
 
     def lexical_type(self, analyzer: Analyzer, declared: str, use: Any = None) -> Any:
-        """Find source type bindings before interpreting a spelling as an import/package."""
+        """Find lexical type bindings, honoring Kotlin explicit-import priority."""
         declared = analyzer.canonical_type_spelling(declared)
         match = re.match(r"[A-Za-z_]\w*", declared)
         if match is None:
@@ -2221,6 +2222,15 @@ class NativeFlow:
                 for name, declaration in self.type_scope_cache[key]:
                     if name != root:
                         continue
+                    if analyzer.language == "kotlin" and scope.type in {"program", "source_file"}:
+                        imported = self.imported_symbols(analyzer, root, classes=True)
+                        namespace = self.namespaces[id(analyzer)]
+                        identity = (namespace + "." if namespace else "") + root
+                        if imported and imported != {identity}:
+                            # Explicit Kotlin type imports precede package-level
+                            # classifiers, even in this file. Inner declarations
+                            # and unresolved ancestor scopes retain their priority.
+                            continue
                     if (
                         scope.type in {"block", "statements", "function_body"}
                         and analyzer.language != "swift"
@@ -2279,7 +2289,10 @@ class NativeFlow:
                     or self.namespaces[id(source)]
                     or source.path == analyzer.path
                     or analyzer.language == "kotlin"
-                    and bool(imported)
+                    and any(
+                        "." not in symbol and owner == symbol + ("." + remainder if remainder else "")
+                        for symbol in imported
+                    )
                 )
                 and (
                     analyzer.language != "kotlin"

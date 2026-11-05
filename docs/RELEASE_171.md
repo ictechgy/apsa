@@ -575,8 +575,11 @@ separate execution/precision limits.
 
 ## Remaining limits
 
-A callee does not bind a lambda's parameters when it calls the lambda, and a
-trailing lambda is not bound past a defaulted parameter (`limited`). Receiver
+A callee does not bind a lambda's parameters when it calls the lambda. Callee
+following still does not bind a trailing lambda past a skipped defaulted formal
+(`limited`). The declaration-only applicability and constructor-exclusion binder
+can place that lambda at the final non-vararg formal; this does not add execution
+of the skipped-default callee. Receiver
 lambdas of unknown calls (`db.transaction { execSQL(...) }`) do not bind
 `this`, and a write into a scope function's receiver object without identity
 (`StringBuilder().apply { append(q) }`) is not tracked. Deferred callbacks are
@@ -759,7 +762,7 @@ so fixed-body candidates do not become checked through ownership alone.
 The effect limit also follows explicit plain-`this` chains and identifies each
 opaque inner contribution at its own call. Known builder members stay precise;
 foreign supplied callback receivers keep their own effect identity. A shared
-syntactic binder places one trailing lambda at the final non-vararg parameter,
+declaration-only applicability/exclusion binder places one trailing lambda at the final non-vararg parameter,
 skipping defaults before it. Independent proven primitive/String conflicts still
 exclude impossible construction, while Any, SAM and unknown finals remain
 conservative.
@@ -770,3 +773,15 @@ arguments. Alias proofs retain declaration context, a 16-link cap and the comple
 selected name. Explicit Kotlin imports of represented default-package classifiers
 reach the source-type fence before exact-spelling library identity. The obsolete
 value-import inventory is removed; classifier import uncertainty remains intact.
+
+Explicit Kotlin type imports now precede same-file package aliases and nominal
+declarations in the shared classifier and alias selectors. Stronger local/member
+and type-parameter scopes remain in place. A lower-priority package declaration
+does not prove incompatibility or hide a captured extension's effects.
+
+The cross-file default-package exception is limited to a matching dotless root
+import, including a renamed root. A dotted SDK import no longer gains a false
+source owner through a same-spelled default-package nested classifier. Opaque
+builder contributions retain precision even without a represented extension;
+their reason distinguishes a represented custom candidate from an unmodeled
+builder chain. Registered members keep their existing precise path.

@@ -5822,8 +5822,20 @@ class Analyzer:
         ):
             for contribution in [call] if writes else chain:
                 if contribution.name.rsplit(".", 1)[-1] not in recipient.members:
+                    depth = self.native_flow.type_hint_depth
+                    self.native_flow.type_hint_depth += 1
+                    try:
+                        represented = self.project_extension(
+                            contribution.name.rsplit(".", 1)[-1],
+                            contribution,
+                            set(recipient.receiver_types),
+                        )
+                    finally:
+                        self.native_flow.type_hint_depth = depth
                     self.native_flow.partial(
-                        "Kotlin custom builder extension effects unavailable",
+                        "Kotlin custom builder extension effects unavailable"
+                        if represented
+                        else "Kotlin builder chain effects unavailable",
                         self,
                         call=contribution,
                         classification_precision=True,
@@ -9378,7 +9390,12 @@ class Analyzer:
                 if "." in root:
                     if identity == root:
                         buckets[0].append(row)
-                elif source is context and name == root:
+                elif (
+                    source is context
+                    and name == root
+                    # A file-level Kotlin alias has package declaration priority.
+                    and (context.language != "kotlin" or not imported or imported == {identity})
+                ):
                     buckets[0].append(row)
                 elif imported:
                     if identity in imported:
