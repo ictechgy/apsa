@@ -525,14 +525,22 @@ is not proof of its write effects: treating its arguments as receiver writes
 records precision at that actual call, including fixed-body candidates.
 A priority-aware receiver proof can establish an eligible represented
 project-extension candidate for the custom-extension reason. Losing aliases from
-other scopes cannot re-enter that proof through a leaf-name union. Other opaque
-or unmodeled contributions use a generic builder-chain effect limit; absence of
-a represented extension does not prove the effects. This optional label query
-has per-file allowances of 64 queries and 64 visited callable candidates.
-Exhaustion selects the generic reason while preserving precision at the actual
-contribution; it does not claim that the effects were resolved. Its temporary
-query mode and type-hint depth are restored after every query, including failure.
-This distinction chooses the reason, not whether precision is recorded.
+other scopes cannot re-enter that proof through a leaf-name union. A dedicated
+canonical table covers the already modeled builder receivers and their writable
+supertypes, including Appendable and collection receivers; bounded type parameters
+use their declaration-context constraints. This adds attribution proof, not new
+builder execution. Callable aliases are visited in stable order in attribution
+mode before its allowance is consumed; ordinary dispatch ordering is separate.
+Other opaque or unmodeled contributions use a generic builder-chain effect limit;
+absence of a represented extension does not prove the effects. This optional label
+query has per-file allowances of 64 queries and 64 visited callable candidates.
+Exhaustion selects the generic reason for an unclassified context while preserving
+precision at the actual contribution; it does not claim resolved effects.
+A previously proved custom label is retained on revisits of the same immutable
+syntax, receiver, function and scope profile. This metadata ledger has at most one
+entry per successful optional query and retains no Frame or mutable effect state.
+Temporary query mode and type-hint depth restore after every query, including
+failure. This distinction chooses the reason, not whether precision is recorded.
 This also covers plain `this` and recognized implicit chains: each opaque link
 gets its own call location, while registered outer builder members remain precise.
 Effect routing and diagnostics share the same supplied-object identity check;
@@ -572,15 +580,22 @@ or callee effects themselves.
 An established imported Kotlin classifier precedes a weaker package-level
 classifier; the losing package declaration cannot re-enter through alias
 selection. Import syntax also names functions and values. If a visible
-same-package class or alias competes with an import whose classifier is not
-positively represented, type identity stays unresolved rather than affirming
-either the package nominal or an SDK spelling. This includes declarations in
-another admitted file, with file-private visibility preserved. A represented
+same-package or applicable non-static wildcard-imported class or alias competes
+with an import whose classifier is not positively represented, type identity
+stays unresolved rather than affirming either the source nominal or an SDK spelling.
+This includes admitted Java/Kotlin JVM classifiers and Kotlin aliases in another
+file, with Java accessibility and file-private visibility preserved. Recognizing
+a competitor adds no general cross-language callee execution. A represented
 function/value is not proof that a binary classifier with that FQN is absent.
 Consumers retain affected precision; pure type queries do not execute imported
 values or emit that consumed diagnostic. Function-local, class-member and
 type-parameter bindings retain their stronger lexical scope, and unknown
 ancestry remains conservative. Expression/value import resolution is separate.
+Represented selected aliases are expanded in declaration context before accepting
+an exact imported or fully qualified SDK spelling. TYPE presence alone is not
+SDK identity: an alias at android.net.Uri may denote a source nominal. Library,
+external-model, declaration and retained-receiver queries preserve the same
+standard/source/unknown distinction instead of reintroducing the raw import.
 CharSequence does not acquire Comparable or Serializable as known supertypes.
 Numeric Comparable argument compatibility remains conservative, so an incompatible
 generic extension can withhold a constructor fact. Some generic Number parameters

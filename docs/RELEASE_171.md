@@ -779,18 +779,27 @@ nominal declarations in the shared type selectors. Raw function/value imports
 do not establish a TYPE identity: when a visible same-package classifier
 competes and the imported classifier is not positively represented, consumers
 retain unresolved identity and affected precision instead of affirming an SDK
-spelling. The package declaration may be in another admitted file; private-file
-visibility remains separate. A function/value import cannot prove that an
-overlapping binary classifier is absent. Stronger local/member/type-parameter
+spelling. The competitor may be an accessible Java/Kotlin JVM classifier or Kotlin
+alias in another same-package or non-static wildcard-imported file; privacy and
+Java accessibility remain separate. This does not add general cross-language
+execution. A function/value import cannot prove that an overlapping binary
+classifier is absent. Stronger local/member/type-parameter
 scopes remain in place. A losing package declaration cannot prove
-incompatibility or hide a captured extension's effects.
+incompatibility or hide a captured extension's effects. Selected represented
+aliases expand in declaration context before exact-import or fully qualified SDK
+acceptance, and library/model/declaration/resolved-receiver consumers agree on
+standard, source-nominal or unresolved identity. An alias at an SDK FQN is not
+automatically that SDK type.
 
 The cross-file default-package exception is limited to a matching dotless root
 import, including a renamed root. A dotted SDK import no longer gains a false
 source owner through a same-spelled default-package nested classifier. Opaque
 builder contributions retain precision even without a represented extension.
 Their reason uses declaration-context and selected-alias receiver proof rather
-than collecting every alias with the same leaf name. Optional attribution is
-limited to 64 queries and 64 visited candidates per analyzed file; exhaustion
-uses the generic chain reason while preserving precision at the actual inner
+than collecting every alias with the same leaf name. Canonical attribution covers
+existing builder supertypes and collection forms; attribution alias order is
+stable. Optional attribution is limited to 64 queries and 64 visited candidates
+per analyzed file. Exhaustion uses the generic reason for unclassified contexts;
+a bounded immutable syntax/receiver/scope ledger retains an already-proved custom
+label on revisits without retaining Frames. Precision stays at the actual inner
 contribution. Registered members keep their existing precise path.

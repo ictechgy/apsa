@@ -36211,3 +36211,989 @@ def test_review46_attribution_scope_flag_and_depth_restore_after_interrupted_pro
     monkeypatch.setattr(Analyzer, "record_visited", record)
     analyze_sources(_REVIEW46_PROGRAMS["builder_numeric_reason_control"])
     assert seen
+
+
+# _REVIEW47: selected aliases, JVM/star TYPE fences, builder roots, deterministic bounded labels.
+
+_REVIEW47_PROGRAMS = {
+    "appendable": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun Appendable.appendQuoted(q:String) { append(q) }\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildString { appendQuoted(q) })\n"
+            "}\n",
+        )
+    ],
+    "bounded_appendable": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T:Appendable> T.appendQuoted(q:String):T { append(q); return this }\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildString { appendQuoted(q) })\n"
+            "}\n",
+        )
+    ],
+    "mutable_list": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun MutableList<String>.addSql(q:String) { add(q) }\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildList<String> { addSql(q) }.joinToString())\n"
+            "}\n",
+        )
+    ],
+    "alias_seed": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import ext.foo as opaque\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildString { append(q).opaque(q) })\n"
+            "}\n",
+        ),
+        (
+            "Overloads.kt",
+            "package fresh47\n"
+            "class C0\n"
+            "fun C0.opaque(q:String):C0=this\n"
+            "class C1\n"
+            "fun C1.opaque(q:String):C1=this\n"
+            "class C2\n"
+            "fun C2.opaque(q:String):C2=this\n"
+            "class C3\n"
+            "fun C3.opaque(q:String):C3=this\n"
+            "class C4\n"
+            "fun C4.opaque(q:String):C4=this\n"
+            "class C5\n"
+            "fun C5.opaque(q:String):C5=this\n"
+            "class C6\n"
+            "fun C6.opaque(q:String):C6=this\n"
+            "class C7\n"
+            "fun C7.opaque(q:String):C7=this\n"
+            "class C8\n"
+            "fun C8.opaque(q:String):C8=this\n"
+            "class C9\n"
+            "fun C9.opaque(q:String):C9=this\n"
+            "class C10\n"
+            "fun C10.opaque(q:String):C10=this\n"
+            "class C11\n"
+            "fun C11.opaque(q:String):C11=this\n"
+            "class C12\n"
+            "fun C12.opaque(q:String):C12=this\n"
+            "class C13\n"
+            "fun C13.opaque(q:String):C13=this\n"
+            "class C14\n"
+            "fun C14.opaque(q:String):C14=this\n"
+            "class C15\n"
+            "fun C15.opaque(q:String):C15=this\n"
+            "class C16\n"
+            "fun C16.opaque(q:String):C16=this\n"
+            "class C17\n"
+            "fun C17.opaque(q:String):C17=this\n"
+            "class C18\n"
+            "fun C18.opaque(q:String):C18=this\n"
+            "class C19\n"
+            "fun C19.opaque(q:String):C19=this\n"
+            "class C20\n"
+            "fun C20.opaque(q:String):C20=this\n"
+            "class C21\n"
+            "fun C21.opaque(q:String):C21=this\n"
+            "class C22\n"
+            "fun C22.opaque(q:String):C22=this\n"
+            "class C23\n"
+            "fun C23.opaque(q:String):C23=this\n"
+            "class C24\n"
+            "fun C24.opaque(q:String):C24=this\n"
+            "class C25\n"
+            "fun C25.opaque(q:String):C25=this\n"
+            "class C26\n"
+            "fun C26.opaque(q:String):C26=this\n"
+            "class C27\n"
+            "fun C27.opaque(q:String):C27=this\n"
+            "class C28\n"
+            "fun C28.opaque(q:String):C28=this\n"
+            "class C29\n"
+            "fun C29.opaque(q:String):C29=this\n"
+            "class C30\n"
+            "fun C30.opaque(q:String):C30=this\n"
+            "class C31\n"
+            "fun C31.opaque(q:String):C31=this\n"
+            "class C32\n"
+            "fun C32.opaque(q:String):C32=this\n"
+            "class C33\n"
+            "fun C33.opaque(q:String):C33=this\n"
+            "class C34\n"
+            "fun C34.opaque(q:String):C34=this\n"
+            "class C35\n"
+            "fun C35.opaque(q:String):C35=this\n"
+            "class C36\n"
+            "fun C36.opaque(q:String):C36=this\n"
+            "class C37\n"
+            "fun C37.opaque(q:String):C37=this\n"
+            "class C38\n"
+            "fun C38.opaque(q:String):C38=this\n"
+            "class C39\n"
+            "fun C39.opaque(q:String):C39=this\n"
+            "class C40\n"
+            "fun C40.opaque(q:String):C40=this\n"
+            "class C41\n"
+            "fun C41.opaque(q:String):C41=this\n"
+            "class C42\n"
+            "fun C42.opaque(q:String):C42=this\n"
+            "class C43\n"
+            "fun C43.opaque(q:String):C43=this\n"
+            "class C44\n"
+            "fun C44.opaque(q:String):C44=this\n"
+            "class C45\n"
+            "fun C45.opaque(q:String):C45=this\n"
+            "class C46\n"
+            "fun C46.opaque(q:String):C46=this\n"
+            "class C47\n"
+            "fun C47.opaque(q:String):C47=this\n"
+            "class C48\n"
+            "fun C48.opaque(q:String):C48=this\n"
+            "class C49\n"
+            "fun C49.opaque(q:String):C49=this\n"
+            "class C50\n"
+            "fun C50.opaque(q:String):C50=this\n"
+            "class C51\n"
+            "fun C51.opaque(q:String):C51=this\n"
+            "class C52\n"
+            "fun C52.opaque(q:String):C52=this\n"
+            "class C53\n"
+            "fun C53.opaque(q:String):C53=this\n"
+            "class C54\n"
+            "fun C54.opaque(q:String):C54=this\n"
+            "class C55\n"
+            "fun C55.opaque(q:String):C55=this\n"
+            "class C56\n"
+            "fun C56.opaque(q:String):C56=this\n"
+            "class C57\n"
+            "fun C57.opaque(q:String):C57=this\n"
+            "class C58\n"
+            "fun C58.opaque(q:String):C58=this\n"
+            "class C59\n"
+            "fun C59.opaque(q:String):C59=this\n"
+            "class C60\n"
+            "fun C60.opaque(q:String):C60=this\n"
+            "class C61\n"
+            "fun C61.opaque(q:String):C61=this\n"
+            "class C62\n"
+            "fun C62.opaque(q:String):C62=this\n"
+            "class C63\n"
+            "fun C63.opaque(q:String):C63=this\n",
+        ),
+        ("Types.kt", "package ext\nfun StringBuilder.foo(q:String):StringBuilder=this\n"),
+    ],
+    "mutable_collection": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun MutableCollection<String>.addSql(q:String) { add(q) }\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildList<String> { addSql(q) }.joinToString())\n"
+            "}\n",
+        )
+    ],
+    "mutable_iterable": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun MutableIterable<String>.touchSql(q:String) {}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            ' db.execSQL(buildList<String> { add("FIXED"); touchSql(q) }.joinToString())\n'
+            "}\n",
+        )
+    ],
+    "mutable_set": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun MutableSet<String>.addSql(q:String) { add(q) }\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildSet<String> { addSql(q) }.joinToString())\n"
+            "}\n",
+        )
+    ],
+    "mutable_map": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            'fun MutableMap<String,String>.putSql(q:String) { put("q",q) }\n'
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildMap<String,String> { putSql(q) }.values.joinToString())\n"
+            "}\n",
+        )
+    ],
+    "bounded_collection": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T:MutableCollection<String>> T.addSql(q:String):T { add(q); return this "
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildList<String> { addSql(q) }.joinToString())\n"
+            "}\n",
+        )
+    ],
+    "appendable_shadow": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class Appendable\n"
+            "fun Appendable.reverse():Appendable=this\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "selected_collection_alias": [
+        (
+            "Caller.kt",
+            "package fresh47\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import ext.Selected\n"
+            "typealias Selected=Number\n"
+            "fun Selected.addSql(q:String) { add(q) }\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildList<String> { addSql(q) }.joinToString())\n"
+            "}\n",
+        ),
+        ("Types.kt", "package ext\ntypealias Selected=MutableList<String>\n"),
+    ],
+    "sdk_alias": [
+        (
+            "Caller.kt",
+            "package fresh46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "class Uri\n"
+            'fun scan(db:SQLiteDatabase,u:Uri) { db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        ("Types.kt", "package android.net\ntypealias Uri=fresh46.Own\n"),
+        ("Own.kt", 'package fresh46\nclass Own { fun getQueryParameter(name:String):String="FIXED" }\n'),
+    ],
+    "sdk_alias_fqn": [
+        (
+            "Caller.kt",
+            "package fresh46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "class Uri\n"
+            "fun scan(db:SQLiteDatabase,u:android.net.Uri) { "
+            'db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        ("Types.kt", "package android.net\ntypealias Uri=fresh46.Own\n"),
+        ("Own.kt", 'package fresh46\nclass Own { fun getQueryParameter(name:String):String="FIXED" }\n'),
+    ],
+    "java_own": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            'fun scan(db:SQLiteDatabase,u:Uri) { db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        (
+            "Uri.java",
+            "package probe46; public class Uri { public String getQueryParameter(String name) { "
+            'return "JAVA_FIXED"; } }\n',
+        ),
+        ("Imported.kt", "package android.net\nval Uri:Int=0\n"),
+    ],
+    "java_own_sdk_twin": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            'fun scan(db:SQLiteDatabase,u:Uri) { db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        (
+            "Uri.java",
+            "package probe46; public class Uri { public String getQueryParameter(String "
+            'name) { return "JAVA_FIXED"; } }\n',
+        ),
+        ("Imported.kt", "package android.net\nval Uri:Int=0\n"),
+    ],
+    "unconflicted_sdk": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            'fun scan(db:SQLiteDatabase,u:Uri) { db.execSQL(u.getQueryParameter("q")) }\n',
+        )
+    ],
+    "java_package_own": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "internal fun scan(db:SQLiteDatabase,u:Uri) { "
+            'db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        (
+            "Uri.java",
+            "package probe46; class Uri { public String getQueryParameter(String name) { "
+            'return "JAVA_FIXED"; } }\n',
+        ),
+        ("Imported.kt", "package android.net\nval Uri:Int=0\n"),
+    ],
+    "f2-star-class": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "import other.*\n"
+            'fun scan(db:SQLiteDatabase,u:Uri) { db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        ("Imported.kt", "package android.net\nfun Uri():other.Uri=other.Uri()\n"),
+        ("Other.kt", 'package other\nclass Uri { fun getQueryParameter(name:String):String="FIXED" }\n'),
+    ],
+    "f2-star-alias": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "import other.*\n"
+            'fun scan(db:SQLiteDatabase,u:Uri) { db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        ("Imported.kt", "package android.net\nfun Uri():other.Uri=other.Own()\n"),
+        (
+            "Other.kt",
+            "package other\n"
+            "typealias Uri=Own\n"
+            'class Own { fun getQueryParameter(name:String):String="FIXED_ALIAS" }\n',
+        ),
+    ],
+    "f2-star-class-sdk-twin": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "import other.*\n"
+            'fun scan(db:SQLiteDatabase,u:Uri) { db.execSQL(u.getQueryParameter("q")) '
+            "}\n",
+        ),
+        ("Imported.kt", "package android.net\nfun Uri():other.Uri=other.Uri()\n"),
+        ("Other.kt", 'package other\nclass Uri { fun getQueryParameter(name:String):String="FIXED" }\n'),
+    ],
+    "f2-private-star-sdk-control": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "import other.*\n"
+            "fun scan(db:SQLiteDatabase,u:Uri) { "
+            'db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        ("Imported.kt", "package android.net\nfun Uri():Int=0\n"),
+        (
+            "Other.kt",
+            'package other\nprivate class Uri { fun getQueryParameter(name:String):String="FIXED" }\n',
+        ),
+    ],
+    "f4-named-helper-1": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            'fun StringBuilder.appendSql(q:String):StringBuilder { append("FIXED"); return '
+            "this }\n"
+            "fun page(q:String)=buildString { appendSql(q) }\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(page(q))\n"
+            "}\n",
+        )
+    ],
+    "f4-named-helper-65": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            'fun StringBuilder.appendSql(q:String):StringBuilder { append("FIXED"); return '
+            "this }\n"
+            "fun page(q:String)=buildString { appendSql(q) }\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            " db.execSQL(page(q))\n"
+            "}\n",
+        )
+    ],
+    "java_private_star": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "import other.*\n"
+            'fun scan(db:SQLiteDatabase,u:Uri) { db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        ("Imported.kt", "package android.net\nfun Uri():Int=0\n"),
+        (
+            "Other.java",
+            "package other; class Uri { public String getQueryParameter(String key) { return "
+            '"PRIVATE_FIXED"; } }\n',
+        ),
+    ],
+    "unrelated_star": [
+        (
+            "Caller.kt",
+            "package probe46\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "import other.*\n"
+            'fun scan(db:SQLiteDatabase,u:Uri) { db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        ("Imported.kt", "package android.net\nfun Uri():Int=0\n"),
+        ("Other.kt", "package other\nclass Different\n"),
+    ],
+}
+
+_REVIEW47_UNKNOWN = [
+    "java_own",
+    "java_own_sdk_twin",
+    "java_package_own",
+    "f2-star-class",
+    "f2-star-alias",
+    "f2-star-class-sdk-twin",
+]
+
+_REVIEW47_SDK = ["unconflicted_sdk", "f2-private-star-sdk-control", "java_private_star", "unrelated_star"]
+
+_REVIEW47_LABELS = [
+    ("appendable", True),
+    ("bounded_appendable", True),
+    ("mutable_list", True),
+    ("mutable_collection", True),
+    ("mutable_iterable", True),
+    ("mutable_set", True),
+    ("mutable_map", True),
+    ("bounded_collection", True),
+    ("appendable_shadow", False),
+    ("selected_collection_alias", True),
+]
+
+_REVIEW47_SQL = [
+    ("appendable", True),
+    ("bounded_appendable", True),
+    ("mutable_list", True),
+    ("alias_seed", True),
+    ("mutable_collection", True),
+    ("mutable_iterable", False),
+    ("mutable_set", True),
+    ("mutable_map", True),
+    ("bounded_collection", True),
+    ("appendable_shadow", True),
+    ("selected_collection_alias", True),
+    ("sdk_alias", False),
+    ("sdk_alias_fqn", False),
+    ("java_own", False),
+    ("java_own_sdk_twin", False),
+    ("unconflicted_sdk", False),
+    ("java_package_own", False),
+    ("f2-star-class", False),
+    ("f2-star-alias", False),
+    ("f2-star-class-sdk-twin", False),
+    ("f2-private-star-sdk-control", False),
+    ("f4-named-helper-1", False),
+    ("f4-named-helper-65", False),
+    ("java_private_star", False),
+    ("unrelated_star", False),
+]
+
+
+def _review47_snapshot(analyzer, frame):
+    return _review46_query_snapshot(analyzer, frame), frozenset(
+        getattr(analyzer, "builder_custom_labels", ())
+    )
+
+
+def _review47_getter_anchor(program):
+    source = dict(_REVIEW47_PROGRAMS[program])["Caller.kt"]
+    line = next(i + 1 for i, text in enumerate(source.splitlines()) if "u.getQueryParameter" in text)
+    return line, source.splitlines()[line - 1].index("u.getQueryParameter") + 1
+
+
+@pytest.mark.parametrize("mode", [0, 9])
+@pytest.mark.parametrize("spelling", ["Uri", "android.net.Uri"])
+@pytest.mark.parametrize("program", ["sdk_alias", "sdk_alias_fqn"])
+def test_review47_selected_sdk_fqn_alias_precedes_all_sdk_certainty(monkeypatch, mode, spelling, program):
+    original = Analyzer.record_visited
+    active = False
+    facts = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("alias identity query evaluated a value or consumed precision")
+
+    def record(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if active or self.scope != "scan" or call.name != "getQueryParameter":
+            return result
+        active = True
+        flow = self.native_flow
+        depth = flow.type_hint_depth
+        try:
+            flow.type_hint_depth = mode
+            before = _review47_snapshot(self, frame)
+            with monkeypatch.context() as query:
+                query.setattr(self, "value", forbidden)
+                query.setattr(flow, "partial", forbidden)
+                assert flow.lexical_type(self, spelling, call.node) is None
+                aliases = self.reference_type_aliases(
+                    self, spelling, flow.imported_symbols(self, spelling, classes=True)
+                )
+                assert [source.path for source, _alias in aliases] == ["Types.kt"]
+                assert self.library_reference_type(spelling, call.node, "fresh46.Own")
+                assert not self.library_reference_type(spelling, call.node, "fresh46.Uri")
+                assert not self.library_reference_type(spelling, call.node, "android.net.Uri")
+                assert not flow.modeled_external(self, spelling, call, receiver=value)
+                declared = self.declared_modeled_type(spelling, call.node, qualify_source=True)
+                assert declared != "android.net.Uri"
+                resolved = self.resolved_receiver_kind(call.receiver, frame.types.get("u", ""), frame)
+                assert resolved != "android.net.Uri"
+                assert (
+                    self.resolved_receiver_kind(call.receiver, "android.net.Uri", frame) != "android.net.Uri"
+                )
+                owners = flow.class_owners(self, spelling, call.node)
+                assert owners <= {"fresh46.Own"}
+                proof = self.reference_type_identity(spelling, call.node, context=self)
+                assert isinstance(proof, tuple) and isinstance(proof[2], frozenset)
+                assert proof[0] != "android.net.Uri" and (proof[1] or proof[2])
+                facts.append((resolved, owners))
+            assert before == _review47_snapshot(self, frame)
+        finally:
+            flow.type_hint_depth = depth
+            active = False
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW47_PROGRAMS[program])
+    assert facts and not _hit(report, SQL)
+    assert not report["metadata"]["native_flow"]["budget_reasons"]
+    if _state(report, SQL) == "checked":
+        assert any(resolved == "fresh46.Own" or owners == {"fresh46.Own"} for resolved, owners in facts)
+    else:
+        line, column = _review47_getter_anchor(program)
+        assert _state(report, SQL) == "limited"
+        assert any(
+            d.get("path") == "Caller.kt"
+            and d.get("line") == line
+            and d.get("column") == column
+            and d.get("call") == "getQueryParameter"
+            and d.get("kind") == "precision"
+            for d in report["metadata"]["native_flow"]["partial_details"]
+        )
+
+
+@pytest.mark.parametrize("mode", [0, 9])
+@pytest.mark.parametrize("program", _REVIEW47_UNKNOWN)
+def test_review47_visible_jvm_and_star_competitors_remain_unknown_in_binary_twins(monkeypatch, mode, program):
+    original = Analyzer.record_visited
+    active = False
+    seen = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("TYPE fence query evaluated or consumed uncertainty")
+
+    def record(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if active or self.scope != "scan" or call.name != "getQueryParameter":
+            return result
+        active = True
+        flow = self.native_flow
+        depth = flow.type_hint_depth
+        try:
+            flow.type_hint_depth = mode
+            before = _review47_snapshot(self, frame)
+            with monkeypatch.context() as query:
+                query.setattr(self, "value", forbidden)
+                query.setattr(flow, "partial", forbidden)
+                assert flow.lexical_type(self, "Uri", call.node) is None
+                assert not flow.class_owners(self, "Uri", call.node)
+                assert not self.library_reference_type("Uri", call.node, "android.net.Uri")
+                assert not flow.modeled_external(self, "Uri", call, receiver=value)
+                assert self.declared_modeled_type("Uri", call.node, qualify_source=True) == ""
+                assert self.resolved_receiver_kind(call.receiver, frame.types.get("u", ""), frame) == ""
+                proof = self.reference_type_identity("Uri", call.node, context=self)
+                assert proof[:2] == ("", False) and isinstance(proof[2], frozenset) and proof[2]
+            assert before == _review47_snapshot(self, frame)
+            seen.append(True)
+        finally:
+            flow.type_hint_depth = depth
+            active = False
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW47_PROGRAMS[program])
+    assert seen and not _hit(report, SQL)
+    assert _state(report, SQL) == "limited"
+    line, column = _review47_getter_anchor(program)
+    assert any(
+        d.get("path") == "Caller.kt"
+        and d.get("line") == line
+        and d.get("column") == column
+        and d.get("call") == "getQueryParameter"
+        and d.get("kind") == "precision"
+        for d in report["metadata"]["native_flow"]["partial_details"]
+    )
+    assert not report["metadata"]["native_flow"]["budget_reasons"]
+
+
+@pytest.mark.parametrize("mode", [0, 9])
+@pytest.mark.parametrize("program", _REVIEW47_SDK)
+def test_review47_inaccessible_unrelated_and_unconflicted_types_keep_sdk_proof(monkeypatch, mode, program):
+    original = Analyzer.record_visited
+    active = False
+    seen = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("SDK proof query executed or consumed precision")
+
+    def record(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if active or self.scope != "scan" or call.name != "getQueryParameter":
+            return result
+        active = True
+        flow = self.native_flow
+        depth = flow.type_hint_depth
+        try:
+            flow.type_hint_depth = mode
+            before = _review47_snapshot(self, frame)
+            with monkeypatch.context() as query:
+                query.setattr(self, "value", forbidden)
+                query.setattr(flow, "partial", forbidden)
+                assert self.library_reference_type("Uri", call.node, "android.net.Uri")
+                assert flow.modeled_external(self, "Uri", call, receiver=value)
+                assert self.declared_modeled_type("Uri", call.node, qualify_source=True) == "android.net.Uri"
+                assert (
+                    self.resolved_receiver_kind(call.receiver, frame.types.get("u", ""), frame)
+                    == "android.net.Uri"
+                )
+            assert before == _review47_snapshot(self, frame)
+            seen.append(True)
+        finally:
+            flow.type_hint_depth = depth
+            active = False
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW47_PROGRAMS[program])
+    assert seen and not _hit(report, SQL)
+    assert _state(report, SQL) == "checked" and not _reasons(report)
+
+
+@pytest.mark.parametrize("program,expected", _REVIEW47_LABELS)
+def test_review47_supported_builder_classifier_and_bounds_prove_candidate_labels(
+    monkeypatch, program, expected
+):
+    original_project = Analyzer.project_extension
+    original_record = Analyzer.record_visited
+    frames = []
+    seen = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("builder candidate proof evaluated or consumed uncertainty")
+
+    def project(self, name, call, receivers, **kwargs):
+        if not frames or not getattr(self, "builder_label_query_active", False):
+            return original_project(self, name, call, receivers, **kwargs)
+        before = _review47_snapshot(self, frames[-1])
+        with monkeypatch.context() as query:
+            query.setattr(self, "value", forbidden)
+            query.setattr(self.native_flow, "partial", forbidden)
+            result = original_project(self, name, call, receivers, **kwargs)
+        assert before == _review47_snapshot(self, frames[-1])
+        assert result is expected
+        seen.append(name)
+        return result
+
+    def record(self, call, frame, value):
+        frames.append(frame)
+        try:
+            return original_record(self, call, frame, value)
+        finally:
+            frames.pop()
+
+    monkeypatch.setattr(Analyzer, "project_extension", project)
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW47_PROGRAMS[program])
+    assert seen
+    expected_reason = (
+        "Kotlin custom builder extension effects unavailable"
+        if expected
+        else "Kotlin builder chain effects unavailable"
+    )
+    relevant = [
+        d
+        for d in report["metadata"]["native_flow"]["partial_details"]
+        if d["reason"]
+        in {"Kotlin custom builder extension effects unavailable", "Kotlin builder chain effects unavailable"}
+    ]
+    assert relevant and all(d["reason"] == expected_reason and d["kind"] == "precision" for d in relevant)
+    assert not report["metadata"]["native_flow"]["budget_reasons"]
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])
+def test_review47_import_alias_budget_order_is_reproducible_across_hash_seeds(seed):
+    import json
+    import os
+    import subprocess
+
+    script = """import json,sys
+from mobile_audit.source_analysis import analyze_sources
+r=analyze_sources(json.load(sys.stdin))
+print(json.dumps(r))
+"""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", script],
+        input=json.dumps(_REVIEW47_PROGRAMS["alias_seed"]),
+        text=True,
+        capture_output=True,
+        env={**os.environ, "PYTHONHASHSEED": str(seed), "PYTHONDONTWRITEBYTECODE": "1"},
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert _hit(report, SQL) and _state(report, SQL) == "limited"
+    assert not report["metadata"]["native_flow"]["budget_reasons"]
+    relevant = [
+        d
+        for d in report["metadata"]["native_flow"]["partial_details"]
+        if d["reason"]
+        in {"Kotlin custom builder extension effects unavailable", "Kotlin builder chain effects unavailable"}
+    ]
+    assert relevant and all(
+        d.get("path") == "Caller.kt"
+        and d.get("line") == 7
+        and d.get("column") == 27
+        and d.get("call") == "opaque"
+        and d.get("kind") == "precision"
+        and d["reason"] == "Kotlin custom builder extension effects unavailable"
+        for d in relevant
+    )
+
+
+@pytest.mark.parametrize("program", ["f4-named-helper-1", "f4-named-helper-65"])
+def test_review47_revisited_contribution_retains_only_its_proven_specific_label(monkeypatch, program):
+    from mobile_audit.source_analysis import ObjectScope
+
+    original = Analyzer.record_visited
+    analyzers = []
+
+    def record(self, call, frame, value):
+        result = original(self, call, frame, value)
+        if self.scope == "page" and call.name == "appendSql":
+            analyzers.append(self)
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW47_PROGRAMS[program])
+    assert analyzers
+    relevant = [
+        d
+        for d in report["metadata"]["native_flow"]["partial_details"]
+        if d["reason"]
+        in {"Kotlin custom builder extension effects unavailable", "Kotlin builder chain effects unavailable"}
+    ]
+    assert relevant and all(
+        d.get("path") == "Caller.kt"
+        and d.get("line") == 5
+        and d.get("column") == 34
+        and d.get("call") == "appendSql"
+        and d.get("kind") == "precision"
+        and d["reason"] == "Kotlin custom builder extension effects unavailable"
+        for d in relevant
+    )
+    for analyzer in analyzers:
+        assert analyzer.builder_label_queries <= 64 and analyzer.builder_label_candidates <= 64
+        labels = getattr(analyzer, "builder_custom_labels", ())
+        assert len(labels) <= analyzer.builder_label_queries
+        for key in labels:
+            assert isinstance(key[0], int) and isinstance(key[1], frozenset) and isinstance(key[2], int)
+            assert isinstance(key[3], tuple) and all(isinstance(fact, ObjectScope) for fact in key[3])
+            assert isinstance(key[4], bool)
+    assert not report["metadata"]["native_flow"]["budget_reasons"]
+
+
+def test_review47_specific_label_evidence_does_not_cover_an_unclassified_scope_profile(monkeypatch):
+    import mobile_audit.source_analysis as source_analysis
+    from mobile_audit.source_analysis import ObjectScope
+
+    monkeypatch.setattr(source_analysis, "MAX_BUILDER_LABEL_QUERIES", 1)
+    original = Analyzer.record_visited
+    visits = []
+
+    def record(self, call, frame, value):
+        if self.scope != "page" or call.name != "appendSql":
+            return original(self, call, frame, value)
+        visits.append(True)
+        if len(visits) != 2:
+            return original(self, call, frame, value)
+        fact = ObjectScope(
+            id(self.raw), self.function.id, call.node.id, call.node.start_byte, call.node.end_byte, None
+        )
+        self.active_object_scopes.append(fact)
+        try:
+            return original(self, call, frame, value)
+        finally:
+            assert self.active_object_scopes.pop() is fact
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW47_PROGRAMS["f4-named-helper-1"])
+    assert len(visits) >= 2
+    reasons = {
+        d["reason"]
+        for d in report["metadata"]["native_flow"]["partial_details"]
+        if d.get("call") == "appendSql"
+    }
+    assert "Kotlin custom builder extension effects unavailable" in reasons
+    assert "Kotlin builder chain effects unavailable" in reasons
+    assert not report["metadata"]["native_flow"]["budget_reasons"]
+
+
+@pytest.mark.parametrize("program,expected", _REVIEW47_SQL)
+def test_review47_compiler_sql_arguments_require_correctness_or_actual_contribution_precision(
+    program, expected
+):
+    report = analyze_sources(_REVIEW47_PROGRAMS[program])
+    assert not any(row.get("parse_errors") for row in report["metadata"]["files"])
+    flow = report["metadata"]["native_flow"]
+    assert not flow["budget_reasons"]
+    source = dict(_REVIEW47_PROGRAMS[program])["Caller.kt"]
+    sites = [i + 1 for i, text in enumerate(source.splitlines()) if "db.execSQL(" in text]
+    hits = {(e["path"], e["line"]) for f in report["findings"] if f["rule_id"] == SQL for e in f["evidence"]}
+    for line in sites:
+        if (("Caller.kt", line) in hits) is expected:
+            continue
+        assert _state(report, SQL) == "limited"
+        if program.startswith("f4-"):
+            affected_line, column, call_name = 5, 34, "appendSql"
+        elif program == "mutable_iterable":
+            affected_line, column, call_name = (
+                line,
+                source.splitlines()[line - 1].index("touchSql") + 1,
+                "touchSql",
+            )
+        else:
+            affected_line, column, call_name = line, None, None
+        assert any(
+            d.get("path") == "Caller.kt"
+            and d.get("line") == affected_line
+            and (column is None or d.get("column") == column)
+            and (call_name is None or d.get("call") == call_name)
+            and d.get("kind") == "precision"
+            for d in flow["partial_details"]
+        ), (program, line, flow)

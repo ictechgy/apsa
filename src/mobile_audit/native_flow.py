@@ -1753,19 +1753,52 @@ class NativeFlow:
         identity = (namespace + "." if namespace else "") + root
         if not imported or imported == {identity}:
             return False
-        own = any(
+        visible_namespaces = {namespace} | {
+            declaration[:-2]
+            for declaration in analyzer.imports
+            if declaration.endswith(".*") and not declaration.startswith("static ")
+        }
+
+        def visible_nominal(source: Analyzer, node: Any) -> bool:
+            if source.language not in {"java", "kotlin"}:
+                return False
+            current = node
+            while current is not None and current.type not in {"program", "source_file"}:
+                if current.type in NOMINAL_DECLARATIONS:
+                    tokens = self.declaration_tokens(current)
+                    top_level = current.parent is not None and current.parent.type in {
+                        "program",
+                        "source_file",
+                    }
+                    if tokens & {"private", "fileprivate"} and not (source is analyzer and top_level):
+                        return False
+                    if "protected" in tokens and (
+                        source.language == "kotlin" or self.namespaces[id(source)] != namespace
+                    ):
+                        return False
+                    if source.language == "java" and self.namespaces[id(source)] != namespace:
+                        parent = current.parent.parent if current.parent is not None else None
+                        implicit_public = parent is not None and "interface" in self.declaration_tokens(
+                            parent
+                        )
+                        if "public" not in tokens and not implicit_public:
+                            return False
+                elif current.type not in NOMINAL_BODIES:
+                    return False
+                current = current.parent
+            return current is not None
+
+        competing = any(
             source.language == analyzer.language
-            and self.namespaces[id(source)] == namespace
+            and self.namespaces[id(source)] in visible_namespaces
             and (source is analyzer or not self.declaration_tokens(alias) & {"private", "fileprivate"})
             for source, alias in self.module_type_aliases.get(root, ())
         ) or any(
-            source.language == analyzer.language
-            and (source is analyzer or not self.declaration_tokens(nominal) & {"private", "fileprivate"})
-            and nominal.parent is not None
-            and nominal.parent.type in {"program", "source_file"}
-            for source, nominal in self.class_definitions.get(identity, ())
+            visible_nominal(source, nominal)
+            for visible in visible_namespaces
+            for source, nominal in self.class_definitions.get((visible + "." if visible else "") + root, ())
         )
-        if not own:
+        if not competing:
             return False
         represented = {
             symbol
@@ -2770,20 +2803,32 @@ class NativeFlow:
         if len(identities) != 1:
             return False
         identity = next(iter(identities))
-        if (
+        canonical_path = (
             not constructor
             and identity in {"java.io.File", "java.nio.file.Path"}
             and receiver is not None
             and receiver.category in {"canonical-path", "text"}
             and call.name in {"startsWith", "endsWith", "contains"}
-        ):
-            # Canonical path strings retain the originating File/Path type.
-            return True
-        return (
+        )
+        modeled = canonical_path or (
             identity in MODELED_EXTERNAL_CONSTRUCTORS
             if constructor
             else call.name in MODELED_EXTERNAL_METHODS.get(identity, set())
         )
+        if not modeled:
+            return False
+        if analyzer.language == "kotlin":
+            depth = self.type_hint_depth
+            self.type_hint_depth += 1
+            try:
+                if not analyzer.library_reference_type(declared, call.node, identity):
+                    return False
+            finally:
+                self.type_hint_depth = depth
+        if canonical_path:
+            # Canonical path strings retain the originating File/Path type.
+            return True
+        return True
 
     def implicit_constructor(self, analyzer: Analyzer, declared: str, call: Call) -> bool:
         """A unique source class with no declared constructor permits a no-arg allocation."""

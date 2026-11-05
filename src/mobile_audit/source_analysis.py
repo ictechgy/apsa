@@ -1048,6 +1048,28 @@ BUILDER_RECEIVERS = {
     "onCompletion": _COLLECTOR,
     "onSubscription": _COLLECTOR,
 }
+# Canonical roots for the already-supported builders and writable supertypes.
+# Non-default SDK roots still require an explicit import or qualified spelling.
+KOTLIN_BUILDER_RECEIVER_TYPES = {
+    **KOTLIN_STANDARD_RECEIVER_TYPES,
+    "Appendable": ("kotlin.text.Appendable", "java.lang.Appendable"),
+    "MutableList": ("kotlin.collections.MutableList",),
+    "MutableCollection": ("kotlin.collections.MutableCollection",),
+    "MutableIterable": ("kotlin.collections.MutableIterable",),
+    "MutableSet": ("kotlin.collections.MutableSet",),
+    "MutableMap": ("kotlin.collections.MutableMap",),
+    "JsonObjectBuilder": ("kotlinx.serialization.json.JsonObjectBuilder",),
+    "JsonArrayBuilder": ("kotlinx.serialization.json.JsonArrayBuilder",),
+    "Builder": ("androidx.compose.ui.text.AnnotatedString.Builder",),
+    "SpannableStringBuilder": ("android.text.SpannableStringBuilder",),
+    "Editable": ("android.text.Editable",),
+    "Spannable": ("android.text.Spannable",),
+    "SequenceScope": ("kotlin.sequences.SequenceScope",),
+    "FlowCollector": ("kotlinx.coroutines.flow.FlowCollector",),
+    "ProducerScope": ("kotlinx.coroutines.channels.ProducerScope",),
+    "SendChannel": ("kotlinx.coroutines.channels.SendChannel",),
+    "LiveDataScope": ("androidx.lifecycle.LiveDataScope",),
+}
 # Coroutine builders and runners: their lambda's receiver is a scope, on any receiver.
 COROUTINE_BUILDERS = {
     "launch",
@@ -1878,6 +1900,9 @@ class Analyzer:
         self.builder_label_queries = 0
         self.builder_label_candidates = 0
         self.builder_label_query_active = False
+        # Metadata-only positive labels; at most one entry per successful
+        # optional query, with immutable syntax/receiver/scope facts, no Frame.
+        self.builder_custom_labels: set[tuple] = set()
         # A receiverless opener that resolves to project code, which is always followed.
         self.opener_follow = False
         # The framework type certainly applies (override, declared, Context receiver).
@@ -5829,9 +5854,17 @@ class Analyzer:
         ):
             for contribution in [call] if writes else chain:
                 if contribution.name.rsplit(".", 1)[-1] not in recipient.members:
-                    represented = False
+                    label_key = (
+                        contribution.node.id,
+                        recipient.receiver_types,
+                        self.function.id if self.function is not None else 0,
+                        tuple(self.active_object_scopes[-64:]),
+                        len(self.active_object_scopes) > 64,
+                    )
+                    represented = label_key in self.builder_custom_labels
                     if (
-                        self.builder_label_queries < MAX_BUILDER_LABEL_QUERIES
+                        not represented
+                        and self.builder_label_queries < MAX_BUILDER_LABEL_QUERIES
                         and self.builder_label_candidates < MAX_BUILDER_LABEL_CANDIDATES
                     ):
                         self.builder_label_queries += 1
@@ -5848,6 +5881,8 @@ class Analyzer:
                         finally:
                             self.native_flow.type_hint_depth = depth
                             self.builder_label_query_active = query
+                        if represented:
+                            self.builder_custom_labels.add(label_key)
                     self.native_flow.partial(
                         "Kotlin custom builder extension effects unavailable"
                         if represented
@@ -7235,6 +7270,23 @@ class Analyzer:
             )
             if standard:
                 return standard
+            root = spelling.rstrip("?!").partition("<")[0]
+            binding = flow.lexical_type(context, root, use)
+            selected_alias = binding is not None and binding.type in {"type_alias", "typealias_declaration"}
+            if binding is None:
+                selected_alias = bool(
+                    self.reference_type_aliases(
+                        context, root, flow.imported_symbols(context, root, classes=True)
+                    )
+                )
+            if selected_alias:
+                for candidate in (*KOTLIN_STANDARD_RECEIVER_TYPES, *KOTLIN_MODEL_TYPES):
+                    standard = self.standard_receiver_type(
+                        candidate, spelling, use, context=context, allow_nullable=allow_nullable
+                    )
+                    if standard:
+                        return standard
+                return ""  # a qualified alias spelling is not its canonical nominal identity
             imported = (
                 flow.imported_symbols(context, spelling.rstrip("?!"), classes=True)
                 if flow.lexical_type(context, spelling.rstrip("?!"), use) is None
@@ -7697,6 +7749,32 @@ class Analyzer:
                 and flow.type_import_unresolved(self, binding[1])
             ):
                 return ""
+            if binding is not None and binding[1]:
+                spelling = (
+                    re.sub(r"\s+", "", self.canonical_type_spelling(binding[1]))
+                    .rstrip("?!")
+                    .partition("<")[0]
+                )
+                lexical = flow.lexical_type(self, spelling, binding[0])
+                selected_alias = lexical is not None and lexical.type in {
+                    "type_alias",
+                    "typealias_declaration",
+                }
+                if lexical is None:
+                    selected_alias = bool(
+                        self.reference_type_aliases(
+                            self, spelling, flow.imported_symbols(self, spelling, classes=True)
+                        )
+                    )
+                identity = KOTLIN_MODEL_TYPES.get(kind, (kind,))[0]
+                if (
+                    selected_alias
+                    and "." in identity
+                    and not self.library_reference_type(
+                        binding[1], binding[0], identity, require_nonnullable=not allow_nullable
+                    )
+                ):
+                    return ""
         if kind.startswith("@source:"):
             owner = kind.removeprefix("@source:")
             return owner if flow.class_owners(self, owner, node) == {owner} else ""
@@ -7723,7 +7801,14 @@ class Analyzer:
                     else set()
                 )
                 if len(imported) == 1:
-                    return next(iter(imported))
+                    identity = next(iter(imported))
+                    return (
+                        identity
+                        if self.library_reference_type(
+                            binding[1], binding[0], identity, require_nonnullable=not allow_nullable
+                        )
+                        else ""
+                    )
         return ""
 
     @staticmethod
@@ -9581,14 +9666,10 @@ class Analyzer:
                 return False
             if namespace:
                 return False
-        if root == qualified:
-            return compatible_root()
         simple = qualified.rsplit(".", 1)[-1]
         if flow is None:
-            return default_import and root == simple and compatible_root()
+            return (root == qualified or default_import and root == simple) and compatible_root()
         imported = flow.imported_symbols(context, root, classes=True)
-        if imported == {qualified}:
-            return compatible_root()
         aliases = self.reference_type_aliases(context, root, imported)
         if aliases:
             if len(aliases) != 1:
@@ -9605,6 +9686,8 @@ class Analyzer:
                 expanded,
                 require_nonnullable=require_nonnullable,
             )
+        if root == qualified or imported == {qualified}:
+            return compatible_root()
         if imported:
             return False
         return (
@@ -12276,6 +12359,68 @@ class Analyzer:
                 return None if unknown_head else True
         return None if unknown_owner or lexical and unknown_head else lexical
 
+    def builder_receiver_compatible(self, source: Analyzer, receiver: Any, receivers: set[str]) -> bool:
+        """Positive declaration-context candidacy only; bounds/aliases stay bounded."""
+        flow = self.native_flow
+        if flow is None:
+            return False
+        kinds = receivers | {"Any", "Object"}
+        if "StringBuilder" in receivers:
+            kinds |= {"CharSequence"}
+        canonical = {identity for kind in kinds for identity in KOTLIN_BUILDER_RECEIVER_TYPES.get(kind, ())}
+
+        def accepts(node: Any, seen: frozenset[int]) -> bool:
+            if len(seen) >= 16:
+                return False
+            binding = flow.lexical_type(source, source.text(node), node)
+            if binding is not None and binding.type in {"type_parameter", "type_constraint"}:
+                if binding.id in seen or binding.parent is None or binding.parent.parent is None:
+                    return False
+                name = next((part for part in binding.named_children if part.type in IDENTIFIERS), None)
+                if name is None:
+                    return False
+                bounds = []
+                for group in binding.parent.parent.named_children:
+                    if group.type not in {"type_parameters", "type_constraints"}:
+                        continue
+                    for declaration in group.named_children:
+                        identifier = next(
+                            (part for part in declaration.named_children if part.type in IDENTIFIERS), None
+                        )
+                        if identifier is not None and source.symbol_name(
+                            source.text(identifier)
+                        ) == source.symbol_name(source.text(name)):
+                            bounds.extend(
+                                part
+                                for part in declaration.named_children
+                                if part.id != identifier.id
+                                and part.type
+                                in {
+                                    "user_type",
+                                    "nullable_type",
+                                    "type_identifier",
+                                    "parenthesized_type",
+                                    "non_nullable_type",
+                                }
+                            )
+                if len(bounds) > 16:
+                    return False
+                if not bounds:
+                    return ":" not in source.text(binding)
+                return all(accepts(bound, seen | {binding.id}) for bound in bounds)
+            return any(
+                self.library_reference_type(
+                    source.text(node),
+                    node,
+                    identity,
+                    context=source,
+                    default_import=identity.startswith(("kotlin.", "java.lang.")),
+                )
+                for identity in sorted(canonical)
+            )
+
+        return accepts(receiver, frozenset())
+
     def project_extension(
         self,
         name: str,
@@ -12297,7 +12442,11 @@ class Analyzer:
             name,
             *(symbol.rsplit(".", 1)[-1] for symbol in self.native_flow.imported_symbols(self, name)),
         }
-        for target in (target for alias in aliases for target in self.native_flow.by_name.get(alias, [])):
+        for target in (
+            target
+            for alias in (sorted(aliases) if attribution_only else aliases)
+            for target in self.native_flow.by_name.get(alias, [])
+        ):
             if attribution_only:
                 if self.builder_label_candidates >= MAX_BUILDER_LABEL_CANDIDATES:
                     return False
@@ -12492,21 +12641,7 @@ class Analyzer:
                     return True
                 continue
             compatible = (
-                self.extension_bound_compatibility(
-                    target.analyzer,
-                    receiver,
-                    receivers=receivers,
-                    source_owners=set(),
-                    standard_kind="StringBuilder",
-                )
-                is True
-                if attribution_only and parameter_receiver
-                else any(
-                    self.library_reference_type(
-                        spelling, receiver, qualified, context=target.analyzer, default_import=True
-                    )
-                    for qualified in canonical
-                )
+                self.builder_receiver_compatible(target.analyzer, receiver, receivers)
                 if attribution_only
                 else self.string_extension_receiver(target.analyzer, target.node, receiver) is not False
                 if standard_string
