@@ -465,9 +465,29 @@ Qualified ordinary callables use their language's represented signature syntax;
 the fixed-arity Java method path does not read Kotlin parameter nodes. Kotlin
 String-to-primitive incompatibility binds named arguments to declaration names,
 preserving positional/default/vararg distinctions. Its qualified-call query can
-also use bounded established String facts from the actual caller frame, without
-reevaluating arguments. Unknown contexts may abstain; this is not general overload
-ranking or compiler-wide applicability inference.
+also read explicit declaration/cast identities and canonical inferred ordinary-local
+facts from the actual caller frame, without resolving or reevaluating argument
+expressions. Nullable String nominal facts can disprove a nonnull primitive
+parameter independently of receiver-dispatch nullability. This shallow check runs
+only after proving the relevant primitive parameter and does not restart a generic
+type-inference query. Unknown applicability preserves possible source construction
+with precision at the competing call; it does not prove the sibling's declared
+return or a library identity. Exact nonnull scalar matches can select a callable;
+general vararg/constructor ranking remains unknown. Java method invocations are
+never allocations merely because their names start uppercase; explicit new
+expressions keep their constructor path. Unresolved Java vararg dispatch can still
+miss flow with precision at the invocation. This is not general overload ranking
+or compiler-wide applicability inference.
+In Kotlin TYPE positions, proven represented value-only imports do not hide a
+package qualifier. Actual or unresolved classifier imports still compete, and
+expression roots keep their stricter value-shadow rules. This distinction does
+not execute imported values. Represented builder extension candidates now check
+declaration visibility as capped candidates do; a supplied unrelated source class
+named StringBuilder does not establish the standard builder receiver identity.
+An active receiver-scope alias naming an unshadowed supplied object can provide
+the dispatch owner for its public builder member extension. Unrelated objects,
+shadowing local values and inaccessible private members do not gain that owner.
+This narrow path does not infer arbitrary instance or factory receiver ownership.
 Type-parameter extension receivers use their represented bounds without a
 redundant library-identity probe that would diagnose an already rejected candidate.
 Head queries follow inline/where bounds and parameter chains for at most 16 links,

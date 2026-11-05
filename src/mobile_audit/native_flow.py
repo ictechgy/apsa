@@ -416,6 +416,7 @@ class NativeFlow:
         self.module_values: dict[str, list[tuple[Analyzer, Any]]] = {}
         self.import_indexes: dict[tuple[int, bool], dict[str, set[str]]] = {}
         self.module_type_aliases: dict[str, list[tuple[Analyzer, Any]]] = {}
+        self.value_import_identities: frozenset[str] | None = None
         self.swift_extensions_present = False
         # Member types added by an extension are lookup uncertainty, never
         # ordinary module classes or source constructor summaries.
@@ -2288,6 +2289,8 @@ class NativeFlow:
         return owners
 
     def constructor_type(self, analyzer: Analyzer, call: Call, frame: Frame) -> str | None:
+        if analyzer.language == "java" and call.node.type != "object_creation_expression":
+            return None
         if self.value_binding(analyzer, call, frame) is not None:
             return None
         name = call.name
@@ -2305,10 +2308,12 @@ class NativeFlow:
                 )
             ):
                 return None
-            if call.node.type != "object_creation_expression" and self.qualified_callable_present(
-                analyzer, call, namespace, frame=frame
-            ):
-                return None
+            if call.node.type != "object_creation_expression":
+                ordinary = self.qualified_callable_present(analyzer, call, namespace, frame=frame)
+                if ordinary is True:
+                    return None
+                if ordinary is None and not self.type_hint_depth:
+                    self.partial("unresolved callable identity or argument signature", analyzer, call=call)
             name = namespace + "." + name
         leaf = name.rsplit(".", 1)[-1]
         if call.node.type == "object_creation_expression" or (
@@ -2394,10 +2399,54 @@ class NativeFlow:
         # A represented source type still permits its own nested-type/member lookup.
         return not source_types or not self.class_owners(analyzer, spelling, use)
 
+    def type_namespace_shadow(self, analyzer: Analyzer, spelling: str, use: Any) -> bool:
+        """Classifier lookup ignores proven value-only imports, unlike expression lookup."""
+        if not self.imported_namespace_shadow(analyzer, spelling, use, source_types=False):
+            return False
+        if analyzer.language != "kotlin":
+            return True
+        root, _, _tail = spelling.partition(".")
+        if self.class_owners(analyzer, root, use) or self.class_owners(
+            analyzer, spelling.rsplit(".", 1)[0], use
+        ):
+            return True
+        if self.value_import_identities is None:
+            values = set()
+            classifiers = set(self.class_definitions)
+            for name, bindings in self.module_type_aliases.items():
+                for source, _node in bindings:
+                    namespace = self.namespaces[id(source)]
+                    classifiers.add((namespace + "." if namespace else "") + name)
+            for source, _root, nodes in self.files:
+                if source.language != "kotlin":
+                    continue
+                for node in nodes:
+                    if (
+                        node.type != "property_declaration"
+                        or node.parent is None
+                        or node.parent.type not in {"program", "source_file", "class_body"}
+                    ):
+                        continue
+                    namespace = self.owner(source, node) or self.namespaces[id(source)]
+                    for name in self.property_binding_names(source, node):
+                        values.add((namespace + "." if namespace else "") + name)
+            for targets in self.by_name.values():
+                for target in targets:
+                    if (
+                        target.analyzer.language == "kotlin"
+                        and target.node.type == "function_declaration"
+                        and not self.lexical_function(target.node)
+                    ):
+                        namespace = target.owner or self.namespaces[id(target.analyzer)]
+                        values.add((namespace + "." if namespace else "") + target.name)
+            self.value_import_identities = frozenset(values - classifiers)
+        imported = self.imported_symbols(analyzer, root)
+        return not imported or not imported <= self.value_import_identities
+
     def qualified_callable_present(
         self, analyzer: Analyzer, call: Call, namespace: str, *, frame: Frame | None = None
-    ) -> bool:
-        """A represented ordinary namespace member competes before allocation heuristics."""
+    ) -> bool | None:
+        """True selects an ordinary callable; None preserves uncertain construction."""
         owners = self.class_owners(analyzer, namespace, call.node)
         classes = {ancestor for owner in owners for ancestor in self.project_ancestry(owner)}
         singleton = any(
@@ -2406,6 +2455,11 @@ class NativeFlow:
             for _source, node in self.class_definitions.get(owner, [])
         )
         labels = [analyzer.argument_label(arg) for arg in call.args if analyzer.argument_label(arg)]
+        declared = namespace + "." + call.name
+        competing_constructor = bool(
+            self.class_owners(analyzer, declared, call.node)
+        ) or self.modeled_external(analyzer, declared, call, constructor=True)
+        unknown = False
         for target in self.by_name.get(call.name, []):
             if target.analyzer.language != analyzer.language or target.node.type in (
                 INITIALIZERS | {"class_declaration", "primary_constructor", "constructor_declaration"}
@@ -2433,8 +2487,12 @@ class NativeFlow:
                     target.analyzer, target.node, call, frame=frame
                 )
             ):
-                return True
-        return False
+                if not competing_constructor or analyzer.established_call_arguments(
+                    target.analyzer, target.node, call, frame=frame
+                ):
+                    return True
+                unknown = True
+        return None if unknown else False
 
     def module_value_bindings(
         self, analyzer: Analyzer, name: str, *, aliases: bool = False

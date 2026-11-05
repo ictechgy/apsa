@@ -136,6 +136,19 @@ credential service was contacted.
   applicability probes include modeled names in their optional context, resolve
   renamed primitive aliases, and check vararg elements. Generic head competition
   follows alias and parameter bounds with a bounded, conservative query.
+  Qualified constructor competition reads shallow, origin-sensitive argument facts
+  after proving a relevant primitive parameter. It retains nullable String nominal
+  identity and established ordinary-local facts without starting fresh recursive
+  inference. Unknown applicability preserves possible source construction with an
+  affected precision reason. Proven value-only Kotlin imports do not hide package
+  qualifiers in TYPE positions. Java uppercase method names do not create
+  allocations; explicit new expressions retain their constructor behavior.
+  Represented builder extensions respect declaration visibility and distinguish
+  unrelated source StringBuilder classes from the standard receiver. General
+  overload ranking, Java vararg dispatch and inferred library returns remain
+  bounded limitations.
+  Active scopes on unshadowed supplied objects keep their public builder member
+  extensions; unrelated, locally shadowed and private-owner controls stay excluded.
 - Swift guard bindings become visible to subsequent clauses after their own
   initializers, remain available after success, and stay outside the else body.
   Format calls retain their visited fills, including Swift closure locals and
