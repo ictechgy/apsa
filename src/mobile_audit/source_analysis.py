@@ -6760,6 +6760,14 @@ class Analyzer:
             or self.implicit_reference_head_shadow(node, constructor.name, Frame())
             or any(
                 target.node.type not in {"constructor_declaration", "primary_constructor"}
+                and target.analyzer.language == self.language
+                and target.analyzer.accepts_arguments(target.node, len(constructor.args))
+                and flow.lexical_visible(self, target, constructor)
+                and (
+                    flow.lexical_function(target.node)
+                    or not target.owner
+                    and flow.top_level_visible(self, target, constructor.name)
+                )
                 for target in choices
             )
         ):
@@ -7561,6 +7569,18 @@ class Analyzer:
             value = frame.values.get(self.symbol_name(text))
         value = value or Value()
         if value.type_name.rstrip().endswith("?") and not allow_nullable:
+            return ""
+        if (
+            self.language == "kotlin"
+            and call is not None
+            and value.type_name
+            and self.modeled_type_name(value.type_name) == self.modeled_type_name(call.name)
+            and self.implicit_reference_head_shadow(
+                call.node, (self.key(call.receiver) or call.name).partition(".")[0], frame
+            )
+        ):
+            if self.native_flow is not None and not self.native_flow.type_hint_depth:
+                self.native_flow.partial("callable argument type identity unresolved", self, call=call)
             return ""
         return self.modeled_type_name(value.type_name) or ("String" if value.category == "text" else "")
 
@@ -9314,7 +9334,7 @@ class Analyzer:
                         expanded,
                         require_nonnullable=require_nonnullable,
                     )
-                if binding.type in {"type_parameter", "type_constraint"}:
+                if binding.type in {"type_parameter", "type_constraint"} and not flow.type_hint_depth:
                     flow.partial("callable argument type identity unresolved", self)
                 return False
         if root == qualified:
@@ -9958,11 +9978,21 @@ class Analyzer:
         *,
         callback_shape: bool = False,
         companion_only: bool = False,
+        callable_heads: set[int] | None = None,
     ) -> bool:
         """A bounded source hierarchy must not hide a value behind a standard head."""
         flow = self.native_flow
         if flow is None:
             return False
+        call = self.call(use)
+        head_arity = (
+            len(call.args)
+            if not callback_shape
+            and call is not None
+            and call.receiver is None
+            and call.name.rsplit(".", 1)[-1] == name
+            else None
+        )
         for owner in owners:
             instance_bodies = not companion_only or any(
                 nominal.type == "object_declaration"
@@ -9991,8 +10021,13 @@ class Analyzer:
                         if child.type == "companion_object"
                     )
                     for scope in bodies:
+                        functions = (
+                            source.body_functions(scope).get(name, [])
+                            if callback_shape or head_arity is not None
+                            else []
+                        )
                         if callback_shape:
-                            for function in source.body_functions(scope).get(name, []):
+                            for function in functions:
                                 if source.accepts_arguments(function, 1):
                                     parameters = source.parameters(function)
                                     if len(parameters) != 1 or not self.parameterless_callback_type(
@@ -10000,35 +10035,47 @@ class Analyzer:
                                     ):
                                         return True
                         binding = source.reference_binding(use, name, scope=scope, stop=nominal)
-                        declared = (
-                            binding[0]
+                        declarations = (
+                            [binding[0]]
                             if binding is not None
-                            else next(
-                                (
-                                    child
-                                    for child in scope.named_children
-                                    if child.type in {"class_declaration", "object_declaration"}
-                                    and any(
-                                        part.type in IDENTIFIERS and source.text(part) == name
-                                        for part in child.named_children
-                                    )
-                                ),
-                                None,
-                            )
+                            else [
+                                child
+                                for child in scope.named_children
+                                if child.type in {"class_declaration", "object_declaration"}
+                                and any(
+                                    part.type in IDENTIFIERS and source.text(part) == name
+                                    for part in child.named_children
+                                )
+                            ]
                         )
-                        if declared is None:
-                            continue
-                        if source.has_modifier(declared, "private"):
-                            current = use if source is self else None
-                            while current is not None and current.id != nominal.id:
-                                current = current.parent
-                            if current is None:
-                                continue
-                        return True
+                        if head_arity is not None:
+                            declarations.extend(
+                                function
+                                for function in functions
+                                if source.accepts_arguments(function, head_arity)
+                            )
+                        for declared in declarations:
+                            if source.has_modifier(declared, "private"):
+                                current = use if source is self else None
+                                while current is not None and current.id != nominal.id:
+                                    current = current.parent
+                                if current is None:
+                                    continue
+                            if callable_heads is not None and declared.type in FUNCTIONS:
+                                callable_heads.add(declared.id)
+                            return True
         return False
 
     def reference_type_head_shadow(
-        self, use: Any, name: str, context: Analyzer, origin: Any, kind: str, *, callback_shape: bool = False
+        self,
+        use: Any,
+        name: str,
+        context: Analyzer,
+        origin: Any,
+        kind: str,
+        *,
+        callback_shape: bool = False,
+        callable_heads: set[int] | None = None,
     ) -> bool:
         """Every component of an intersection must preserve its own head evidence."""
         flow = self.native_flow
@@ -10036,7 +10083,9 @@ class Analyzer:
             return True
         owners = flow.class_owners(context, kind.rstrip("?!"), origin) if kind else set()
         if owners:
-            return self.nominal_reference_head_shadow(use, name, owners, callback_shape=callback_shape)
+            return self.nominal_reference_head_shadow(
+                use, name, owners, callback_shape=callback_shape, callable_heads=callable_heads
+            )
         primitive = self.modeled_type_name(kind)
         if primitive not in NUMBER_TYPES | {"String", "CharSequence", "Any", "Object", "Unit"}:
             return True
@@ -10174,7 +10223,14 @@ class Analyzer:
         return True
 
     def implicit_reference_head_shadow(
-        self, use: Any, name: str, frame: Frame, *, callback_shape: bool = False, lexical: bool = True
+        self,
+        use: Any,
+        name: str,
+        frame: Frame,
+        *,
+        callback_shape: bool = False,
+        lexical: bool = True,
+        callable_heads: set[int] | None = None,
     ) -> bool:
         """Veto a class/package spelling when a represented receiver may supply the value."""
         flow = self.native_flow
@@ -10193,11 +10249,19 @@ class Analyzer:
                 current = boundary.node.parent
                 continue
             if boundary is not None and boundary.kind == "callable" and self.language == "kotlin":
-                declared = _field(current, "name")
+                declaration = current
+                if current.type in {"getter", "setter"} and current.parent is not None:
+                    declaration = current.parent
+                    declared = next(
+                        (part for part in declaration.named_children if part.type == "variable_declaration"),
+                        None,
+                    )
+                else:
+                    declared = _field(current, "name")
                 receiver = next(
                     (
                         part
-                        for part in current.named_children
+                        for part in declaration.named_children
                         if declared is not None
                         and part.end_byte <= declared.start_byte
                         and part.type in {"user_type", "nullable_type", "function_type", "parenthesized_type"}
@@ -10205,7 +10269,13 @@ class Analyzer:
                     None,
                 )
                 if receiver is not None and self.reference_type_head_shadow(
-                    use, name, self, receiver, self.text(receiver), callback_shape=callback_shape
+                    use,
+                    name,
+                    self,
+                    receiver,
+                    self.text(receiver),
+                    callback_shape=callback_shape,
+                    callable_heads=callable_heads,
                 ):
                     return True
             if boundary is not None and boundary.kind == "nominal":
@@ -10215,7 +10285,12 @@ class Analyzer:
                     return True
                 owner = flow.owner(self, boundary.name)
                 if self.nominal_reference_head_shadow(
-                    use, name, {owner}, callback_shape=callback_shape, companion_only=companion_boundary
+                    use,
+                    name,
+                    {owner},
+                    callback_shape=callback_shape,
+                    companion_only=companion_boundary,
+                    callable_heads=callable_heads,
                 ):
                     return True
                 if not self.has_modifier(current, "inner"):
@@ -10228,6 +10303,7 @@ class Analyzer:
                             {flow.owner(self, body)},
                             callback_shape=callback_shape,
                             companion_only=True,
+                            callable_heads=callable_heads,
                         )
                         for body in self.class_bodies(current)
                     )
@@ -10261,7 +10337,13 @@ class Analyzer:
                             if binding is None:
                                 return True
                             if binding[1] and self.reference_type_head_shadow(
-                                use, name, context, binding[0], binding[1], callback_shape=callback_shape
+                                use,
+                                name,
+                                context,
+                                binding[0],
+                                binding[1],
+                                callback_shape=callback_shape,
+                                callable_heads=callable_heads,
                             ):
                                 return True
                             for tested in tests:
@@ -10278,6 +10360,7 @@ class Analyzer:
                                         tested[0],
                                         tested[1],
                                         callback_shape=callback_shape,
+                                        callable_heads=callable_heads,
                                     )
                                 ):
                                     return True
@@ -10335,7 +10418,13 @@ class Analyzer:
                 if not kind and fallback_allowed and fallback_kind:
                     context, origin, kind = self, fallback_origin, fallback_kind
                 if self.reference_type_head_shadow(
-                    use, name, context, origin, kind, callback_shape=callback_shape
+                    use,
+                    name,
+                    context,
+                    origin,
+                    kind,
+                    callback_shape=callback_shape,
+                    callable_heads=callable_heads,
                 ):
                     return True
             current = current.parent

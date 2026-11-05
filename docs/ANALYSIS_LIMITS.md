@@ -375,11 +375,26 @@ The singleton instance-member head search includes its represented ancestry;
 ordinary static nested classes still do not acquire an outer instance. An ordinary
 companion with no matching value/type/callable or inherited receiver can be
 transparent for a head proof. Named, inherited and unknown competing companion
-heads remain conservative. A declared Kotlin extension receiver may veto an
-imported standard head that its source members shadow. This only withholds false
-identity proof: general extension execution and field-state recovery remain
-bounded. A missed extension result needs the affected callable diagnostic, not
-just a reason at an earlier assignment.
+heads remain conservative. Declared Kotlin extension-function receivers and
+extension-property accessor receivers participate in the head query. A represented
+source value or arity-compatible visible function can veto an imported constructor
+spelling. Unavailable external, generic or collection receiver definitions may
+also conservatively withhold true standard facts, including qualified heads. This
+can add precision details within that extension while retaining its tainted sink;
+it is not a complete SDK member inventory. General extension execution and
+field-state recovery remain bounded. A missed represented extension result needs
+the affected callable diagnostic, not just a reason at an earlier assignment.
+
+Constructor queries collect represented callable competitors only in query-local
+node-ID sets; they do not retain frames or execute the function. An unrelated
+same-name member elsewhere does not globally suppress a detached source
+constructor. Local/top-level competitors require declaration-site language,
+arity and visibility. A known callable prevents a constructor fact at its
+producer. Unknown ownership alone may retain a possible allocation for existing
+field provenance, but known-value library queries recheck a retained
+constructor-like hint against the expression's head before accepting it. Consumed
+uncertainty identifies that call; optional initializer hints suppress the detail.
+The generic type-parameter identity probe follows the same optional-hint rule.
 
 ## Hybrid source and compiled artifacts
 

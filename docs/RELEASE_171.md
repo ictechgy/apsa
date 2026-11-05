@@ -652,3 +652,14 @@ Ordinary companions with no competing head can be transparent to this proof;
 inherited, named or unresolved companion heads remain conservative. Non-null
 member precedence is established before an optional nullable-extension probe, so
 an unused generic conversion does not add an unconsumed identity diagnostic.
+
+Arity-compatible visible source callable heads now compete with constructor
+spellings in ordinary/inherited receivers as well as declared extension receivers.
+The constructor producer and retained known-value fallback preserve this
+distinction. Unrelated same-name members do not suppress detached constructors;
+private and inapplicable-arity controls retain their constructor facts. Getter
+and setter receiver queries read the owning extension property's declaration.
+Unused nullable generic conversions suppress optional type-parameter diagnostics,
+while consuming queries still identify the affected call. Unknown external
+extension receivers remain conservative, including for qualified standard heads;
+this may add precision details without claiming complete SDK member knowledge.

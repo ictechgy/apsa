@@ -2309,6 +2309,13 @@ class NativeFlow:
         ):
             # Preserve the original source root for lexical checks; only the
             # identity lookup may expand an import after that check succeeds.
+            if analyzer.language == "kotlin":
+                callable_heads: set[int] = set()
+                analyzer.implicit_reference_head_shadow(
+                    call.node, name.partition(".")[0], frame, callable_heads=callable_heads
+                )
+                if callable_heads:
+                    return None
             return name
         return None
 
