@@ -509,7 +509,8 @@ represented nested classifiers across source files. That exception matches the
 current owner to the resolved imported root plus the written remainder; a dotted
 SDK import does not qualify merely because an import exists. The root is checked before an exact qualified
 spelling supplies a library fact; Java/Swift and unimported/private source gates
-remain separate. The import cache inventories classifiers, not value absence.
+remain separate. Raw import syntax does not establish a classifier kind or prove
+that a represented function/value excludes an overlapping binary classifier.
 Represented builder extension candidates now check
 declaration visibility as capped candidates do; a supplied unrelated source class
 named StringBuilder does not establish the standard builder receiver identity.
@@ -522,9 +523,15 @@ member-extension candidates. Known builder members and top-level extensions keep
 separate, narrower dispatch approximations. A compatible custom builder extension
 is not proof of its write effects: treating its arguments as receiver writes
 records precision at that actual call, including fixed-body candidates.
-An eligible represented project-extension candidate retains the custom-extension
-reason. Other opaque or unmodeled contributions use a generic builder-chain
-effect limit; absence of a represented extension does not prove the effects.
+A priority-aware receiver proof can establish an eligible represented
+project-extension candidate for the custom-extension reason. Losing aliases from
+other scopes cannot re-enter that proof through a leaf-name union. Other opaque
+or unmodeled contributions use a generic builder-chain effect limit; absence of
+a represented extension does not prove the effects. This optional label query
+has per-file allowances of 64 queries and 64 visited callable candidates.
+Exhaustion selects the generic reason while preserving precision at the actual
+contribution; it does not claim that the effects were resolved. Its temporary
+query mode and type-hint depth are restored after every query, including failure.
 This distinction chooses the reason, not whether precision is recorded.
 This also covers plain `this` and recognized implicit chains: each opaque link
 gets its own call location, while registered outer builder members remain precise.
@@ -562,11 +569,18 @@ declaration context and stops after 16 links; ambiguity, cycles, and a qualified
 selection through only an alias prefix do not prove incompatibility. The same
 distinction applies to Comparable's argument. These proofs emit no diagnostics
 or callee effects themselves.
-An explicit Kotlin type import precedes a same-file package-level classifier;
-that package declaration cannot re-enter through the alias-selection fallback.
-Function-local, class-member and type-parameter bindings retain their stronger
-lexical scope, and unknown ancestry remains conservative. This is a type lookup
-rule, not a change to expression/value import resolution.
+An established imported Kotlin classifier precedes a weaker package-level
+classifier; the losing package declaration cannot re-enter through alias
+selection. Import syntax also names functions and values. If a visible
+same-package class or alias competes with an import whose classifier is not
+positively represented, type identity stays unresolved rather than affirming
+either the package nominal or an SDK spelling. This includes declarations in
+another admitted file, with file-private visibility preserved. A represented
+function/value is not proof that a binary classifier with that FQN is absent.
+Consumers retain affected precision; pure type queries do not execute imported
+values or emit that consumed diagnostic. Function-local, class-member and
+type-parameter bindings retain their stronger lexical scope, and unknown
+ancestry remains conservative. Expression/value import resolution is separate.
 CharSequence does not acquire Comparable or Serializable as known supertypes.
 Numeric Comparable argument compatibility remains conservative, so an incompatible
 generic extension can withhold a constructor fact. Some generic Number parameters

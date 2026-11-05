@@ -1739,6 +1739,53 @@ class NativeFlow:
             self.import_indexes[key] = index
         return self.import_indexes[key].get(name, set()).copy()
 
+    def type_import_unresolved(self, analyzer: Analyzer, declared: str) -> bool:
+        """A conflicting package classifier needs positive imported TYPE evidence.
+
+        Call after stronger lexical bindings have been excluded. Kotlin imports
+        also name functions/values; their presence proves no binary type absence.
+        """
+        if analyzer.language != "kotlin":
+            return False
+        root = analyzer.canonical_type_spelling(declared).partition(".")[0].partition("<")[0].rstrip("?!")
+        imported = self.imported_symbols(analyzer, root, classes=True)
+        namespace = self.namespaces[id(analyzer)]
+        identity = (namespace + "." if namespace else "") + root
+        if not imported or imported == {identity}:
+            return False
+        own = any(
+            source.language == analyzer.language
+            and self.namespaces[id(source)] == namespace
+            and (source is analyzer or not self.declaration_tokens(alias) & {"private", "fileprivate"})
+            for source, alias in self.module_type_aliases.get(root, ())
+        ) or any(
+            source.language == analyzer.language
+            and (source is analyzer or not self.declaration_tokens(nominal) & {"private", "fileprivate"})
+            and nominal.parent is not None
+            and nominal.parent.type in {"program", "source_file"}
+            for source, nominal in self.class_definitions.get(identity, ())
+        )
+        if not own:
+            return False
+        represented = {
+            symbol
+            for symbol in imported
+            if any(
+                source.language == analyzer.language
+                and (source is analyzer or not self.declaration_tokens(node) & {"private", "fileprivate"})
+                for source, node in self.class_definitions.get(symbol, ())
+            )
+            or any(
+                source.language == analyzer.language
+                and (self.namespaces[id(source)] + "." if self.namespaces[id(source)] else "")
+                + symbol.rsplit(".", 1)[-1]
+                == symbol
+                and (source is analyzer or not self.declaration_tokens(node) & {"private", "fileprivate"})
+                for source, node in self.module_type_aliases.get(symbol.rsplit(".", 1)[-1], ())
+            )
+        }
+        return len(imported) != 1 or represented != imported
+
     def empty_source_ancestry(self, analyzer: Analyzer, nominal: Any, root: str) -> bool:
         """Discharge member lookup only for a unique, same-file empty class chain.
 
@@ -2265,6 +2312,8 @@ class NativeFlow:
             suffix = declared.partition(".")[2]
             reference = owner + ("." + suffix if suffix else "")
             return {reference} if self.class_definitions.get(reference) else set()
+        if self.type_import_unresolved(analyzer, declared):
+            return set()
         root, _, remainder = declared.partition(".")
         imported = self.imported_symbols(analyzer, root, classes=True)
         references = {symbol + ("." + remainder if remainder else "") for symbol in imported}
@@ -2702,6 +2751,8 @@ class NativeFlow:
         receiver: Value | None = None,
     ) -> bool:
         if self.lexical_type(analyzer, declared, call.node) is not None:
+            return False
+        if self.type_import_unresolved(analyzer, declared):
             return False
         if self.class_owners(analyzer, declared, call.node):
             return False

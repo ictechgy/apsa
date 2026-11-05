@@ -774,14 +774,23 @@ selected name. Explicit Kotlin imports of represented default-package classifier
 reach the source-type fence before exact-spelling library identity. The obsolete
 value-import inventory is removed; classifier import uncertainty remains intact.
 
-Explicit Kotlin type imports now precede same-file package aliases and nominal
-declarations in the shared classifier and alias selectors. Stronger local/member
-and type-parameter scopes remain in place. A lower-priority package declaration
-does not prove incompatibility or hide a captured extension's effects.
+Established Kotlin classifier imports precede weaker package aliases and
+nominal declarations in the shared type selectors. Raw function/value imports
+do not establish a TYPE identity: when a visible same-package classifier
+competes and the imported classifier is not positively represented, consumers
+retain unresolved identity and affected precision instead of affirming an SDK
+spelling. The package declaration may be in another admitted file; private-file
+visibility remains separate. A function/value import cannot prove that an
+overlapping binary classifier is absent. Stronger local/member/type-parameter
+scopes remain in place. A losing package declaration cannot prove
+incompatibility or hide a captured extension's effects.
 
 The cross-file default-package exception is limited to a matching dotless root
 import, including a renamed root. A dotted SDK import no longer gains a false
 source owner through a same-spelled default-package nested classifier. Opaque
-builder contributions retain precision even without a represented extension;
-their reason distinguishes a represented custom candidate from an unmodeled
-builder chain. Registered members keep their existing precise path.
+builder contributions retain precision even without a represented extension.
+Their reason uses declaration-context and selected-alias receiver proof rather
+than collecting every alias with the same leaf name. Optional attribution is
+limited to 64 queries and 64 visited candidates per analyzed file; exhaustion
+uses the generic chain reason while preserving precision at the actual inner
+contribution. Registered members keep their existing precise path.

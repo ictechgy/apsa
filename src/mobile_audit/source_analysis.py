@@ -30,6 +30,8 @@ MAX_AST_FINDINGS = 500
 MAX_PATH_ROUTE_EVIDENCE = 32
 # Links of a call or getter chain followed to the object it is rooted at.
 MAX_CHAIN = 256
+MAX_BUILDER_LABEL_QUERIES = 64
+MAX_BUILDER_LABEL_CANDIDATES = 64
 MAX_CLOSURE_CLASSIFICATIONS = 65_536
 # First segments of package paths a standard builder is called through (`kotlinx.coroutines.flow.flow { }`).
 PACKAGE_ROOTS = {"kotlin", "kotlinx", "java", "javax", "android", "androidx"}
@@ -1871,6 +1873,11 @@ class Analyzer:
         self.active_object_scopes: list[ObjectScope] = []
         self.scope_owner_head_queries: set[tuple[int, int, int, int, str, str]] = set()
         self.reference_type_evidence: list[set[tuple[str, int, str]]] = []
+        # Optional reason attribution has a small allowance; exhausted queries
+        # keep generic precision and never change effect/data propagation.
+        self.builder_label_queries = 0
+        self.builder_label_candidates = 0
+        self.builder_label_query_active = False
         # A receiverless opener that resolves to project code, which is always followed.
         self.opener_follow = False
         # The framework type certainly applies (override, declared, Context receiver).
@@ -5822,16 +5829,25 @@ class Analyzer:
         ):
             for contribution in [call] if writes else chain:
                 if contribution.name.rsplit(".", 1)[-1] not in recipient.members:
-                    depth = self.native_flow.type_hint_depth
-                    self.native_flow.type_hint_depth += 1
-                    try:
-                        represented = self.project_extension(
-                            contribution.name.rsplit(".", 1)[-1],
-                            contribution,
-                            set(recipient.receiver_types),
-                        )
-                    finally:
-                        self.native_flow.type_hint_depth = depth
+                    represented = False
+                    if (
+                        self.builder_label_queries < MAX_BUILDER_LABEL_QUERIES
+                        and self.builder_label_candidates < MAX_BUILDER_LABEL_CANDIDATES
+                    ):
+                        self.builder_label_queries += 1
+                        depth = self.native_flow.type_hint_depth
+                        query = self.builder_label_query_active
+                        self.native_flow.type_hint_depth += 1
+                        self.builder_label_query_active = True
+                        try:
+                            represented = self.project_extension(
+                                contribution.name.rsplit(".", 1)[-1],
+                                contribution,
+                                set(recipient.receiver_types),
+                            )
+                        finally:
+                            self.native_flow.type_hint_depth = depth
+                            self.builder_label_query_active = query
                     self.native_flow.partial(
                         "Kotlin custom builder extension effects unavailable"
                         if represented
@@ -7210,6 +7226,10 @@ class Analyzer:
             if len(owners) == 1:
                 owner = next(iter(owners))
                 return "@source:" + owner if "." not in owner else owner
+            if flow.lexical_type(context, spelling, use) is None and flow.type_import_unresolved(
+                context, spelling
+            ):
+                return ""
             standard = self.standard_receiver_type(
                 kind, spelling, use, context=context, allow_nullable=allow_nullable
             )
@@ -7670,6 +7690,12 @@ class Analyzer:
         if node is not None and node.type in IDENTIFIERS:
             binding = self.reference_binding(node, self.symbol_name(self.text(node)), frame=frame)
             if not allow_nullable and binding is not None and binding[1].rstrip().endswith("?"):
+                return ""
+            if (
+                binding is not None
+                and flow.lexical_type(self, binding[1], binding[0]) is None
+                and flow.type_import_unresolved(self, binding[1])
+            ):
                 return ""
         if kind.startswith("@source:"):
             owner = kind.removeprefix("@source:")
@@ -9437,6 +9463,8 @@ class Analyzer:
                 nominal = binding.type in NOMINAL_DECLARATIONS and "." not in root
                 return "", nominal, frozenset() if nominal else origin
         else:
+            if flow.type_import_unresolved(context, root):
+                return "", False, origin
             aliases = self.reference_type_aliases(context, root, imported)
         if aliases:
             if len(aliases) != 1:
@@ -9542,6 +9570,10 @@ class Analyzer:
                     flow.partial("callable argument type identity unresolved", self)
                 return False
         if flow is not None:
+            if flow.type_import_unresolved(context, root):
+                if self.reference_type_evidence:
+                    self.reference_type_evidence[-1].add((context.path, context.location(use)["line"], root))
+                return False
             namespace = flow.type_namespace_shadow(context, root, use)
             if namespace is None:
                 if self.reference_type_evidence:
@@ -12260,11 +12292,16 @@ class Analyzer:
         """A Kotlin project extension function of this name on one of these receiver types."""
         if self.native_flow is None:
             return False
+        attribution_only = self.builder_label_query_active
         aliases = {
             name,
             *(symbol.rsplit(".", 1)[-1] for symbol in self.native_flow.imported_symbols(self, name)),
         }
         for target in (target for alias in aliases for target in self.native_flow.by_name.get(alias, [])):
+            if attribution_only:
+                if self.builder_label_candidates >= MAX_BUILDER_LABEL_CANDIDATES:
+                    return False
+                self.builder_label_candidates += 1
             uncertain_dispatch = False
             namespace = target.owner or self.native_flow.namespaces[id(target.analyzer)]
             if target.name != name and (
@@ -12379,6 +12416,8 @@ class Analyzer:
                 elif not self.native_flow.top_level_visible(self, target, name):
                     continue
             if receiver is None:
+                if attribution_only:
+                    continue
                 if not visible and not nullable_receiver and not self.native_flow.type_hint_depth:
                     self.native_flow.partial("callable argument type identity unresolved", self, call=call)
                 if callable_heads is not None:
@@ -12453,7 +12492,23 @@ class Analyzer:
                     return True
                 continue
             compatible = (
-                self.string_extension_receiver(target.analyzer, target.node, receiver) is not False
+                self.extension_bound_compatibility(
+                    target.analyzer,
+                    receiver,
+                    receivers=receivers,
+                    source_owners=set(),
+                    standard_kind="StringBuilder",
+                )
+                is True
+                if attribution_only and parameter_receiver
+                else any(
+                    self.library_reference_type(
+                        spelling, receiver, qualified, context=target.analyzer, default_import=True
+                    )
+                    for qualified in canonical
+                )
+                if attribution_only
+                else self.string_extension_receiver(target.analyzer, target.node, receiver) is not False
                 if standard_string
                 else self.extension_bound_compatibility(
                     target.analyzer,

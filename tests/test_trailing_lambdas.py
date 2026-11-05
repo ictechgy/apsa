@@ -35331,3 +35331,883 @@ def test_review45c_rejected_sentinel_and_default_binding_boundaries_remain_pure(
     monkeypatch.setattr(Analyzer, "record_visited", observe)
     analyze_sources(_REVIEW45C_PROGRAMS[program])
     assert seen
+
+
+# _REVIEW46: type-import namespace uncertainty and bounded scoped builder attribution.
+
+_REVIEW46_PROGRAMS = {
+    "function-import-type-param": [
+        (
+            "Caller.kt",
+            "package probe45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            'class Uri { fun getQueryParameter(name:String):String="FIXED" }\n'
+            "fun scan(intent:Intent, db:SQLiteDatabase, u:Uri) {\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        ("Imported.kt", "package android.net\nfun Uri(): probe45.Uri = probe45.Uri()\n"),
+    ],
+    "value-import-type-param": [
+        (
+            "Caller.kt",
+            "package probe45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            'class Uri { fun getQueryParameter(name:String):String="FIXED" }\n'
+            "fun scan(intent:Intent, db:SQLiteDatabase, u:Uri) {\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        ("Imported.kt", "package android.net\nval Uri: Int=0\n"),
+    ],
+    "function-import-typealias-param": [
+        (
+            "Caller.kt",
+            "package probe45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "typealias Uri=Own\n"
+            'class Own { fun getQueryParameter(name:String):String="FIXED" }\n'
+            "fun scan(intent:Intent, db:SQLiteDatabase, u:Uri) {\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        ("Imported.kt", "package android.net\nfun Uri(): probe45.Own = probe45.Own()\n"),
+    ],
+    "value-import-typealias-param": [
+        (
+            "Caller.kt",
+            "package probe45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "typealias Uri=Own\n"
+            'class Own { fun getQueryParameter(name:String):String="FIXED" }\n'
+            "fun scan(intent:Intent, db:SQLiteDatabase, u:Uri) {\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        ("Imported.kt", "package android.net\nval Uri: Int=0\n"),
+    ],
+    "function-import-type-param-sdk-twin": [
+        (
+            "Caller.kt",
+            "package probe45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            'class Uri { fun getQueryParameter(name:String):String="FIXED" '
+            "}\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase, u:Uri) {\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        ("Imported.kt", "package android.net\nfun Uri(): probe45.Uri = probe45.Uri()\n"),
+    ],
+    "builder_import_priority_reason": [
+        (
+            "Caller.kt",
+            "package fresh45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Selected\n"
+            "typealias Selected=StringBuilder\n"
+            "fun Selected.reverse():Selected = this\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Selected=Number\n"),
+    ],
+    "builder_genuine_alias_reason": [
+        (
+            "Caller.kt",
+            "package fresh45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Selected\n"
+            "typealias Selected=Number\n"
+            "fun Selected.reverse():Selected = this\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Selected=StringBuilder\n"),
+    ],
+    "builder_numeric_reason_control": [
+        (
+            "Caller.kt",
+            "package fresh45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun Number.reverse():Number = this\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "function-import-other-file-param": [
+        ("Own.kt", 'package probe45\nclass Uri { fun getQueryParameter(name:String):String="FIXED" }\n'),
+        (
+            "Caller.kt",
+            "package probe45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase, u:Uri) {\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        ("Imported.kt", "package android.net\nfun Uri(): probe45.Uri = probe45.Uri()\n"),
+    ],
+}
+
+_REVIEW46_NAMESPACE = [
+    "function-import-type-param",
+    "value-import-type-param",
+    "function-import-typealias-param",
+    "value-import-typealias-param",
+    "function-import-type-param-sdk-twin",
+    "function-import-other-file-param",
+]
+
+_REVIEW46_BUILDERS = [
+    ("builder_import_priority_reason", "Selected", "kotlin.Number", False),
+    ("builder_genuine_alias_reason", "Selected", "kotlin.text.StringBuilder", True),
+    ("builder_numeric_reason_control", "Number", "kotlin.Number", False),
+]
+
+_REVIEW46_RATCHET_PROGRAMS = {
+    "alias_declaration_import": [
+        (
+            "Case.kt",
+            "package preserve45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "typealias Textish=Number\n"
+            "typealias Selected=Textish\n"
+            'fun Selected.trim():String { println("SELECT|EXTENSION"); return "FIXED" '
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Textish=CharSequence\n"),
+    ],
+    "binary_local_capture": [
+        (
+            "Case.kt",
+            "package independent44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "class Textish\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' fun Textish.trim():String { println("SELECT|LOCAL_EXTENSION"); return q }\n'
+            ' " SAFE ".run { db.execSQL("T|"+trim()) }\n'
+            "}\n",
+        )
+    ],
+    "binary_samefile_nominal": [
+        (
+            "Case.kt",
+            "package independent44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "class Textish\n"
+            'fun Textish.trim():String { println("SELECT|EXTENSION"); return "FIXED" '
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        )
+    ],
+    "builder_also": [
+        (
+            "Caller.kt",
+            "package cal44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildString { append(q).also {} })\n"
+            "}\n",
+        )
+    ],
+    "builder_append": [
+        (
+            "Caller.kt",
+            "package cal44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' db.execSQL(buildString { append(q).append("X") })\n'
+            "}\n",
+        )
+    ],
+    "builder_binary_opaque": [
+        (
+            "Caller.kt",
+            "package cal44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.opaque\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' db.execSQL(buildString { append("FIXED").opaque(q) })\n'
+            "}\n",
+        )
+    ],
+    "builder_reverse": [
+        (
+            "Caller.kt",
+            "package cal44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "declaration_context": [
+        (
+            "Case.kt",
+            "package independent44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "class String\n"
+            'fun Textish.trim():kotlin.String { println("SELECT|EXTENSION"); return '
+            '"FIXED" }\n'
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:kotlin.String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Textish=Comparable<String>\n"),
+    ],
+    "explicit_standard_alias_corrected": [
+        (
+            "Case.kt",
+            "package independent44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import kotlin.String as Textish\n"
+            "fun Comparable<Textish>.trim():kotlin.String { "
+            'println("SELECT|EXTENSION"); return "FIXED" }\n'
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:kotlin.String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        )
+    ],
+    "inherited_member_scope": [
+        (
+            "Case.kt",
+            "package preserve45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "open class Base { class Textish }\n"
+            "class Host:Base() {\n"
+            " fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' fun Textish.trim():String { println("SELECT|LOCAL_EXTENSION"); return '
+            '"FIXED" }\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            " }\n"
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Textish=CharSequence\n"),
+    ],
+    "local_scope_nominal_control": [
+        (
+            "Case.kt",
+            "package independent44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            " class Textish\n"
+            ' fun Textish.trim():String { println("SELECT|LOCAL_EXTENSION"); '
+            'return "FIXED" }\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Textish=CharSequence\n"),
+    ],
+    "member_scope": [
+        (
+            "Case.kt",
+            "package preserve45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "class Host {\n"
+            " class Textish\n"
+            " fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' fun Textish.trim():String { println("SELECT|LOCAL_EXTENSION"); return "FIXED" }\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            " }\n"
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Textish=CharSequence\n"),
+    ],
+    "member_sentinel": [
+        (
+            "Caller.kt",
+            "package cal44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Base\n"
+            "import external.Textish\n"
+            "class Owner:Base() {\n"
+            ' fun Textish.trim():String = "FIXED"\n'
+            " fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            '  val q:String=intent.getStringExtra("q") ?: ""\n'
+            "  q.run { db.execSQL(trim()) }\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "package_alias_import": [
+        (
+            "Case.kt",
+            "package independent44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            'fun Textish.trim():String { println("SELECT|EXTENSION"); return "FIXED" }\n'
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        ),
+        ("Local.kt", "package independent44\ntypealias Textish=Number\n"),
+        ("Types.kt", "package external\ntypealias Textish=CharSequence\n"),
+    ],
+    "renamed_import": [
+        (
+            "Case.kt",
+            "package preserve45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish as Written\n"
+            "class Written\n"
+            'fun Written.trim():String { println("SELECT|EXTENSION"); return "FIXED" }\n'
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Textish=CharSequence\n"),
+    ],
+    "same_identity_import": [
+        (
+            "Case.kt",
+            "package preserve45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import preserve45.Textish\n"
+            "class Textish\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' fun Textish.trim():String { println("SELECT|LOCAL_EXTENSION"); return '
+            '"FIXED" }\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        )
+    ],
+    "samefile_alias_import": [
+        (
+            "Case.kt",
+            "package independent44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "typealias Textish=Number\n"
+            'fun Textish.trim():String { println("SELECT|EXTENSION"); return "FIXED" }\n'
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Textish=CharSequence\n"),
+    ],
+    "samefile_nominal_import": [
+        (
+            "Case.kt",
+            "package independent44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "class Textish\n"
+            'fun Textish.trim():String { println("SELECT|EXTENSION"); return "FIXED" '
+            "}\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Textish=CharSequence\n"),
+    ],
+    "source_nominal_import": [
+        (
+            "Case.kt",
+            "package preserve45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "typealias Textish=Number\n"
+            'fun Textish.trim():String { println("SELECT|EXTENSION"); return "FIXED" }\n'
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        ),
+        ("Types.kt", "package external\nclass Textish\n"),
+    ],
+    "type_parameter_scope": [
+        (
+            "Case.kt",
+            "package preserve45\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import external.Textish\n"
+            "class Textish\n"
+            "fun <Textish:Number> scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q:String=intent.getStringExtra("q") ?: ""\n'
+            ' fun Textish.trim():String { println("SELECT|LOCAL_EXTENSION"); return '
+            '"FIXED" }\n'
+            ' q.run { db.execSQL("T|"+trim()) }\n'
+            ' " SAFE ".run { db.execSQL("F|"+trim()) }\n'
+            "}\n",
+        ),
+        ("Types.kt", "package external\ntypealias Textish=CharSequence\n"),
+    ],
+    "uri_dotted": [
+        (
+            "Caller.kt",
+            "package cal44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            " val u:Uri=intent.getData()!!\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        (
+            "Root.kt",
+            "class android { class net { class Uri { fun getQueryParameter(name:String):String = "
+            '"FIXED" } } }\n',
+        ),
+    ],
+    "uri_dotted_alias": [
+        (
+            "Caller.kt",
+            "package cal44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri as U\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            " val u:U=intent.getData()!!\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        (
+            "Root.kt",
+            "class android { class net { class Uri { fun "
+            'getQueryParameter(name:String):String = "FIXED" } } }\n',
+        ),
+    ],
+    "uri_packaged_source": [
+        (
+            "Caller.kt",
+            "package cal44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            " val u:Uri=Uri()\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        (
+            "Root.kt",
+            'package android.net\nclass Uri { fun getQueryParameter(name:String):String = "FIXED" }\n',
+        ),
+    ],
+    "uri_root_alias": [
+        (
+            "Caller.kt",
+            "package cal44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android as Platform\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            " val u:Platform.net.Uri=Platform.net.Uri()\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        (
+            "Root.kt",
+            "class android { class net { class Uri { fun getQueryParameter(name:String):String "
+            '= "FIXED" } } }\n',
+        ),
+    ],
+    "uri_root_import": [
+        (
+            "Caller.kt",
+            "package cal44\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            " val u:android.net.Uri=android.net.Uri()\n"
+            ' db.execSQL(u.getQueryParameter("q"))\n'
+            "}\n",
+        ),
+        (
+            "Root.kt",
+            "class android { class net { class Uri { fun getQueryParameter(name:String):String "
+            '= "FIXED" } } }\n',
+        ),
+    ],
+}
+
+_REVIEW46_CORRECT_ROWS = [
+    ("samefile_alias_import", "Case.kt", 9, "source", False),
+    ("samefile_alias_import", "Case.kt", 10, "source", False),
+    ("samefile_nominal_import", "Case.kt", 9, "source", False),
+    ("samefile_nominal_import", "Case.kt", 10, "source", False),
+    ("package_alias_import", "Case.kt", 8, "source", False),
+    ("package_alias_import", "Case.kt", 9, "source", False),
+    ("declaration_context", "Case.kt", 9, "source", False),
+    ("declaration_context", "Case.kt", 10, "source", False),
+    ("local_scope_nominal_control", "Case.kt", 10, "source", True),
+    ("local_scope_nominal_control", "Case.kt", 11, "source", False),
+    ("explicit_standard_alias_corrected", "Case.kt", 8, "source", False),
+    ("explicit_standard_alias_corrected", "Case.kt", 9, "source", False),
+    ("binary_samefile_nominal", "Case.kt", 9, "alias", False),
+    ("binary_samefile_nominal", "Case.kt", 10, "alias", False),
+    ("binary_samefile_nominal", "Case.kt", 10, "class", False),
+    ("binary_local_capture", "Case.kt", 9, "class", False),
+    ("member_scope", "Case.kt", 10, "source", True),
+    ("member_scope", "Case.kt", 11, "source", False),
+    ("type_parameter_scope", "Case.kt", 10, "source", False),
+    ("inherited_member_scope", "Case.kt", 11, "source", False),
+    ("alias_declaration_import", "Case.kt", 10, "source", False),
+    ("alias_declaration_import", "Case.kt", 11, "source", False),
+    ("source_nominal_import", "Case.kt", 9, "source", True),
+    ("source_nominal_import", "Case.kt", 10, "source", False),
+    ("same_identity_import", "Case.kt", 9, "source", True),
+    ("same_identity_import", "Case.kt", 10, "source", False),
+    ("renamed_import", "Case.kt", 9, "source", False),
+    ("renamed_import", "Case.kt", 10, "source", False),
+    ("builder_reverse", "Caller.kt", 6, "plain", True),
+    ("builder_also", "Caller.kt", 6, "plain", True),
+    ("builder_append", "Caller.kt", 6, "plain", True),
+    ("member_sentinel", "Caller.kt", 10, "member_binary", False),
+    ("uri_dotted", "Caller.kt", 7, "platform", True),
+    ("uri_dotted_alias", "Caller.kt", 7, "platform", True),
+    ("uri_root_import", "Caller.kt", 7, "platform", False),
+    ("builder_binary_opaque", "Caller.kt", 7, "tainted", True),
+    ("uri_root_alias", "Caller.kt", 7, "platform", False),
+    ("uri_packaged_source", "Caller.kt", 7, "platform", False),
+]
+
+
+def _review46_query_snapshot(analyzer, frame):
+    return _review44_query_snapshot(analyzer, frame), getattr(analyzer, "builder_label_query_active", False)
+
+
+@pytest.mark.parametrize("mode", [0, 9])
+@pytest.mark.parametrize("program", _REVIEW46_NAMESPACE)
+def test_review46_value_import_and_binary_type_twins_keep_pure_unknown_classifier_facts(
+    monkeypatch, mode, program
+):
+    original = Analyzer.record_visited
+    active = False
+    seen = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unresolved TYPE query evaluated a value or consumed uncertainty")
+
+    def observe(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if active or self.scope != "scan" or call.name != "getQueryParameter":
+            return result
+        active = True
+        flow = self.native_flow
+        depth = flow.type_hint_depth
+        try:
+            flow.type_hint_depth = mode
+            before = _review46_query_snapshot(self, frame)
+            with monkeypatch.context() as query:
+                query.setattr(self, "value", forbidden)
+                query.setattr(flow, "partial", forbidden)
+                assert flow.lexical_type(self, "Uri", call.node) is None
+                assert flow.class_owners(self, "Uri", call.node) == set()
+                assert not self.library_reference_type("Uri", call.node, "android.net.Uri")
+                assert not flow.modeled_external(self, "Uri", call, receiver=value)
+                proof = self.reference_type_identity("Uri", call.node, context=self)
+                assert proof[:2] == ("", False) and isinstance(proof[2], frozenset) and proof[2]
+                assert (self.path, self.location(call.node)["line"], "Uri") in proof[2]
+                assert self.declared_modeled_type("Uri", call.node, qualify_source=True) == ""
+                assert self.resolved_receiver_kind(call.receiver, frame.types.get("u", ""), frame) == ""
+            assert before == _review46_query_snapshot(self, frame)
+            seen.append(True)
+        finally:
+            flow.type_hint_depth = depth
+            active = False
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", observe)
+    report = analyze_sources(_REVIEW46_PROGRAMS[program])
+    assert seen
+    # FIXED and the binary TAINT_q literal are dispatch markers only. Neither
+    # environment has an admitted untrusted source feeding this SQL argument.
+    assert not _hit(report, SQL)
+    assert _state(report, SQL) == "limited"
+    source = dict(_REVIEW46_PROGRAMS[program])["Caller.kt"]
+    line = next(i + 1 for i, text in enumerate(source.splitlines()) if "db.execSQL" in text)
+    assert any(
+        detail.get("path") == "Caller.kt"
+        and detail.get("line") == line
+        and detail.get("column") == 13
+        and detail.get("call") == "getQueryParameter"
+        and detail.get("kind") == "precision"
+        and detail.get("reason") == "unresolved callable identity or argument signature"
+        for detail in report["metadata"]["native_flow"]["partial_details"]
+    )
+    assert not report["metadata"]["native_flow"]["budget_reasons"]
+
+
+@pytest.mark.parametrize("program,spelling,canonical,represented", _REVIEW46_BUILDERS)
+def test_review46_builder_label_proof_selects_alias_in_its_declaration_context(
+    monkeypatch, program, spelling, canonical, represented
+):
+    original = Analyzer.project_extension
+    seen = []
+
+    def observe(self, name, call, receivers, **kwargs):
+        result = original(self, name, call, receivers, **kwargs)
+        if self.scope == "scan" and name == "reverse" and self.native_flow.type_hint_depth:
+            target = next(row for row in self.native_flow.by_name["reverse"] if row.analyzer is self)
+            name_node = target.node.child_by_field_name("name")
+            receiver = next(
+                node
+                for node in target.node.named_children
+                if node.type == "user_type" and node.end_byte <= name_node.start_byte
+            )
+            before = _review46_query_snapshot(self, current_frame[0])
+            assert self.reference_type_identity(spelling, receiver, context=self)[:2] == (canonical, False)
+            assert before == _review46_query_snapshot(self, current_frame[0])
+            assert result is represented
+            seen.append(True)
+        return result
+
+    original_record = Analyzer.record_visited
+    current_frame = []
+
+    def record(self, call, frame, value):
+        current_frame.append(frame)
+        try:
+            return original_record(self, call, frame, value)
+        finally:
+            current_frame.pop()
+
+    monkeypatch.setattr(Analyzer, "project_extension", observe)
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW46_PROGRAMS[program])
+    assert seen and _hit(report, SQL)
+    expected = (
+        "Kotlin custom builder extension effects unavailable"
+        if represented
+        else "Kotlin builder chain effects unavailable"
+    )
+    source = dict(_REVIEW46_PROGRAMS[program])["Caller.kt"]
+    line = next(i + 1 for i, text in enumerate(source.splitlines()) if "db.execSQL" in text)
+    details = [
+        d
+        for d in report["metadata"]["native_flow"]["partial_details"]
+        if d["reason"]
+        in {"Kotlin custom builder extension effects unavailable", "Kotlin builder chain effects unavailable"}
+    ]
+    assert details and all(
+        d.get("path") == "Caller.kt"
+        and d.get("line") == line
+        and d.get("column") == 27
+        and d.get("call") == "reverse"
+        and d.get("kind") == "precision"
+        and d["reason"] == expected
+        for d in details
+    )
+    assert _state(report, SQL) == "limited" and not report["metadata"]["native_flow"]["budget_reasons"]
+
+
+@pytest.mark.parametrize("links,overloads", [(1, 0), (8, 8), (32, 32), (64, 64), (64, 0)])
+def test_review46_reason_only_query_work_has_an_explicit_small_allowance(monkeypatch, links, overloads):
+    source = "package work46\nimport android.content.Intent\nimport android.database.sqlite.SQLiteDatabase\n"
+    source += "".join(f"class C{i}\nfun C{i}.reverse():C{i}=this\n" for i in range(overloads))
+    source += (
+        'fun scan(intent:Intent,db:SQLiteDatabase) {\n val q=intent.getStringExtra("q") ?: ""\n db.execSQL(buildString { append(q)'
+        + ".reverse()" * links
+        + " })\n}\n"
+    )
+    original_record = Analyzer.record_visited
+    original_project = Analyzer.project_extension
+    original_literal = Analyzer.literal_string_argument_conflict
+    active = False
+    querying = False
+    counts = {"queries": 0, "candidates": 0}
+    frames = []
+
+    def literal(self, *args, **kwargs):
+        if querying:
+            counts["candidates"] += 1
+        return original_literal(self, *args, **kwargs)
+
+    def project(self, name, call, receivers, **kwargs):
+        nonlocal querying
+        if not active or name != "reverse" or not self.native_flow.type_hint_depth:
+            return original_project(self, name, call, receivers, **kwargs)
+        counts["queries"] += 1
+        before = _review46_query_snapshot(self, frames[-1])
+        querying = True
+        try:
+            result = original_project(self, name, call, receivers, **kwargs)
+        finally:
+            querying = False
+        assert before == _review46_query_snapshot(self, frames[-1])
+        return result
+
+    def record(self, call, frame, value):
+        nonlocal active
+        previous = active
+        active = self.scope == "scan"
+        frames.append(frame)
+        try:
+            return original_record(self, call, frame, value)
+        finally:
+            active = previous
+            frames.pop()
+
+    monkeypatch.setattr(Analyzer, "literal_string_argument_conflict", literal)
+    monkeypatch.setattr(Analyzer, "project_extension", project)
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources([("Scaling.kt", source)])
+    assert counts["queries"] <= 64 and counts["candidates"] <= 64, counts
+    assert _hit(report, SQL) and _state(report, SQL) == "limited"
+    assert not report["metadata"]["native_flow"]["budget_reasons"]
+    assert any(
+        d.get("call") == "reverse"
+        and d.get("kind") == "precision"
+        and d.get("reason") == "Kotlin builder chain effects unavailable"
+        for d in report["metadata"]["native_flow"]["partial_details"]
+    )
+
+
+@pytest.mark.parametrize("allowance", ["MAX_BUILDER_LABEL_QUERIES", "MAX_BUILDER_LABEL_CANDIDATES"])
+def test_review46_exhausted_attribution_keeps_generic_precision_and_data_flow(monkeypatch, allowance):
+    import mobile_audit.source_analysis as source_analysis
+
+    monkeypatch.setattr(source_analysis, allowance, 0, raising=False)
+    report = analyze_sources(_REVIEW46_PROGRAMS["builder_genuine_alias_reason"])
+    assert _hit(report, SQL) and _state(report, SQL) == "limited"
+    flow = report["metadata"]["native_flow"]
+    assert not flow["budget_reasons"]
+    assert any(
+        d.get("call") == "reverse"
+        and d.get("line") == 9
+        and d.get("column") == 27
+        and d.get("reason") == "Kotlin builder chain effects unavailable"
+        and d.get("kind") == "precision"
+        for d in flow["partial_details"]
+    )
+    assert not any(
+        d["reason"] == "Kotlin custom builder extension effects unavailable" for d in flow["partial_details"]
+    )
+
+
+@pytest.mark.parametrize(
+    "program,path,line,environment,expected",
+    _REVIEW46_CORRECT_ROWS,
+    ids=[f"{r[0]}:{r[1]}:{r[2]}:{r[3]}" for r in _REVIEW46_CORRECT_ROWS],
+)
+def test_review46_ratchet_keeps_all_38_measured_r45_correct_rows_correct(
+    program, path, line, environment, expected
+):
+    # Includes all seven named R45 recoveries. A new precision detail cannot
+    # substitute for previously correct SQL polarity; binary rows stay separate.
+    report = analyze_sources(_REVIEW46_RATCHET_PROGRAMS[program])
+    hits = {(e["path"], e["line"]) for f in report["findings"] if f["rule_id"] == SQL for e in f["evidence"]}
+    assert ((path, line) in hits) is expected, (program, environment, report["metadata"]["native_flow"])
+    assert not report["metadata"]["native_flow"]["budget_reasons"]
+
+
+def test_review46_attribution_scope_flag_and_depth_restore_after_interrupted_probe(monkeypatch):
+    original = Analyzer.record_visited
+    active = False
+    seen = []
+
+    def record(self, call, frame, value):
+        nonlocal active
+        if active or self.scope != "scan" or call.name != "reverse":
+            return original(self, call, frame, value)
+        active = True
+        flow = self.native_flow
+        before = _review46_query_snapshot(self, frame)
+
+        def fail(self, name, contribution, receivers, **kwargs):
+            assert name == "reverse" and getattr(self, "builder_label_query_active", False)
+            assert flow.type_hint_depth == before[0][1] + 1
+            raise RuntimeError("review46 interrupted attribution")
+
+        try:
+            with monkeypatch.context() as query:
+                query.setattr(Analyzer, "project_extension", fail)
+                with pytest.raises(RuntimeError, match="review46 interrupted attribution"):
+                    original(self, call, frame, value)
+            assert before == _review46_query_snapshot(self, frame)
+            seen.append(True)
+            return original(self, call, frame, value)
+        finally:
+            active = False
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    analyze_sources(_REVIEW46_PROGRAMS["builder_numeric_reason_control"])
+    assert seen
