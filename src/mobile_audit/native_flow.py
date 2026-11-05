@@ -327,6 +327,7 @@ CONTEXT = (
     "action_hint",
     "intent_checks",
     "aliases",
+    "active_object_scopes",
     "literal_table",
     "private_keys",
     "target_names",
@@ -401,6 +402,7 @@ class NativeFlow:
         self.namespace_names: set[str] = set()
         self.owners_with_constructor: set[str] = set()
         self.partial_details: set[tuple] = set()
+        self.type_identity_origins: dict[tuple, tuple[frozenset[tuple[str, int, str]], bool]] = {}
         self.partial_details_truncated = False
         self.fields: dict[str, dict[str, Value]] = {}
         self.owner_cache: dict[tuple[int, int], str] = {}
@@ -417,6 +419,7 @@ class NativeFlow:
         self.import_indexes: dict[tuple[int, bool], dict[str, set[str]]] = {}
         self.module_type_aliases: dict[str, list[tuple[Analyzer, Any]]] = {}
         self.value_import_identities: frozenset[str] | None = None
+        self.classifier_import_identities: frozenset[str] = frozenset()
         self.swift_extensions_present = False
         # Member types added by an extension are lookup uncertainty, never
         # ordinary module classes or source constructor summaries.
@@ -2399,7 +2402,7 @@ class NativeFlow:
         # A represented source type still permits its own nested-type/member lookup.
         return not source_types or not self.class_owners(analyzer, spelling, use)
 
-    def type_namespace_shadow(self, analyzer: Analyzer, spelling: str, use: Any) -> bool:
+    def type_namespace_shadow(self, analyzer: Analyzer, spelling: str, use: Any) -> bool | None:
         """Classifier lookup ignores proven value-only imports, unlike expression lookup."""
         if not self.imported_namespace_shadow(analyzer, spelling, use, source_types=False):
             return False
@@ -2417,6 +2420,18 @@ class NativeFlow:
                 for source, _node in bindings:
                     namespace = self.namespaces[id(source)]
                     classifiers.add((namespace + "." if namespace else "") + name)
+
+            def value_only(source: Analyzer, owner: str, member: str) -> bool:
+                definitions = self.class_definitions.get(owner, ())
+                if not owner or len(definitions) != 1:
+                    return False
+                context, nominal = definitions[0]
+                return (
+                    context is source
+                    and member not in self.member_type_names(context, nominal)
+                    and self.known_ancestry(context, nominal, member)
+                )
+
             for source, _root, nodes in self.files:
                 if source.language != "kotlin":
                     continue
@@ -2427,9 +2442,10 @@ class NativeFlow:
                         or node.parent.type not in {"program", "source_file", "class_body"}
                     ):
                         continue
-                    namespace = self.owner(source, node) or self.namespaces[id(source)]
+                    namespace = self.owner(source, node)
                     for name in self.property_binding_names(source, node):
-                        values.add((namespace + "." if namespace else "") + name)
+                        if value_only(source, namespace, name):
+                            values.add(namespace + "." + name)
             for targets in self.by_name.values():
                 for target in targets:
                     if (
@@ -2437,11 +2453,43 @@ class NativeFlow:
                         and target.node.type == "function_declaration"
                         and not self.lexical_function(target.node)
                     ):
-                        namespace = target.owner or self.namespaces[id(target.analyzer)]
-                        values.add((namespace + "." if namespace else "") + target.name)
+                        if target.owner and value_only(target.analyzer, target.owner, target.name):
+                            values.add(target.owner + "." + target.name)
             self.value_import_identities = frozenset(values - classifiers)
+            self.classifier_import_identities = frozenset(classifiers)
         imported = self.imported_symbols(analyzer, root)
-        return not imported or not imported <= self.value_import_identities
+        if imported and imported <= self.value_import_identities:
+            return False
+        if imported & self.classifier_import_identities:
+            return True
+        return None  # package-level value presence cannot close the binary classifier namespace
+
+    def consumed_type_identity_unknown(
+        self, analyzer: Analyzer, call: Call, origins: frozenset[tuple[str, int, str]]
+    ) -> None:
+        """Commit query-local import uncertainty only at a semantic consumer."""
+        before = self.partial_events
+        self.partial(
+            "callable argument type identity unresolved", analyzer, call=call, classification_precision=True
+        )
+        if self.partial_events == before:
+            return
+        position = analyzer.location(call.node)
+        key = analyzer.path, position["line"], position["column"], call.name
+        previous, truncated = self.type_identity_origins.get(key, (frozenset(), False))
+        combined = previous | origins
+        self.type_identity_origins[key] = frozenset(sorted(combined)[:8]), truncated or len(combined) > 8
+        if len(self.type_identity_origins) > MAX_PARTIAL_DETAILS:
+            del self.type_identity_origins[max(self.type_identity_origins)]
+
+    def type_identity_origin_metadata(self, path: str, line: int, column: int, call: str) -> dict:
+        origins = self.type_identity_origins.get((path, line, column, call))
+        if origins is None:
+            return {}
+        return {
+            "type_origins": [dict(path=p, line=n, spelling=s) for p, n, s in sorted(origins[0])],
+            "type_origins_truncated": origins[1],
+        }
 
     def qualified_callable_present(
         self, analyzer: Analyzer, call: Call, namespace: str, *, frame: Frame | None = None
@@ -2456,9 +2504,13 @@ class NativeFlow:
         )
         labels = [analyzer.argument_label(arg) for arg in call.args if analyzer.argument_label(arg)]
         declared = namespace + "." + call.name
-        competing_constructor = bool(
-            self.class_owners(analyzer, declared, call.node)
-        ) or self.modeled_external(analyzer, declared, call, constructor=True)
+        constructor_owners = self.class_owners(analyzer, declared, call.node)
+        competing_constructor = bool(constructor_owners) or self.modeled_external(
+            analyzer, declared, call, constructor=True
+        )
+        constructor_excluded = bool(constructor_owners) and self.qualified_construction_excluded(
+            analyzer, call, constructor_owners, frame=frame
+        )
         unknown = False
         for target in self.by_name.get(call.name, []):
             if target.analyzer.language != analyzer.language or target.node.type in (
@@ -2487,12 +2539,58 @@ class NativeFlow:
                     target.analyzer, target.node, call, frame=frame
                 )
             ):
-                if not competing_constructor or analyzer.established_call_arguments(
-                    target.analyzer, target.node, call, frame=frame
-                ):
+                if not competing_constructor or constructor_excluded:
                     return True
                 unknown = True
         return None if unknown else False
+
+    def qualified_construction_excluded(
+        self, analyzer: Analyzer, call: Call, owners: set[str], *, frame: Frame | None = None
+    ) -> bool:
+        """Only positive, represented constructor exclusion permits a competing callable."""
+        for owner in owners:
+            definitions = self.class_definitions.get(owner, ())
+            if len(definitions) != 1:
+                return False
+            source, nominal = definitions[0]
+            if source.language != "kotlin":
+                return False
+            body = next((part for part in nominal.named_children if part.type == "class_body"), None)
+            members = body.named_children if body is not None else ()
+            if any(part.type == "companion_object" for part in members):
+                return False  # a companion can supply value-call behavior
+            tokens = self.declaration_tokens(nominal)
+            if "interface" in tokens and "fun" not in tokens:
+                continue
+            if (
+                nominal.type != "class_declaration"
+                or "class" not in tokens
+                or tokens & {"abstract", "sealed", "inner", "enum", "annotation"}
+            ):
+                return False
+            if any(part.type in {"secondary_constructor", "constructor_declaration"} for part in members):
+                return False
+            primary = next(
+                (part for part in nominal.named_children if part.type == "primary_constructor"), None
+            )
+            if primary is None:
+                if call.args:
+                    continue  # fully represented implicit public no-argument constructor
+                return False
+            if any(source.has_modifier(primary, modifier) for modifier in {"private", "protected"}):
+                lexical = {self.owner(analyzer, part) for part in analyzer.class_bodies(call.node)}
+                if owner not in lexical:
+                    continue
+            parameters = analyzer.primary_constructor_parameters(source, primary)
+            if parameters is None or any(source.has_modifier(part, "vararg") for _, _, part in parameters):
+                return False
+            bindings = analyzer.bound_parameter_arguments(source, primary, call)
+            if bindings is None:
+                continue  # complete fixed signature proves an arity/label mismatch
+            if analyzer.literal_string_argument_conflict(source, primary, call, frame=frame):
+                continue
+            return False
+        return True
 
     def module_value_bindings(
         self, analyzer: Analyzer, name: str, *, aliases: bool = False
@@ -3751,6 +3849,11 @@ class NativeFlow:
                     "scope": "file-call" if call else "file" if path else "analysis",
                     "rule_ids": sorted(RULES),
                     "rule_scope": "conservative-all-native-rules",
+                    **(
+                        self.type_identity_origin_metadata(path, line, column, call)
+                        if reason == "callable argument type identity unresolved"
+                        else {}
+                    ),
                 }
                 for reason, path, line, column, call, category in sorted(self.partial_details)
             ],

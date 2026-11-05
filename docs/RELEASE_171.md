@@ -728,3 +728,19 @@ constructor. Capped builder receivers keep visible declarations competing and
 anchor consumed uncertainty at the affected call; unrelated function receivers
 remain excluded. These changes do not establish general overload ranking or
 arbitrary inherited-object/instance-field execution.
+
+Nested receiver scopes now retain ordered source-singleton dispatch owners for
+builder member extensions, including qualified and parenthesized object receivers.
+Nearer ordinary members, private declarations, nullable receivers and detached
+helper bodies preserve their boundaries. Competing construction is excluded by
+represented kind, accessibility, arity, labels or proven incompatibility before an
+ordinary callable supplies a declared result; an exact String argument alone does
+not defeat an applicable Any or nullable String constructor. Nonnull assertions
+retain their explicit argument proof.
+
+Package-level value imports no longer establish absence of a binary classifier.
+Unknown type roots withhold library identity and add precision at the consuming
+String operation, with bounded declaration-origin details. Closed represented
+member-value imports keep their separate type-namespace behavior. These changes
+do not add binary classpath inventory, general overload ranking or constructor
+initializer execution.

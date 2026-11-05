@@ -1573,6 +1573,19 @@ class ClosureEffects:
 
 
 @dataclass(frozen=True)
+class ObjectScope:
+    """Declaration-only receiver evidence, restricted to its source/function/lambda."""
+
+    source: int
+    function: int
+    scope: int
+    start: int
+    end: int
+    owner: str | None
+    builder_types: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class Call:
     """A call site. ``args`` lists every argument in order, trailing lambdas last.
 
@@ -1855,6 +1868,8 @@ class Analyzer:
         self.intent_checks = 0
         # Kotlin lambda parameters bound to the receiver of let/also/use, for Intent text lookups.
         self.aliases: dict[str, Any] = {}
+        self.active_object_scopes: list[ObjectScope] = []
+        self.reference_type_evidence: list[set[tuple[str, int, str]]] = []
         # A receiverless opener that resolves to project code, which is always followed.
         self.opener_follow = False
         # The framework type certainly applies (override, declared, Context receiver).
@@ -7695,6 +7710,8 @@ class Analyzer:
                 "field_types",
                 "visited_values",
                 "type_query_active",
+                "aliases",
+                "active_object_scopes",
             )
         }
         try:
@@ -7705,6 +7722,8 @@ class Analyzer:
             self.field_types = {}
             self.visited_values = {}
             self.type_query_active = True
+            self.aliases = {}
+            self.active_object_scopes = []
             return self.known_value_type(
                 expression,
                 frame,
@@ -9370,8 +9389,14 @@ class Analyzer:
                 if binding.type in {"type_parameter", "type_constraint"} and not flow.type_hint_depth:
                     flow.partial("callable argument type identity unresolved", self)
                 return False
-        if flow is not None and flow.type_namespace_shadow(context, root, use):
-            return False
+        if flow is not None:
+            namespace = flow.type_namespace_shadow(context, root, use)
+            if namespace is None:
+                if self.reference_type_evidence:
+                    self.reference_type_evidence[-1].add((context.path, context.location(use)["line"], root))
+                return False
+            if namespace:
+                return False
         if root == qualified:
             return compatible_root()
         simple = qualified.rsplit(".", 1)[-1]
@@ -10005,11 +10030,53 @@ class Analyzer:
             return None
         return context, origin, element.removeprefix("out ").strip()
 
+    def primary_constructor_parameters(
+        self, source: Analyzer, primary: Any
+    ) -> list[tuple[str, str, Any]] | None:
+        """Read ordinary Kotlin constructor declarations, preserving type origins."""
+        group = next((part for part in primary.named_children if part.type == "class_parameters"), None)
+        if group is None:
+            return None
+        result = []
+        for parameter in group.named_children:
+            if parameter.type in COMMENTS:
+                continue
+            if parameter.type != "class_parameter":
+                return None
+            name = next((part for part in parameter.named_children if part.type in IDENTIFIERS), None)
+            kind = next(
+                (
+                    part
+                    for part in parameter.named_children
+                    if part.type
+                    in {
+                        "user_type",
+                        "type_identifier",
+                        "nullable_type",
+                        "non_nullable_type",
+                        "function_type",
+                        "parenthesized_type",
+                    }
+                ),
+                None,
+            )
+            if name is None or kind is None:
+                return None
+            result.append((source.symbol_name(source.text(name)), source.text(kind), parameter))
+        return result
+
     def bound_parameter_arguments(
         self, source: Analyzer, function: Any, call: Call
     ) -> list[tuple[str, str, Any, list[Any], bool]] | None:
         """Bind represented Kotlin arguments without evaluating their expressions."""
-        parameters = source.parameters(function)
+        constructor = function.type == "primary_constructor"
+        parameters = (
+            self.primary_constructor_parameters(source, function)
+            if constructor
+            else source.parameters(function)
+        )
+        if parameters is None:
+            return None
         labels = [self.argument_label(argument) for argument in call.args]
         named = {label: index for index, label in enumerate(labels) if label}
         if len(named) != sum(bool(label) for label in labels) or named.keys() - {
@@ -10024,7 +10091,9 @@ class Analyzer:
             while modifiers is not None and modifiers.type in COMMENTS:
                 modifiers = modifiers.prev_sibling
             variadic = bool(
-                modifiers is not None
+                source.has_modifier(parameter, "vararg")
+                if constructor
+                else modifiers is not None
                 and modifiers.type == "parameter_modifiers"
                 and any(
                     "annotation" not in child.type and source.text(child).strip() == "vararg"
@@ -10034,7 +10103,11 @@ class Analyzer:
             sibling = parameter.next_sibling
             while sibling is not None and sibling.type in COMMENTS:
                 sibling = sibling.next_sibling
-            defaulted = sibling is not None and sibling.type == "="
+            defaulted = (
+                any(part.type == "=" for part in parameter.children)
+                if constructor
+                else sibling is not None and sibling.type == "="
+            )
             if source.symbol_name(name) in named:
                 indices = [named[source.symbol_name(name)]]
             elif variadic:
@@ -10054,20 +10127,10 @@ class Analyzer:
         self, argument: Any, frame: Frame | None, qualified: str, *, require_nonnullable: bool = False
     ) -> bool:
         """Read literals, explicit types, casts or canonical ordinary-local facts only."""
+        asserted = self.nonnull_expression(argument)
         node = self.unwrap(argument, preserve_cast=True)
         if node is None:
             return False
-        asserted = False
-        for _ in range(8):
-            if not self.nonnull_expression(node) or not self.text(node).rstrip().endswith("!!"):
-                break
-            parts = [part for part in node.named_children if part.type not in COMMENTS]
-            if len(parts) != 1:
-                break
-            node = self.unwrap(parts[0], preserve_cast=True)
-            asserted = True
-            if node is None:
-                return False
         if node.type in TEXT_LITERALS and self.text(node).lstrip().startswith('"'):
             return qualified in KOTLIN_MODEL_TYPES["String"]
         if node.type in NUMBERS:
@@ -10128,7 +10191,7 @@ class Analyzer:
     def established_call_arguments(
         self, source: Analyzer, function: Any, call: Call, *, frame: Frame | None = None
     ) -> bool:
-        """Only exact final scalar matches select a callable over a possible constructor."""
+        """Read exact final scalar argument facts without resolving expressions."""
         if self.native_flow is None or source.language != "kotlin":
             return False
         bindings = self.bound_parameter_arguments(source, function, call)
@@ -10977,6 +11040,23 @@ class Analyzer:
             return "java.util.Locale"
         return ""
 
+    def library_argument_evidence(
+        self, argument: Any, frame: Frame, qualified: str, *, default_import: bool = False, depth: int = 0
+    ) -> tuple[bool, frozenset[tuple[str, int, str]]]:
+        """Collect immutable uncertainty origins within this one reference query."""
+        evidence: set[tuple[str, int, str]] = set()
+        self.reference_type_evidence.append(evidence)
+        result = False
+        try:
+            result = self.library_argument_type(
+                argument, frame, qualified, default_import=default_import, depth=depth
+            )
+            return result, frozenset() if result else frozenset(evidence)
+        finally:
+            self.reference_type_evidence.pop()
+            if not result and self.reference_type_evidence:
+                self.reference_type_evidence[-1].update(evidence)
+
     def library_argument_type(
         self,
         argument: Any,
@@ -11204,7 +11284,9 @@ class Analyzer:
             kind, origin, qualified, default_import=default_import, context=context
         )
 
-    def string_operation_applicable(self, call: Call, frame: Frame, depth: int = 0) -> bool:
+    def string_operation_applicable(
+        self, call: Call, frame: Frame, depth: int = 0, *, consume_uncertainty: bool = False
+    ) -> bool:
         """The modeled String signature must accept labels and known argument kinds."""
         name, count = call.name.rsplit(".", 1)[-1], len(call.args)
         if name == "plus":
@@ -11223,30 +11305,33 @@ class Analyzer:
                 "orEmpty",
                 "lines",
             }
+        origins: set[tuple[str, int, str]] = set()
         for with_locale in (False, True):
             locale_bound = vararg_bound = named_array = False
             matched = True
             for argument in call.args:
                 label = self.argument_label(argument)
                 if label == "locale" or not label and with_locale and not locale_bound:
-                    if (
-                        not with_locale
-                        or locale_bound
-                        or not self.library_argument_type(
-                            argument, frame, "java.util.Locale", depth=depth + 1
-                        )
-                    ):
+                    if not with_locale or locale_bound:
+                        matched = False
+                        break
+                    proof, unknown = self.library_argument_evidence(
+                        argument, frame, "java.util.Locale", depth=depth + 1
+                    )
+                    origins.update(unknown)
+                    if not proof:
                         matched = False
                         break
                     locale_bound = True
                 elif label == "args":
-                    if (
-                        vararg_bound
-                        or self.text(self.unwrap(argument)).strip() == "null"
-                        or not self.library_argument_type(
-                            argument, frame, "kotlin.Array", default_import=True, depth=depth + 1
-                        )
-                    ):
+                    if vararg_bound or self.text(self.unwrap(argument)).strip() == "null":
+                        matched = False
+                        break
+                    proof, unknown = self.library_argument_evidence(
+                        argument, frame, "kotlin.Array", default_import=True, depth=depth + 1
+                    )
+                    origins.update(unknown)
+                    if not proof:
                         matched = False
                         break
                     vararg_bound = named_array = True
@@ -11257,6 +11342,8 @@ class Analyzer:
                     vararg_bound = True
             if matched and (not with_locale or locale_bound):
                 return True
+        if origins and consume_uncertainty and self.native_flow is not None:
+            self.native_flow.consumed_type_identity_unknown(self, call, frozenset(origins))
         return False
 
     def implicit_string_subject(
@@ -11266,6 +11353,7 @@ class Analyzer:
         *,
         depth: int = 0,
         receiver_kinds: dict[tuple[int, int, int, bool], str] | None = None,
+        consume_uncertainty: bool = False,
     ) -> Any:
         """Identified String reads precede an outer class or top-level helper.
 
@@ -11280,7 +11368,7 @@ class Analyzer:
             self.language != "kotlin"
             or call.receiver is not None
             or name != "format"
-            and not self.string_operation_applicable(call, frame)
+            and not self.string_operation_applicable(call, frame, consume_uncertainty=consume_uncertainty)
         ):
             return None
         if name in frame.local_names:
@@ -11305,7 +11393,9 @@ class Analyzer:
                         or not kind
                         and self.string_template_root(subject, frame, receiver_proof=True)
                     ):
-                        if not self.string_operation_applicable(call, frame, depth):
+                        if not self.string_operation_applicable(
+                            call, frame, depth, consume_uncertainty=consume_uncertainty
+                        ):
                             return None
                         if name not in {"plus", "toString"} and self.project_extension(
                             name,
@@ -11372,7 +11462,7 @@ class Analyzer:
         return None
 
     def implicit_string_receiver(self, call: Call, frame: Frame) -> Value | None:
-        subject = self.implicit_string_subject(call, frame)
+        subject = self.implicit_string_subject(call, frame, consume_uncertainty=True)
         return self.reused(subject, frame) if subject is not None else None
 
     def builder_transform(self, call: Call, types: frozenset[str], frame: Frame) -> bool:
@@ -11754,6 +11844,181 @@ class Analyzer:
             for target in self.native_flow.by_name.get(alias, [])
         )
 
+    def supplied_object_scope_owner(
+        self, receiver: Any, frame: Frame, *, nonnull: bool = False, depth: int = 0
+    ) -> str | None:
+        """Prove a source singleton at scope entry without evaluating the receiver."""
+        flow = self.native_flow
+        if flow is None or self.language != "kotlin" or depth >= 8:
+            return None
+        asserted = nonnull or self.nonnull_expression(receiver)
+        node = receiver
+        for _ in range(16):
+            if node is None:
+                return None
+            if node.type in {"value_argument", "parenthesized_expression"}:
+                node = _field(node, "value") or (node.named_children[-1] if node.named_children else None)
+            elif node.type in {"postfix_expression", "unary_expression"} and self.text(
+                node
+            ).rstrip().endswith("!!"):
+                asserted = True
+                node = _field(node, "target") or (node.named_children[0] if node.named_children else None)
+            else:
+                break
+        else:
+            return None
+        if node is None:
+            return None
+        origin = node
+        spelling = ""
+        if node.type in IDENTIFIERS:
+            symbol = self.symbol_name(self.text(node))
+            if symbol in {"it", "this", "self", "super"}:
+                return None
+            binding = self.reference_binding(node, symbol, frame=frame)
+            if binding is not None:
+                origin, declared, initializer = binding
+                function = flow.enclosing(origin, FUNCTIONS)
+                if self.function is None or function is None or function.id != self.function.id:
+                    return None
+                immutable = origin.type == "property_declaration" and "val" in flow.declaration_tokens(origin)
+                if not declared:
+                    alias_owner = (
+                        self.supplied_object_scope_owner(
+                            initializer, frame, nonnull=asserted, depth=depth + 1
+                        )
+                        if immutable and initializer is not None
+                        else None
+                    )
+                    if alias_owner is not None:
+                        return alias_owner
+                elif declared.rstrip().endswith("?") and not asserted:
+                    return (
+                        ""
+                        if immutable
+                        and initializer is not None
+                        and self.text(self.unwrap(initializer, preserve_cast=True)) == "null"
+                        else None
+                    )
+                else:
+                    spelling = declared.rstrip("?") if asserted else declared
+            elif not (
+                symbol in frame.values
+                or symbol in frame.local_names
+                or symbol in self.parameter_types
+                or symbol in self.field_types
+                or flow.module_value_present(self, symbol)
+                or flow.imported_namespace_shadow(self, symbol, node)
+            ):
+                spelling = symbol
+        elif node.type == "navigation_expression":
+            text = self.text(node)
+            identifier = r"(?:`[^`.\r\n]+`|[^\W\d]\w*)"
+            if re.fullmatch(identifier + r"(?:\s*\.\s*" + identifier + r")+", text):
+                spelling = ".".join(self.symbol_name(part.strip()) for part in text.split("."))
+                root = spelling.partition(".")[0]
+                if (
+                    root in {"this", "self", "super", "it"}
+                    or root in frame.values
+                    or root in frame.local_names
+                    or root in self.parameter_types
+                    or root in self.field_types
+                    or self.reference_binding(node, root, frame=frame) is not None
+                    or flow.module_value_present(self, root)
+                    or flow.imported_namespace_shadow(self, spelling, node)
+                ):
+                    spelling = ""
+        if spelling:
+            owners = flow.class_owners(self, spelling, origin)
+            if len(owners) == 1:
+                owner = next(iter(owners))
+                definitions = flow.class_definitions.get(owner, ())
+                if len(definitions) == 1:
+                    source, nominal = definitions[0]
+                    if (
+                        source.language == "kotlin"
+                        and nominal.type == "object_declaration"
+                        and not nominal.has_error
+                    ):
+                        return owner
+        if any(
+            self.established_argument_type(receiver, frame, "kotlin." + kind)
+            for kind in ("String", "Boolean", "Int", "Long", "UInt", "ULong", "Float", "Double")
+        ):
+            return ""  # a proven final scalar is not a supplied source object
+        if node.type in IDENTIFIERS and self.initializer_type_hint(receiver, frame) in {
+            "String",
+            "Boolean",
+            "Int",
+            "Long",
+            "UInt",
+            "ULong",
+            "Float",
+            "Double",
+        }:
+            return ""  # inferred final scalars can exclude owners, never establish one
+        return None
+
+    def active_object_extension_visibility(
+        self, target: Any, call: Call, receivers: set[str], *, lexical: bool
+    ) -> bool | None:
+        """Inspect ordered source-scope facts without inferring from the current this."""
+        flow = self.native_flow
+        if flow is None or not self.active_object_scopes:
+            return lexical
+        function = flow.enclosing(
+            call.node, FUNCTIONS | INITIALIZERS | ACCESSORS | {"class_declaration", "primary_constructor"}
+        )
+        function_id = function.id if function is not None else 0
+        if function_id != (self.function.id if self.function is not None else 0):
+            return lexical
+
+        def matches(fact: ObjectScope) -> bool:
+            return (
+                fact.source == id(self.raw)
+                and fact.function == function_id
+                and fact.start <= call.node.start_byte
+                and call.node.end_byte <= fact.end
+            )
+
+        facts = [fact for fact in self.active_object_scopes[-64:] if matches(fact)]
+        unknown_owner = len(self.active_object_scopes) > 64 and matches(self.active_object_scopes[0])
+        unknown_head = unknown_owner
+        builder_nearer = False
+        lexical_owners = {flow.owner(self, body) for body in self.class_bodies(call.node)}
+        for fact in reversed(facts):
+            if fact.builder_types:
+                builder_nearer = builder_nearer or bool(fact.builder_types & receivers)
+                continue
+            if fact.owner is None:
+                unknown_owner = unknown_head = True
+                continue
+            if not fact.owner:
+                unknown_head = unknown_head or not builder_nearer
+                continue
+            ancestry = flow.project_ancestry(fact.owner)
+            if not builder_nearer:
+                for ordinary in flow.by_name.get(call.name, ()):
+                    if (
+                        ordinary.owner not in ancestry
+                        or ordinary.node.type != "function_declaration"
+                        or not flow.lexical_visible(self, ordinary, call)
+                        or not ordinary.analyzer.accepts_arguments(ordinary.node, len(call.args))
+                        or "private" in flow.declaration_tokens(ordinary.node)
+                        and ordinary.owner not in lexical_owners
+                    ):
+                        continue
+                    if self.literal_string_argument_conflict(
+                        ordinary.analyzer, ordinary.node, call, frame=Frame()
+                    ):
+                        continue
+                    if self.established_call_arguments(ordinary.analyzer, ordinary.node, call, frame=Frame()):
+                        return False
+                    unknown_head = True
+            if target.owner in ancestry:
+                return None if unknown_head else True
+        return None if unknown_owner or lexical and unknown_head else lexical
+
     def project_extension(
         self,
         name: str,
@@ -11775,6 +12040,7 @@ class Analyzer:
             *(symbol.rsplit(".", 1)[-1] for symbol in self.native_flow.imported_symbols(self, name)),
         }
         for target in (target for alias in aliases for target in self.native_flow.by_name.get(alias, [])):
+            uncertain_dispatch = False
             namespace = target.owner or self.native_flow.namespaces[id(target.analyzer)]
             if target.name != name and (
                 (namespace + "." if namespace else "") + target.name
@@ -11876,23 +12142,15 @@ class Analyzer:
                         for owner in lexical_owners
                         for ancestor in self.native_flow.project_ancestry(owner)
                     }
-                    dispatch = self.aliases.get("this")
-                    if dispatch is not None and dispatch.type in IDENTIFIERS:
-                        symbol = self.symbol_name(self.text(dispatch))
-                        if self.reference_binding(
-                            dispatch, symbol
-                        ) is None and not self.native_flow.module_value_present(self, symbol):
-                            for owner in self.native_flow.class_owners(self, symbol, dispatch):
-                                if any(
-                                    node.type == "object_declaration"
-                                    for _source, node in self.native_flow.class_definitions.get(owner, ())
-                                ):
-                                    classes.update(self.native_flow.project_ancestry(owner))
-                    if target.owner not in classes or (
+                    scope_visibility = self.active_object_extension_visibility(
+                        target, call, receivers, lexical=target.owner in classes
+                    )
+                    if scope_visibility is False or (
                         "private" in self.native_flow.declaration_tokens(target.node)
                         and target.owner not in lexical_owners
                     ):
                         continue
+                    uncertain_dispatch = scope_visibility is None
                 elif not self.native_flow.top_level_visible(self, target, name):
                     continue
             if receiver is None:
@@ -11990,6 +12248,13 @@ class Analyzer:
                 )
             )
             if target.analyzer.accepts_arguments(target.node, len(call.args)) and compatible:
+                if (
+                    uncertain_dispatch
+                    and not visible
+                    and not nullable_receiver
+                    and not self.native_flow.type_hint_depth
+                ):
+                    self.native_flow.partial("callable argument type identity unresolved", self, call=call)
                 if callable_heads is not None:
                     callable_heads.add(target.node.id)
                 return True
@@ -13151,6 +13416,18 @@ class Analyzer:
         )
         declared = set()
         saved = dict(self.aliases)
+        scope_stack = self.active_object_scopes
+        scope_size = len(scope_stack)
+        object_scope = (
+            scope in {"run", "apply", "with"}
+            and receiver is not None
+            and self.kotlin_scope_identity_known(scope, frame)
+        )
+        scope_owner = (
+            self.supplied_object_scope_owner(receiver, frame, nonnull=self.scope_receiver_nonnull(node))
+            if object_scope
+            else ""
+        )
         if scope in {"let", "also", "use"}:
             name = names[0] if names else "it"
             declared.add(name)
@@ -13205,6 +13482,19 @@ class Analyzer:
         from .native_guards import exits
 
         try:
+            builder_types = effects.receiver_types if effects is not None else frozenset()
+            if object_scope or builder_types:
+                scope_stack.append(
+                    ObjectScope(
+                        id(self.raw),
+                        self.function.id if self.function is not None else 0,
+                        node.id,
+                        node.start_byte,
+                        node.end_byte,
+                        scope_owner,
+                        builder_types,
+                    )
+                )
             exited = False
             for child in node.named_children:
                 if child is parameters or child.type in {"lambda_function_type", "capture_list"}:
@@ -13237,7 +13527,9 @@ class Analyzer:
             if self.native_flow is not None:
                 self.native_flow.active_guards = guards
                 self.native_flow.active_conditions = conditions
-        self.aliases = saved
+            del scope_stack[scope_size:]
+            self.active_object_scopes = scope_stack
+            self.aliases = saved
         for key in frame.values:
             changed = local.values[key]
             if key in declared or changed is frame.values[key]:
@@ -13520,6 +13812,7 @@ class Analyzer:
         self.private_keys = None
         self.target_names = None
         self.aliases = {}
+        self.active_object_scopes = []
         self.field_types = self.class_fields(function)
         self.return_values = []
         self.closure_depth = 0
