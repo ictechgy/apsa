@@ -419,8 +419,7 @@ class NativeFlow:
         self.module_values: dict[str, list[tuple[Analyzer, Any]]] = {}
         self.import_indexes: dict[tuple[int, bool], dict[str, set[str]]] = {}
         self.module_type_aliases: dict[str, list[tuple[Analyzer, Any]]] = {}
-        self.value_import_identities: frozenset[str] | None = None
-        self.classifier_import_identities: frozenset[str] = frozenset()
+        self.classifier_import_identities: frozenset[str] | None = None
         self.swift_extensions_present = False
         # Member types added by an extension are lookup uncertainty, never
         # ordinary module classes or source constructor summaries.
@@ -2279,6 +2278,8 @@ class NativeFlow:
                     not self.namespaces[id(analyzer)]
                     or self.namespaces[id(source)]
                     or source.path == analyzer.path
+                    or analyzer.language == "kotlin"
+                    and bool(imported)
                 )
                 and (
                     analyzer.language != "kotlin"
@@ -2404,7 +2405,7 @@ class NativeFlow:
         return not source_types or not self.class_owners(analyzer, spelling, use)
 
     def type_namespace_shadow(self, analyzer: Analyzer, spelling: str, use: Any) -> bool | None:
-        """Classifier lookup ignores proven value-only imports, unlike expression lookup."""
+        """Separate represented classifier roots from unresolved imported identities."""
         if not self.imported_namespace_shadow(analyzer, spelling, use, source_types=False):
             return False
         if analyzer.language != "kotlin":
@@ -2414,53 +2415,15 @@ class NativeFlow:
             analyzer, spelling.rsplit(".", 1)[0], use
         ):
             return True
-        if self.value_import_identities is None:
-            values = set()
+        if self.classifier_import_identities is None:
             classifiers = set(self.class_definitions)
             for name, bindings in self.module_type_aliases.items():
                 for source, _node in bindings:
                     namespace = self.namespaces[id(source)]
                     classifiers.add((namespace + "." if namespace else "") + name)
 
-            def value_only(source: Analyzer, owner: str, member: str) -> bool:
-                definitions = self.class_definitions.get(owner, ())
-                if not owner or len(definitions) != 1:
-                    return False
-                context, nominal = definitions[0]
-                return (
-                    context is source
-                    and member not in self.member_type_names(context, nominal)
-                    and self.known_ancestry(context, nominal, member)
-                )
-
-            for source, _root, nodes in self.files:
-                if source.language != "kotlin":
-                    continue
-                for node in nodes:
-                    if (
-                        node.type != "property_declaration"
-                        or node.parent is None
-                        or node.parent.type not in {"program", "source_file", "class_body"}
-                    ):
-                        continue
-                    namespace = self.owner(source, node)
-                    for name in self.property_binding_names(source, node):
-                        if value_only(source, namespace, name):
-                            values.add(namespace + "." + name)
-            for targets in self.by_name.values():
-                for target in targets:
-                    if (
-                        target.analyzer.language == "kotlin"
-                        and target.node.type == "function_declaration"
-                        and not self.lexical_function(target.node)
-                    ):
-                        if target.owner and value_only(target.analyzer, target.owner, target.name):
-                            values.add(target.owner + "." + target.name)
-            self.value_import_identities = frozenset(values - classifiers)
             self.classifier_import_identities = frozenset(classifiers)
         imported = self.imported_symbols(analyzer, root)
-        if imported and imported <= self.value_import_identities:
-            return None  # source members cannot exclude an overlapping binary package classifier
         if imported & self.classifier_import_identities:
             return True
         return None  # package-level value presence cannot close the binary classifier namespace
@@ -2592,22 +2555,6 @@ class NativeFlow:
                 return False
             bindings = analyzer.bound_parameter_arguments(source, primary, call)
             if bindings is None:
-                if call.trailing:
-                    required = sum(
-                        not any(token.type == "=" for token in parameter.children)
-                        for _name, _kind, parameter in parameters
-                    )
-                    labels = [
-                        analyzer.argument_label(argument)
-                        for argument in call.args
-                        if analyzer.argument_label(argument)
-                    ]
-                    if (
-                        required <= len(call.args) <= len(parameters)
-                        and len(labels) == len(set(labels))
-                        and set(labels) <= {name for name, _kind, _parameter in parameters}
-                    ):
-                        return False  # trailing lambdas can skip defaulted positional parameters
                 continue  # complete fixed signature proves an arity/label mismatch
             if analyzer.literal_string_argument_conflict(source, primary, call, frame=frame):
                 continue

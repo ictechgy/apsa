@@ -755,3 +755,18 @@ inherited value shadows with bounded, restored query state; a proven modeled
 Intent receiver can exclude unrelated source dispatch. Custom builder extension
 argument-write approximations identify their effect limit at the consuming call,
 so fixed-body candidates do not become checked through ownership alone.
+
+The effect limit also follows explicit plain-`this` chains and identifies each
+opaque inner contribution at its own call. Known builder members stay precise;
+foreign supplied callback receivers keep their own effect identity. A shared
+syntactic binder places one trailing lambda at the final non-vararg parameter,
+skipping defaults before it. Independent proven primitive/String conflicts still
+exclude impossible construction, while Any, SAM and unknown finals remain
+conservative.
+
+String extension compatibility now distinguishes known standard/source classifiers
+from unresolved imported/FQN identities, including binary aliases and Comparable
+arguments. Alias proofs retain declaration context, a 16-link cap and the complete
+selected name. Explicit Kotlin imports of represented default-package classifiers
+reach the source-type fence before exact-spelling library identity. The obsolete
+value-import inventory is removed; classifier import uncertainty remains intact.

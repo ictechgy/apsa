@@ -478,8 +478,12 @@ interfaces, inaccessible private nominal declarations or primary constructors,
 complete implicit/primary arity and labels, and proven primitive incompatibility.
 Private nested declarations are checked in their declaring owner's AST scope;
 top-level private declarations remain source-file scoped. These enclosing-gate
-queries stop after 64 nodes. A failed positional binder does not exclude a
-plausible trailing-lambda call that can skip defaulted parameters. A String argument does not by itself
+queries stop after 64 nodes. For a supported fixed signature, one syntactic
+trailing lambda binds to the final non-vararg parameter, skipping preceding
+defaults. The binder does not search backward past a final vararg. Independent
+String or literal-lambda incompatibility with a proven nonnull primitive/String
+parameter can exclude construction; lambdas are not blanket-excluded from Any,
+SAM interfaces or unknown types. A String argument does not by itself
 exclude an applicable Any or nullable String constructor. Secondary, companion,
 variadic and otherwise unmodeled construction remains unknown. Explicit `!!`
 syntax retains its nonnull proof before argument wrappers are removed.
@@ -498,6 +502,10 @@ twin. A consumed String-overload uncertainty is recorded at the affected call;
 up to eight declaration-origin locations supplement that detail. Optional queries
 do not emit this consumed uncertainty. Expression roots keep their stricter
 value-shadow rules. This distinction does not execute imported values.
+Kotlin explicit imports can identify represented default-package classifiers
+across source files. The imported root is checked before an exact qualified
+spelling supplies a library fact; Java/Swift and unimported/private source gates
+remain separate. The import cache inventories classifiers, not value absence.
 Represented builder extension candidates now check
 declaration visibility as capped candidates do; a supplied unrelated source class
 named StringBuilder does not establish the standard builder receiver identity.
@@ -510,6 +518,12 @@ member-extension candidates. Known builder members and top-level extensions keep
 separate, narrower dispatch approximations. A compatible custom builder extension
 is not proof of its write effects: treating its arguments as receiver writes
 records precision at that actual call, including fixed-body candidates.
+This also covers plain `this` and recognized implicit chains: each opaque link
+gets its own call location, while known outer builder members remain precise.
+Effect routing and diagnostics share the same supplied-object identity check;
+a foreign callback parameter cannot borrow an enclosing builder's receiver type.
+Labeled builder receivers retain a separate preexisting flow limit and are not
+covered by the plain-`this` chain repair.
 Queries inspect at
 most 64 active scope facts and check their source, function and lexical span;
 unknown ownership stays conservative at a consuming builder call. Scope exit and
@@ -533,6 +547,13 @@ For String extension receivers, unresolved classifier identity retains competiti
 it is not evidence of incompatibility. Intersection bounds preserve a separately
 proven incompatibility, while a proven alternative can establish compatibility.
 Query-local origin collectors are restored before consuming diagnostics are recorded.
+Unsupported imported or fully qualified classifiers, including binary typealiases,
+remain unknown. A pure declaration proof distinguishes established standard and
+source-nominal identities from unresolved names. Alias selection preserves its
+declaration context and stops after 16 links; ambiguity, cycles, and a qualified
+selection through only an alias prefix do not prove incompatibility. The same
+distinction applies to Comparable's argument. These proofs emit no diagnostics
+or callee effects themselves.
 CharSequence does not acquire Comparable or Serializable as known supertypes.
 Numeric Comparable argument compatibility remains conservative, so an incompatible
 generic extension can withhold a constructor fact. Some generic Number parameters

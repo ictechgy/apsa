@@ -5805,21 +5805,6 @@ class Analyzer:
             and self.supplied(call.receiver, frame)
             or (call.receiver is None and not bound_transform and self.implicit_write(call))
         )
-        if (
-            writes
-            and self.language == "kotlin"
-            and call.receiver is None
-            and owner is not None
-            and owner.receiver_types
-            and name not in owner.members
-            and self.native_flow is not None
-        ):
-            self.native_flow.partial(
-                "Kotlin custom builder extension effects unavailable",
-                self,
-                call=call,
-                classification_precision=True,
-            )
         # `append("<p>").append(q)` and `this.append(q)` write into the implicit receiver.
         chain = (
             []
@@ -5828,6 +5813,21 @@ class Analyzer:
         )
         if not writes and not chain and not targets and not handed_this:
             return
+        recipient = self.effect_owner(call.receiver if writes else None, frame)
+        if (
+            self.language == "kotlin"
+            and recipient is not None
+            and recipient.receiver_types
+            and self.native_flow is not None
+        ):
+            for contribution in [call] if writes else chain:
+                if contribution.name.rsplit(".", 1)[-1] not in recipient.members:
+                    self.native_flow.partial(
+                        "Kotlin custom builder extension effects unavailable",
+                        self,
+                        call=contribution,
+                        classification_precision=True,
+                    )
         # What the call writes into the supplied object is its data, whichever callee
         # runs (a followed project function of the same name returns nothing), what a
         # nested builder closure wrote into its own supplied object, and the result of a
@@ -9357,6 +9357,116 @@ class Analyzer:
             and self.builder_transform(call, frozenset({"StringBuilder"}), frame)
         )
 
+    def reference_type_aliases(
+        self, context: Analyzer, root: str, imported: set[str]
+    ) -> list[tuple[Analyzer, Any]]:
+        """Select represented aliases in declaration priority without emitting diagnostics."""
+        flow = self.native_flow
+        if flow is None:
+            return []
+        buckets: list[list[tuple[Analyzer, Any]]] = [[], [], [], []]
+        names = {root.rsplit(".", 1)[-1], *(name.rsplit(".", 1)[-1] for name in imported)}
+        for name in names:
+            for source, alias in flow.module_type_aliases.get(name, []):
+                if source.language != context.language:
+                    continue
+                if source is not context and flow.declaration_tokens(alias) & {"private", "fileprivate"}:
+                    continue
+                namespace = flow.namespaces[id(source)]
+                identity = (namespace + "." if namespace else "") + name
+                row = (source, alias)
+                if "." in root:
+                    if identity == root:
+                        buckets[0].append(row)
+                elif source is context and name == root:
+                    buckets[0].append(row)
+                elif imported:
+                    if identity in imported:
+                        buckets[1].append(row)
+                elif name == root:
+                    if namespace == flow.namespaces[id(context)]:
+                        buckets[2].append(row)
+                    elif namespace + ".*" in context.imports:
+                        buckets[3].append(row)
+        return next((bucket for bucket in buckets if bucket), [])
+
+    def reference_type_identity(
+        self,
+        spelling: str,
+        use: Any,
+        *,
+        context: Analyzer,
+        seen: frozenset[tuple[int, int]] = frozenset(),
+    ) -> tuple[str, bool, frozenset[tuple[str, int, str]]]:
+        """Pure standard/source classifier evidence; an unresolved name proves no exclusion."""
+        root = re.sub(r"\s+", "", context.canonical_type_spelling(spelling)).rstrip("?!").partition("<")[0]
+        origin = frozenset({(context.path, context.location(use)["line"], root)})
+        flow = self.native_flow
+        if not root or flow is None:
+            return "", False, origin
+        binding = flow.lexical_type(context, root, use)
+        imported = flow.imported_symbols(context, root, classes=True)
+        if binding is not None:
+            if binding.type in {"type_alias", "typealias_declaration"}:
+                name = _field(binding, "name") or next(
+                    (part for part in binding.named_children if part.type in IDENTIFIERS), None
+                )
+                if name is None or context.symbol_name(context.text(name)) != root:
+                    return "", False, origin
+                aliases = [(context, binding)]
+            else:
+                from .native_flow import NOMINAL_DECLARATIONS
+
+                nominal = binding.type in NOMINAL_DECLARATIONS and "." not in root
+                return "", nominal, frozenset() if nominal else origin
+        else:
+            aliases = self.reference_type_aliases(context, root, imported)
+        if aliases:
+            if len(aliases) != 1:
+                return "", False, origin
+            source, alias = aliases[0]
+            key = id(source), alias.id
+            declaration = frozenset({(source.path, source.location(alias)["line"], root)})
+            if key in seen or len(seen) >= 16:
+                return "", False, origin | declaration
+            equal = next((part for part in alias.children if part.type == "="), None)
+            target = next(
+                (
+                    part
+                    for part in alias.named_children
+                    if equal is not None and part.start_byte >= equal.end_byte
+                ),
+                None,
+            )
+            if target is None or target.type not in {"user_type", "nullable_type", "type_identifier"}:
+                return "", False, origin | declaration
+            canonical, nominal, unknown = self.reference_type_identity(
+                source.text(target), target, context=source, seen=seen | {key}
+            )
+            return canonical, nominal, unknown | declaration if unknown else unknown
+        if flow.class_owners(context, root, use):
+            return "", True, frozenset()
+        if flow.type_namespace_shadow(context, root, use) is not False:
+            return "", False, origin
+        known = {qualified for qualified, _default in KOTLIN_NONNULL_EXTENSION_ROOTS} | {"kotlin.Nothing"}
+        if root in known:
+            return root, False, frozenset()
+        if imported:
+            return (
+                (next(iter(imported)), False, frozenset())
+                if len(imported) == 1 and imported <= known
+                else ("", False, origin)
+            )
+        defaults = {
+            qualified
+            for qualified, default in KOTLIN_NONNULL_EXTENSION_ROOTS
+            if default and qualified.rsplit(".", 1)[-1] == root
+        }
+        if root == "Nothing":
+            defaults.add("kotlin.Nothing")
+        preferred = {qualified for qualified in defaults if qualified.startswith("kotlin.")} or defaults
+        return (next(iter(preferred)), False, frozenset()) if len(preferred) == 1 else ("", False, origin)
+
     def library_reference_type(
         self,
         kind: str,
@@ -9392,6 +9502,15 @@ class Analyzer:
             binding = flow.lexical_type(context, root, use)
             if binding is not None:
                 if binding.type in {"type_alias", "typealias_declaration"}:
+                    name = _field(binding, "name") or next(
+                        (part for part in binding.named_children if part.type in IDENTIFIERS), None
+                    )
+                    if name is None or context.symbol_name(context.text(name)) != root:
+                        if self.reference_type_evidence:
+                            self.reference_type_evidence[-1].add(
+                                (context.path, context.location(use)["line"], root)
+                            )
+                        return False
                     return self.library_alias_type(
                         context,
                         binding,
@@ -9421,31 +9540,7 @@ class Analyzer:
         imported = flow.imported_symbols(context, root, classes=True)
         if imported == {qualified}:
             return compatible_root()
-        buckets: list[list[tuple[Analyzer, Any]]] = [[], [], [], []]
-        names = {root.rsplit(".", 1)[-1], *(name.rsplit(".", 1)[-1] for name in imported)}
-        for name in names:
-            for source, alias in flow.module_type_aliases.get(name, []):
-                if source.language != context.language:
-                    continue
-                if source is not context and flow.declaration_tokens(alias) & {"private", "fileprivate"}:
-                    continue
-                namespace = flow.namespaces[id(source)]
-                identity = (namespace + "." if namespace else "") + name
-                row = (source, alias)
-                if "." in root:
-                    if identity == root:
-                        buckets[0].append(row)
-                elif source is context and name == root:
-                    buckets[0].append(row)
-                elif imported:
-                    if identity in imported:
-                        buckets[1].append(row)
-                elif name == root:
-                    if namespace == flow.namespaces[id(context)]:
-                        buckets[2].append(row)
-                    elif namespace + ".*" in context.imports:
-                        buckets[3].append(row)
-        aliases = next((bucket for bucket in buckets if bucket), [])
+        aliases = self.reference_type_aliases(context, root, imported)
         if aliases:
             if len(aliases) != 1:
                 flow.partial("callable argument type identity unresolved", self)
@@ -10102,6 +10197,14 @@ class Analyzer:
         bound = []
         used = set()
         after_variadic = False
+        trailing = (
+            len(call.args) - 1
+            if source.language == "kotlin"
+            and len(call.trailing) == 1
+            and call.args
+            and call.args[-1] == call.trailing[0]
+            else None
+        )
         for index, (name, kind, parameter) in enumerate(parameters):
             modifiers = parameter.prev_sibling
             while modifiers is not None and modifiers.type in COMMENTS:
@@ -10126,9 +10229,15 @@ class Analyzer:
             )
             if source.symbol_name(name) in named:
                 indices = [named[source.symbol_name(name)]]
+            elif trailing is not None and index == len(parameters) - 1 and not variadic:
+                indices = [trailing]
             elif variadic:
-                indices = [position for position in range(index, len(call.args)) if not labels[position]]
-            elif not after_variadic and index < len(labels) and not labels[index]:
+                indices = [
+                    position
+                    for position in range(index, len(call.args))
+                    if not labels[position] and (position != trailing or index == len(parameters) - 1)
+                ]
+            elif not after_variadic and index < len(labels) and index != trailing and not labels[index]:
                 indices = [index]
             else:
                 indices = []
@@ -10264,7 +10373,7 @@ class Analyzer:
     def literal_string_argument_conflict(
         self, source: Analyzer, function: Any, call: Call, *, frame: Frame | None = None
     ) -> bool:
-        """Exclude String-like arguments only after proving a nonnull primitive parameter."""
+        """Reject String/lambda expressions only against proven incompatible final types."""
         flow = self.native_flow
         if flow is None or source.language != "kotlin":
             return False
@@ -10301,10 +10410,28 @@ class Analyzer:
                         "UShort",
                     )
                 )
-                if primitive and any(
-                    self.established_argument_type(argument, frame, qualified)
-                    for argument in arguments
-                    for qualified in KOTLIN_MODEL_TYPES["String"]
+                if (
+                    any(self.closure_argument(argument) is not None for argument in arguments)
+                    and (
+                        primitive
+                        or any(
+                            self.library_reference_type(
+                                spelling,
+                                parameter,
+                                qualified,
+                                default_import=True,
+                                context=source,
+                                require_nonnullable=True,
+                            )
+                            for qualified in KOTLIN_MODEL_TYPES["String"]
+                        )
+                    )
+                    or primitive
+                    and any(
+                        self.established_argument_type(argument, frame, qualified)
+                        for argument in arguments
+                        for qualified in KOTLIN_MODEL_TYPES["String"]
+                    )
                 ):
                     return True
             return False
@@ -12389,7 +12516,20 @@ class Analyzer:
                 if not self.library_reference_type(
                     text, use, "kotlin.Comparable", default_import=True, context=source, expanded=expanded
                 ):
-                    return None if unknown else False
+                    identity, nominal, origins = self.reference_type_identity(text, use, context=source)
+                    unknown.update(origins)
+                    compatible = {
+                        "kotlin.String",
+                        "java.lang.String",
+                        "kotlin.CharSequence",
+                        "java.lang.CharSequence",
+                        "kotlin.Any",
+                        "java.lang.Object",
+                        "java.io.Serializable",
+                        "kotlin.Comparable",
+                        "java.lang.Comparable",
+                    }
+                    return False if nominal or identity and identity not in compatible else None
                 if expanded:
                     return True  # alias arguments remain opaque; the consumer records precision
                 match = re.search(r"<(.+)>", text)
@@ -12406,7 +12546,10 @@ class Analyzer:
                 for kind in ("kotlin.String", "kotlin.Nothing"):
                     if self.library_reference_type(argument, use, kind, default_import=True, context=source):
                         return True
-                return None if unknown else False
+                identity, nominal, origins = self.reference_type_identity(argument, use, context=source)
+                unknown.update(origins)
+                compatible = {"kotlin.String", "java.lang.String", "kotlin.Nothing"}
+                return False if nominal or identity and identity not in compatible else None
             finally:
                 self.reference_type_evidence.pop()
 
@@ -12892,6 +13035,24 @@ class Analyzer:
                     effects.names[name] = frame.values[name]
                 return
 
+    def effect_owner(self, target: Any, frame: Frame, *, receiverless: bool = True) -> ClosureEffects | None:
+        """Read the exact existing recipient of an effect without changing closure state."""
+        if target is None:
+            return (
+                next((effects for effects in reversed(self.closure_effects) if effects.implicit), None)
+                if receiverless
+                else None
+            )
+        root = self.effect_root(target)
+        if root is None:
+            return None
+        name = self.symbol_name(self.text(root))
+        for effects in reversed(self.closure_effects):
+            bound = effects.names.get(name)
+            if bound is not None:
+                return effects if frame.values.get(name) is bound else None
+        return None
+
     def record_effect(
         self,
         target: Any,
@@ -12903,25 +13064,10 @@ class Analyzer:
         """Note a value passed to a call on, or written into, a followed closure's supplied object."""
         if not value.traces:
             return
-        if target is None:
-            if receiverless:
-                for effects in reversed(self.closure_effects):
-                    if effects.implicit:
-                        effects.values.append(value)
-                        effects.expressions.extend(expressions)
-                        return
-            return
-        root = self.effect_root(target)
-        if root is None:
-            return
-        name = self.symbol_name(self.text(root))
-        for effects in reversed(self.closure_effects):
-            bound = effects.names.get(name)
-            if bound is not None:
-                if frame.values.get(name) is bound:
-                    effects.values.append(value)
-                    effects.expressions.extend(expressions)
-                return
+        effects = self.effect_owner(target, frame, receiverless=receiverless)
+        if effects is not None:
+            effects.values.append(value)
+            effects.expressions.extend(expressions)
 
     def closure_parameters(self, node: Any) -> list[tuple[str, str, int]]:
         """Declared closure parameters as (name, declared type, position); `_` binds nothing."""
