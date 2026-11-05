@@ -9364,6 +9364,8 @@ class Analyzer:
                 if binding.type in {"type_parameter", "type_constraint"} and not flow.type_hint_depth:
                     flow.partial("callable argument type identity unresolved", self)
                 return False
+        if flow is not None and flow.imported_namespace_shadow(context, root, use, source_types=False):
+            return False
         if root == qualified:
             return compatible_root()
         simple = qualified.rsplit(".", 1)[-1]
@@ -9997,14 +9999,22 @@ class Analyzer:
             return None
         return context, origin, element.removeprefix("out ").strip()
 
-    def literal_string_argument_conflict(self, source: Analyzer, function: Any, call: Call) -> bool:
-        """Exclude a positional literal String only with a proven primitive parameter."""
+    def literal_string_argument_conflict(
+        self, source: Analyzer, function: Any, call: Call, *, frame: Frame | None = None
+    ) -> bool:
+        """Exclude established String arguments only for proven incompatible parameters."""
         flow = self.native_flow
-        if flow is None or source.language != "kotlin" or any(self.argument_label(arg) for arg in call.args):
+        if flow is None or source.language != "kotlin":
             return False
-        for index, (_name, kind, parameter) in enumerate(source.parameters(function)):
-            if index >= len(call.args):
-                break
+        parameters = source.parameters(function)
+        labels = [self.argument_label(argument) for argument in call.args]
+        named = {label: argument for label, argument in zip(labels, call.args, strict=True) if label}
+        if len(named) != sum(bool(label) for label in labels) or named.keys() - {
+            source.symbol_name(name) for name, _kind, _parameter in parameters
+        }:
+            return False
+        after_variadic = False
+        for index, (name, kind, parameter) in enumerate(parameters):
             modifiers = parameter.prev_sibling
             while modifiers is not None and modifiers.type in COMMENTS:
                 modifiers = modifiers.prev_sibling
@@ -10016,11 +10026,28 @@ class Analyzer:
                     for child in modifiers.children
                 )
             )
-            arguments = call.args[index:] if variadic else call.args[index : index + 1]
+            if source.symbol_name(name) in named:
+                arguments = [named[source.symbol_name(name)]]
+            elif variadic:
+                arguments = [
+                    argument
+                    for label, argument in zip(labels[index:], call.args[index:], strict=True)
+                    if not label
+                ]
+            elif not after_variadic and index < len(labels) and not labels[index]:
+                arguments = call.args[index : index + 1]
+            else:
+                arguments = []
+            after_variadic = after_variadic or variadic
             strings = any(
-                (node := self.unwrap(argument)) is not None
-                and node.type in TEXT_LITERALS
-                and self.text(node).lstrip().startswith('"')
+                (
+                    (node := self.unwrap(argument)) is not None
+                    and node.type in TEXT_LITERALS
+                    and self.text(node).lstrip().startswith('"')
+                )
+                or frame is not None
+                and self.known_value_type(argument, frame, depth=flow.type_hint_depth)
+                in {"String", "kotlin.String"}
                 for argument in arguments
             )
             if kind and strings:
@@ -10069,7 +10096,7 @@ class Analyzer:
                         return True
                 finally:
                     flow.type_hint_depth = depth
-            if variadic:
+            if variadic and not named:
                 break
         return False
 
@@ -11027,7 +11054,10 @@ class Analyzer:
                 return False
 
         if kind is None:
-            kind = self.standard_reference_kind(node, frame) or self.known_value_type(node, frame, depth + 1)
+            standard = self.standard_reference_kind(node, frame)
+            if standard == qualified:
+                return True  # an origin-proven identity is not a new declaration spelling
+            kind = standard or self.known_value_type(node, frame, depth + 1)
         if not kind:
             if self.native_flow is not None:
                 self.native_flow.partial("callable argument type identity unresolved", self)
@@ -11639,6 +11669,7 @@ class Analyzer:
             )
             receiver_nullable: bool | None = None
             receiver_nonnull = False
+            receiver_capped = False
             for _ in range(16):
                 if receiver is None or receiver.type not in {
                     "parenthesized_type",
@@ -11674,6 +11705,7 @@ class Analyzer:
                     "nullable_type",
                     "non_nullable_type",
                 }:
+                    receiver_capped = True
                     receiver = None
             unknown_receiver = (
                 receiver is None
@@ -11683,9 +11715,11 @@ class Analyzer:
                     for child in target.node.children
                 )
             )
-            if receiver is None and not (unknown_receiver and (visible or nullable_receiver)):
+            if receiver is None and not (
+                unknown_receiver and (visible or nullable_receiver or receiver_capped)
+            ):
                 continue
-            if visible:
+            if visible or receiver is None and not nullable_receiver:
                 if not self.native_flow.lexical_visible(self, target, call, allow_extensions=True):
                     continue
                 labels = [
@@ -11712,6 +11746,8 @@ class Analyzer:
                 elif not self.native_flow.top_level_visible(self, target, name):
                     continue
             if receiver is None:
+                if not visible and not nullable_receiver and not self.native_flow.type_hint_depth:
+                    self.native_flow.partial("callable argument type identity unresolved", self, call=call)
                 if callable_heads is not None:
                     callable_heads.add(target.node.id)
                 return True  # represented extension syntax, unresolved receiver compatibility

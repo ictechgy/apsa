@@ -2306,7 +2306,7 @@ class NativeFlow:
             ):
                 return None
             if call.node.type != "object_creation_expression" and self.qualified_callable_present(
-                analyzer, call, namespace
+                analyzer, call, namespace, frame=frame
             ):
                 return None
             name = namespace + "." + name
@@ -2394,7 +2394,9 @@ class NativeFlow:
         # A represented source type still permits its own nested-type/member lookup.
         return not source_types or not self.class_owners(analyzer, spelling, use)
 
-    def qualified_callable_present(self, analyzer: Analyzer, call: Call, namespace: str) -> bool:
+    def qualified_callable_present(
+        self, analyzer: Analyzer, call: Call, namespace: str, *, frame: Frame | None = None
+    ) -> bool:
         """A represented ordinary namespace member competes before allocation heuristics."""
         owners = self.class_owners(analyzer, namespace, call.node)
         classes = {ancestor for owner in owners for ancestor in self.project_ancestry(owner)}
@@ -2420,10 +2422,16 @@ class NativeFlow:
                 continue
             if (
                 self.lexical_visible(analyzer, target, call)
-                and target.analyzer.accepts_arguments(target.node, len(call.args))
+                and (
+                    target.analyzer.accepts_arguments(target.node, len(call.args))
+                    if target.analyzer.language == "kotlin"
+                    else self.signature_visible(analyzer, target, call)
+                )
                 and len(labels) == len(set(labels))
                 and set(labels) <= {name for name, _kind, _node in target.parameters}
-                and not analyzer.literal_string_argument_conflict(target.analyzer, target.node, call)
+                and not analyzer.literal_string_argument_conflict(
+                    target.analyzer, target.node, call, frame=frame
+                )
             ):
                 return True
         return False

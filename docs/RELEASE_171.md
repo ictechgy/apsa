@@ -704,3 +704,14 @@ Nullable/DNN exclusion applies only to queries carrying the proven nullable
 subject. Inferred library-reference factory returns remain a documented precision
 limit; a fixed-runtime control now has a diagnosed candidate rather than clearance
 based on its qualified spelling.
+
+Nominal library identity now checks the declaring file's source and import roots,
+including parameters, locals, fields, cross-file returns and root-package classifier
+collisions. Already proven standard-reference origins remain distinct from raw
+type spellings, preserving genuine renamed imports. Qualified Java ordinary
+callables use their own signature syntax. Kotlin named arguments and bounded known
+String values retain primitive incompatibility when competing with a source
+constructor. Capped builder receivers keep visible declarations competing and
+anchor consumed uncertainty at the affected call; unrelated function receivers
+remain excluded. These changes do not establish general overload ranking or
+arbitrary inherited-object/instance-field execution.

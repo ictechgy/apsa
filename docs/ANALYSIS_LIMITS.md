@@ -436,8 +436,11 @@ supply a proven nullable subject exclude a proven bare definitely-non-null
 receiver. Other head queries can remain conservative; this is not a whole-program
 nullable-overload proof. The unwrap bound accepts 16 wrappers when the resulting
 terminal is represented. Unsupported or capped shapes compete in visible head
-and nullable queries rather than establishing head absence. An unrelated unknown
-receiver is not introduced into the separate builder receiver lookup.
+and nullable queries rather than establishing head absence. A capped receiver can
+also compete in builder lookup only when its source declaration is visible to the
+caller. Consuming that unknown compatibility records precision at the builder
+call. Uncapped unsupported receiver shapes remain excluded from that builder
+lookup, preserving unrelated function-receiver controls.
 The source-type namespace exception checks the complete written qualifier.
 Represented ordinary qualified source callables can veto uppercase allocation
 heuristics using declaration visibility, arity, labels and literal incompatibility,
@@ -452,6 +455,19 @@ control loses its earlier spelling-based apparent clearance under this stricter
 rule. That is a precision limit, not restored factory-return inference.
 Qualified Kotlin array factories check the complete call head, so an object-member
 value imported as kotlin cannot become the standard kotlin.Array factory.
+Nominal library facts check qualified source/import roots in the type declaration's
+own context, including parameter, local, field and cross-file return declarations.
+A represented source classifier can textually collide with a library FQN without
+becoming that library type. An identity already proven by the standard-reference
+query retains its origin; its canonical FQN is not reparsed as a new type spelling
+under an unrelated expression import. This preserves genuine renamed imports.
+Qualified ordinary callables use their language's represented signature syntax;
+the fixed-arity Java method path does not read Kotlin parameter nodes. Kotlin
+String-to-primitive incompatibility binds named arguments to declaration names,
+preserving positional/default/vararg distinctions. Its qualified-call query can
+also use bounded established String facts from the actual caller frame, without
+reevaluating arguments. Unknown contexts may abstain; this is not general overload
+ranking or compiler-wide applicability inference.
 Type-parameter extension receivers use their represented bounds without a
 redundant library-identity probe that would diagnose an already rejected candidate.
 Head queries follow inline/where bounds and parameter chains for at most 16 links,
