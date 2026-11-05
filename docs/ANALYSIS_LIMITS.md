@@ -529,7 +529,8 @@ other scopes cannot re-enter that proof through a leaf-name union. A dedicated
 canonical table covers the already modeled builder receivers and their writable
 supertypes, including Appendable and collection receivers; bounded type parameters
 use their declaration-context constraints. Every represented upper bound must be
-accounted for; function-typed or unsupported constraints cannot be silently dropped
+accounted for; syntax comments are excluded from this inventory and its bound
+allowance. Function-typed or unsupported constraints cannot be silently dropped
 to obtain positive builder proof. Root-level candidacy does not establish general
 generic argument substitution or overload selection. This adds attribution proof,
 not new builder execution. Callable aliases are visited in stable order in attribution

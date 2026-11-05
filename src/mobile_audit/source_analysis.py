@@ -12398,7 +12398,9 @@ class Analyzer:
                             bounds.extend(
                                 part
                                 for part in declaration.named_children
-                                if colon is not None and part.start_byte >= colon.end_byte
+                                if colon is not None
+                                and part.start_byte >= colon.end_byte
+                                and part.type not in COMMENTS
                             )
                 if len(bounds) > 16:
                     return False

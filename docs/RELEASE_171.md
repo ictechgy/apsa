@@ -800,7 +800,8 @@ builder contributions retain precision even without a represented extension.
 Their reason uses declaration-context and selected-alias receiver proof rather
 than collecting every alias with the same leaf name. Canonical attribution covers
 existing builder supertypes and collection forms; every represented upper bound
-must be accounted for, including constraints that prevent positive proof. A
+must be accounted for, including constraints that prevent positive proof. Comments
+are syntax trivia and do not enter that bound inventory or consume its allowance. A
 function-typed bound cannot be dropped. Candidacy stays at receiver-root granularity,
 with general generic substitution and overload selection outside that claim.
 Attribution alias order is stable. Optional attribution is limited to 64 queries and 64 visited candidates

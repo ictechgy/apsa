@@ -37574,3 +37574,205 @@ def test_review48_compiler_sql_truth_remains_separate_from_type_and_label_oracle
     assert not any(r.get("parse_errors") for r in report["metadata"]["files"])
     assert not report["metadata"]["native_flow"]["budget_reasons"]
     assert _hit(report, SQL) is (program in {"function_bound", "appendable_bound"})
+
+
+# _REVIEW49: comment trivia never participates in represented generic upper bounds.
+
+_REVIEW49_PROGRAMS = {
+    "plain": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T> T.reverse():T where T:Appendable { return this }\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "where_block_comment": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T> T.reverse():T where T: /* receiver must be writable */ Appendable { "
+            "return this }\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "inline_block_comment": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T: /* receiver must be writable */ Appendable> T.reverse():T { return "
+            "this }\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "where_line_comment": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T> T.reverse():T where T: // receiver must be writable\n"
+            " Appendable { return this }\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "mixed_function": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T> T.reverse():T where T:Appendable, T:()->Unit { return this }\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "inline_line_comment": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T: // writable receiver\n"
+            " Appendable> T.reverse():T { return this }\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "commented_mixed_function": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T> T.reverse():T where T: /* writable */ Appendable, T: /* function "
+            "required */ ()->Unit { return this }\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "many_comments": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T> T.reverse():T where T: /* trivia0 */ /* trivia1 */ /* trivia2 */ /* trivia3 "
+            "*/ /* trivia4 */ /* trivia5 */ /* trivia6 */ /* trivia7 */ /* trivia8 */ /* trivia9 "
+            "*/ /* trivia10 */ /* trivia11 */ /* trivia12 */ /* trivia13 */ /* trivia14 */ /* "
+            "trivia15 */ /* trivia16 */ /* trivia17 */ /* trivia18 */ /* trivia19 */ Appendable "
+            "{ return this }\n"
+            "fun scan(intent:Intent, db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+}
+
+_REVIEW49_EXPECTED = {
+    "plain": True,
+    "where_block_comment": True,
+    "inline_block_comment": True,
+    "where_line_comment": True,
+    "mixed_function": False,
+    "inline_line_comment": True,
+    "commented_mixed_function": False,
+    "many_comments": True,
+}
+
+
+@pytest.mark.parametrize("program", list(_REVIEW49_PROGRAMS))
+def test_review49_only_real_upper_bounds_control_candidate_attribution(monkeypatch, program):
+    original = Analyzer.project_extension
+    seen = []
+
+    def project(self, name, call, receivers, **kwargs):
+        result = original(self, name, call, receivers, **kwargs)
+        if name == "reverse" and getattr(self, "builder_label_query_active", False):
+            assert result is _REVIEW49_EXPECTED[program]
+            seen.append((self.location(call.node)["line"], self.location(call.node)["column"]))
+        return result
+
+    monkeypatch.setattr(Analyzer, "project_extension", project)
+    report = analyze_sources(_REVIEW49_PROGRAMS[program])
+    assert len(seen) == 1 and _hit(report, SQL) and _state(report, SQL) == "limited"
+    assert not any(row.get("parse_errors") for row in report["metadata"]["files"])
+    flow = report["metadata"]["native_flow"]
+    assert not flow["budget_reasons"]
+    expected = (
+        "Kotlin custom builder extension effects unavailable"
+        if _REVIEW49_EXPECTED[program]
+        else "Kotlin builder chain effects unavailable"
+    )
+    labels = [d for d in flow["partial_details"] if d.get("call") == "reverse"]
+    assert labels and all(d["reason"] == expected and d["kind"] == "precision" for d in labels)
+    assert all((d["line"], d["column"]) == seen[0] for d in labels)
+
+
+@pytest.mark.parametrize("mode", [0, 9])
+@pytest.mark.parametrize("program", ["many_comments", "commented_mixed_function"])
+def test_review49_comment_filter_preserves_complete_bound_query_purity(monkeypatch, program, mode):
+    original = Analyzer.record_visited
+    active = False
+    seen = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("bound fact query evaluated or consumed uncertainty")
+
+    def record(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if active or self.scope != "scan" or call.name != "reverse":
+            return result
+        active = True
+        flow = self.native_flow
+        depth = flow.type_hint_depth
+        try:
+            flow.type_hint_depth = mode
+            target = next(t for t in flow.by_name["reverse"] if not t.owner)
+            receiver = next(p for p in target.node.named_children if target.analyzer.text(p) == "T")
+            before = _review47_snapshot(self, frame)
+            with monkeypatch.context() as query:
+                query.setattr(self, "value", forbidden)
+                query.setattr(flow, "partial", forbidden)
+                assert (
+                    self.builder_receiver_compatible(
+                        target.analyzer, receiver, {"StringBuilder", "Appendable"}
+                    )
+                    is _REVIEW49_EXPECTED[program]
+                )
+            assert before == _review47_snapshot(self, frame)
+            seen.append(True)
+        finally:
+            flow.type_hint_depth = depth
+            active = False
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW49_PROGRAMS[program])
+    assert seen and _hit(report, SQL) and not report["metadata"]["native_flow"]["budget_reasons"]
