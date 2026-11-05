@@ -17672,3 +17672,678 @@ def test_review32_nullable_origin_and_lexical_constructor_evidence(
             and row.get("line") == 7
             for row in details
         ), details
+
+
+# Compiler/runtime-accepted R32 adversarial and post-review calibration fixtures.
+_REVIEW33_PROGRAMS = {
+    "review32-01-nullable-origin-aliases": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import fresh.proofs.kinds.NullableText as Long\n"
+            "import fresh.proofs.kinds.FixedText as Regex\n"
+            "class Other\n"
+            "class Box { val value:Long=null }\n"
+            "class AliasThis(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun Any?.toString():Other=Other()\n"
+            " private val origin:Long=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  this.origin.toString().run { db.execSQL(trim()) } // "
+            "ROW:1101\n"
+            " }\n"
+            "}\n"
+            "class AliasParen(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun Any?.toString():Other=Other()\n"
+            " private val origin:Long=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  ((origin)).toString().run { db.execSQL(trim()) } // "
+            "ROW:1102\n"
+            " }\n"
+            "}\n"
+            "class AliasCast(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun Any?.toString():Other=Other()\n"
+            " private val origin:Long=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  (origin as kotlin.String?).toString().run { "
+            "db.execSQL(trim()) } // ROW:1103\n"
+            " }\n"
+            "}\n"
+            "class AliasCopy(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun Any?.toString():Other=Other()\n"
+            " private val origin:Long=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  val copy=this.origin; copy.toString().run { "
+            "db.execSQL(trim()) } // ROW:1104\n"
+            " }\n"
+            "}\n"
+            "class AliasMember(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun Any?.toString():Other=Other()\n"
+            " private val box=Box()\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  box.value.toString().run { db.execSQL(trim()) } // "
+            "ROW:1105\n"
+            " }\n"
+            "}\n"
+            "class AliasFixed(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun Any?.toString():Other=Other()\n"
+            ' private val origin:Regex="fixed"\n'
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.toString().run { db.execSQL(trim()) } // "
+            "ROW:1106\n"
+            " }\n"
+            "}\n"
+            "class AliasAsserted(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun Any?.toString():Other=Other()\n"
+            ' private val origin:Long="fixed"\n'
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin!!.toString().run { db.execSQL(trim()) } // "
+            "ROW:1107\n"
+            " }\n"
+            "}\n",
+        ),
+        (
+            "Kinds.kt",
+            "package fresh.proofs.kinds\n"
+            "typealias NullableText=kotlin.String?\n"
+            "typealias FixedText=kotlin.String\n",
+        ),
+    ],
+    "review32-02-extension-applicability": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class Other\n"
+            "typealias NullableNumber=kotlin.Number?\n"
+            "class NullableNumberExtension(private val "
+            "db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun kotlin.Number?.toString():Other=Other()\n"
+            " private val origin:kotlin.Int?=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.toString().run { db.execSQL(trim()) } // "
+            "ROW:1201\n"
+            " }\n"
+            "}\n"
+            "class NonnullNumberExtension(private val "
+            "db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun kotlin.Number.toString():Other=Other()\n"
+            " private val origin:kotlin.Int?=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.toString().run { db.execSQL(trim()) } // "
+            "ROW:1202\n"
+            " }\n"
+            "}\n"
+            "class NullableCharsExtension(private val "
+            "db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun "
+            "kotlin.CharSequence?.toString():Other=Other()\n"
+            " private val origin:kotlin.String?=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.toString().run { db.execSQL(trim()) } // "
+            "ROW:1203\n"
+            " }\n"
+            "}\n"
+            "class NonnullCharsExtension(private val "
+            "db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun "
+            "kotlin.CharSequence.toString():Other=Other()\n"
+            " private val origin:kotlin.String?=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.toString().run { db.execSQL(trim()) } // "
+            "ROW:1204\n"
+            " }\n"
+            "}\n"
+            "class NullableAliasExtension(private val "
+            "db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun NullableNumber.toString():Other=Other()\n"
+            " private val origin:kotlin.Int?=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.toString().run { db.execSQL(trim()) } // "
+            "ROW:1205\n"
+            " }\n"
+            "}\n"
+            "class NonnullExactExtension(private val "
+            "db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun kotlin.Int.toString():Other=Other()\n"
+            " private val origin:kotlin.Int?=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.toString().run { db.execSQL(trim()) } // "
+            "ROW:1206\n"
+            " }\n"
+            "}\n"
+            "class DistinctFinalExtension(private val "
+            "db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun kotlin.String?.toString():Other=Other()\n"
+            " private val origin:kotlin.Int?=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.toString().run { db.execSQL(trim()) } // "
+            "ROW:1207\n"
+            " }\n"
+            "}\n"
+            "class NonnullSerializableExtension(private val "
+            "db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private fun "
+            "java.io.Serializable.toString():Other=Other()\n"
+            " private val origin:kotlin.String?=null\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.toString().run { db.execSQL(trim()) } // "
+            "ROW:1208\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "review32-03-constructor-heads": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class Other { fun label():Other=Other() }\n"
+            "class Defaulted(val n:Int=17) { fun "
+            'label():kotlin.String="fixed" }\n'
+            "class Secondary private constructor(n:Int) {\n"
+            " constructor():this(17)\n"
+            ' fun label():kotlin.String="fixed"\n'
+            "}\n"
+            "class Varargs(vararg val n:Int) { fun "
+            'label():kotlin.String="fixed" }\n'
+            "class PrivateCtor private constructor() {\n"
+            ' fun label():kotlin.String="fixed"\n'
+            " companion object { operator fun invoke():Other=Other() }\n"
+            "}\n"
+            "object Lexical {\n"
+            " val Defaulted:()->Other={Other()}\n"
+            "class HeadNotes(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private val origin=Defaulted()\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.label().run { db.execSQL(trim()) } // ROW:1304\n"
+            " }\n"
+            "}\n"
+            "}\n"
+            "class DefaultNotes(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private val origin=Defaulted()\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.label().run { db.execSQL(trim()) } // ROW:1301\n"
+            " }\n"
+            "}\n"
+            "class SecondaryNotes(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private val origin=Secondary()\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.label().run { db.execSQL(trim()) } // ROW:1302\n"
+            " }\n"
+            "}\n"
+            "class VarargNotes(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private val origin=Varargs()\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.label().run { db.execSQL(trim()) } // ROW:1303\n"
+            " }\n"
+            "}\n"
+            "class PrivateNotes(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private val origin=PrivateCtor()\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.label().run { db.execSQL(trim()) } // ROW:1305\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "review32-04-singleton-captured-heads": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class Other { fun label():Other=Other() }\n"
+            'class Thing { fun label():kotlin.String="fixed" }\n'
+            "object Global {\n"
+            " val Thing:()->Other={Other()}\n"
+            " class Middle {\n"
+            "class SingletonNotes(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private val origin=Thing()\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.label().run { db.execSQL(trim()) } // "
+            "ROW:1401\n"
+            " }\n"
+            "}\n"
+            "}\n"
+            "}\n"
+            "class Ordinary {\n"
+            " val Thing:()->Other={Other()}\n"
+            " class Middle {\n"
+            "class StaticNotes(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            " private val origin=Thing()\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  origin.label().run { db.execSQL(trim()) } // "
+            "ROW:1402\n"
+            " }\n"
+            "}\n"
+            "}\n"
+            "}\n"
+            "open class HeadBase { val Thing:()->Other={Other()} }\n"
+            "fun localCase(intent:Intent,db:SQLiteDatabase) {\n"
+            " val Thing:()->Other={Other()}\n"
+            " class Captured {\n"
+            '  private var captured=""\n'
+            "  private fun trim():kotlin.String=captured\n"
+            "  private val origin=Thing()\n"
+            "  fun scan() {\n"
+            '   captured=intent.getStringExtra("q") ?: ""\n'
+            "   origin.label().run { db.execSQL(trim()) } // "
+            "ROW:1403\n"
+            "  }\n"
+            " }\n"
+            " Captured().scan()\n"
+            "}\n"
+            "fun anonymousCase(intent:Intent,db:SQLiteDatabase) {\n"
+            " val notes=object:HeadBase() {\n"
+            '  private var captured=""\n'
+            "  private fun trim():kotlin.String=captured\n"
+            "  private val origin=Thing()\n"
+            "  fun scan() {\n"
+            '   captured=intent.getStringExtra("q") ?: ""\n'
+            "   origin.label().run { db.execSQL(trim()) } // "
+            "ROW:1404\n"
+            "  }\n"
+            " }\n"
+            " notes.scan()\n"
+            "}\n",
+        )
+    ],
+    "review32-05-diagnostic-consumption": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class UnusedNotes(private val db:SQLiteDatabase) {\n"
+            " fun scan(intent:Intent) {\n"
+            "  val letter:Char='x'\n"
+            "  val unused=(letter).toString()\n"
+            '  db.execSQL("fixed") // ROW:1501\n'
+            " }\n"
+            "}\n"
+            "class ThreadNotes(private val db:SQLiteDatabase) {\n"
+            ' private fun trim():kotlin.String="fixed"\n'
+            " fun scan(intent:Intent) {\n"
+            '  val q=intent.getStringExtra("q") ?: ""\n'
+            "  val "
+            'worker:java.lang.Thread=java.lang.Thread("synthetic-"+q)\n'
+            "  val result=worker.toString()\n"
+            "  result.run { db.execSQL(trim()) } // ROW:1502\n"
+            " }\n"
+            "}\n"
+            "class RegexNotes(private val db:SQLiteDatabase) {\n"
+            ' private val original="unmatched".toRegex()\n'
+            " private val retained=original\n"
+            " private val pattern=retained\n"
+            " fun scan(intent:Intent) {\n"
+            '  val q=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") {\n'
+            "   buildString {\n"
+            "    append(q)\n"
+            '    db.execSQL(replace(pattern,"unused")) // ROW:1503\n'
+            "   }\n"
+            "  }\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "review32-06-query-isolation": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class QueryNotes(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            ' private fun initialize():kotlin.String? { captured="CLEARED"; '
+            "return null }\n"
+            " private val origin=initialize()\n"
+            " private val mirror=origin\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  mirror.run { db.execSQL(trim()) } // ROW:1601\n"
+            " }\n"
+            "}\n"
+            "class FixedNotes(private val db:SQLiteDatabase) {\n"
+            ' private var captured=""\n'
+            " private fun trim():kotlin.String=captured\n"
+            ' private val origin="fixed"\n'
+            " private val mirror=origin\n"
+            " fun scan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            "  mirror.run { db.execSQL(trim()) } // ROW:1602\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "claude32-01-inherited-singleton-head": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class Other { fun label():Other=Other() }\n"
+            'class Thing { fun label():kotlin.String="fixed" }\n'
+            "open class Base { val Thing:()->Other={Other()} }\n"
+            "object SingletonOuter:Base() {\n"
+            " class Notes(private val db:SQLiteDatabase) {\n"
+            '  private var captured=""\n'
+            "  private fun trim():kotlin.String=captured\n"
+            "  private val value=Thing()\n"
+            "  fun scan(intent:Intent) {\n"
+            '   captured=intent.getStringExtra("q") ?: ""\n'
+            "   value.label().run { db.execSQL(trim()) } // "
+            "ROW:33011\n"
+            "  }\n"
+            " }\n"
+            "}\n"
+            "class OrdinaryOuter:Base() {\n"
+            " class Notes(private val db:SQLiteDatabase) {\n"
+            '  private var captured=""\n'
+            "  private fun trim():kotlin.String=captured\n"
+            "  private val value=Thing()\n"
+            "  fun scan(intent:Intent) {\n"
+            '   captured=intent.getStringExtra("q") ?: ""\n'
+            "   value.label().run { db.execSQL(trim()) } // "
+            "ROW:33012\n"
+            "  }\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "claude32-02-ordinary-companion": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class Host {\n"
+            " companion object {\n"
+            "  fun scan(db:SQLiteDatabase,intent:Intent) {\n"
+            '   listOf(intent.getStringExtra("q") ?: "").forEach {\n'
+            "    run { db.execSQL(it) } // ROW:33021\n"
+            "   }\n"
+            "  }\n"
+            " }\n"
+            "}\n"
+            "fun plainScan(db:SQLiteDatabase,intent:Intent) {\n"
+            ' listOf(intent.getStringExtra("q") ?: "").forEach {\n'
+            "  run { db.execSQL(it) } // ROW:33022\n"
+            " }\n"
+            "}\n",
+        )
+    ],
+    "claude32-03-extension-implicit-locale": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import java.util.Locale\n"
+            'class FakeLocale { val US:kotlin.String="fake-us" }\n'
+            "class Source(val db:SQLiteDatabase) {\n"
+            " val Locale=FakeLocale()\n"
+            ' var captured:kotlin.String=""\n'
+            " fun "
+            "format(locale:kotlin.String):kotlin.String=captured\n"
+            " fun memberScan(intent:Intent) {\n"
+            '  captured=intent.getStringExtra("q") ?: ""\n'
+            '  with("fixed") { '
+            "db.execSQL(format(locale=Locale.US)) } // ROW:33033\n"
+            " }\n"
+            "}\n"
+            "fun Source.scan(intent:Intent) {\n"
+            ' captured=intent.getStringExtra("q") ?: ""\n'
+            ' with("fixed") { db.execSQL(format(locale=Locale.US)) '
+            "} // ROW:33031\n"
+            "}\n"
+            "fun Source.standardControl(intent:Intent) {\n"
+            ' captured=intent.getStringExtra("q") ?: ""\n'
+            ' with("fixed") { '
+            "db.execSQL(format(locale=java.util.Locale.US)) } // "
+            "ROW:33032\n"
+            "}\n",
+        )
+    ],
+    "claude32-04-unused-generic-extension": [
+        (
+            "Caller.kt",
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "class GenericNotes(private val db:SQLiteDatabase) {\n"
+            ' private fun<T>T?.toString():kotlin.String="x"\n'
+            " fun scan(intent:Intent) {\n"
+            '  val unused="fixed".toString()\n'
+            '  db.execSQL("fixed") // ROW:33041\n'
+            " }\n"
+            "}\n"
+            "class PlainNotes(private val db:SQLiteDatabase) {\n"
+            " fun scan(intent:Intent) {\n"
+            '  val unused="fixed".toString()\n'
+            '  db.execSQL("fixed") // ROW:33042\n'
+            " }\n"
+            "}\n",
+        )
+    ],
+}
+
+_REVIEW33_ROWS = [
+    ("review32-01-nullable-origin-aliases", "1101", "Caller.kt", 14, True, "exact", 0, (0, 0)),
+    ("review32-01-nullable-origin-aliases", "1102", "Caller.kt", 24, True, "exact", 0, (0, 0)),
+    ("review32-01-nullable-origin-aliases", "1103", "Caller.kt", 34, True, "exact", 0, (0, 0)),
+    ("review32-01-nullable-origin-aliases", "1104", "Caller.kt", 44, True, "exact", 0, (0, 0)),
+    ("review32-01-nullable-origin-aliases", "1105", "Caller.kt", 54, True, "exact", 0, (0, 0)),
+    ("review32-01-nullable-origin-aliases", "1106", "Caller.kt", 64, False, "exact", 0, (0, 0)),
+    ("review32-01-nullable-origin-aliases", "1107", "Caller.kt", 74, False, "exact", 0, (0, 0)),
+    ("review32-02-extension-applicability", "1201", "Caller.kt", 12, True, "exact", 0, (0, 0)),
+    ("review32-02-extension-applicability", "1202", "Caller.kt", 22, False, "exact", 0, (0, 0)),
+    ("review32-02-extension-applicability", "1203", "Caller.kt", 32, True, "exact", 0, (0, 0)),
+    ("review32-02-extension-applicability", "1204", "Caller.kt", 42, False, "exact", 0, (0, 0)),
+    ("review32-02-extension-applicability", "1205", "Caller.kt", 52, True, "exact", 0, (0, 0)),
+    ("review32-02-extension-applicability", "1206", "Caller.kt", 62, False, "exact", 0, (0, 0)),
+    ("review32-02-extension-applicability", "1207", "Caller.kt", 72, False, "exact", 0, (0, 0)),
+    ("review32-02-extension-applicability", "1208", "Caller.kt", 82, False, "exact", 0, (0, 0)),
+    ("review32-03-constructor-heads", "1301", "Caller.kt", 32, False, "exact", 0, (0, 0)),
+    ("review32-03-constructor-heads", "1302", "Caller.kt", 41, False, "exact", 0, (0, 0)),
+    ("review32-03-constructor-heads", "1303", "Caller.kt", 50, False, "exact", 0, (0, 0)),
+    ("review32-03-constructor-heads", "1305", "Caller.kt", 59, True, "exact", 0, (0, 0)),
+    ("review32-03-constructor-heads", "1304", "Caller.kt", 22, True, "exact", 0, (0, 0)),
+    ("review32-04-singleton-captured-heads", "1401", "Caller.kt", 14, True, "exact", 0, (0, 0)),
+    ("review32-04-singleton-captured-heads", "1402", "Caller.kt", 28, False, "exact", 0, (0, 0)),
+    ("review32-04-singleton-captured-heads", "1403", "Caller.kt", 42, True, "scope-boundary", 0, (36, 44)),
+    ("review32-04-singleton-captured-heads", "1404", "Caller.kt", 54, True, "scope-boundary", 0, (48, 56)),
+    ("review32-05-diagnostic-consumption", "1501", "Caller.kt", 7, False, "exact", 0, (0, 0)),
+    ("review32-05-diagnostic-consumption", "1502", "Caller.kt", 16, True, "toString-boundary", 15, (0, 0)),
+    ("review32-05-diagnostic-consumption", "1503", "Caller.kt", 28, True, "replace-boundary", 28, (0, 0)),
+    ("review32-06-query-isolation", "1601", "Caller.kt", 11, True, "exact", 0, (0, 0)),
+    ("review32-06-query-isolation", "1602", "Caller.kt", 21, False, "exact", 0, (0, 0)),
+    ("claude32-01-inherited-singleton-head", "33011", "Caller.kt", 13, True, "exact", 0, (0, 0)),
+    ("claude32-01-inherited-singleton-head", "33012", "Caller.kt", 24, False, "exact", 0, (0, 0)),
+    ("claude32-02-ordinary-companion", "33021", "Caller.kt", 7, True, "exact", 0, (0, 0)),
+    ("claude32-02-ordinary-companion", "33022", "Caller.kt", 14, True, "exact", 0, (0, 0)),
+    (
+        "claude32-03-extension-implicit-locale",
+        "33031",
+        "Caller.kt",
+        16,
+        True,
+        "extension-origin-boundary",
+        16,
+        (0, 0),
+    ),
+    ("claude32-03-extension-implicit-locale", "33032", "Caller.kt", 20, False, "exact", 0, (0, 0)),
+    ("claude32-03-extension-implicit-locale", "33033", "Caller.kt", 11, True, "exact", 0, (0, 0)),
+    ("claude32-04-unused-generic-extension", "33041", "Caller.kt", 7, False, "exact", 0, (0, 0)),
+    ("claude32-04-unused-generic-extension", "33042", "Caller.kt", 13, False, "exact", 0, (0, 0)),
+]
+
+
+@pytest.mark.parametrize(
+    "program,marker,path,line,expected,mode,consumer,scope",
+    _REVIEW33_ROWS,
+    ids=[r[0] + ":" + r[1] for r in _REVIEW33_ROWS],
+)
+def test_review33_extension_nullability_and_implicit_head_evidence(
+    program, marker, path, line, expected, mode, consumer, scope
+):
+    report = analyze_sources(_REVIEW33_PROGRAMS[program])
+    assert not any(row.get("parse_errors") for row in report["metadata"]["files"]), (program, marker)
+    hits = {
+        (ev["path"], ev["line"])
+        for finding in report["findings"]
+        if finding["rule_id"] == SQL
+        for ev in finding["evidence"]
+    }
+    hit = (path, line) in hits
+    state, reasons = _state(report, SQL), _reasons(report)
+    flow = report["metadata"]["native_flow"]
+    details = flow.get("partial_details", [])
+    if state == "partial":
+        assert flow.get("budget_reasons"), (program, marker, state, reasons)
+    elif state == "limited":
+        assert reasons and not flow.get("budget_reasons"), (program, marker, state, reasons)
+    else:
+        assert state == "checked" and not reasons, (program, marker, state, reasons)
+    if mode in {"toString-boundary", "replace-boundary"} and hit is not expected:
+        assert state in {"limited", "partial"}
+        assert any(
+            row.get("reason") == "callable argument type identity unresolved"
+            and row.get("call") == mode.removesuffix("-boundary")
+            and row.get("path") == path
+            and row.get("line") == consumer
+            for row in details
+        ), (program, marker, details)
+    elif mode == "scope-boundary" and hit is not expected:
+        assert state in {"limited", "partial"} and any(
+            row.get("reason")
+            in {
+                "nominal callable scope unavailable",
+                "anonymous callable scope unavailable",
+                "callable value binding unresolved",
+            }
+            and row.get("path") == path
+            and scope[0] <= row.get("line", 0) <= scope[1]
+            for row in details
+        ), (program, marker, details)
+    elif mode == "extension-origin-boundary" and hit is not expected:
+        assert state in {"limited", "partial"} and any(
+            row.get("reason") == "unresolved callable identity or argument signature"
+            and row.get("call") == "format"
+            and row.get("path") == path
+            and row.get("line") == consumer
+            for row in details
+        ), (program, marker, details)
+    else:
+        assert hit is expected, (program, marker, state, reasons, hits)
+    if marker in {"1501", "33021"}:
+        unused = {"1501": 6, "33021": 7}[marker]
+        assert not any(
+            row.get("reason") == "callable argument type identity unresolved"
+            and row.get("path") == path
+            and row.get("line") == unused
+            for row in details
+        ), details
+    if marker in {"33041", "33042"}:
+        assert state == "checked" and not reasons
+
+
+def test_review33_declared_extension_receiver_vetoes_imported_locale_head(monkeypatch):
+    standard, argument = Analyzer.standard_reference_kind, Analyzer.library_argument_type
+    standards, arguments = {}, {}
+
+    def observe_standard(self, node, frame):
+        result = standard(self, node, frame)
+        if self.text(node) in {"Locale.US", "java.util.Locale.US"}:
+            standards.setdefault(self.location(node)["line"], set()).add(result)
+        return result
+
+    def observe_argument(self, node, frame, qualified, **kwargs):
+        result = argument(self, node, frame, qualified, **kwargs)
+        if self.text(node) in {"Locale.US", "java.util.Locale.US"} and qualified == "java.util.Locale":
+            arguments.setdefault(self.location(node)["line"], set()).add(result)
+        return result
+
+    monkeypatch.setattr(Analyzer, "standard_reference_kind", observe_standard)
+    monkeypatch.setattr(Analyzer, "library_argument_type", observe_argument)
+    analyze_sources(_REVIEW33_PROGRAMS["claude32-03-extension-implicit-locale"])
+    assert standards.get(16) == {""}, standards
+    assert standards.get(20) == {"java.util.Locale"}, standards
+    assert arguments.get(16) == {False}, arguments
+    assert arguments.get(20) == {True}, arguments
+
+
+def test_review33_inherited_singleton_value_head_is_not_a_detached_constructor(monkeypatch):
+    constructor = Analyzer.detached_constructor_kind
+    observations = {}
+
+    def observe_constructor(self, node):
+        result = constructor(self, node)
+        if self.text(node) == "Thing()":
+            observations.setdefault(self.location(node)["line"], set()).add(result)
+        return result
+
+    monkeypatch.setattr(Analyzer, "detached_constructor_kind", observe_constructor)
+    analyze_sources(_REVIEW33_PROGRAMS["claude32-01-inherited-singleton-head"])
+    assert observations.get(10) == {""}, observations
+    assert observations.get(21) == {"@source:Thing"}, observations

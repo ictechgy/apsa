@@ -640,3 +640,15 @@ supertypes; inapplicable non-null/final-library controls stay separate.
 Zero-argument constructor applicability includes defaults/varargs and explicit
 zero-argument secondaries without executing them. Nested singleton object heads
 remain visible, and opaque anonymous ownership cannot prove head absence.
+
+Non-null extension receiver declarations are excluded from nullable competition
+independently of the call receiver's modeled type. Known non-null supertype
+spellings retain this distinction; nullable aliases and unknown generic receivers
+still compete conservatively. Singleton head lookup includes inherited instance
+members of the starting object, while ordinary static nested classes do not gain
+an outer instance. Declared extension receivers may veto a conflicting imported
+head without executing the extension. General extension execution remains bounded.
+Ordinary companions with no competing head can be transparent to this proof;
+inherited, named or unresolved companion heads remain conservative. Non-null
+member precedence is established before an optional nullable-extension probe, so
+an unused generic conversion does not add an unconsumed identity diagnostic.

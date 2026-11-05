@@ -783,6 +783,18 @@ KOTLIN_STANDARD_RECEIVER_TYPES = {
     "Exception": ("kotlin.Exception", "java.lang.Exception"),
     "Number": ("kotlin.Number", "java.lang.Number"),
 }
+KOTLIN_NONNULL_EXTENSION_ROOTS = tuple(
+    sorted(
+        {
+            (qualified, True)
+            for types in (*KOTLIN_MODEL_TYPES.values(), *KOTLIN_STANDARD_RECEIVER_TYPES.values())
+            for qualified in types
+        }
+        | {(qualified, True) for qualified in KOTLIN_CALLBACK_TYPES.values()}
+        | {("kotlin.Comparable", True), ("java.lang.Comparable", True), ("java.io.Serializable", False)}
+    )
+)
+
 # Members whose result is a flag or a number, not text (`b.visible { q.isNotEmpty() }`,
 # `q.length`, `template.contains(q)`).
 SCALAR_RESULTS = {
@@ -7311,8 +7323,17 @@ class Analyzer:
                     else ""
                 )
                 name = call.name.rsplit(".", 1)[-1]
+                safe_receiver = self.safe_receiver_access(node)
+                nonnull_receiver = (
+                    self.known_value_type(call.receiver, frame, depth + 1, receiver_kinds=receiver_kinds)
+                    if receiver_kind and not safe_receiver
+                    else ""
+                )
                 nullable_text = (
-                    name == "toString"
+                    receiver_kind
+                    and not nonnull_receiver
+                    and not safe_receiver
+                    and name == "toString"
                     and not call.args
                     and not self.project_extension(
                         name,
@@ -7323,25 +7344,12 @@ class Analyzer:
                         nullable_receiver=receiver_kind,
                     )
                 )
-                allow_nullable_receiver = self.safe_receiver_access(node) or nullable_text
-                nonnull_receiver = (
-                    self.known_value_type(
-                        call.receiver,
-                        frame,
-                        depth + 1,
-                        receiver_kinds=receiver_kinds,
-                    )
-                    if receiver_kind and not allow_nullable_receiver
-                    else receiver_kind
-                )
+                allow_nullable_receiver = bool(safe_receiver or nullable_text)
                 resolved_kind = (
                     self.resolved_receiver_kind(
-                        call.receiver,
-                        receiver_kind,
-                        frame,
-                        allow_nullable=allow_nullable_receiver,
+                        call.receiver, receiver_kind, frame, allow_nullable=allow_nullable_receiver
                     )
-                    if nonnull_receiver
+                    if nonnull_receiver or allow_nullable_receiver
                     else ""
                 )
                 if receiver_kind and not resolved_kind:
@@ -9956,6 +9964,10 @@ class Analyzer:
         if flow is None:
             return False
         for owner in owners:
+            instance_bodies = not companion_only or any(
+                nominal.type == "object_declaration"
+                for _source, nominal in flow.class_definitions.get(owner, ())
+            )
             ancestry = flow.project_ancestry(owner)
             for ancestor in ancestry:
                 definitions = flow.class_definitions.get(ancestor, [])
@@ -9972,7 +9984,7 @@ class Analyzer:
                     body = next(
                         (part for part in nominal.named_children if part.type == "class_body"), nominal
                     )
-                    bodies = [] if companion_only and nominal.type != "object_declaration" else [body]
+                    bodies = [body] if instance_bodies else []
                     bodies.extend(
                         next((part for part in child.named_children if part.type == "class_body"), child)
                         for child in body.named_children
@@ -10125,6 +10137,42 @@ class Analyzer:
             return None
         return tuple(found)
 
+    def transparent_companion_head(self, use: Any, name: str, companion: Any, frame: Frame) -> bool:
+        """Prove an ordinary companion has no declaration competing for this head."""
+        flow = self.native_flow
+        if self.language != "kotlin" or flow is None or companion.type != "companion_object":
+            return False
+        if (
+            name == "Companion"
+            or any(
+                part.type in IDENTIFIERS | {"type_identifier"} and self.symbol_name(self.text(part)) == name
+                for part in companion.named_children
+            )
+            or flow.supertype_references(self, companion)
+        ):
+            return False
+        if flow.supertype_references(self, companion) is None:
+            return False
+        body = next((part for part in companion.named_children if part.type == "class_body"), companion)
+        if self.reference_binding(use, name, scope=body, stop=companion, frame=frame) is not None:
+            return False
+        binding = flow.lexical_type(self, name, use)
+        current = binding
+        while current is not None:
+            if current.id == companion.id:
+                return False
+            current = current.parent
+        call = self.call(use)
+        if call is not None and call.name.rsplit(".", 1)[-1] == name:
+            if any(
+                part.type in FUNCTIONS
+                and self.symbol_name(self.text(_field(part, "name"))) == name
+                and self.accepts_arguments(part, len(call.args))
+                for part in body.named_children
+            ):
+                return False
+        return True
+
     def implicit_reference_head_shadow(
         self, use: Any, name: str, frame: Frame, *, callback_shape: bool = False, lexical: bool = True
     ) -> bool:
@@ -10133,19 +10181,42 @@ class Analyzer:
         if flow is None:
             return False
         current = use.parent
+        companion_boundary = False
         for _ in range(64):
             if current is None:
                 return False
             boundary = flow.scope_boundary(current)
             if boundary is not None and boundary.kind in {"anonymous", "unavailable"}:
-                return True
+                if not self.transparent_companion_head(use, name, boundary.node, frame):
+                    return True
+                companion_boundary = True
+                current = boundary.node.parent
+                continue
+            if boundary is not None and boundary.kind == "callable" and self.language == "kotlin":
+                declared = _field(current, "name")
+                receiver = next(
+                    (
+                        part
+                        for part in current.named_children
+                        if declared is not None
+                        and part.end_byte <= declared.start_byte
+                        and part.type in {"user_type", "nullable_type", "function_type", "parenthesized_type"}
+                    ),
+                    None,
+                )
+                if receiver is not None and self.reference_type_head_shadow(
+                    use, name, self, receiver, self.text(receiver), callback_shape=callback_shape
+                ):
+                    return True
             if boundary is not None and boundary.kind == "nominal":
                 if not lexical:
                     return False
                 if boundary.name is None:
                     return True
                 owner = flow.owner(self, boundary.name)
-                if self.nominal_reference_head_shadow(use, name, {owner}, callback_shape=callback_shape):
+                if self.nominal_reference_head_shadow(
+                    use, name, {owner}, callback_shape=callback_shape, companion_only=companion_boundary
+                ):
                     return True
                 if not self.has_modifier(current, "inner"):
                     # A static nested class still sees enclosing companions,
@@ -11210,10 +11281,10 @@ class Analyzer:
                         receiver,
                         qualified,
                         context=target.analyzer,
-                        default_import=True,
+                        default_import=default_import,
                         require_nonnullable=True,
                     )
-                    for qualified in canonical
+                    for qualified, default_import in KOTLIN_NONNULL_EXTENSION_ROOTS
                 )
                 or not spelling.rstrip().endswith("?")
                 and self.native_flow.class_owners(target.analyzer, spelling, receiver)

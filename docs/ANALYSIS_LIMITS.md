@@ -364,6 +364,23 @@ Optional initializer hint queries suppress unconsumed receiver-identity details;
 later modeled consumers still record the actual affected call. Existing value
 ownership/effect diagnostics remain independent of those optional hints.
 
+Nullable extension competition checks the extension declaration's own non-null
+identity against the known standard/source type universe, independently of
+compatibility with the actual receiver. Nullable aliases and unknown generic
+receivers do not establish this exclusion. Non-null member precedence is queried
+first, so an unused generic nullable extension cannot add a diagnostic to an
+already proven non-null conversion.
+
+The singleton instance-member head search includes its represented ancestry;
+ordinary static nested classes still do not acquire an outer instance. An ordinary
+companion with no matching value/type/callable or inherited receiver can be
+transparent for a head proof. Named, inherited and unknown competing companion
+heads remain conservative. A declared Kotlin extension receiver may veto an
+imported standard head that its source members shadow. This only withholds false
+identity proof: general extension execution and field-state recovery remain
+bounded. A missed extension result needs the affected callable diagnostic, not
+just a reason at an earlier assignment.
+
 ## Hybrid source and compiled artifacts
 
 JS, TS and Dart use token/block flow, not full compiler semantics. Analysis covers
