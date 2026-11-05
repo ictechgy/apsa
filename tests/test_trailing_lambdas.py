@@ -37197,3 +37197,380 @@ def test_review47_compiler_sql_arguments_require_correctness_or_actual_contribut
             and d.get("kind") == "precision"
             for d in flow["partial_details"]
         ), (program, line, flow)
+
+
+# _REVIEW48: whitespace-selected aliases, complete upper bounds, annotation member visibility.
+
+_REVIEW48_PROGRAMS = {
+    "spaced_fqn": [
+        ("Alias.kt", "package android.net\ntypealias Uri = fresh.Own\n"),
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase,u:android . net . Uri) { "
+            'db.execSQL(u.getQueryParameter("q")) }\n'
+            'class Own { fun getQueryParameter(key:String):String="FIXED" }\n',
+        ),
+    ],
+    "spaced_consumers": [
+        ("Alias.kt", "package android.net\ntypealias Uri = fresh.Own\n"),
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            'class Own { fun getQueryParameter(key:String):String="FIXED" }\n'
+            "fun produce():android . net . Uri = Own()\n"
+            "fun canonical():android.net.Uri = Own()\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase,u:Own) {\n"
+            ' db.execSQL((u as android . net . Uri).getQueryParameter("q"))\n'
+            ' db.execSQL(produce().getQueryParameter("q"))\n'
+            ' db.execSQL((u as android.net.Uri).getQueryParameter("q"))\n'
+            ' db.execSQL(canonical().getQueryParameter("q"))\n'
+            "}\n",
+        ),
+    ],
+    "nullable_wrapped": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            'class Own { fun getQueryParameter(key:String):String="FIXED" }\n'
+            "fun nullable(): (android . net . Uri)? = Own()\n"
+            "fun spacedNullable(): android . net . Uri ? = Own()\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase,u:Own) {\n"
+            ' db.execSQL((u as android . net . Uri ?)?.getQueryParameter("q") ?: "FIXED")\n'
+            ' db.execSQL((u as (android . net . Uri)?)?.getQueryParameter("q") ?: "FIXED")\n'
+            ' db.execSQL(nullable()?.getQueryParameter("q") ?: "FIXED")\n'
+            ' db.execSQL(spacedNullable()?.getQueryParameter("q") ?: "FIXED")\n'
+            "}\n",
+        ),
+        ("Alias.kt", "package android.net\ntypealias Uri = fresh.Own\n"),
+    ],
+    "function_bound": [
+        (
+            "Caller.kt",
+            "package probe47code\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T> T.reverse():T where T:Appendable, T:()->Unit { return this }\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "appendable_bound": [
+        (
+            "Caller.kt",
+            "package probe47code\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "fun <T> T.reverse():T where T:Appendable { return this }\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase) {\n"
+            ' val q=intent.getStringExtra("q")?:""\n'
+            " db.execSQL(buildString { append(q).reverse() })\n"
+            "}\n",
+        )
+    ],
+    "annotation_member": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "import other.Outer.*\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase,u:Uri) { "
+            'db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        ("Imported.kt", "package android.net\nfun Uri():Int=0\n"),
+        (
+            "Outer.java",
+            "package other; public @interface Outer { class Uri { public String "
+            'getQueryParameter(String key) { return "NESTED_FIXED"; } } }\n',
+        ),
+    ],
+    "interface_member": [
+        (
+            "Caller.kt",
+            "package fresh\n"
+            "import android.content.Intent\n"
+            "import android.database.sqlite.SQLiteDatabase\n"
+            "import android.net.Uri\n"
+            "import other.Outer.*\n"
+            "fun scan(intent:Intent,db:SQLiteDatabase,u:Uri) { "
+            'db.execSQL(u.getQueryParameter("q")) }\n',
+        ),
+        ("Imported.kt", "package android.net\nfun Uri():Int=0\n"),
+        (
+            "Outer.java",
+            "package other; public interface Outer { class Uri { public String "
+            'getQueryParameter(String key) { return "NESTED_FIXED"; } } }\n',
+        ),
+    ],
+}
+
+
+@pytest.mark.parametrize("mode", [0, 9])
+def test_review48_qualified_alias_declaration_normalization_keeps_nullability_and_context(monkeypatch, mode):
+    original = Analyzer.record_visited
+    active = False
+    seen = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("declaration query evaluated or consumed uncertainty")
+
+    def record(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if active or self.scope != "scan" or call.name != "getQueryParameter":
+            return result
+        active = True
+        flow = self.native_flow
+        depth = flow.type_hint_depth
+        try:
+            flow.type_hint_depth = mode
+            before = _review47_snapshot(self, frame)
+            with monkeypatch.context() as query:
+                query.setattr(self, "value", forbidden)
+                query.setattr(flow, "partial", forbidden)
+                for spelling in [
+                    "android.net.Uri",
+                    "android . net . Uri",
+                    " \tandroid . net . Uri \n",
+                    "android . net . `Uri`",
+                    "android . net . Uri ?",
+                    "(android . net . Uri)?",
+                ]:
+                    for allow_nullable in (False, True):
+                        kind = self.declared_modeled_type(
+                            spelling,
+                            call.node,
+                            allow_nullable=allow_nullable,
+                            qualify_source=True,
+                        )
+                        assert kind != "android.net.Uri", (
+                            spelling,
+                            allow_nullable,
+                            kind,
+                        )
+                        if spelling.rstrip().endswith("?") and not allow_nullable:
+                            assert kind == ""
+                assert not self.library_reference_type("android . net . Uri", call.node, "android.net.Uri")
+                assert self.library_reference_type("android . net . Uri", call.node, "fresh.Own")
+            assert before == _review47_snapshot(self, frame)
+            seen.append(True)
+        finally:
+            flow.type_hint_depth = depth
+            active = False
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    analyze_sources(_REVIEW48_PROGRAMS["spaced_fqn"])
+    assert seen
+
+
+@pytest.mark.parametrize("mode", [0, 9])
+@pytest.mark.parametrize("program", ["spaced_fqn", "spaced_consumers", "nullable_wrapped"])
+def test_review48_spaced_cast_and_declared_return_consumers_cannot_regain_sdk_identity(
+    monkeypatch, mode, program
+):
+    original = Analyzer.record_visited
+    active = False
+    seen = {}
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("consumer type query evaluated or consumed precision")
+
+    def record(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if active or self.scope != "scan" or call.name != "getQueryParameter":
+            return result
+        active = True
+        flow = self.native_flow
+        depth = flow.type_hint_depth
+        try:
+            flow.type_hint_depth = mode
+            before = _review47_snapshot(self, frame)
+            with monkeypatch.context() as query:
+                query.setattr(self, "value", forbidden)
+                query.setattr(flow, "partial", forbidden)
+                kind = self.known_value_type(call.receiver, frame, allow_nullable=True)
+                resolved = self.resolved_receiver_kind(call.receiver, kind, frame, allow_nullable=True)
+                assert kind != "android.net.Uri" and resolved != "android.net.Uri"
+                seen[
+                    (
+                        self.location(call.node)["line"],
+                        self.location(call.node)["column"],
+                    )
+                ] = (kind, resolved)
+            assert before == _review47_snapshot(self, frame)
+        finally:
+            flow.type_hint_depth = depth
+            active = False
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW48_PROGRAMS[program])
+    assert seen and not _hit(report, SQL)
+    flow = report["metadata"]["native_flow"]
+    assert not flow["budget_reasons"]
+    source_lines = dict(_REVIEW48_PROGRAMS[program])["Caller.kt"].splitlines()
+    for (line, column), (kind, resolved) in seen.items():
+        if kind == "fresh.Own" or resolved == "fresh.Own":
+            continue  # a correct source-identity recovery is allowed
+        if program != "spaced_fqn" and " as " not in source_lines[line - 1]:
+            continue  # source-return execution can recover the returned object
+        assert _state(report, SQL) == "limited"
+        assert any(
+            d.get("path") == "Caller.kt"
+            and d.get("line") == line
+            and d.get("column") == column
+            and d.get("call") == "getQueryParameter"
+            and d.get("kind") == "precision"
+            for d in flow["partial_details"]
+        )
+
+
+@pytest.mark.parametrize("mode", [0, 9])
+@pytest.mark.parametrize("program", ["annotation_member", "interface_member"])
+def test_review48_java_annotation_and_interface_nested_members_compete_equally(monkeypatch, mode, program):
+    original = Analyzer.record_visited
+    active = False
+    seen = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("JVM visibility query evaluated or consumed uncertainty")
+
+    def record(self, call, frame, value):
+        nonlocal active
+        result = original(self, call, frame, value)
+        if active or self.scope != "scan" or call.name != "getQueryParameter":
+            return result
+        active = True
+        flow = self.native_flow
+        depth = flow.type_hint_depth
+        try:
+            flow.type_hint_depth = mode
+            before = _review47_snapshot(self, frame)
+            with monkeypatch.context() as query:
+                query.setattr(self, "value", forbidden)
+                query.setattr(flow, "partial", forbidden)
+                assert flow.type_import_unresolved(self, "Uri")
+                assert not self.library_reference_type("Uri", call.node, "android.net.Uri")
+                assert not flow.modeled_external(self, "Uri", call, receiver=value)
+                assert self.declared_modeled_type("Uri", call.node, qualify_source=True) == ""
+                assert self.resolved_receiver_kind(call.receiver, frame.types.get("u", ""), frame) == ""
+            assert before == _review47_snapshot(self, frame)
+            seen.append((self.location(call.node)["line"], self.location(call.node)["column"]))
+        finally:
+            flow.type_hint_depth = depth
+            active = False
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW48_PROGRAMS[program])
+    assert seen and not _hit(report, SQL) and _state(report, SQL) == "limited"
+    flow = report["metadata"]["native_flow"]
+    assert not flow["budget_reasons"]
+    assert all(
+        any(
+            d.get("path") == "Caller.kt"
+            and d.get("line") == line
+            and d.get("column") == column
+            and d.get("call") == "getQueryParameter"
+            and d.get("kind") == "precision"
+            for d in flow["partial_details"]
+        )
+        for line, column in seen
+    )
+
+
+@pytest.mark.parametrize("program,expected", [("function_bound", False), ("appendable_bound", True)])
+def test_review48_every_represented_upper_bound_participates_in_builder_candidacy(
+    monkeypatch, program, expected
+):
+    original = Analyzer.project_extension
+    seen = []
+
+    def project(self, name, call, receivers, **kwargs):
+        result = original(self, name, call, receivers, **kwargs)
+        if name == "reverse" and getattr(self, "builder_label_query_active", False):
+            assert result is expected
+            seen.append(True)
+        return result
+
+    monkeypatch.setattr(Analyzer, "project_extension", project)
+    report = analyze_sources(_REVIEW48_PROGRAMS[program])
+    assert seen and _hit(report, SQL) and _state(report, SQL) == "limited"
+    flow = report["metadata"]["native_flow"]
+    assert not flow["budget_reasons"]
+    reason = (
+        "Kotlin custom builder extension effects unavailable"
+        if expected
+        else "Kotlin builder chain effects unavailable"
+    )
+    details = [
+        d
+        for d in flow["partial_details"]
+        if d["reason"]
+        in {
+            "Kotlin custom builder extension effects unavailable",
+            "Kotlin builder chain effects unavailable",
+        }
+    ]
+    assert details and all(
+        d.get("call") == "reverse" and d.get("kind") == "precision" and d["reason"] == reason for d in details
+    )
+
+
+def test_review48_ordinary_sdk_spelling_keeps_qualified_whitespace_and_nullable_controls(
+    monkeypatch,
+):
+    original = Analyzer.record_visited
+    seen = []
+
+    def record(self, call, frame, value):
+        result = original(self, call, frame, value)
+        if self.scope == "scan" and call.name == "getQueryParameter":
+            before = _review47_snapshot(self, frame)
+            for spelling in [
+                "android.net.Uri",
+                "android . net . Uri",
+                " \tandroid . net . Uri \n",
+            ]:
+                assert (
+                    self.declared_modeled_type(spelling, call.node, qualify_source=True) == "android.net.Uri"
+                )
+            assert self.declared_modeled_type("android . net . Uri ?", call.node, qualify_source=True) == ""
+            assert (
+                self.declared_modeled_type(
+                    "android . net . Uri ?",
+                    call.node,
+                    qualify_source=True,
+                    allow_nullable=True,
+                )
+                == "android.net.Uri"
+            )
+            assert before == _review47_snapshot(self, frame)
+            seen.append(True)
+        return result
+
+    monkeypatch.setattr(Analyzer, "record_visited", record)
+    report = analyze_sources(_REVIEW47_PROGRAMS["unconflicted_sdk"])
+    assert seen and _state(report, SQL) == "checked" and not _reasons(report)
+
+
+@pytest.mark.parametrize("program", list(_REVIEW48_PROGRAMS))
+def test_review48_compiler_sql_truth_remains_separate_from_type_and_label_oracles(
+    program,
+):
+    report = analyze_sources(_REVIEW48_PROGRAMS[program])
+    assert not any(r.get("parse_errors") for r in report["metadata"]["files"])
+    assert not report["metadata"]["native_flow"]["budget_reasons"]
+    assert _hit(report, SQL) is (program in {"function_bound", "appendable_bound"})

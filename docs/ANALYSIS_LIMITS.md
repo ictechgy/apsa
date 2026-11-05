@@ -523,13 +523,16 @@ member-extension candidates. Known builder members and top-level extensions keep
 separate, narrower dispatch approximations. A compatible custom builder extension
 is not proof of its write effects: treating its arguments as receiver writes
 records precision at that actual call, including fixed-body candidates.
-A priority-aware receiver proof can establish an eligible represented
+A priority-aware receiver-root proof can establish a represented
 project-extension candidate for the custom-extension reason. Losing aliases from
 other scopes cannot re-enter that proof through a leaf-name union. A dedicated
 canonical table covers the already modeled builder receivers and their writable
 supertypes, including Appendable and collection receivers; bounded type parameters
-use their declaration-context constraints. This adds attribution proof, not new
-builder execution. Callable aliases are visited in stable order in attribution
+use their declaration-context constraints. Every represented upper bound must be
+accounted for; function-typed or unsupported constraints cannot be silently dropped
+to obtain positive builder proof. Root-level candidacy does not establish general
+generic argument substitution or overload selection. This adds attribution proof,
+not new builder execution. Callable aliases are visited in stable order in attribution
 mode before its allowance is consumed; ordinary dispatch ordering is separate.
 Other opaque or unmodeled contributions use a generic builder-chain effect limit;
 absence of a represented extension does not prove the effects. This optional label
@@ -584,7 +587,9 @@ same-package or applicable non-static wildcard-imported class or alias competes
 with an import whose classifier is not positively represented, type identity
 stays unresolved rather than affirming either the source nominal or an SDK spelling.
 This includes admitted Java/Kotlin JVM classifiers and Kotlin aliases in another
-file, with Java accessibility and file-private visibility preserved. Recognizing
+file, with Java accessibility and file-private visibility preserved. Accessible
+member types include represented implicitly public nested types of Java interfaces
+and annotation interfaces. Recognizing
 a competitor adds no general cross-language callee execution. A represented
 function/value is not proof that a binary classifier with that FQN is absent.
 Consumers retain affected precision; pure type queries do not execute imported
@@ -596,6 +601,8 @@ an exact imported or fully qualified SDK spelling. TYPE presence alone is not
 SDK identity: an alias at android.net.Uri may denote a source nominal. Library,
 external-model, declaration and retained-receiver queries preserve the same
 standard/source/unknown distinction instead of reintroducing the raw import.
+Legal whitespace in qualified type names is normalized consistently before alias
+lookup and fallback, including declaration, cast and declared-return consumers.
 CharSequence does not acquire Comparable or Serializable as known supertypes.
 Numeric Comparable argument compatibility remains conservative, so an incompatible
 generic extension can withhold a constructor fact. Some generic Number parameters

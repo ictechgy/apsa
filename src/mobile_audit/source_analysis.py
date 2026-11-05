@@ -7251,7 +7251,11 @@ class Analyzer:
     ) -> str:
         """Modeled precedence needs a standard identity at the declaration's origin."""
         context = context or self
-        spelling = context.canonical_type_spelling(spelling)
+        spelling = re.sub(
+            r"`[^`]*`|\s+",
+            lambda part: part[0] if part[0].startswith("`") else "",
+            context.canonical_type_spelling(spelling),
+        )
         if context.language == "kotlin" and spelling.rstrip().endswith("?") and not allow_nullable:
             return ""
         kind = self.modeled_type_name(spelling)
@@ -12390,18 +12394,11 @@ class Analyzer:
                         if identifier is not None and source.symbol_name(
                             source.text(identifier)
                         ) == source.symbol_name(source.text(name)):
+                            colon = next((part for part in declaration.children if part.type == ":"), None)
                             bounds.extend(
                                 part
                                 for part in declaration.named_children
-                                if part.id != identifier.id
-                                and part.type
-                                in {
-                                    "user_type",
-                                    "nullable_type",
-                                    "type_identifier",
-                                    "parenthesized_type",
-                                    "non_nullable_type",
-                                }
+                                if colon is not None and part.start_byte >= colon.end_byte
                             )
                 if len(bounds) > 16:
                     return False

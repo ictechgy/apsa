@@ -1778,8 +1778,8 @@ class NativeFlow:
                         return False
                     if source.language == "java" and self.namespaces[id(source)] != namespace:
                         parent = current.parent.parent if current.parent is not None else None
-                        implicit_public = parent is not None and "interface" in self.declaration_tokens(
-                            parent
+                        implicit_public = parent is not None and bool(
+                            self.declaration_tokens(parent) & {"interface", "@interface"}
                         )
                         if "public" not in tokens and not implicit_public:
                             return False
