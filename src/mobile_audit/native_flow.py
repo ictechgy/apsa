@@ -2297,6 +2297,7 @@ class NativeFlow:
             if (
                 root in {"this", "self"}
                 or self.module_value_present(analyzer, root)
+                or self.imported_namespace_shadow(analyzer, namespace, call.node)
                 or any(
                     key in bindings
                     for key in {namespace, root}
@@ -2367,6 +2368,20 @@ class NativeFlow:
     def module_value_present(self, analyzer: Analyzer, name: str, *, aliases: bool = False) -> bool:
         """A potential expression binding supplies uncertainty, never a value/type proof."""
         return bool(self.module_value_bindings(analyzer, name, aliases=aliases))
+
+    def imported_namespace_shadow(self, analyzer: Analyzer, spelling: str, use: Any) -> bool:
+        """An imported expression root cannot silently stand for the written package prefix."""
+        spelling = analyzer.canonical_type_spelling(spelling).partition("<")[0]
+        root, separator, _tail = spelling.partition(".")
+        if not separator:
+            return False
+        imported = self.imported_symbols(analyzer, root)
+        if not imported or any(
+            spelling == symbol or spelling.startswith(symbol + ".") for symbol in imported
+        ):
+            return False
+        # A represented source type still permits its own nested-type/member lookup.
+        return not self.class_owners(analyzer, root, use)
 
     def module_value_bindings(
         self, analyzer: Analyzer, name: str, *, aliases: bool = False
@@ -2872,6 +2887,7 @@ class NativeFlow:
             and (
                 self.module_value_present(analyzer, receiver_root)
                 or self.module_value_present(analyzer, receiver_root, aliases=True)
+                or self.imported_namespace_shadow(analyzer, analyzer.key(call.receiver), call.node)
             )
         ):
             return [], True

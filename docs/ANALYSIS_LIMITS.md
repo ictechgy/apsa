@@ -406,8 +406,9 @@ not mapped to trailing defaulted parameters. Spread/unknown arguments do not
 establish a literal conflict. Other compatibility remains conservative; this is
 not full overload resolution.
 Primitive-looking generic parameters and aliases are not primitive proof.
-The finite unmodeled primitive targets also use non-null Kotlin identity proof at
-the parameter declaration, including imported renamed aliases. The whole
+Finite primitive targets also use non-null Kotlin identity proof at the
+parameter declaration, including same-file aliases to modeled primitives and
+imported renamed aliases. The whole
 applicability query, including modeled-name classification, is optional: it
 suppresses its own unused identity uncertainty and restores depth after failure.
 
@@ -423,9 +424,19 @@ alias for a class does not also alias an unrelated same-leaf extension function.
 Same-file value import aliases use the same exact imported identity as cross-file
 aliases. Same-file private declarations remain visible; cross-file private values
 do not become package-looking expression roots.
+An explicitly imported qualified root cannot silently stand for the written
+package prefix, including imports of object-member values. Represented source
+types retain their own nested-type lookup. This veto does not execute imported
+values or claim their runtime ownership.
+Supported escaped generic names use canonical declaration/use identities in the
+String path, including Comparable arguments. Bounded receiver-wrapper lookup
+unwraps parentheses, nullable types and definitely-non-null intersections while
+preserving declaration origin and outer nullability. A proven bare non-null
+receiver does not compete with a proven nullable subject. Unsupported or capped
+receiver shapes keep competing rather than establishing head absence.
 Type-parameter extension receivers use their represented bounds without a
 redundant library-identity probe that would diagnose an already rejected candidate.
-Head queries follow inline/where bounds and parameter chains for at most16 links,
+Head queries follow inline/where bounds and parameter chains for at most 16 links,
 resolving concrete aliases at their declaration. Unknown/cyclic/capped bounds
 continue to compete. Only proven incompatibility rejects a bound: standard
 receiver profiles come from established identities, and source nonintersection
@@ -433,8 +444,10 @@ requires a complete represented ancestry. String keeps its separate variance
 checks. These declaration queries neither execute callees nor retain frames.
 CharSequence does not acquire Comparable or Serializable as known supertypes.
 Numeric Comparable argument compatibility remains conservative, so an incompatible
-generic extension can withhold a constructor fact. The bounded model still has
-preexisting false positives when a locally constructed receiver's String result
+generic extension can withhold a constructor fact. Some generic Number parameters
+and alias-expanded source bounds still produce diagnosed conservative candidates,
+without affirmative standard-library facts. Preexisting false positives also occur
+when a locally constructed receiver's String result
 is consumed inside nested numeric or CharSequence scopes, including controls
 without an extension. Some of those controls remain checked; these constructor
 head changes do not establish complete project-instance or receiver-tower flow.

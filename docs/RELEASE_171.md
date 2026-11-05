@@ -685,3 +685,10 @@ Unused nullable generic conversions suppress optional type-parameter diagnostics
 while consuming queries still identify the affected call. Unknown external
 extension receivers remain conservative, including for qualified standard heads;
 this may add precision details without claiming complete SDK member knowledge.
+
+Escaped generic identifiers retain one binding in String receiver applicability,
+including Comparable argument checks. Parenthesized, nullable and definitely-non-null
+receiver wrappers keep their declaration origin and nullability; unresolved shapes
+cannot establish constructor-head absence. Explicit imported expression roots,
+including object-member imports, do not become package namespaces. Same-file
+aliases to modeled primitive parameters use exact declaration-origin Kotlin proofs.

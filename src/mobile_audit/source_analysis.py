@@ -10027,7 +10027,20 @@ class Analyzer:
                             context=source,
                             require_nonnullable=True,
                         )
-                        for primitive in ("Char", "UByte", "UShort")
+                        for primitive in (
+                            "Boolean",
+                            "Byte",
+                            "Short",
+                            "Int",
+                            "Long",
+                            "Float",
+                            "Double",
+                            "UInt",
+                            "ULong",
+                            "Char",
+                            "UByte",
+                            "UShort",
+                        )
                     ):
                         return True
                 finally:
@@ -10705,6 +10718,7 @@ class Analyzer:
                 or head in frame.local_names
                 or self.reference_binding(node, head) is not None
                 or flow.module_value_present(self, head)
+                or flow.imported_namespace_shadow(self, root, node)
                 or any(flow.class_definitions.get(owner) for owner in flow.class_owners(self, head, node))
                 or self.implicit_reference_head_shadow(node, head, frame)
             )
@@ -11588,10 +11602,50 @@ class Analyzer:
                     for child in target.node.named_children
                     if declared is not None
                     and child.end_byte <= declared.start_byte
-                    and child.type in {"user_type", "nullable_type", "type_identifier"}
+                    and child.type
+                    in {
+                        "user_type",
+                        "nullable_type",
+                        "type_identifier",
+                        "parenthesized_type",
+                        "non_nullable_type",
+                    }
                 ),
                 None,
             )
+            receiver_nullable: bool | None = None
+            receiver_nonnull = False
+            for _ in range(16):
+                if receiver is None or receiver.type not in {
+                    "parenthesized_type",
+                    "nullable_type",
+                    "non_nullable_type",
+                }:
+                    break
+                wrapper = receiver.type
+                if receiver_nullable is None and wrapper == "nullable_type":
+                    receiver_nullable = True
+                elif receiver_nullable is None and wrapper == "non_nullable_type":
+                    receiver_nullable = False
+                    receiver_nonnull = True
+                parts = [
+                    part
+                    for part in receiver.named_children
+                    if part.type
+                    in {
+                        "user_type",
+                        "nullable_type",
+                        "type_identifier",
+                        "parenthesized_type",
+                        "non_nullable_type",
+                    }
+                ]
+                if len(parts) != (2 if wrapper == "non_nullable_type" else 1):
+                    receiver = None
+                    break
+                receiver = parts[0]
+            else:
+                receiver = None
             unknown_receiver = (
                 receiver is None
                 and declared is not None
@@ -11600,7 +11654,7 @@ class Analyzer:
                     for child in target.node.children
                 )
             )
-            if receiver is None and not (nullable_receiver and unknown_receiver):
+            if receiver is None and not unknown_receiver:
                 continue
             if visible:
                 if not self.native_flow.lexical_visible(self, target, call, allow_extensions=True):
@@ -11629,8 +11683,12 @@ class Analyzer:
                 elif not self.native_flow.top_level_visible(self, target, name):
                     continue
             if receiver is None:
-                return True  # represented extension syntax, unresolved nullable compatibility
-            spelling = target.analyzer.text(receiver)
+                if callable_heads is not None:
+                    callable_heads.add(target.node.id)
+                return True  # represented extension syntax, unresolved receiver compatibility
+            if nullable_receiver and receiver_nonnull:
+                continue
+            spelling = target.analyzer.text(receiver) + ("?" if receiver_nullable else "")
             if source_owners is not None:
                 declared_owners = self.native_flow.class_owners(
                     target.analyzer, spelling.rstrip("?"), receiver
@@ -11726,7 +11784,7 @@ class Analyzer:
                     continue
                 name = next((part for part in declaration.named_children if part.type in IDENTIFIERS), None)
                 if name is not None:
-                    parameters.setdefault(source.text(name), []).extend(
+                    parameters.setdefault(source.symbol_name(source.text(name)), []).extend(
                         part
                         for part in declaration.named_children
                         if part.type in {"user_type", "nullable_type"}
@@ -11738,6 +11796,7 @@ class Analyzer:
             return all(accepts(source.text(bound), bound, seen | {name}) for bound in parameters[name])
 
         def accepts(spelling: str, use: Any, seen: frozenset[str]) -> bool:
+            spelling = source.canonical_type_spelling(spelling)
             spelling = re.sub(r"<\s*in\s+", "<", spelling)
             text = re.sub(r"\s+", "", spelling).rstrip("?!")
             if text in parameters:
