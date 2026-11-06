@@ -65,6 +65,7 @@ REASON_KINDS = {
     "Kotlin non-local return context unavailable": "precision",
     "Kotlin scope import identity unavailable": "precision",
     "Kotlin project extension receiver flow unavailable": "precision",
+    "Kotlin stored property initializer flow unavailable": "precision",
     "Kotlin custom builder extension effects unavailable": "precision",
     "Kotlin builder chain effects unavailable": "precision",
     "Swift inout writeback unavailable": "precision",
@@ -3444,6 +3445,86 @@ class NativeFlow:
             )
         )
 
+    def kotlin_extension_string_receiver(
+        self, analyzer: Analyzer, receiver: Any, frame: Frame, *, nullable: bool = False, depth: int = 0
+    ) -> bool:
+        """Read bounded String facts already established by the ordinary visit.
+
+        Elvis expressions are not retained as call values. Both branches must
+        independently prove String; its left branch may carry the null removed
+        by Elvis. Unknown call results cannot inherit String from tainted inputs.
+        This query never evaluates the receiver or a source callable body.
+        """
+        node = analyzer.unwrap(receiver, preserve_cast=True)
+        if node is None or depth >= 8:
+            return False
+        if node.type in {"binary_expression", "elvis_expression"}:
+            parts = [part for part in node.named_children if part.type not in COMMENTS]
+            if len(parts) == 2 and analyzer.operator_between(parts[0], parts[1]) == b"?:":
+                return self.kotlin_extension_string_receiver(
+                    analyzer, parts[0], frame, nullable=True, depth=depth + 1
+                ) and self.kotlin_extension_string_receiver(
+                    analyzer, parts[1], frame, nullable=nullable, depth=depth + 1
+                )
+        if analyzer.established_argument_type(node, frame, "kotlin.String", require_nonnullable=not nullable):
+            return True
+        # These input calls already produced a scalar String in Analyzer's
+        # model. Read their visited result, without re-running their model or
+        # resolving a helper merely to obtain an optional receiver hint.
+        source = analyzer.call(node)
+        retained = analyzer.retained_value(node, frame)
+        return bool(
+            source is not None
+            and source.name in {"getDataString", "getStringExtra", "getQueryParameter"}
+            and retained.category == "text"
+            and (nullable or analyzer.nonnull_expression(receiver))
+            and self.argument_signature_type(analyzer, node, retained, frame) == ("nominal", "kotlin.String")
+        )
+
+    def kotlin_extension_receiver_unavailable(
+        self, analyzer: Analyzer, call: Call, receiver: Value, frame: Frame
+    ) -> bool:
+        """A real tainted value call can cross an unmodeled project extension.
+
+        Ordinary member admission, callable-value and scoped-stdlib precedence
+        are handled by call(). Optional type/classification/attribution queries
+        must neither expose this boundary nor spend their diagnostic ledgers.
+        """
+        if (
+            analyzer.language != "kotlin"
+            or call.receiver is None
+            or not receiver.traces
+            or self.muted
+            or self.type_hint_depth
+            or analyzer.type_query_active
+            or analyzer.builder_label_query_active
+        ):
+            return False
+        previous_depth, previous_muted = self.type_hint_depth, self.muted
+        previous_query = analyzer.type_query_active
+        self.type_hint_depth += 1
+        self.muted += 1
+        analyzer.type_query_active = True
+        try:
+            if not self.kotlin_extension_string_receiver(analyzer, call.receiver, frame):
+                return False
+            # These signatures are already modeled as actual String members,
+            # which precede a same-named extension in Kotlin dispatch.
+            if call.name in {"plus", "toString"} and analyzer.string_operation_applicable(call, frame):
+                return False
+            if self.constructor_type(analyzer, call, frame) is not None:
+                return False
+            return analyzer.project_extension(
+                call.name,
+                call,
+                {"String", "CharSequence", "Any", "Comparable", "Serializable"},
+                visible=True,
+                standard_string=True,
+            )
+        finally:
+            analyzer.type_query_active = previous_query
+            self.type_hint_depth, self.muted = previous_depth, previous_muted
+
     def call(
         self, analyzer: Analyzer, call: Call, frame: Frame, receiver: Value, args: list[Value]
     ) -> Value | None:
@@ -3494,6 +3575,8 @@ class NativeFlow:
                 self.partial(reason, analyzer, call=call)
                 relevant = True
         targets = admitted
+        if not targets and self.kotlin_extension_receiver_unavailable(analyzer, call, receiver, frame):
+            self.partial("Kotlin project extension receiver flow unavailable", analyzer, call=call)
         if not targets and syntactic_inout:
             # `&actual` is a mutation boundary even without a callee inventory.
             # It precedes relevance shortcuts; admitted bodies keep their own

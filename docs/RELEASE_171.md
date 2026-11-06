@@ -809,3 +809,11 @@ per analyzed file. Exhaustion uses the generic reason for unclassified contexts;
 a bounded immutable syntax/receiver/scope ledger retains an already-proved custom
 label on revisits without retaining Frames. Precision stays at the actual inner
 contribution. Registered members keep their existing precise path.
+
+#### Stored initialization and explicit extension coverage
+
+Eligible named top-level Kotlin class/object property initializers now participate in bounded source flow together with ordered init blocks. Fresh construction state preserves stored values and receiver storage for later method analysis, while nonstored constructor parameters remain local to initialization. Custom getter results are not inferred from their backing initializer; unsupported initialization boundaries remain precise and execution caps remain partial. Cross-class runtime initialization order and general constructor-call argument mapping are not established.
+
+A source-derived explicit project String-extension call whose receiver execution is unavailable now carries the existing receiver-flow precision reason at that call. It no longer silently leaves the affected native coverage checked. This is an honest bounded-model diagnostic, not execution of an extension body or recovery of its SQL finding. Safe constant and ordinary-call controls remain covered by their existing models.
+
+Kotlin null literals now stay untainted. Indexed implicit-receiver property writes preserve their actual content data under the existing content-lambda model, including the HTML attributes-map case previously masked by erroneous null provenance. Bound maps and rebound receiver scopes retain their separate effects; this establishes source flow, not third-party escaping or exploitability.

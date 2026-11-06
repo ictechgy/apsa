@@ -1864,6 +1864,10 @@ class Analyzer:
         self.static_fields: set[str] = set()
         self.unavailable_fields: set[str] = set()
         self.class_field_nodes: dict[tuple[int, int], list[Any]] = {}
+        # Fresh construction facts are distinct from the growing method-write
+        # summaries. Untainted identities/categories need no fixed-point round.
+        self.kotlin_constructed_fields: dict[str, dict[str, Value]] = {}
+        self.kotlin_constructed_objects: dict[str, dict[Any, dict[Any, Value]]] = {}
         # Names of the file's String properties, fields and constants outside functions (class,
         # companion object, object and top-level declarations): template roots; with the class
         # or object declaring each ("" at the top level), which NativeFlow joins across files.
@@ -2960,6 +2964,8 @@ class Analyzer:
         return "maybe"
 
     def identifier_value(self, name: str, frame: Frame, node: Any) -> Value:
+        if self.language == "kotlin" and self.text(node).strip() == "null":
+            return Value()  # The Kotlin grammar represents null as an identifier.
         if (
             name == "intent"
             and name not in frame.values
@@ -3908,7 +3914,9 @@ class Analyzer:
         name = next((part for part in declaration.named_children if part.type in IDENTIFIERS), None)
         type_node = next((part for part in declaration.named_children if part != name), None)
         values = [
-            part for part in node.named_children if part.type not in {"variable_declaration", "modifiers"}
+            part
+            for part in node.named_children
+            if part.type not in {"variable_declaration", "modifiers"} | ACCESSORS | COMMENTS
         ]
         return self.symbol_name(self.text(name)), values[-1] if values else None, self.text(type_node)
 
@@ -4865,6 +4873,13 @@ class Analyzer:
                     )
                     if self.implicit_this(base, frame):
                         # `this += q`, `this["k"] = q` in a builder lambda write into its receiver.
+                        self.record_effect(None, frame, value, expressions=(right,))
+                    elif left.type in {
+                        "indexing_expression",
+                        "index_expression",
+                    } and self.implicit_property_write(base, frame):
+                        # `attributes["key"] = q` writes into a property of the
+                        # same supplied implicit receiver as `property = q`.
                         self.record_effect(None, frame, value, expressions=(right,))
                     elif left.type not in IDENTIFIERS:
                         self.record_effect(left, frame, value, receiverless=False, expressions=(right,))
@@ -6957,6 +6972,49 @@ class Analyzer:
             if flow is not None:
                 flow.type_hint_depth -= 1
 
+    def same_execution_context(self, node: Any, kinds: set[str] | None = None) -> bool:
+        """Keep runtime facts in their callable or the actual stored-property RHS.
+
+        Kotlin property RHS nodes have no enclosing function. During the bounded
+        construction pass the property itself is the execution context; accepting
+        its own descendants (and its class's primary parameters) must not make a
+        sibling property, accessor, local function or nested nominal share it.
+        """
+        if node is None or self.function is None or self.native_flow is None:
+            return False
+        lexical = self.native_flow.enclosing(node, kinds or FUNCTIONS | INITIALIZERS)
+        if lexical is not None and lexical.id == self.function.id:
+            return True
+        context = self.function
+        body = context.parent
+        nominal = body.parent if body is not None and body.type == "class_body" else None
+        if (
+            self.language != "kotlin"
+            or context.type not in {"property_declaration", "anonymous_initializer"}
+            or nominal is None
+            or nominal.type not in {"class_declaration", "object_declaration"}
+        ):
+            return False
+        current = node
+        for _ in range(64):
+            if current is None:
+                return False
+            if current.id == context.id:
+                return True
+            if current.type == "class_parameter":
+                primary = current.parent.parent if current.parent is not None else None
+                return primary is not None and primary.parent == nominal
+            if current.type in FUNCTIONS | {
+                "class_declaration",
+                "object_declaration",
+                "object_literal",
+                "getter",
+                "setter",
+            }:
+                return False
+            current = current.parent
+        return False
+
     def known_value_type(
         self,
         node: Any,
@@ -6976,8 +7034,7 @@ class Analyzer:
         if self.native_flow is not None and node.type not in (
             TEXT_LITERALS | NUMBERS | {"boolean_literal", "as_expression", "cast_expression"}
         ):
-            lexical = self.native_flow.enclosing(node, FUNCTIONS | INITIALIZERS)
-            if self.function is None or lexical is None or lexical.id != self.function.id:
+            if not self.same_execution_context(node):
                 if node.type in IDENTIFIERS:
                     declaration_frame = Frame()
                     binding = self.reference_binding(
@@ -8603,8 +8660,7 @@ class Analyzer:
             if self.native_flow is not None and base.type not in (
                 TEXT_LITERALS | NUMBERS | {"boolean_literal", "as_expression", "cast_expression"}
             ):
-                lexical = self.native_flow.enclosing(base, FUNCTIONS | INITIALIZERS)
-                if self.function is None or lexical is None or lexical.id != self.function.id:
+                if not self.same_execution_context(base):
                     return self.known_value_type(base, Frame(), depth) == "String"
             if depth >= 16:
                 if self.native_flow is not None:
@@ -9473,6 +9529,52 @@ class Analyzer:
         owner = next((effects for effects in reversed(self.closure_effects) if effects.implicit), None)
         # A `with`/`apply` around the builder call bound `this` before the lambda: still its own.
         return owner is not None and frame.values.get("this") is owner.outer_this
+
+    def implicit_property_write(self, node: Any, frame: Frame) -> bool:
+        """An indexed write rooted at an unbound property of the current DSL receiver.
+
+        This follows the existing implicit-property assignment model; a local,
+        field, module value or rebound scope receiver does not write HTML merely
+        because its map is named attributes (or any other property name).
+        """
+        if self.language != "kotlin":
+            return False
+        owner = next((effects for effects in reversed(self.closure_effects) if effects.implicit), None)
+        if owner is None or frame.values.get("this") is not owner.outer_this:
+            return False
+        root = self.unwrap(node)
+        for _ in range(MAX_CHAIN):
+            if root is None:
+                return False
+            if self.implicit_this(root, frame):
+                return True
+            navigation = self.navigation(root)
+            if navigation is None:
+                break
+            root = self.unwrap(navigation[0])
+        else:
+            self.chain_cut(node)
+            return False
+        if root is None or root.type not in IDENTIFIERS:
+            return False
+        name = self.symbol_name(self.text(root))
+        if (
+            name in frame.values
+            or name in frame.types
+            or name in frame.local_names
+            or name in self.field_types
+        ):
+            return False
+        if self.reference_binding(root, name, frame=frame) is not None:
+            return False
+        return not (
+            self.native_flow is not None
+            and (
+                self.native_flow.imported_symbols(self, name)
+                or self.native_flow.module_value_present(self, name)
+                or self.native_flow.module_value_present(self, name, aliases=True)
+            )
+        )
 
     def outer_builder_replace(self, call: Call, frame: Frame) -> bool:
         """A rebound String cannot receive StringBuilder.replace(Int, Int, String)."""
@@ -10418,8 +10520,7 @@ class Analyzer:
         if binding is None:
             return False
         origin, declared, _initializer = binding
-        owner = self.native_flow.enclosing(origin, FUNCTIONS)
-        if self.function is None or owner is None or owner.id != self.function.id:
+        if not self.same_execution_context(origin, FUNCTIONS):
             return False
         if declared:
             return self.library_reference_type(
@@ -12206,8 +12307,7 @@ class Analyzer:
             binding = self.reference_binding(node, symbol, frame=frame)
             if binding is not None:
                 origin, declared, initializer = binding
-                function = flow.enclosing(origin, FUNCTIONS)
-                if self.function is None or function is None or function.id != self.function.id:
+                if not self.same_execution_context(origin, FUNCTIONS):
                     return None
                 immutable = origin.type == "property_declaration" and "val" in flow.declaration_tokens(origin)
                 if not declared:
@@ -12313,7 +12413,13 @@ class Analyzer:
         function = flow.enclosing(
             call.node, FUNCTIONS | INITIALIZERS | ACCESSORS | {"class_declaration", "primary_constructor"}
         )
-        function_id = function.id if function is not None else 0
+        function_id = (
+            self.function.id
+            if self.same_execution_context(call.node)
+            else function.id
+            if function is not None
+            else 0
+        )
         if function_id != (self.function.id if self.function is not None else 0):
             return lexical
 
@@ -14045,13 +14151,13 @@ class Analyzer:
             if target is not None and target.type in IDENTIFIERS:
                 frame.constants.pop(self.symbol_name(self.text(target)), None)
 
-    def parameters(self, function: Any) -> list[tuple[str, str, Any]]:
+    def parameters(self, function: Any, *, initializing_nominal: Any = None) -> list[tuple[str, str, Any]]:
         parameters = _field(function, "parameters") or next(
             (node for node in function.named_children if node.type == "function_value_parameters"), None
         )
-        if function.type == "anonymous_initializer":
+        if function.type == "anonymous_initializer" or initializing_nominal is not None:
             # A Kotlin init block sees the primary constructor's parameters.
-            owner = function.parent.parent if function.parent is not None else None
+            owner = initializing_nominal or (function.parent.parent if function.parent is not None else None)
             primary = (
                 next((node for node in owner.named_children if node.type == "primary_constructor"), None)
                 if owner is not None
@@ -14225,7 +14331,20 @@ class Analyzer:
                     continue
                 if static:
                     self.static_fields.add(name)
-                fields[name] = type_name or self.value(expression, Frame()).type_name
+                if self.language == "kotlin":
+                    constructor = self.call(expression) if expression is not None else None
+                    # Retain the legacy written constructor storage hint without
+                    # executing a property in a type inventory. Receiver/type
+                    # proofs still independently check lexical declaration identity.
+                    fields[name] = type_name or (
+                        constructor.name
+                        if constructor is not None
+                        and constructor.receiver is None
+                        and constructor.name[:1].isupper()
+                        else ""
+                    )
+                else:
+                    fields[name] = type_name or self.value(expression, Frame()).type_name
             key = (boundary.node.start_byte, boundary.node.end_byte)
             for declaration in self.class_field_nodes.get(key, []):
                 if declaration.type == "property_declaration" and any(
@@ -14237,7 +14356,25 @@ class Analyzer:
                         self.unavailable_fields.add(parsed[0])
         return fields
 
-    def start_function(self, function: Any) -> Frame:
+    def unavailable_getter_fields(self) -> set[str]:
+        """Setter inputs remain stored facts; an unavailable getter is a read boundary."""
+        if self.language != "kotlin" or self.native_flow is None or self.function is None:
+            return set()
+        boundary = self.native_flow.enclosing_scope(self.function)
+        if boundary is None or boundary.kind != "nominal":
+            return set()
+        result = set()
+        for declaration in self.class_field_nodes.get((boundary.node.start_byte, boundary.node.end_byte), []):
+            if any(
+                child.type in {"getter", "computed_property", "property_delegate"}
+                for child in declaration.named_children
+            ):
+                parsed = self.declaration(declaration)
+                if parsed:
+                    result.add(parsed[0])
+        return result
+
+    def start_function(self, function: Any, *, initializing_nominal: Any = None) -> Frame:
         self.finding_start = len(self.findings)
         self.pending_paths = []
         self.active_guards = {}
@@ -14299,7 +14436,7 @@ class Analyzer:
             and self.text(_field(enclosing, "name")) in self.exposed_providers
             and any(re.search(r"\bContentProvider\b", self.text(base)) for base in bases)
         )
-        parameters = self.parameters(function)
+        parameters = self.parameters(function, initializing_nominal=initializing_nominal)
         self.parameter_types = {name: type_name for name, type_name, _ in parameters}
         frame = Frame(types={**self.field_types, **self.parameter_types})
         frame.values.update({name: Value(type_name=kind) for name, kind in self.field_types.items()})
@@ -14309,14 +14446,70 @@ class Analyzer:
             {
                 name: self.constants[name][0]
                 for name in self.field_types
-                if name in self.constants and name not in self.parameter_types
+                if initializing_nominal is None
+                and name in self.constants
+                and name not in self.parameter_types
             }
         )
-        if self.native_flow is not None:
-            frame.values.update(self.native_flow.initial_fields(self, function))
+        if self.native_flow is not None and initializing_nominal is None:
+            from .native_flow import StorageKey
+
+            owner = self.native_flow.owner(self, function)
+            frame.object_fields = {
+                identity: fields.copy()
+                for identity, fields in self.kotlin_constructed_objects.get(owner, {}).items()
+            }
+            # A construction snapshot can contain another singleton's bucket.
+            # Its later method writes belong to that static owner, not this one.
+            for identity, fields in frame.object_fields.items():
+                if isinstance(identity, tuple) and identity[0] is StorageKey.STATIC_FIELDS:
+                    fields.update(self.native_flow.fields.get(identity[1], {}))
+            hidden_fields = self.unavailable_getter_fields() - (
+                {self.scope} if function.type in ACCESSORS else set()
+            )
+            initial = {
+                **{
+                    name: value
+                    for name, value in self.kotlin_constructed_fields.get(owner, {}).items()
+                    if name not in hidden_fields
+                },
+                **self.native_flow.initial_fields(self, function),
+            }
+            frame.values.update(initial)
+            for name, value in initial.items():
+                if name in self.field_types:
+                    if not value.identity and self.field_types[name]:
+                        value = self.native_flow.materialize_object(
+                            self,
+                            function,
+                            self.field_types[name],
+                            Value(
+                                value.traces,
+                                value.category,
+                                self.field_types[name],
+                                "@native-field:"
+                                + repr((self.native_flow.field_identity(self, name, frame), name)),
+                            ),
+                            "field",
+                            binding=True,
+                        )
+                    self.native_flow.store_field(
+                        self, self.native_flow.field_identity(self, name, frame), name, value, frame, function
+                    )
             self.native_flow.initialize_fields(self, frame)
+        elif self.native_flow is not None:
+            # A helper called during construction must see uninitialized fields,
+            # never fall back to a later method-write summary for absent storage.
+            for name, value in frame.values.items():
+                self.native_flow.store_field(
+                    self, self.native_flow.field_identity(self, name, frame), name, value, frame, function
+                )
         for name, type_name, node in parameters:
-            frame.local_names.add(name)
+            stored_parameter = initializing_nominal is not None and any(
+                child.type in {"val", "var"} for child in node.children
+            )
+            if not stored_parameter:
+                frame.local_names.add(name)
             frame.values[name] = (
                 self.native_flow.parameter_value(self, node, type_name)
                 if self.native_flow is not None
@@ -14360,6 +14553,15 @@ class Analyzer:
                 frame.values[name] = Value(
                     value.traces, value.category, type_name, frame.values[name].identity
                 )
+            if stored_parameter and self.native_flow is not None:
+                self.native_flow.store_field(
+                    self,
+                    self.native_flow.field_identity(self, name, frame),
+                    name,
+                    frame.values[name],
+                    frame,
+                    node,
+                )
         if function.type in ACCESSORS:
             # set(value), willSet/didSet names and Kotlin's backing `field` are accessor
             # locals holding what was stored in the property, not same-named class fields.
@@ -14375,6 +14577,182 @@ class Analyzer:
                 frame.local_names.add(name)
                 frame.values[name] = frame.values.get(self.scope, Value())
         return frame
+
+    def initialize_kotlin_properties(self, nodes: list[Any]) -> set[int]:
+        """Execute the bounded, ordered construction prefix once per field round.
+
+        This is separate from callable accounting and from method frames. A new
+        constructor frame never inherits constants from later properties or
+        field summaries learned from ordinary methods in a previous round.
+        """
+        if self.language != "kotlin" or self.native_flow is None:
+            return set()
+        flow = self.native_flow
+        modeled_names = {name for _kind, name in SQL_SINKS} | {
+            "getStringExtra",
+            "getDataString",
+            "getData",
+            "getQueryParameter",
+            "loadUrl",
+            "loadDataWithBaseURL",
+        }
+
+        def modeled_boundary(expression: Any) -> bool:
+            return any(
+                (call := self.call(part)) is not None and call.name.rsplit(".", 1)[-1] in modeled_names
+                for part in _walk(expression)
+            )
+
+        nominals: dict[int, Any] = {}
+        for declaration in nodes:
+            if (
+                declaration.type == "class_parameter"
+                and any(child.type in {"val", "var"} for child in declaration.children)
+                and any(child.type == "=" for child in declaration.children)
+            ):
+                # Default arguments run only when omitted by a constructor
+                # caller. This pass binds parameters; it cannot assume that a
+                # nonconstant default ran for every construction.
+                expression = declaration.named_children[-1]
+                if modeled_boundary(expression) and self.constant(expression, Frame()) is None:
+                    flow.partial(
+                        "Kotlin stored property initializer flow unavailable", self, node=declaration
+                    )
+            if declaration.type != "property_declaration":
+                continue
+            parent = declaration.parent
+            if parent is None or parent.type in BLOCKS | CLOSURES:
+                continue  # These declarations already run in their enclosing callable.
+            parsed = self.declaration(declaration)
+            delegate = next(
+                (child for child in declaration.named_children if child.type == "property_delegate"), None
+            )
+            expression = delegate or (parsed[1] if parsed else None)
+            if expression is None:
+                continue  # An accessor body has its own existing analysis unit.
+            nominal = parent.parent if parent.type == "class_body" else None
+            eligible = (
+                nominal is not None
+                and nominal.type in {"class_declaration", "object_declaration"}
+                and nominal.parent is not None
+                and nominal.parent.type == "source_file"
+                and flow.scope_boundary(nominal).kind == "nominal"
+                and not nominal.has_error
+                and not flow.declaration_tokens(nominal)
+                & {"enum", "interface", "annotation", "expect", "external"}
+            )
+            if nominal is not None and eligible and delegate is None:
+                nominals[nominal.id] = nominal
+                continue
+            # Local/anonymous initializers already visited inline keep that path.
+            # A constructor parameter used by a local class's property needs its
+            # own frame, however; its name is not an enclosing callable capture.
+            inline = flow.enclosing(declaration, FUNCTIONS) is not None
+            own_parameters = (
+                self.parameters(declaration, initializing_nominal=nominal) if nominal is not None else []
+            )
+            parameter_names = {name for name, _kind, _node in own_parameters}
+            uses_parameter = any(
+                child.type in IDENTIFIERS and self.symbol_name(self.text(child)) in parameter_names
+                for child in _walk(expression)
+            )
+            if (
+                (uses_parameter or modeled_boundary(expression))
+                and (delegate is not None or not inline or uses_parameter)
+                and self.constant(expression, Frame()) is None
+            ):
+                flow.partial("Kotlin stored property initializer flow unavailable", self, node=declaration)
+        initialized = set()
+        for nominal in nominals.values():
+            body = next(child for child in nominal.named_children if child.type == "class_body")
+            properties = {
+                child.id: self.declaration(child)
+                for child in body.named_children
+                if child.type == "property_declaration"
+                and not any(part.type == "property_delegate" for part in child.named_children)
+            }
+            field_names = {field[0] for field in self.nominal_fields(nominal)}
+            saved_constants = self.constants
+            self.constants = {
+                name: value for name, value in saved_constants.items() if name not in field_names
+            }
+            try:
+                frame = self.start_function(body, initializing_nominal=nominal)
+                backing_fields = {}
+                unavailable_getters = self.unavailable_getter_fields()
+                for child in body.named_children:
+                    parsed = properties.get(child.id)
+                    if not parsed and child.type != "anonymous_initializer":
+                        continue
+                    self.function = child
+                    self.function_source = self.text(child)
+                    self.scope = parsed[0] if parsed else "init"
+                    self.literal_table = None
+                    self.private_keys = self.target_names = None
+                    if child.type == "anonymous_initializer":
+                        block = _function_body(child)
+                        if block is not None:
+                            self.visit(block, frame, {}, [])
+                            initialized.add(child.id)
+                        continue
+                    if parsed is None:
+                        continue
+                    name, expression, declared = parsed
+                    if expression is None:
+                        continue
+                    self.visit(expression, frame, {}, [])
+                    value = self.reused(expression, frame).bind(self.point(child))
+                    # Preserve the complete evaluated value, including a database
+                    # alias's identity and a source receiver's category. A stored
+                    # Unit result is not an ordinary object-local allocation.
+                    inferred = value.type_name
+                    value = Value(value.traces, value.category, declared or inferred, value.identity)
+                    stored = value
+                    if name in unavailable_getters:
+                        # A getter read is an existing precision boundary. Keep
+                        # its backing Value for its own accessor, but do not turn
+                        # that storage directly into a property-read result.
+                        backing_fields[name] = value
+                        stored = Value(type_name=declared or inferred)
+                    flow.store_field(self, flow.field_identity(self, name, frame), name, stored, frame, child)
+                    self.field_types[name] = declared or inferred
+                    if name not in frame.local_names:
+                        frame.values[name] = stored
+                        frame.types[name] = declared or inferred
+                        described = self.constant(expression, frame)
+                        if described:
+                            frame.constants[name] = described
+                        else:
+                            frame.constants.pop(name, None)
+                # Keep every construction Value independently of the growing
+                # traced summaries. Later rounds retain method-write traces;
+                # trace-free storage facts need no dataflow fixed point.
+                owner = flow.owner(self, body)
+                constructed = self.kotlin_constructed_fields[owner] = {}
+                self.kotlin_constructed_objects[owner] = {
+                    identity: stored.copy() for identity, stored in frame.object_fields.items()
+                }
+                summary = flow.fields.setdefault(owner, {})
+                for name in self.field_types:
+                    value = frame.object_fields.get(flow.field_identity(self, name, frame), {}).get(
+                        name, Value(type_name=self.field_types[name])
+                    )
+                    constructed[name] = backing_fields.get(name, value)
+                    previous = summary.get(name)
+                    if not value.traces:
+                        continue
+                    if previous is None or not previous.traces:
+                        summary[name] = value
+                    else:
+                        summary[name] = _union([previous, value], value.category, value.type_name)
+                self.finish_paths()
+            except RecursionError:
+                # A property is not a callable: report the execution gap without
+                # inventing an observed/skipped function or dropping other units.
+                flow.partial("native flow recursion budget", self, node=nominal)
+            finally:
+                self.constants = saved_constants
+        return initialized
 
     def finish_paths(self) -> None:
         safe = self.guarded_paths - self.unguarded_paths
@@ -14534,6 +14912,7 @@ class Analyzer:
                 "Kotlin scope import identity unavailable", self, node=self.kotlin_scope_import_unavailable
             )
             self.kotlin_scope_import_reported = True
+        initialized = self.initialize_kotlin_properties(nodes)
         for function in nodes:
             if not _analysis_unit(function):
                 continue
@@ -14545,6 +14924,9 @@ class Analyzer:
                 parent = parent.parent
             if uncertain:
                 self.function_counts["skipped"] += 1
+                continue
+            if function.id in initialized:
+                self.function_counts["analyzed"] += 1
                 continue
             frame = self.start_function(function)
             body = _function_body(function)
@@ -14580,7 +14962,19 @@ class Analyzer:
                             )
                 self.visit(body, frame, {}, [])
                 if self.native_flow is not None:
-                    self.native_flow.finish(self, function, frame)
+                    fields = self.field_types
+                    try:
+                        if self.language == "kotlin":
+                            # An accessor can inspect its raw backing Value, but
+                            # that is not evidence that a future property read
+                            # returns it through an unmodeled getter.
+                            unavailable_getters = self.unavailable_getter_fields()
+                            self.field_types = {
+                                name: kind for name, kind in fields.items() if name not in unavailable_getters
+                            }
+                        self.native_flow.finish(self, function, frame)
+                    finally:
+                        self.field_types = fields
                 self.finish_paths()
             else:
                 self.function_counts["without_body"] += 1
