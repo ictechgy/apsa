@@ -319,6 +319,136 @@ def test_nonstored_constant_or_unrelated_default_stays_checked(value: str) -> No
     assert_checked(report)
 
 
+@pytest.mark.parametrize(
+    ("helper", "parameters", "value"),
+    [
+        ('fun getStringExtra(): String = "fixed"', "", "getStringExtra()"),
+        (
+            'class Other { fun getStringExtra(key: String): String = "fixed" }',
+            "other: Other, ",
+            'other.getStringExtra("q")',
+        ),
+        (
+            "class Other { fun execSQL(query: String): Unit {} }",
+            "other: Other, ",
+            'other.execSQL("fixed")',
+        ),
+    ],
+    ids=["ordinary-function", "ordinary-source-named-member", "ordinary-sink-named-member"],
+)
+def test_nonstored_default_api_lookalikes_with_inert_bodies_stay_checked(
+    helper: str, parameters: str, value: str
+) -> None:
+    report = scan(f"{helper}\nclass Handler({parameters}ignored: Any = {value})")
+    assert not sql_findings(report), report
+    assert_checked(report)
+
+
+@pytest.mark.parametrize(
+    ("helper", "parameters", "value"),
+    [
+        (
+            'fun getStringExtra(intent: Intent): String = intent.getStringExtra("q") ?: ""',
+            "intent: Intent, ",
+            "getStringExtra(intent)",
+        ),
+        (
+            'class Other { fun execSQL(db: SQLiteDatabase): String { db.execSQL("SELECT 1"); '
+            'return "fixed" } }',
+            "other: Other, db: SQLiteDatabase, ",
+            "other.execSQL(db)",
+        ),
+        (
+            'fun getStringExtra(query: String = Intent().getStringExtra("q") ?: ""): String = "fixed"',
+            "",
+            "getStringExtra()",
+        ),
+        (
+            'class Other { fun execSQL(db: SQLiteDatabase, ignored: Unit = db.execSQL("SELECT 1"))'
+            ': String = "fixed" }',
+            "other: Other, db: SQLiteDatabase, ",
+            "other.execSQL(db)",
+        ),
+        (
+            'fun readQuery(db: SQLiteDatabase): String { db.execSQL("SELECT 1"); return "fixed" }\n'
+            'fun getStringExtra(key: String): String = "fixed"',
+            "db: SQLiteDatabase, ",
+            "getStringExtra(readQuery(db))",
+        ),
+    ],
+    ids=["source-result", "sink-before-constant-return", "source-default", "sink-default", "argument-effect"],
+)
+def test_nonstored_default_project_helpers_with_possible_effects_keep_the_boundary(
+    helper: str, parameters: str, value: str
+) -> None:
+    report = scan(f"{helper}\nclass Handler({parameters}ignored: Any = {value})")
+    assert_default_boundary(report, 3 + helper.count("\n") + 1)
+
+
+@pytest.mark.parametrize(
+    ("helper", "parameters", "value"),
+    [
+        (
+            'open class Other { open fun getStringExtra(key: String): String = "fixed" }',
+            "other: Other, ",
+            'other.getStringExtra("q")',
+        ),
+        ("import external.Other", "other: Other, ", 'other.getStringExtra("q")'),
+        (
+            'fun getStringExtra(): String = "fixed"',
+            "getStringExtra: () -> String, ",
+            "getStringExtra()",
+        ),
+        (
+            "class Other(val getStringExtra: (String) -> String) { "
+            'fun getStringExtra(key: Int): String = "fixed" }',
+            "other: Other, ",
+            'other.getStringExtra("q")',
+        ),
+    ],
+    ids=["open-member", "unknown-imported-receiver", "callable-parameter-shadow", "callable-member-shadow"],
+)
+def test_nonstored_default_uncertain_api_lookalikes_keep_the_boundary(
+    helper: str, parameters: str, value: str
+) -> None:
+    report = scan(f"{helper}\nclass Handler({parameters}ignored: Any = {value})")
+    assert_default_boundary(report, 4)
+
+
+@pytest.mark.parametrize("shadow", ["nested-type", "when-binding", "companion-member"])
+def test_nonstored_default_nearer_binding_cannot_borrow_an_inert_lookalike(shadow: str) -> None:
+    helper = 'class Other { fun getStringExtra(key: String): String = "fixed" }'
+    if shadow == "nested-type":
+        body = """class Handler(other: Other, query: String = other.getStringExtra("q")) {
+            class Other { fun getStringExtra(key: String): String = Intent().getStringExtra(key) ?: "" }
+        }"""
+    elif shadow == "when-binding":
+        body = """class Handler(other: Other, query: String = when (val other = Intent()) {
+            else -> other.getStringExtra("q")
+        })"""
+    else:
+        helper = 'fun getStringExtra(): String = "fixed"'
+        body = """class Handler(query: String = getStringExtra()) {
+            companion object { fun getStringExtra(): String = Intent().getStringExtra("q") ?: "" }
+        }"""
+    report = scan(f"{helper}\n{body}")
+    extra = ("nominal callable scope unavailable",) if shadow == "companion-member" else ()
+    assert_default_boundary(report, 4, extra)
+
+
+def test_stored_default_api_lookalike_retains_its_existing_boundary_and_location() -> None:
+    report = scan(
+        'fun getStringExtra(): String = "fixed"\nclass Handler(val query: String = getStringExtra())'
+    )
+    metadata = report["metadata"]["native_flow"]
+    assert metadata["precision_reasons"] == [UNAVAILABLE], report
+    assert DEFAULT_UNAVAILABLE not in metadata["reasons"], report
+    details = metadata["partial_details"]
+    assert len(details) == 1 and details[0]["reason"] == UNAVAILABLE, report
+    assert details[0]["line"] == 4 and details[0]["column"] == 15, report
+    assert not sql_findings(report), report
+
+
 def test_explicit_argument_does_not_execute_default_or_publish_nonstored_parameter() -> None:
     report = scan(
         """class Handler(
@@ -505,3 +635,36 @@ def test_initializer_recursion_cut_does_not_invent_a_skipped_function(
         "without_body": 0,
     }, report
     assert "native flow recursion budget" in report["metadata"]["native_flow"]["budget_reasons"], report
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reversed"])
+def test_nonstored_default_empty_package_overload_keeps_identity_unavailable(reverse: bool) -> None:
+    sources = [
+        (
+            "Construction.kt",
+            IMPORTS + 'fun getStringExtra(value: Any): String = "fixed"\n'
+            'class Handler(private val db: SQLiteDatabase, query: String = getStringExtra("constant")) {\n'
+            '    init { db.execSQL("SELECT " + query) }\n'
+            "}",
+        ),
+        (
+            "Other.kt",
+            "import android.content.Intent\n"
+            'fun getStringExtra(value: String): String = Intent().getStringExtra("q") ?: ""',
+        ),
+    ]
+    report = analyze_sources(list(reversed(sources)) if reverse else sources)
+    # The second default-package file is visible, and its more specific overload
+    # can be selected. The default remains conditional; no body is executed.
+    assert_default_boundary(report, 4)
+
+
+def test_nonstored_default_unique_same_file_literal_argument_stays_checked() -> None:
+    report = scan(
+        """fun getStringExtra(value: Any): String = "fixed"
+        class Handler(private val db: SQLiteDatabase, query: String = getStringExtra("constant")) {
+            init { db.execSQL("SELECT " + query) }
+        }"""
+    )
+    assert not sql_findings(report), report
+    assert_checked(report)

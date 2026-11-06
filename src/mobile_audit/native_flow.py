@@ -3447,6 +3447,83 @@ class NativeFlow:
             )
         )
 
+    def kotlin_extension_nominal_receiver(
+        self, analyzer: Analyzer, receiver: Any, nominal: Any, frame: Frame
+    ) -> bool:
+        """Whether lexical this still names the nominal, through local functions.
+
+        Only known nonreceiver callbacks preserve that owner. The query reads
+        syntax, declarations and existing bindings; it never evaluates a call or
+        retains a Frame. A nearer or unresolved receiver cannot borrow storage
+        from an outer class, even when the ordinary visit carried its content.
+        """
+        current = receiver
+        for _ in range(64):
+            if current is None:
+                return False
+            if current.id == nominal.id:
+                return True
+            if current.type in CLOSURES:
+                owner = analyzer.closure_owner(current)
+                if (
+                    analyzer.scope_receiver(current) is not None
+                    or owner is None
+                    or owner.receiver is None
+                    or owner.name not in {"let", "also", "takeIf", "takeUnless", "use", "forEach"}
+                    or not analyzer.kotlin_scope_identity_known(owner.name, frame)
+                    or analyzer.reference_binding(owner.node, owner.name, frame=frame) is not None
+                ):
+                    return False
+                namespaces = {"kotlin.collections", "kotlin.sequences", "kotlin.text"}
+                allowed = (
+                    {namespace + ".forEach" for namespace in namespaces}
+                    if owner.name == "forEach"
+                    else {"kotlin.io.use" if owner.name == "use" else "kotlin." + owner.name}
+                )
+                if self.imported_symbols(analyzer, owner.name) - allowed or any(
+                    declaration.endswith(".*")
+                    and declaration
+                    not in {"kotlin.*", "kotlin.io.*", *(namespace + ".*" for namespace in namespaces)}
+                    for declaration in analyzer.imports
+                ):
+                    return False
+                if owner.name == "forEach":
+                    subject = analyzer.unwrap(owner.receiver)
+                    factory = analyzer.call(subject) if subject is not None else None
+                    factory_known = bool(
+                        factory is not None
+                        and factory.receiver is None
+                        and factory.name in {"listOf", "mutableListOf", "setOf", "mutableSetOf", "arrayOf"}
+                        and analyzer.kotlin_scope_identity_known(factory.name, frame)
+                        and not self.imported_symbols(analyzer, factory.name)
+                        - {"kotlin.collections." + factory.name, "kotlin." + factory.name}
+                    )
+                    if not factory_known and not any(
+                        analyzer.established_argument_type(owner.receiver, frame, qualified)
+                        for qualified in (
+                            "kotlin.collections.List",
+                            "kotlin.collections.MutableList",
+                            "kotlin.collections.Set",
+                            "kotlin.collections.Collection",
+                            "kotlin.Array",
+                            "kotlin.String",
+                            "kotlin.CharSequence",
+                        )
+                    ):
+                        return False
+            if current.type in FUNCTIONS | {"anonymous_function", "property_declaration"}:
+                name = _field(current, "name")
+                if name is not None and any(
+                    child.type == "." for child in current.children if child.end_byte <= name.start_byte
+                ):
+                    return False  # an extension function has a nearer this receiver
+                if current.type in {"anonymous_function", "property_declaration"} and any(
+                    child.type == "." for child in current.children
+                ):
+                    return False
+            current = current.parent
+        return False
+
     def kotlin_extension_stored_string_receiver(
         self, analyzer: Analyzer, receiver: Any, frame: Frame, *, nullable: bool
     ) -> bool:
@@ -3459,22 +3536,11 @@ class NativeFlow:
         if analyzer.function is None or not analyzer.same_execution_context(receiver):
             return False
         boundary = self.enclosing_scope(analyzer.function)
-        if boundary is None or boundary.kind != "nominal":
-            return False
-        current = receiver
-        for _ in range(64):
-            if current is None or current.type in CLOSURES:
-                return False
-            if current.type in FUNCTIONS:
-                name = _field(current, "name")
-                if name is not None and any(
-                    child.type == "." for child in current.children if child.end_byte <= name.start_byte
-                ):
-                    return False  # an extension function has a nearer this receiver
-            if current.id == analyzer.function.id:
-                break
-            current = current.parent
-        else:
+        if (
+            boundary is None
+            or boundary.kind != "nominal"
+            or not self.kotlin_extension_nominal_receiver(analyzer, receiver, boundary.node, frame)
+        ):
             return False
         navigation = analyzer.navigation(receiver)
         if navigation is not None:

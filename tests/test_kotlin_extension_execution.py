@@ -642,9 +642,29 @@ def test_source_nominal_named_string_does_not_gain_standard_field_receiver_ident
     assert _native(report)["budget_reasons"] == []
 
 
-@pytest.mark.parametrize("receiver", ["q", "this.q"])
-def test_stored_boundary_proof_is_pure_during_actual_source_call(receiver: str, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("receiver", "context"),
+    [
+        pytest.param("q", "direct", id="q"),
+        pytest.param("this.q", "direct", id="this.q"),
+        *[
+            pytest.param(receiver, context, id=f"{context}-{receiver}")
+            for context in ("let", "forEach", "nested")
+            for receiver in ("q", "this.q")
+        ],
+    ],
+)
+def test_stored_boundary_proof_is_pure_during_actual_source_call(
+    receiver: str, context: str, monkeypatch
+) -> None:
     source, invocation = _stored_program(receiver, initializer=False, declared="String?", safe=True)
+    if context != "direct":
+        body = (
+            f"fun nested() {{ {invocation} }}; nested()"
+            if context == "nested"
+            else f"{'listOf(q).forEach' if context == 'forEach' else 'q.let'} {{ {invocation} }}"
+        )
+        source = source.replace(invocation, body)
     path = "app/PureStoredProof.kt"
     original = NativeFlow.call
     seen = []
@@ -695,7 +715,13 @@ def test_stored_boundary_proof_is_pure_during_actual_source_call(receiver: str, 
     monkeypatch.setattr(NativeFlow, "call", observe)
     report, origins = _actual_receiver_sources(monkeypatch, path, source)
     assert seen
-    _assert_exact_boundary(report, path, source, invocation)
+    _assert_exact_boundary(
+        report,
+        path,
+        source,
+        invocation,
+        other_reasons=("unresolved callable identity",) if context == "forEach" else (),
+    )
     assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
 
 
@@ -753,6 +779,103 @@ def test_nullable_assertion_does_not_override_stronger_any_receiver(binding: str
     path = "app/AssertedAny.kt"
     report, origins = _actual_receiver_sources(monkeypatch, path, source)
     assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+    assert _state(report) == "checked", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == []
+
+
+@pytest.mark.parametrize(
+    ("body", "invocation", "nullable"),
+    [
+        ("q.let { q.go(db) }", "q.go(db)", False),
+        ("q.let { this.q.go(db) }", "this.q.go(db)", False),
+        ("q.also { q.go(db) }", "q.go(db)", False),
+        ("listOf(q).forEach { q.go(db) }", "q.go(db)", False),
+        ("q.let { q?.go(db) }", "q?.go(db)", True),
+        ("q.let { q!!.go(db) }", "q!!.go(db)", True),
+        ("fun nested() { this.q.go(db) }; nested()", "this.q.go(db)", False),
+        ("q.let { fun nested() { this.q.go(db) }; nested() }", "this.q.go(db)", False),
+    ],
+    ids=["let", "let-this", "also", "forEach", "safe", "asserted", "nested", "let-nested"],
+)
+def test_nonreceiver_capture_retains_stored_string_boundary(
+    body: str, invocation: str, nullable: bool, monkeypatch
+) -> None:
+    source, original = _stored_program("q", initializer=False, declared="String?" if nullable else "String")
+    source = source.replace(original, body)
+    path = "app/StoredCapture.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    _assert_exact_boundary(
+        report,
+        path,
+        source,
+        invocation,
+        other_reasons=("unresolved callable identity",) if ".forEach" in body else (),
+    )
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+
+
+@pytest.mark.parametrize("body", ["q.let { q.go(db) }", "listOf(q).forEach { q.go(db) }"])
+def test_constant_nonreceiver_capture_remains_checked(body: str, monkeypatch) -> None:
+    source, original = _stored_program("q", initializer=False, value='"fixed"')
+    source = source.replace(original, body)
+    report, origins = _actual_receiver_sources(monkeypatch, "app/ConstantCapture.kt", source)
+    assert not origins
+    assert _state(report) == "checked", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == []
+
+
+@pytest.mark.parametrize("receiver", ["q", "this.q"])
+@pytest.mark.parametrize("context", ["extension", "property", "run", "callback", "shadowed-let"])
+def test_nearer_receiver_through_local_function_does_not_borrow_stored_string(
+    receiver: str, context: str, monkeypatch
+) -> None:
+    nested = f"fun nested() {{ {receiver}.go(db) }}; nested()"
+    declarations = ""
+    if context == "extension":
+        member = f"fun Other.run() {{ {nested} }}"
+    elif context == "property":
+        member = f"val Other.foo: Unit\n        get() {{ {nested} }}"
+    elif context == "run":
+        member = f'fun run() {{ Other("fixed").run {{ {nested} }} }}'
+    elif context == "callback":
+        declarations = 'fun capture(block: Other.() -> Unit) { Other("fixed").block() }\n'
+        member = f"fun run() {{ capture {{ {nested} }} }}"
+    else:
+        declarations = 'fun String.let(block: Other.() -> Unit) { Other("fixed").block() }\n'
+        member = f"fun run() {{ q.let {{ {nested} }} }}"
+    source = (
+        HEADER
+        + 'fun Any.go(db: SQLiteDatabase) { db.execSQL("SELECT " + this) }\n'
+        + "class Other(val q: Any)\n"
+        + declarations
+        + "class StoredReceiver(intent: Intent, val db: SQLiteDatabase) {\n"
+        + f"    val q: String = {INPUT}\n"
+        + f"    {member}\n"
+        + "}\n"
+    )
+    path = "app/NearerReceiver.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    assert origins  # Actual modeled visits can carry the outer source; it is not type proof.
+    assert not any(
+        detail["reason"] == REASON and detail.get("call") == "go"
+        for detail in _native(report)["partial_details"]
+    ), report
+    if context != "shadowed-let":
+        assert REASON not in _native(report)["reasons"], report
+    assert not _sql(report)
+    assert _native(report)["budget_reasons"] == []
+
+
+@pytest.mark.parametrize("declaration", ['val q = "fixed"', "val q: Any = this.q"])
+def test_nonreceiver_capture_preserves_local_shadow(declaration: str, monkeypatch) -> None:
+    source, original = _stored_program(
+        "q", initializer=False, extension="Any" if ": Any" in declaration else "String"
+    )
+    source = source.replace(original, f"q.let {{ {declaration}; q.go(db) }}")
+    report, _origins = _actual_receiver_sources(monkeypatch, "app/CaptureShadow.kt", source)
+    assert REASON not in _native(report)["reasons"], report
     assert _state(report) == "checked", report
     assert not _sql(report)
     assert _native(report)["reasons"] == []

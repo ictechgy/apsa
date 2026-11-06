@@ -818,4 +818,6 @@ A source-derived explicit project String-extension call whose receiver execution
 
 The receiver diagnostic also uses safe-call nonnull branches, explicit !! assertions before expression unwrapping and declaration-backed String fields on the current nominal, preserving shadowing and getter/delegate boundaries. Relevant nonstored primary-parameter defaults have a separate constructor-default precision reason even when copied into a stored property; defaults remain conditional and unexecuted, and nonstored parameters remain construction locals.
 
+Receiver ownership now survives known nonreceiver callbacks and ordinary local functions while fencing enclosing extension/receiver contexts, including extension properties. Nonstored defaults calling a bounded, proven inert project API lookalike remain checked; real or uncertain modeled source/sink boundaries remain precise. Both queries read declarations and syntax without executing bodies or changing analysis state.
+
 Kotlin null literals now stay untainted. Indexed implicit-receiver property writes preserve their actual content data under the existing content-lambda model, including the HTML attributes-map case previously masked by erroneous null provenance. Bound maps and rebound receiver scopes retain their separate effects; this establishes source flow, not third-party escaping or exploitability.

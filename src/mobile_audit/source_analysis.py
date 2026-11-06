@@ -14578,6 +14578,191 @@ class Analyzer:
                 frame.values[name] = frame.values.get(self.scope, Value())
         return frame
 
+    def kotlin_inert_default_call(self, call: Call, parameter: Any) -> bool:
+        """Exclude a bounded ordinary API lookalike without evaluating its default.
+
+        Only unique same-file top-level functions and final ordinary members on
+        an explicitly typed preceding constructor parameter are eligible. The
+        complete body must be a literal result or empty Unit block; defaults,
+        inheritance, closures and uncertain bindings retain the boundary. These
+        are AST/declaration reads, with no value, type-query or cache effects.
+        """
+        flow = self.native_flow
+        group = parameter.parent
+        primary = group.parent if group is not None else None
+        nominal = primary.parent if primary is not None else None
+        if (
+            flow is None
+            or primary is None
+            or primary.type != "primary_constructor"
+            or nominal is None
+            or nominal.type != "class_declaration"
+            or nominal.parent is None
+            or nominal.parent.type != "source_file"
+            or nominal.has_error
+            or flow.declaration_tokens(nominal) - {"class", "public", "private", "internal", "final"}
+            or any(
+                part.type in {"type_parameters", "delegation_specifiers"} for part in nominal.named_children
+            )
+            or any(
+                part.type == "companion_object"
+                for body in nominal.named_children
+                if body.type == "class_body"
+                for part in body.named_children
+            )
+        ):
+            return False
+        current = call.node.parent
+        while current is not None and current != parameter:
+            if current.type in FUNCTIONS | CLOSURES | BLOCKS | {"object_literal", "when_expression"}:
+                return False
+            current = current.parent
+        if current is None:
+            return False
+
+        def literal(node: Any) -> bool:
+            return node.type in NUMBERS | {"boolean_literal", "null_literal"} or (
+                node.type in STRINGS and "$" not in self.text(node)
+            )
+
+        if not all(literal(argument) for argument in call.args):
+            return False  # Arguments can have effects even when the complete callee body is inert.
+        parameters = self.primary_constructor_parameters(self, primary)
+        if parameters is None or len({name for name, _kind, _node in parameters}) != len(parameters):
+            return False
+
+        def import_conflict(name: str) -> bool:
+            return any(
+                (normalized := self.normalized_import_name(imported)) is None
+                or normalized.endswith(".*")
+                or normalized.rsplit(" as ", 1)[-1].rsplit(".", 1)[-1] == name
+                for imported in self.imports
+            )
+
+        root = nominal.parent
+        if call.receiver is None:
+            if import_conflict(call.name) or any(name == call.name for name, _kind, _node in parameters):
+                return False
+            # A declaration with the same leaf elsewhere is not identity proof.
+            candidates = [
+                target
+                for target in flow.by_name.get(call.name, ())
+                if not target.owner
+                and target.analyzer.language == self.language
+                and target.node.parent is not None
+                and target.node.parent.type == "source_file"
+                and flow.namespaces[id(target.analyzer)] == flow.namespaces[id(self)]
+            ]
+            # Source values/types or a member can take precedence over a function.
+            for part in [*root.named_children, *nominal.named_children]:
+                if part.type == "class_body":
+                    members = part.named_children
+                else:
+                    members = [part]
+                for member in members:
+                    parsed = self.declaration(member)
+                    name = _field(member, "name")
+                    if (parsed is not None and parsed[0] == call.name) or (
+                        name is not None
+                        and self.symbol_name(self.text(name)) == call.name
+                        and member.type != "function_declaration"
+                    ):
+                        return False
+                    if (
+                        member.parent != root
+                        and member.type == "function_declaration"
+                        and (name is not None and self.symbol_name(self.text(name)) == call.name)
+                    ):
+                        return False
+        else:
+            if call.receiver.type not in IDENTIFIERS:
+                return False
+            receiver = self.symbol_name(self.text(call.receiver))
+            kinds = [
+                kind
+                for name, kind, node in parameters
+                if name == receiver and node.start_byte < parameter.start_byte
+            ]
+            if len(kinds) != 1 or not re.fullmatch(r"[^\W\d]\w*", kinds[0]) or import_conflict(kinds[0]):
+                return False
+            if any(
+                part.type
+                in {"class_declaration", "object_declaration", "type_alias", "typealias_declaration"}
+                and (name := _field(part, "name")) is not None
+                and self.symbol_name(self.text(name)) == kinds[0]
+                for body in nominal.named_children
+                if body.type == "class_body"
+                for part in body.named_children
+            ):
+                return False
+            owner = (flow.namespaces[id(self)] + "." if flow.namespaces[id(self)] else "") + kinds[0]
+            definitions = flow.class_definitions.get(owner, ())
+            if len(definitions) != 1 or definitions[0][0] is not self:
+                return False
+            source_nominal = definitions[0][1]
+            if (
+                source_nominal.parent != root
+                or source_nominal.type != "class_declaration"
+                or source_nominal.has_error
+                or flow.declaration_tokens(source_nominal)
+                - {"class", "public", "private", "internal", "final"}
+                or any(
+                    part.type in {"type_parameters", "delegation_specifiers"}
+                    for part in source_nominal.named_children
+                )
+            ):
+                return False
+            source_primary = next(
+                (part for part in source_nominal.named_children if part.type == "primary_constructor"), None
+            )
+            if source_primary is not None and any(
+                name == call.name
+                for name, _kind, _node in self.primary_constructor_parameters(self, source_primary) or ()
+            ):
+                return False
+            if any(
+                part.type == "companion_object"
+                or (parsed := self.declaration(part)) is not None
+                and parsed[0] == call.name
+                for body in source_nominal.named_children
+                if body.type == "class_body"
+                for part in body.named_children
+            ):
+                return False
+            candidates = [target for target in flow.by_name.get(call.name, ()) if target.owner == owner]
+        if len(candidates) != 1:
+            return False
+        target = candidates[0]
+        name = _field(target.node, "name")
+        if (
+            target.analyzer is not self
+            or target.node.has_error
+            or target.node.type != "function_declaration"
+            or target.body is None
+            or not flow.closed_dispatch(target)
+            or not flow.signature_visible(self, target, call)
+            or any(
+                part.type == "."
+                and name is not None
+                and part.end_byte <= name.start_byte
+                or part.type == "type_parameters"
+                or part.type == "function_value_parameters"
+                and any(child.type == "=" for child in part.children)
+                for part in target.node.children
+            )
+        ):
+            return False
+        parts = [part for part in target.body.named_children if part.type not in COMMENTS]
+        if len(parts) == 1 and parts[0].type == "block":
+            parts = [part for part in parts[0].named_children if part.type not in COMMENTS]
+            if not parts:
+                return True
+            if len(parts) == 1 and parts[0].type == "return_expression":
+                parts = parts[0].named_children
+        if len(parts) != 1:
+            return False
+        return literal(parts[0])
+
     def initialize_kotlin_properties(self, nodes: list[Any]) -> set[int]:
         """Execute the bounded, ordered construction prefix once per field round.
 
@@ -14597,9 +14782,14 @@ class Analyzer:
             "loadDataWithBaseURL",
         }
 
-        def modeled_boundary(expression: Any) -> bool:
+        def modeled_boundary(expression: Any, nonstored_parameter: Any = None) -> bool:
             return any(
-                (call := self.call(part)) is not None and call.name.rsplit(".", 1)[-1] in modeled_names
+                (call := self.call(part)) is not None
+                and call.name.rsplit(".", 1)[-1] in modeled_names
+                and (
+                    nonstored_parameter is None
+                    or not self.kotlin_inert_default_call(call, nonstored_parameter)
+                )
                 for part in _walk(expression)
             )
 
@@ -14613,8 +14803,11 @@ class Analyzer:
                 # nonconstant default ran for every construction. A default can
                 # affect construction even when its parameter is never a field.
                 expression = declaration.named_children[-1]
-                if modeled_boundary(expression) and self.constant(expression, Frame()) is None:
-                    stored = any(child.type in {"val", "var"} for child in declaration.children)
+                stored = any(child.type in {"val", "var"} for child in declaration.children)
+                if (
+                    modeled_boundary(expression, None if stored else declaration)
+                    and self.constant(expression, Frame()) is None
+                ):
                     flow.partial(
                         "Kotlin stored property initializer flow unavailable"
                         if stored
