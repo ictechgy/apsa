@@ -668,3 +668,85 @@ def test_nonstored_default_unique_same_file_literal_argument_stays_checked() -> 
     )
     assert not sql_findings(report), report
     assert_checked(report)
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reversed"])
+@pytest.mark.parametrize("package", ["", "sample"])
+@pytest.mark.parametrize("rival", ["class", "alias", "object", "property"])
+def test_nonstored_default_peer_nonfunction_keeps_identity_unavailable(
+    rival: str, package: str, reverse: bool
+) -> None:
+    prefix = f"package {package}\n" if package else ""
+    source = 'Intent().getStringExtra(key) ?: ""'
+    rivals = {
+        "class": f"class getStringExtra(key: String) {{ val query = {source} }}",
+        "alias": f"class SourceValue(key: String) {{ val query = {source} }}\n"
+        "typealias getStringExtra = SourceValue",
+        "object": f"object getStringExtra {{ operator fun invoke(key: String): String = {source} }}",
+        "property": f"val getStringExtra: (String) -> String = {{ key -> {source} }}",
+    }
+    files = [
+        (
+            "Construction.kt",
+            prefix + IMPORTS + 'fun getStringExtra(key: Int): String = "fixed"\n'
+            'class Handler(ignored: Any = getStringExtra("q"))',
+        ),
+        ("Other.kt", prefix + "import android.content.Intent\n" + rivals[rival]),
+    ]
+    report = analyze_sources(list(reversed(files)) if reverse else files)
+    assert_default_boundary(report, 4 + bool(package), (UNAVAILABLE,) if rival == "property" else ())
+
+
+@pytest.mark.parametrize("rival", ["class", "alias", "object", "property"])
+def test_nonstored_default_other_package_nonfunction_does_not_shadow_inert_helper(rival: str) -> None:
+    declarations = {
+        "class": "class getStringExtra(key: String)",
+        "alias": "class SourceValue(key: String)\ntypealias getStringExtra = SourceValue",
+        "object": 'object getStringExtra { operator fun invoke(key: String): String = "fixed" }',
+        "property": 'val getStringExtra: (String) -> String = { "fixed" }',
+    }
+    files = [
+        (
+            "Construction.kt",
+            IMPORTS + 'fun getStringExtra(key: String): String = "fixed"\n'
+            'class Handler(ignored: Any = getStringExtra("q"))',
+        ),
+        ("Other.kt", "package separate\n" + declarations[rival]),
+    ]
+    report = analyze_sources(files)
+    assert not sql_findings(report), report
+    assert_checked(report)
+
+
+@pytest.mark.parametrize("peer", [False, True], ids=["same-file", "peer-file"])
+def test_nonstored_default_inapplicable_member_cannot_borrow_inert_body(peer: bool) -> None:
+    extension = 'fun Other.getStringExtra(key: String): String = Intent().getStringExtra(key) ?: ""'
+    helper = 'class Other { fun getStringExtra(key: Int): String = "fixed" }\n'
+    body = 'class Handler(other: Other, ignored: Any = other.getStringExtra("q"))'
+    main = IMPORTS + helper + ("" if peer else extension + "\n") + body
+    files = [("Construction.kt", main)]
+    if peer:
+        files.append(("Other.kt", "import android.content.Intent\n" + extension))
+    report = analyze_sources(files)
+    assert_default_boundary(report, 4 if peer else 5)
+
+
+@pytest.mark.parametrize("peer", [False, True], ids=["same-file", "peer-file"])
+def test_nonstored_default_callable_extension_property_keeps_member_identity_unavailable(
+    peer: bool,
+) -> None:
+    extension = (
+        'val Other.getStringExtra: (String) -> String get() = { key -> Intent().getStringExtra(key) ?: "" }'
+    )
+    helper = 'class Other { fun getStringExtra(key: Int): String = "fixed" }\n'
+    main = (
+        IMPORTS
+        + helper
+        + ("" if peer else extension + "\n")
+        + 'class Handler(other: Other, ignored: Any = other.getStringExtra("q"))'
+    )
+    files = [("Construction.kt", main)]
+    if peer:
+        files.append(("Other.kt", "import android.content.Intent\n" + extension))
+    report = analyze_sources(files)
+    assert_default_boundary(report, 4 if peer else 5)

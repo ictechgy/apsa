@@ -605,7 +605,7 @@ class NativeFlow:
                 if node.type == "constructor_declaration":
                     self.owners_with_constructor.add(owner)
 
-    def owner(self, analyzer: Analyzer, function: Any) -> str:
+    def owner(self, analyzer: Analyzer, function: Any, *, cache: bool = True) -> str:
         key = (id(analyzer), function.id)
         if key in self.owner_cache:
             return self.owner_cache[key]
@@ -624,7 +624,8 @@ class NativeFlow:
                 ([self.namespaces[id(analyzer)]] if self.namespaces[id(analyzer)] else [])
                 + list(reversed(names))
             )
-        self.owner_cache[key] = owner
+        if cache:
+            self.owner_cache[key] = owner
         return owner
 
     def string_members(self) -> set[tuple[str, str]]:
@@ -1714,14 +1715,17 @@ class NativeFlow:
         boundary = cls.unavailable_scope(node)
         return boundary.node if boundary is not None and boundary.kind == "anonymous" else None
 
-    def imported_symbols(self, analyzer: Analyzer, name: str, *, classes: bool = False) -> set[str]:
-        """Exact immutable file imports, indexed once; callers receive an independent set."""
+    def imported_symbols(
+        self, analyzer: Analyzer, name: str, *, classes: bool = False, cache: bool = True
+    ) -> set[str]:
+        """Exact imports; a read-only query builds any missing index locally."""
         # prepare() finishes imports before flow evaluation; this index belongs
         # to one NativeFlow and grows only from actual declarations, never queries.
         name = analyzer.symbol_name(name)
         key = (id(analyzer), classes)
-        if key not in self.import_indexes:
-            index: dict[str, set[str]] = {}
+        index = self.import_indexes.get(key)
+        if index is None:
+            index = {}
             for declaration in analyzer.imports:
                 declaration = declaration.strip()
                 if analyzer.language == "java":
@@ -1739,10 +1743,11 @@ class NativeFlow:
                 match = re.fullmatch(r"([\w.]+)(?:\s+as\s+(\w+))?", declaration)
                 if match:
                     index.setdefault(match[2] or match[1].rsplit(".", 1)[-1], set()).add(match[1])
-            self.import_indexes[key] = index
-        return self.import_indexes[key].get(name, set()).copy()
+            if cache:
+                self.import_indexes[key] = index
+        return index.get(name, set()).copy()
 
-    def type_import_unresolved(self, analyzer: Analyzer, declared: str) -> bool:
+    def type_import_unresolved(self, analyzer: Analyzer, declared: str, *, cache: bool = True) -> bool:
         """A conflicting package classifier needs positive imported TYPE evidence.
 
         Call after stronger lexical bindings have been excluded. Kotlin imports
@@ -1751,7 +1756,7 @@ class NativeFlow:
         if analyzer.language != "kotlin":
             return False
         root = analyzer.canonical_type_spelling(declared).partition(".")[0].partition("<")[0].rstrip("?!")
-        imported = self.imported_symbols(analyzer, root, classes=True)
+        imported = self.imported_symbols(analyzer, root, classes=True, cache=cache)
         namespace = self.namespaces[id(analyzer)]
         identity = (namespace + "." if namespace else "") + root
         if not imported or imported == {identity}:
@@ -1822,7 +1827,9 @@ class NativeFlow:
         }
         return len(imported) != 1 or represented != imported
 
-    def empty_source_ancestry(self, analyzer: Analyzer, nominal: Any, root: str) -> bool:
+    def empty_source_ancestry(
+        self, analyzer: Analyzer, nominal: Any, root: str, *, cache: bool = True
+    ) -> bool:
         """Discharge member lookup only for a unique, same-file empty class chain.
 
         This supplies no constructor, dispatch or external SDK ancestry proof.
@@ -1831,7 +1838,8 @@ class NativeFlow:
         key = (id(analyzer), nominal.id, root)
         if key in self.empty_base_cache:
             return self.empty_base_cache[key]
-        self.empty_base_cache[key] = False
+        if cache:
+            self.empty_base_cache[key] = False
         if "class" not in self.declaration_tokens(nominal):
             return False
         if analyzer.language == "swift" and self.swift_extensions_present:
@@ -1851,7 +1859,8 @@ class NativeFlow:
             seen.add(current.id)
             inherited = [child for child in current.named_children if child.type in INHERITED_TYPE_SCOPES]
             if not inherited:
-                self.empty_base_cache[key] = True
+                if cache:
+                    self.empty_base_cache[key] = True
                 return True
             if len(inherited) != 1:
                 return False
@@ -1877,7 +1886,7 @@ class NativeFlow:
             # leaf, or recurse through the use site's inherited lookup.
             namespace = self.namespaces[id(analyzer)]
             owner = namespace + "." + name if namespace else name
-            imported = self.imported_symbols(analyzer, name, classes=True)
+            imported = self.imported_symbols(analyzer, name, classes=True, cache=cache)
             if (
                 imported
                 and imported != {owner}
@@ -1999,7 +2008,7 @@ class NativeFlow:
                 references.append(text)
         return references
 
-    def member_type_names(self, analyzer: Analyzer, nominal: Any) -> set[str]:
+    def member_type_names(self, analyzer: Analyzer, nominal: Any, *, cache: bool = True) -> set[str]:
         """Every type declared anywhere in a source class body, nested or local."""
         key = (id(analyzer), nominal.id)
         if key not in self.member_type_cache:
@@ -2026,7 +2035,9 @@ class NativeFlow:
                         )
                     )
                     names.add(analyzer.text(name) if name is not None else "Companion")
-            self.member_type_cache[key] = names
+            if cache:
+                self.member_type_cache[key] = names
+            return names
         return self.member_type_cache[key]
 
     def swiftui_shadowed(self) -> bool:
@@ -2051,7 +2062,9 @@ class NativeFlow:
                         self.swiftui_shadow = True
         return self.swiftui_shadow
 
-    def known_ancestry(self, analyzer: Analyzer, nominal: Any, root: str, depth: int = 0) -> bool:
+    def known_ancestry(
+        self, analyzer: Analyzer, nominal: Any, root: str, depth: int = 0, *, cache: bool = True
+    ) -> bool:
         """Every supertype is a curated framework base or a source class, neither declaring `root`.
 
         Member types are the inherited bindings that can shadow a lexical or
@@ -2061,7 +2074,8 @@ class NativeFlow:
         key = (id(analyzer), nominal.id, root)
         if key in self.known_base_cache:
             return self.known_base_cache[key]
-        self.known_base_cache[key] = False
+        if cache:
+            self.known_base_cache[key] = False
         if depth >= MAX_EMPTY_BASE_DEPTH or nominal.has_error or nominal.parent is None:
             return False
         references = self.supertype_references(analyzer, nominal)
@@ -2087,13 +2101,18 @@ class NativeFlow:
                 apple_only = all(
                     module is not None and module[1] in SWIFTUI_COMPANION_MODULES for module in modules
                 )
-                imported = self.imported_symbols(analyzer, head, classes=True)
+                imported = self.imported_symbols(analyzer, head, classes=True, cache=cache)
                 if (
                     not apple_only
                     or self.swiftui_shadowed()
                     or not (imported or "SwiftUI" in analyzer.imports)
                     or self.class_name_present(analyzer, head)
-                    or self.lexical_type(analyzer, reference, nominal.parent) is not None
+                    or (
+                        self.lexical_type(analyzer, reference, nominal.parent)
+                        if cache
+                        else self.lexical_type(analyzer, reference, nominal.parent, cache=False)
+                    )
+                    is not None
                 ):
                     return False
                 if imported:
@@ -2104,20 +2123,24 @@ class NativeFlow:
                 if members is None or root in members:
                     return False
                 continue
-            owners = self.class_owners(analyzer, reference, nominal.parent)
+            owners = self.class_owners(analyzer, reference, nominal.parent, cache=cache)
             if owners:
                 definitions = self.class_definitions[next(iter(owners))]
                 if len(owners) != 1 or len(definitions) != 1:
                     return False
                 source, base = definitions[0]
-                if root in self.member_type_names(source, base) or not self.known_ancestry(
-                    source, base, root, depth + 1
+                if root in self.member_type_names(source, base, cache=cache) or not self.known_ancestry(
+                    source, base, root, depth + 1, cache=cache
                 ):
                     return False
                 continue
-            if self.lexical_type(analyzer, reference, nominal.parent) is not None:
+            if (
+                self.lexical_type(analyzer, reference, nominal.parent)
+                if cache
+                else self.lexical_type(analyzer, reference, nominal.parent, cache=False)
+            ) is not None:
                 return False
-            imported = self.imported_symbols(analyzer, head, classes=True)
+            imported = self.imported_symbols(analyzer, head, classes=True, cache=cache)
             on_demand = [declaration for declaration in analyzer.imports if declaration.endswith(".*")]
             if imported:
                 identities = {symbol + ("." + rest if rest else "") for symbol in imported}
@@ -2130,7 +2153,8 @@ class NativeFlow:
             members = FRAMEWORK_BASE_MEMBER_TYPES.get(identity)
             if members is None or root in members:
                 return False
-        self.known_base_cache[key] = True
+        if cache:
+            self.known_base_cache[key] = True
         return True
 
     def swift_extension_target_represented(self, target: str, extension_source: Analyzer | None) -> bool:
@@ -2170,7 +2194,7 @@ class NativeFlow:
             or re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", target) is None
         )
 
-    def lexical_type(self, analyzer: Analyzer, declared: str, use: Any = None) -> Any:
+    def lexical_type(self, analyzer: Analyzer, declared: str, use: Any = None, *, cache: bool = True) -> Any:
         """Find lexical type bindings, honoring Kotlin explicit-import priority."""
         declared = analyzer.canonical_type_spelling(declared)
         match = re.match(r"[A-Za-z_]\w*", declared)
@@ -2210,7 +2234,8 @@ class NativeFlow:
                 return boundary.node
             key = (id(analyzer), scope.id)
             if scope.type in FUNCTIONS | declarations:
-                if key not in self.type_parameter_cache:
+                names = self.type_parameter_cache.get(key)
+                if names is None:
                     names = {}
                     for parameters in scope.named_children:
                         if parameters.type != "type_parameters":
@@ -2231,13 +2256,18 @@ class NativeFlow:
                             )
                             if name is not None:
                                 names[analyzer.symbol_name(analyzer.text(name))] = parameter
-                    self.type_parameter_cache[key] = names
-                if root in self.type_parameter_cache[key]:
-                    return self.type_parameter_cache[key][root]
+                    if cache:
+                        self.type_parameter_cache[key] = names
+                if root in names:
+                    return names[root]
                 if analyzer.language == "swift" and boundary is not None and boundary.kind == "nominal":
                     if self.swift_extension_types_exhausted:
                         return boundary.name
-                    owner = self.owner(analyzer, boundary.name)
+                    owner = (
+                        self.owner(analyzer, boundary.name)
+                        if cache
+                        else self.owner(analyzer, boundary.name, cache=False)
+                    )
                     for target, (extension_source, inherited) in self.swift_extension_conformances.items():
                         if self.swift_extension_owner_matches(owner, target, extension_source):
                             # A protocol may supply any member type, including
@@ -2256,8 +2286,8 @@ class NativeFlow:
                     (child for child in scope.named_children if child.type in INHERITED_TYPE_SCOPES), None
                 )
                 if inherited is not None and not (
-                    self.empty_source_ancestry(analyzer, scope, root)
-                    or self.known_ancestry(analyzer, scope, root)
+                    self.empty_source_ancestry(analyzer, scope, root, cache=cache)
+                    or self.known_ancestry(analyzer, scope, root, cache=cache)
                 ):
                     # Unknown or nonempty ancestry may supply a member before
                     # an enclosing/package/import binding.
@@ -2272,7 +2302,8 @@ class NativeFlow:
                             # as unresolved rather than falling back to a
                             # same-package class with the same spelling.
                             return scope
-                if key not in self.type_scope_cache:
+                entries = self.type_scope_cache.get(key)
+                if entries is None:
                     entries = []
                     declarations_scope = (
                         next((child for child in scope.named_children if child.type == "class_body"), scope)
@@ -2301,12 +2332,13 @@ class NativeFlow:
                         )
                         if name is not None:
                             entries.append((analyzer.symbol_name(analyzer.text(name)), declaration))
-                    self.type_scope_cache[key] = entries
-                for name, declaration in self.type_scope_cache[key]:
+                    if cache:
+                        self.type_scope_cache[key] = entries
+                for name, declaration in entries:
                     if name != root:
                         continue
                     if analyzer.language == "kotlin" and scope.type in {"program", "source_file"}:
-                        imported = self.imported_symbols(analyzer, root, classes=True)
+                        imported = self.imported_symbols(analyzer, root, classes=True, cache=cache)
                         namespace = self.namespaces[id(analyzer)]
                         identity = (namespace + "." if namespace else "") + root
                         if imported and imported != {identity}:
@@ -2324,10 +2356,16 @@ class NativeFlow:
             scope = scope.parent
         return None
 
-    def class_owners(self, analyzer: Analyzer, declared: str, use: Any = None) -> set[str]:
+    def class_owners(
+        self, analyzer: Analyzer, declared: str, use: Any = None, *, cache: bool = True
+    ) -> set[str]:
         """Class identity is package/import/file based, never globally unique by leaf."""
         declared = analyzer.canonical_type_spelling(declared)
-        binding = self.lexical_type(analyzer, declared, use)
+        binding = (
+            self.lexical_type(analyzer, declared, use)
+            if cache
+            else self.lexical_type(analyzer, declared, use, cache=False)
+        )
         if binding is not None:
             # Same-file top-level nominal declarations (including qualified
             # named nested types) are source identities. Local/member aliases,
@@ -2341,17 +2379,17 @@ class NativeFlow:
             name = _field(binding, "name")
             if name is None:
                 return set()
-            owner = self.owner(analyzer, name)
-            imported = self.imported_symbols(analyzer, declared.partition(".")[0], classes=True)
+            owner = self.owner(analyzer, name) if cache else self.owner(analyzer, name, cache=False)
+            imported = self.imported_symbols(analyzer, declared.partition(".")[0], classes=True, cache=cache)
             if imported and imported != {owner}:
                 return set()
             suffix = declared.partition(".")[2]
             reference = owner + ("." + suffix if suffix else "")
             return {reference} if self.class_definitions.get(reference) else set()
-        if self.type_import_unresolved(analyzer, declared):
+        if self.type_import_unresolved(analyzer, declared, cache=cache):
             return set()
         root, _, remainder = declared.partition(".")
-        imported = self.imported_symbols(analyzer, root, classes=True)
+        imported = self.imported_symbols(analyzer, root, classes=True, cache=cache)
         references = {symbol + ("." + remainder if remainder else "") for symbol in imported}
         if not imported:
             namespace = self.namespaces[id(analyzer)]
@@ -2477,12 +2515,14 @@ class NativeFlow:
                 pending.extend(child.named_children)
         return names
 
-    def module_value_present(self, analyzer: Analyzer, name: str, *, aliases: bool = False) -> bool:
+    def module_value_present(
+        self, analyzer: Analyzer, name: str, *, aliases: bool = False, cache: bool = True
+    ) -> bool:
         """A potential expression binding supplies uncertainty, never a value/type proof."""
-        return bool(self.module_value_bindings(analyzer, name, aliases=aliases))
+        return bool(self.module_value_bindings(analyzer, name, aliases=aliases, cache=cache))
 
     def imported_namespace_shadow(
-        self, analyzer: Analyzer, spelling: str, use: Any, *, source_types: bool = True
+        self, analyzer: Analyzer, spelling: str, use: Any, *, source_types: bool = True, cache: bool = True
     ) -> bool:
         """An imported expression root cannot silently stand for the written package prefix."""
         spelling = analyzer.canonical_type_spelling(spelling).partition("<")[0]
@@ -2490,39 +2530,44 @@ class NativeFlow:
         if not separator:
             return False
         if not source_types and (
-            self.class_owners(analyzer, root, use)
-            or self.class_owners(analyzer, spelling.rsplit(".", 1)[0], use)
+            self.class_owners(analyzer, root, use, cache=cache)
+            or self.class_owners(analyzer, spelling.rsplit(".", 1)[0], use, cache=cache)
         ):
             return True
-        imported = self.imported_symbols(analyzer, root)
+        imported = self.imported_symbols(analyzer, root, cache=cache)
         if not imported or any(
             spelling == symbol or spelling.startswith(symbol + ".") for symbol in imported
         ):
             return False
         # A represented source type still permits its own nested-type/member lookup.
-        return not source_types or not self.class_owners(analyzer, spelling, use)
+        return not source_types or not self.class_owners(analyzer, spelling, use, cache=cache)
 
-    def type_namespace_shadow(self, analyzer: Analyzer, spelling: str, use: Any) -> bool | None:
+    def type_namespace_shadow(
+        self, analyzer: Analyzer, spelling: str, use: Any, *, cache: bool = True
+    ) -> bool | None:
         """Separate represented classifier roots from unresolved imported identities."""
-        if not self.imported_namespace_shadow(analyzer, spelling, use, source_types=False):
+        if not self.imported_namespace_shadow(analyzer, spelling, use, source_types=False, cache=cache):
             return False
         if analyzer.language != "kotlin":
             return True
         root, _, _tail = spelling.partition(".")
-        if self.class_owners(analyzer, root, use) or self.class_owners(
-            analyzer, spelling.rsplit(".", 1)[0], use
+        if self.class_owners(analyzer, root, use, cache=cache) or self.class_owners(
+            analyzer, spelling.rsplit(".", 1)[0], use, cache=cache
         ):
             return True
-        if self.classifier_import_identities is None:
+        classifiers = self.classifier_import_identities
+        if classifiers is None:
             classifiers = set(self.class_definitions)
             for name, bindings in self.module_type_aliases.items():
                 for source, _node in bindings:
                     namespace = self.namespaces[id(source)]
                     classifiers.add((namespace + "." if namespace else "") + name)
 
-            self.classifier_import_identities = frozenset(classifiers)
-        imported = self.imported_symbols(analyzer, root)
-        if imported & self.classifier_import_identities:
+            classifiers = frozenset(classifiers)
+            if cache:
+                self.classifier_import_identities = classifiers
+        imported = self.imported_symbols(analyzer, root, cache=cache)
+        if imported & classifiers:
             return True
         return None  # package-level value presence cannot close the binary classifier namespace
 
@@ -2686,12 +2731,12 @@ class NativeFlow:
         return True
 
     def module_value_bindings(
-        self, analyzer: Analyzer, name: str, *, aliases: bool = False
+        self, analyzer: Analyzer, name: str, *, aliases: bool = False, cache: bool = True
     ) -> list[tuple[Analyzer, Any]]:
         """Visible module declarations retain their source and type origin."""
         result = {}
         name = analyzer.symbol_name(name)
-        imported = self.imported_symbols(analyzer, name)
+        imported = self.imported_symbols(analyzer, name, cache=cache)
         names = {name, *(symbol.rsplit(".", 1)[-1] for symbol in imported)}
         for source_name in names:
             bindings = self.module_type_aliases if aliases else self.module_values
@@ -3470,8 +3515,9 @@ class NativeFlow:
                     or owner is None
                     or owner.receiver is None
                     or owner.name not in {"let", "also", "takeIf", "takeUnless", "use", "forEach"}
-                    or not analyzer.kotlin_scope_identity_known(owner.name, frame)
-                    or analyzer.reference_binding(owner.node, owner.name, frame=frame) is not None
+                    or not analyzer.kotlin_scope_identity_known(owner.name, frame, cache=False)
+                    or analyzer.reference_binding(owner.node, owner.name, frame=frame, cache=False)
+                    is not None
                 ):
                     return False
                 namespaces = {"kotlin.collections", "kotlin.sequences", "kotlin.text"}
@@ -3480,7 +3526,7 @@ class NativeFlow:
                     if owner.name == "forEach"
                     else {"kotlin.io.use" if owner.name == "use" else "kotlin." + owner.name}
                 )
-                if self.imported_symbols(analyzer, owner.name) - allowed or any(
+                if self.imported_symbols(analyzer, owner.name, cache=False) - allowed or any(
                     declaration.endswith(".*")
                     and declaration
                     not in {"kotlin.*", "kotlin.io.*", *(namespace + ".*" for namespace in namespaces)}
@@ -3494,12 +3540,12 @@ class NativeFlow:
                         factory is not None
                         and factory.receiver is None
                         and factory.name in {"listOf", "mutableListOf", "setOf", "mutableSetOf", "arrayOf"}
-                        and analyzer.kotlin_scope_identity_known(factory.name, frame)
-                        and not self.imported_symbols(analyzer, factory.name)
+                        and analyzer.kotlin_scope_identity_known(factory.name, frame, cache=False)
+                        and not self.imported_symbols(analyzer, factory.name, cache=False)
                         - {"kotlin.collections." + factory.name, "kotlin." + factory.name}
                     )
                     if not factory_known and not any(
-                        analyzer.established_argument_type(owner.receiver, frame, qualified)
+                        analyzer.established_argument_type(owner.receiver, frame, qualified, cache=False)
                         for qualified in (
                             "kotlin.collections.List",
                             "kotlin.collections.MutableList",
@@ -3549,11 +3595,11 @@ class NativeFlow:
                 return False
             body = next((part for part in boundary.node.named_children if part.type == "class_body"), None)
             binding = analyzer.reference_binding(
-                receiver, name, scope=body or boundary.node, stop=boundary.node, frame=frame
+                receiver, name, scope=body or boundary.node, stop=boundary.node, frame=frame, cache=False
             )
         elif receiver.type in IDENTIFIERS:
             name = analyzer.symbol_name(analyzer.text(receiver))
-            binding = analyzer.reference_binding(receiver, name, frame=frame)
+            binding = analyzer.reference_binding(receiver, name, frame=frame, cache=False)
         else:
             return False
         if binding is None or name not in analyzer.field_types:
@@ -3613,7 +3659,9 @@ class NativeFlow:
                 ) and self.kotlin_extension_string_receiver(
                     analyzer, parts[1], frame, nullable=nullable, depth=depth + 1
                 )
-        if analyzer.established_argument_type(node, frame, "kotlin.String", require_nonnullable=not nullable):
+        if analyzer.established_argument_type(
+            node, frame, "kotlin.String", require_nonnullable=not nullable, cache=False
+        ):
             return True
         if self.kotlin_extension_stored_string_receiver(analyzer, node, frame, nullable=nullable):
             return True

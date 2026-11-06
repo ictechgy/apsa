@@ -5517,7 +5517,7 @@ class Analyzer:
             current = current.parent
         return False
 
-    def kotlin_scope_identity_known(self, name: str, frame: Frame) -> bool:
+    def kotlin_scope_identity_known(self, name: str, frame: Frame, *, cache: bool = True) -> bool:
         """Only an unshadowed scope name can establish stdlib return semantics."""
         name = self.symbol_name(name)
         return not (
@@ -5532,7 +5532,7 @@ class Analyzer:
                 # Top-level callable val/var bindings also shadow scope names.
                 # Reuse the prepared package/import visibility index; a possible
                 # property binding supplies uncertainty, never stdlib identity.
-                or self.native_flow.module_value_present(self, name)
+                or self.native_flow.module_value_present(self, name, cache=cache)
             )
         )
 
@@ -9715,6 +9715,7 @@ class Analyzer:
         nullable: bool = False,
         expanded: list[tuple[int, int]] | None = None,
         require_nonnullable: bool = False,
+        cache: bool = True,
     ) -> bool:
         """Resolve a nominal root in its lexical and alias-declaration context."""
         if not kind:
@@ -9729,20 +9730,24 @@ class Analyzer:
             if nullable and require_nonnullable:
                 return False
             if qualified == "kotlin.Array" and nullable:
-                if flow is not None:
+                if flow is not None and cache:
                     flow.partial("callable argument type identity unresolved", self)
                 return False  # nullable smart casts are outside these nominal signature facts
             return True
 
         if flow is not None:
-            binding = flow.lexical_type(context, root, use)
+            binding = (
+                flow.lexical_type(context, root, use)
+                if cache
+                else flow.lexical_type(context, root, use, cache=False)
+            )
             if binding is not None:
                 if binding.type in {"type_alias", "typealias_declaration"}:
                     name = _field(binding, "name") or next(
                         (part for part in binding.named_children if part.type in IDENTIFIERS), None
                     )
                     if name is None or context.symbol_name(context.text(name)) != root:
-                        if self.reference_type_evidence:
+                        if cache and self.reference_type_evidence:
                             self.reference_type_evidence[-1].add(
                                 (context.path, context.location(use)["line"], root)
                             )
@@ -9756,18 +9761,23 @@ class Analyzer:
                         nullable,
                         expanded,
                         require_nonnullable=require_nonnullable,
+                        cache=cache,
                     )
-                if binding.type in {"type_parameter", "type_constraint"} and not flow.type_hint_depth:
+                if (
+                    cache
+                    and binding.type in {"type_parameter", "type_constraint"}
+                    and not flow.type_hint_depth
+                ):
                     flow.partial("callable argument type identity unresolved", self)
                 return False
         if flow is not None:
-            if flow.type_import_unresolved(context, root):
-                if self.reference_type_evidence:
+            if flow.type_import_unresolved(context, root, cache=cache):
+                if cache and self.reference_type_evidence:
                     self.reference_type_evidence[-1].add((context.path, context.location(use)["line"], root))
                 return False
-            namespace = flow.type_namespace_shadow(context, root, use)
+            namespace = flow.type_namespace_shadow(context, root, use, cache=cache)
             if namespace is None:
-                if self.reference_type_evidence:
+                if cache and self.reference_type_evidence:
                     self.reference_type_evidence[-1].add((context.path, context.location(use)["line"], root))
                 return False
             if namespace:
@@ -9775,11 +9785,12 @@ class Analyzer:
         simple = qualified.rsplit(".", 1)[-1]
         if flow is None:
             return (root == qualified or default_import and root == simple) and compatible_root()
-        imported = flow.imported_symbols(context, root, classes=True)
+        imported = flow.imported_symbols(context, root, classes=True, cache=cache)
         aliases = self.reference_type_aliases(context, root, imported)
         if aliases:
             if len(aliases) != 1:
-                flow.partial("callable argument type identity unresolved", self)
+                if cache:
+                    flow.partial("callable argument type identity unresolved", self)
                 return False
             source, alias = aliases[0]
             return self.library_alias_type(
@@ -9791,6 +9802,7 @@ class Analyzer:
                 nullable,
                 expanded,
                 require_nonnullable=require_nonnullable,
+                cache=cache,
             )
         if root == qualified or imported == {qualified}:
             return compatible_root()
@@ -9799,7 +9811,7 @@ class Analyzer:
         return (
             default_import
             and root == simple
-            and not flow.class_owners(context, root, use)
+            and not flow.class_owners(context, root, use, cache=cache)
             and compatible_root()
         )
 
@@ -9813,10 +9825,11 @@ class Analyzer:
         nullable: bool = False,
         expanded: list[tuple[int, int]] | None = None,
         require_nonnullable: bool = False,
+        cache: bool = True,
     ) -> bool:
         key = id(source), alias.id
         if key in seen or len(seen) >= 16:
-            if self.native_flow is not None:
+            if self.native_flow is not None and cache:
                 self.native_flow.partial("callable argument type identity unresolved", self)
             return False
         if expanded is not None:
@@ -9842,6 +9855,7 @@ class Analyzer:
             nullable=nullable,
             expanded=expanded,
             require_nonnullable=require_nonnullable,
+            cache=cache,
         )
 
     def reference_declarations(self, node: Any) -> list[tuple[str, Any, str]]:
@@ -10031,9 +10045,16 @@ class Analyzer:
         )
 
     def reference_binding(
-        self, use: Any, name: str, *, scope: Any = None, stop: Any = None, frame: Frame | None = None
+        self,
+        use: Any,
+        name: str,
+        *,
+        scope: Any = None,
+        stop: Any = None,
+        frame: Frame | None = None,
+        cache: bool = True,
     ) -> tuple[Any, str, Any] | None:
-        """Find an argument's declaration before resolving its type spelling."""
+        """Find declaration syntax, optionally without publishing missing indexes."""
         flow = self.native_flow
         if flow is None:
             return None
@@ -10042,8 +10063,9 @@ class Analyzer:
             if scope is None:
                 return None
             key = id(self), scope.id
-            if key not in flow.reference_binding_cache:
-                entries: dict[str, list[tuple[Any, str, Any]]] = {}
+            entries = flow.reference_binding_cache.get(key)
+            if entries is None:
+                entries = {}
 
                 if scope.type in FUNCTIONS:
                     for symbol, kind, origin in self.parameters(scope):
@@ -10138,8 +10160,9 @@ class Analyzer:
                                     entries.setdefault(self.symbol_name(self.text(symbol)), []).append(
                                         (parameter, self.text(kind), None)
                                     )
-                flow.reference_binding_cache[key] = entries
-            for origin, kind, expression in reversed(flow.reference_binding_cache[key].get(name, [])):
+                if cache:
+                    flow.reference_binding_cache[key] = entries
+            for origin, kind, expression in reversed(entries.get(name, [])):
                 if name == "it" and origin.type in CLOSURES and self.closure_arity(origin) is None:
                     if self.kotlin_parameterless_callback(self.closure_owner(origin), frame):
                         continue
@@ -10185,7 +10208,8 @@ class Analyzer:
             if stop is not None and scope.id == stop.id:
                 return None
             scope = scope.parent
-        flow.partial("callable argument type identity unresolved", self)
+        if cache:
+            flow.partial("callable argument type identity unresolved", self)
         return None
 
     def reference_member_binding(
@@ -10487,7 +10511,13 @@ class Analyzer:
         return bound if len(used) == len(call.args) else None
 
     def established_argument_type(
-        self, argument: Any, frame: Frame | None, qualified: str, *, require_nonnullable: bool = False
+        self,
+        argument: Any,
+        frame: Frame | None,
+        qualified: str,
+        *,
+        require_nonnullable: bool = False,
+        cache: bool = True,
     ) -> bool:
         """Read literals, explicit types, casts or canonical ordinary-local facts only."""
         asserted = self.nonnull_expression(argument)
@@ -10510,13 +10540,14 @@ class Analyzer:
                 qualified,
                 default_import=True,
                 require_nonnullable=require_nonnullable and not asserted,
+                cache=cache,
             )
         if frame is None or self.native_flow is None or node.type not in IDENTIFIERS:
             return False
         name = self.symbol_name(self.text(node))
         if name == "it":
             return False  # implicit callback binding can require fresh resolution
-        binding = self.reference_binding(node, name, frame=frame)
+        binding = self.reference_binding(node, name, frame=frame, cache=cache)
         if binding is None:
             return False
         origin, declared, _initializer = binding
@@ -10529,6 +10560,7 @@ class Analyzer:
                 qualified,
                 default_import=True,
                 require_nonnullable=require_nonnullable and not asserted,
+                cache=cache,
             )
         if origin.type != "property_declaration" or name not in frame.local_names:
             return False
@@ -14640,6 +14672,28 @@ class Analyzer:
             )
 
         root = nominal.parent
+        visible_roots = [
+            (source, source_root)
+            for source, source_root, _nodes in flow.files
+            if source.language == self.language and flow.namespaces[id(source)] == flow.namespaces[id(self)]
+        ]
+
+        def extension_candidate(source: Analyzer, declaration: Any) -> bool:
+            name = _field(declaration, "name")
+            parsed = source.declaration(declaration)
+            return bool(
+                (
+                    name is not None
+                    and source.symbol_name(source.text(name)) == call.name
+                    or parsed is not None
+                    and parsed[0] == call.name
+                )
+                and any(
+                    part.type == "." and (name is None or part.end_byte <= name.start_byte)
+                    for part in declaration.children
+                )
+            )
+
         if call.receiver is None:
             if import_conflict(call.name) or any(name == call.name for name, _kind, _node in parameters):
                 return False
@@ -14654,26 +14708,27 @@ class Analyzer:
                 and flow.namespaces[id(target.analyzer)] == flow.namespaces[id(self)]
             ]
             # Source values/types or a member can take precedence over a function.
-            for part in [*root.named_children, *nominal.named_children]:
-                if part.type == "class_body":
-                    members = part.named_children
-                else:
-                    members = [part]
-                for member in members:
-                    parsed = self.declaration(member)
-                    name = _field(member, "name")
-                    if (parsed is not None and parsed[0] == call.name) or (
-                        name is not None
-                        and self.symbol_name(self.text(name)) == call.name
-                        and member.type != "function_declaration"
-                    ):
-                        return False
-                    if (
-                        member.parent != root
-                        and member.type == "function_declaration"
-                        and (name is not None and self.symbol_name(self.text(name)) == call.name)
-                    ):
-                        return False
+            for source, scope in [*visible_roots, (self, nominal)]:
+                for part in scope.named_children:
+                    members = part.named_children if part.type == "class_body" else [part]
+                    for member in members:
+                        parsed = source.declaration(member)
+                        name = _field(member, "name") or next(
+                            (
+                                child
+                                for child in member.named_children
+                                if child.type in IDENTIFIERS
+                                and member.type in {"type_alias", "typealias_declaration"}
+                            ),
+                            None,
+                        )
+                        named = name is not None and source.symbol_name(source.text(name)) == call.name
+                        if (parsed is not None and parsed[0] == call.name) or (
+                            named and member.type != "function_declaration"
+                        ):
+                            return False
+                        if scope == nominal and named and member.type == "function_declaration":
+                            return False
         else:
             if call.receiver.type not in IDENTIFIERS:
                 return False
@@ -14727,6 +14782,16 @@ class Analyzer:
                 for body in source_nominal.named_children
                 if body.type == "class_body"
                 for part in body.named_children
+            ):
+                return False
+            # Arity alone cannot prove that a member wins over an extension.
+            # Keep the boundary when a visible extension could accept the call;
+            # this query deliberately performs no overload ranking.
+            if import_conflict(call.name) or any(
+                extension_candidate(source, member)
+                for source, scope in [*visible_roots, (self, nominal)]
+                for part in scope.named_children
+                for member in (part.named_children if part.type == "class_body" else [part])
             ):
                 return False
             candidates = [target for target in flow.by_name.get(call.name, ()) if target.owner == owner]

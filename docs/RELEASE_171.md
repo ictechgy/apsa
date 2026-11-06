@@ -821,3 +821,11 @@ The receiver diagnostic also uses safe-call nonnull branches, explicit !! assert
 Receiver ownership now survives known nonreceiver callbacks and ordinary local functions while fencing enclosing extension/receiver contexts, including extension properties. Nonstored defaults calling a bounded, proven inert project API lookalike remain checked; real or uncertain modeled source/sink boundaries remain precise. Both queries read declarations and syntax without executing bodies or changing analysis state.
 
 Kotlin null literals now stay untainted. Indexed implicit-receiver property writes preserve their actual content data under the existing content-lambda model, including the HTML attributes-map case previously masked by erroneous null provenance. Bound maps and rebound receiver scopes retain their separate effects; this establishes source flow, not third-party escaping or exploitability.
+
+
+### Item2: preserve constructor-default candidate uncertainty
+
+- Include same-package cross-file classifiers, typealiases, objects and callable values before admitting an inert API-lookalike function; preserve empty-package and input-order parity.
+- Retain the conditional default precision boundary when an inapplicable member can yield to a visible extension function or callable extension property. Read the property's declared callable name, including grammar forms without a name field; do not execute its getter or rank overloads.
+- Keep unique ordinary inert helpers and unrelated-package controls checked. A default boundary describes a conditional analysis limit rather than unconditional default execution or a vulnerability finding.
+- Add read-only lookup routing for receiver ownership, including represented typed iteration callbacks; preserve ordinary lookup caching and analysis budgets.

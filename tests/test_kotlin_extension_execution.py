@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from mobile_audit.native_flow import NativeFlow
-from mobile_audit.source_analysis import Analyzer, analyze_sources
+from mobile_audit.source_analysis import Analyzer, Frame, analyze_sources
 
 SQL = "AST-SQL-CONCAT"
 REASON = "Kotlin project extension receiver flow unavailable"
@@ -649,7 +651,17 @@ def test_source_nominal_named_string_does_not_gain_standard_field_receiver_ident
         pytest.param("this.q", "direct", id="this.q"),
         *[
             pytest.param(receiver, context, id=f"{context}-{receiver}")
-            for context in ("let", "forEach", "nested")
+            for context in (
+                "let",
+                "forEach",
+                "nested",
+                "also",
+                "takeIf",
+                "takeUnless",
+                "let-nested",
+                "forEach-parameter",
+                "forEach-string",
+            )
             for receiver in ("q", "this.q")
         ],
     ],
@@ -659,10 +671,23 @@ def test_stored_boundary_proof_is_pure_during_actual_source_call(
 ) -> None:
     source, invocation = _stored_program(receiver, initializer=False, declared="String?", safe=True)
     if context != "direct":
+        if context in {"forEach-parameter", "forEach-string"}:
+            parameter = "items: List<String>" if context == "forEach-parameter" else "items: String"
+            source = source.replace("fun run()", f"fun run({parameter})")
+        subject = (
+            "listOf(q).forEach"
+            if context == "forEach"
+            else "items.forEach"
+            if context.startswith("forEach-")
+            else "q." + context
+        )
+        callback = invocation + ("; true" if context in {"takeIf", "takeUnless"} else "")
         body = (
             f"fun nested() {{ {invocation} }}; nested()"
             if context == "nested"
-            else f"{'listOf(q).forEach' if context == 'forEach' else 'q.let'} {{ {invocation} }}"
+            else f"q.let {{ fun nested() {{ {invocation} }}; nested() }}"
+            if context == "let-nested"
+            else f"{subject} {{ {callback} }}"
         )
         source = source.replace(invocation, body)
     path = "app/PureStoredProof.kt"
@@ -671,20 +696,17 @@ def test_stored_boundary_proof_is_pure_during_actual_source_call(
 
     def observe(flow, analyzer, call, frame, value, args):
         if analyzer.path == path and call.name == "go" and value.traces:
-            before = (
-                flow.evaluations,
-                flow.partial_events,
-                repr(flow.reasons),
-                repr(flow.partial_details),
-                repr(frame),
-                repr(analyzer.visited_values),
-                analyzer.builder_label_queries,
-                analyzer.builder_label_candidates,
-                analyzer.builder_label_query_active,
-                analyzer.type_query_active,
-                flow.muted,
-                flow.type_hint_depth,
-            )
+
+            def snapshot():
+                return (
+                    {("flow", name): repr(item) for name, item in vars(flow).items()}
+                    | {
+                        (source.path, name): repr(item)
+                        for source, _root, _nodes in flow.files
+                        for name, item in vars(source).items()
+                    }
+                    | {("frame", "state"): repr(frame)}
+                )
 
             def forbidden(*args, **kwargs):
                 pytest.fail("stored receiver proof must read declarations and retained facts only")
@@ -694,21 +716,51 @@ def test_stored_boundary_proof_is_pure_during_actual_source_call(
                 pure.setattr(Analyzer, "visit", forbidden)
                 pure.setattr(Analyzer, "known_value_type", forbidden)
                 pure.setattr(NativeFlow, "call", forbidden)
-                assert flow.kotlin_extension_receiver_unavailable(analyzer, call, value, frame)
-            assert before == (
-                flow.evaluations,
-                flow.partial_events,
-                repr(flow.reasons),
-                repr(flow.partial_details),
-                repr(frame),
-                repr(analyzer.visited_values),
-                analyzer.builder_label_queries,
-                analyzer.builder_label_candidates,
-                analyzer.builder_label_query_active,
-                analyzer.type_query_active,
-                flow.muted,
-                flow.type_hint_depth,
-            )
+                pure.setattr(Frame, "__init__", forbidden)
+                # The complete boundary query consumes the state retained at
+                # this real source call, including every persistent cache.
+                for _ in range(2):
+                    before = snapshot()
+                    assert flow.kotlin_extension_receiver_unavailable(analyzer, call, value, frame)
+                    after = snapshot()
+                    changed = {
+                        key for key in before.keys() | after.keys() if before.get(key) != after.get(key)
+                    }
+                    assert not changed, ("actual-source-state", sorted(changed))
+
+                # Independently exercise the new nominal-owner proof with
+                # warm and cold syntax indexes; missing entries stay local.
+                nominal = flow.enclosing_scope(analyzer.function)
+                assert nominal is not None and nominal.kind == "nominal"
+                for temperature in ("warm", "cold"):
+                    if temperature == "cold":
+                        for name, cache in vars(flow).items():
+                            if name.endswith("_cache") or name == "import_indexes":
+                                cache.clear()
+                        analyzer.class_context_cache.clear()
+                    for _ in range(2):
+                        before = snapshot()
+                        assert flow.kotlin_extension_nominal_receiver(
+                            analyzer, call.receiver, nominal.node, frame
+                        )
+                        after = snapshot()
+                        changed = {
+                            key for key in before.keys() | after.keys() if before.get(key) != after.get(key)
+                        }
+                        assert not changed, (temperature, sorted(changed))
+
+                # A bounded lookup abstains without recording precision or
+                # creating syntax entries, even when no owner can be reached.
+                scope = None
+                for index in range(65):
+                    scope = SimpleNamespace(id=-(index + 1), type="unknown", parent=scope)
+                before = snapshot()
+                assert (
+                    analyzer.reference_binding(call.node, "missing", scope=scope, frame=frame, cache=False)
+                    is None
+                )
+                assert not flow.kotlin_extension_nominal_receiver(analyzer, scope, nominal.node, frame)
+                assert snapshot() == before
             seen.append(True)
         return original(flow, analyzer, call, frame, value, args)
 
@@ -720,7 +772,13 @@ def test_stored_boundary_proof_is_pure_during_actual_source_call(
         path,
         source,
         invocation,
-        other_reasons=("unresolved callable identity",) if context == "forEach" else (),
+        other_reasons=("unresolved callable identity",)
+        if context == "forEach"
+        else (
+            ("aggregate reference ownership unavailable", "unresolved reference argument effects")
+            if context == "forEach-parameter"
+            else ()
+        ),
     )
     assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
 
