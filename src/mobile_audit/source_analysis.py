@@ -10163,7 +10163,8 @@ class Analyzer:
                 if cache:
                     flow.reference_binding_cache[key] = entries
             for origin, kind, expression in reversed(entries.get(name, [])):
-                if name == "it" and origin.type in CLOSURES and self.closure_arity(origin) is None:
+                # A read-only lookup retains unknown it without stateful callback-shape resolution.
+                if cache and name == "it" and origin.type in CLOSURES and self.closure_arity(origin) is None:
                     if self.kotlin_parameterless_callback(self.closure_owner(origin), frame):
                         continue
                 if scope.type == "for_statement":
@@ -14678,16 +14679,25 @@ class Analyzer:
             if source.language == self.language and flow.namespaces[id(source)] == flow.namespaces[id(self)]
         ]
 
+        def declared_name(source: Analyzer, declaration: Any) -> str:
+            parsed = source.declaration(declaration)
+            if parsed is not None:
+                return parsed[0]
+            name = _field(declaration, "name") or next(
+                (
+                    part
+                    for part in declaration.named_children
+                    if declaration.type in {"type_alias", "typealias_declaration"}
+                    and part.type in IDENTIFIERS
+                ),
+                None,
+            )
+            return source.symbol_name(source.text(name)) if name is not None else ""
+
         def extension_candidate(source: Analyzer, declaration: Any) -> bool:
             name = _field(declaration, "name")
-            parsed = source.declaration(declaration)
             return bool(
-                (
-                    name is not None
-                    and source.symbol_name(source.text(name)) == call.name
-                    or parsed is not None
-                    and parsed[0] == call.name
-                )
+                declared_name(source, declaration) == call.name
                 and any(
                     part.type == "." and (name is None or part.end_byte <= name.start_byte)
                     for part in declaration.children
@@ -14712,22 +14722,9 @@ class Analyzer:
                 for part in scope.named_children:
                     members = part.named_children if part.type == "class_body" else [part]
                     for member in members:
-                        parsed = source.declaration(member)
-                        name = _field(member, "name") or next(
-                            (
-                                child
-                                for child in member.named_children
-                                if child.type in IDENTIFIERS
-                                and member.type in {"type_alias", "typealias_declaration"}
-                            ),
-                            None,
-                        )
-                        named = name is not None and source.symbol_name(source.text(name)) == call.name
-                        if (parsed is not None and parsed[0] == call.name) or (
-                            named and member.type != "function_declaration"
+                        if declared_name(source, member) == call.name and (
+                            member.type != "function_declaration" or scope == nominal
                         ):
-                            return False
-                        if scope == nominal and named and member.type == "function_declaration":
                             return False
         else:
             if call.receiver.type not in IDENTIFIERS:
@@ -14743,8 +14740,7 @@ class Analyzer:
             if any(
                 part.type
                 in {"class_declaration", "object_declaration", "type_alias", "typealias_declaration"}
-                and (name := _field(part, "name")) is not None
-                and self.symbol_name(self.text(name)) == kinds[0]
+                and declared_name(self, part) == kinds[0]
                 for body in nominal.named_children
                 if body.type == "class_body"
                 for part in body.named_children
@@ -14777,8 +14773,8 @@ class Analyzer:
                 return False
             if any(
                 part.type == "companion_object"
-                or (parsed := self.declaration(part)) is not None
-                and parsed[0] == call.name
+                or part.type != "function_declaration"
+                and declared_name(self, part) == call.name
                 for body in source_nominal.named_children
                 if body.type == "class_body"
                 for part in body.named_children

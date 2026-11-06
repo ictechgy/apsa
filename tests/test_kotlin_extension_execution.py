@@ -783,6 +783,75 @@ def test_stored_boundary_proof_is_pure_during_actual_source_call(
     assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
 
 
+@pytest.mark.parametrize("nested", [False, True], ids=["known-let", "known-let-local-function"])
+def test_implicit_it_stored_boundary_query_is_pure_and_preserves_plain_report(
+    nested: bool, monkeypatch
+) -> None:
+    source, invocation = _stored_program("it", initializer=False)
+    callback = f"fun nested() {{ {invocation} }}; nested()" if nested else invocation
+    source = source.replace(invocation, f"q.let {{ {callback} }}")
+    path = "app/PureImplicitIt.kt"
+    original = NativeFlow.call
+    seen = []
+    origins = set()
+
+    def observe(flow, analyzer, call, frame, receiver, args):
+        if analyzer.path == path and call.name == "go" and receiver.traces:
+            for trace in receiver.traces:
+                point = analyzer.location(trace.source)
+                origins.add((point["path"], point["line"], point["column"], point["offset"]))
+
+            def snapshot():
+                return (
+                    {("flow", name): repr(item) for name, item in vars(flow).items()}
+                    | {
+                        (source.path, name): repr(item)
+                        for source, _root, _nodes in flow.files
+                        for name, item in vars(source).items()
+                    }
+                    | {("active-analyzer", name): repr(item) for name, item in vars(analyzer).items()}
+                    | {("frame", name): repr(item) for name, item in vars(frame).items()}
+                )
+
+            def forbidden(*args, **kwargs):
+                pytest.fail("read-only implicit-it proof must not enter evaluation or callback resolution")
+
+            with monkeypatch.context() as pure:
+                pure.setattr(Analyzer, "value", forbidden)
+                pure.setattr(Analyzer, "visit", forbidden)
+                pure.setattr(Analyzer, "known_value_type", forbidden)
+                pure.setattr(NativeFlow, "call", forbidden)
+                pure.setattr(Frame, "__init__", forbidden)
+                for _ in range(2):
+                    before = snapshot()
+                    # The lexical it remains a barrier, without claiming its type.
+                    binding = analyzer.reference_binding(call.receiver, "it", frame=frame, cache=False)
+                    assert binding is not None and binding[0].type == "lambda_literal"
+                    assert binding[1] == ""
+                    assert not flow.kotlin_extension_receiver_unavailable(analyzer, call, receiver, frame)
+                    after = snapshot()
+                    changed = {
+                        key for key in before.keys() | after.keys() if before.get(key) != after.get(key)
+                    }
+                    assert not changed, ("implicit-it-actual-source-state", sorted(changed))
+            seen.append(True)
+        return original(flow, analyzer, call, frame, receiver, args)
+
+    with monkeypatch.context() as actual:
+        actual.setattr(NativeFlow, "call", observe)
+        report = analyze_sources([(path, source)])
+    assert seen
+    visits = len(seen)
+    plain = analyze_sources([(path, source)])
+    assert len(seen) == visits  # both query instrumentation and its observer were restored
+    assert report == plain
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+    assert _state(report) == "checked", report
+    assert _native(report)["reasons"] == _native(report)["budget_reasons"] == []
+    assert not _sql(report), report
+    assert report["metadata"]["files"][0]["parse_errors"] is False, report
+
+
 def _asserted_receiver_program(
     binding: str,
     *,

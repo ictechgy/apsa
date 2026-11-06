@@ -750,3 +750,50 @@ def test_nonstored_default_callable_extension_property_keeps_member_identity_una
         files.append(("Other.kt", "import android.content.Intent\n" + extension))
     report = analyze_sources(files)
     assert_default_boundary(report, 4 if peer else 5)
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reversed"])
+@pytest.mark.parametrize("package", ["", "sample"], ids=["empty-package", "named-package"])
+@pytest.mark.parametrize("nested_first", [False, True], ids=["method-first", "nested-first"])
+def test_nonstored_default_nested_constructor_cannot_borrow_inert_member(
+    nested_first: bool, package: str, reverse: bool
+) -> None:
+    prefix = f"package {package}\n" if package else ""
+    method = '    fun getStringExtra(key: Int): String = "fixed"\n'
+    nested = (
+        "    inner class getStringExtra(key: String) {\n"
+        "        init { Intent().getStringExtra(key) }\n"
+        "    }\n"
+    )
+    source = (
+        prefix
+        + IMPORTS
+        + "class Other {\n"
+        + (nested + method if nested_first else method + nested)
+        + "}\n"
+        + 'class Handler(other: Other, ignored: Any = other.getStringExtra("q"))'
+    )
+    files = [("Construction.kt", source), ("Unrelated.kt", prefix + "class Unrelated")]
+    report = analyze_sources(list(reversed(files)) if reverse else files)
+    assert_default_boundary(report, source.count("\n") + 1)
+    # The nested constructor is a candidate, not an executed default/body.
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+    parsed = next(item for item in report["metadata"]["files"] if item["path"] == "Construction.kt")
+    assert parsed["parse_errors"] is False, report
+
+
+@pytest.mark.parametrize("nested_first", [False, True], ids=["method-first", "nested-first"])
+def test_nonstored_default_unrelated_nested_name_keeps_unique_inert_member_checked(
+    nested_first: bool,
+) -> None:
+    method = 'fun getStringExtra(key: String): String = "fixed"\n'
+    nested = "inner class Different(key: String) { init { Intent().getStringExtra(key) } }\n"
+    report = scan(
+        "class Other {\n"
+        + (nested + method if nested_first else method + nested)
+        + '}\nclass Handler(other: Other, ignored: Any = other.getStringExtra("q"))'
+    )
+    assert_checked(report)
+    assert not sql_findings(report), report
+    assert report["metadata"]["native_flow"]["reasons"] == [], report
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report

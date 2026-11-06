@@ -827,5 +827,7 @@ Kotlin null literals now stay untainted. Indexed implicit-receiver property writ
 
 - Include same-package cross-file classifiers, typealiases, objects and callable values before admitting an inert API-lookalike function; preserve empty-package and input-order parity.
 - Retain the conditional default precision boundary when an inapplicable member can yield to a visible extension function or callable extension property. Read the property's declared callable name, including grammar forms without a name field; do not execute its getter or rank overloads.
+- Include matching receiver-owned nonfunction declarations, including inner class constructors, before admitting an inert ordinary member. Preserve unrelated nested-name controls and conditional default behavior without executing the constructor.
 - Keep unique ordinary inert helpers and unrelated-package controls checked. A default boundary describes a conditional analysis limit rather than unconditional default execution or a vulnerability finding.
 - Add read-only lookup routing for receiver ownership, including represented typed iteration callbacks; preserve ordinary lookup caching and analysis budgets.
+- Retain unknown implicit `it` bindings during read-only lookup without entering callback-shape resolution or allocating its Frame. Keep ordinary callback resolution unchanged; this adds no implicit-`it` String inference.
