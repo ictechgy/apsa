@@ -10,6 +10,7 @@ from mobile_audit.source_analysis import analyze_sources
 
 SQL = "AST-SQL-CONCAT"
 UNAVAILABLE = "Kotlin stored property initializer flow unavailable"
+DEFAULT_UNAVAILABLE = "Kotlin constructor default argument flow unavailable"
 IMPORTS = """\
 import android.content.Intent
 import android.database.sqlite.SQLiteDatabase
@@ -248,6 +249,94 @@ def test_primary_stored_parameter_default_is_not_assumed_to_run(source: bool) ->
     metadata = report["metadata"]["native_flow"]
     assert (UNAVAILABLE in metadata["precision_reasons"]) is source, report
     assert not metadata["budget_reasons"], report
+
+
+def assert_default_boundary(report: dict, line: int, extra_precision: tuple[str, ...] = ()) -> None:
+    metadata = report["metadata"]["native_flow"]
+    assert set(metadata["precision_reasons"]) == {DEFAULT_UNAVAILABLE, *extra_precision}, report
+    assert not metadata["budget_reasons"], report
+    assert not sql_findings(report), report
+    details = [item for item in metadata["partial_details"] if item["reason"] == DEFAULT_UNAVAILABLE]
+    assert len(details) == 1, report
+    assert details[0]["reason"] == DEFAULT_UNAVAILABLE, report
+    assert details[0]["kind"] == "precision", report
+    assert details[0]["path"] == "Construction.kt" and details[0]["line"] == line, report
+    assert details[0]["column"] > 0, report
+
+
+@pytest.mark.parametrize("receiver", ["Intent()", "externalIntent"], ids=["direct", "parameter"])
+@pytest.mark.parametrize("consumer", ["property", "init", "method"])
+def test_nonstored_source_default_marks_its_conditional_construction_boundary(
+    receiver: str, consumer: str
+) -> None:
+    statements = {
+        "property": 'val initialized: Unit = db.execSQL("SELECT " + stored)',
+        "init": 'init { db.execSQL("SELECT " + stored) }',
+        "method": 'fun run() { db.execSQL("SELECT " + this.stored) }',
+    }
+    report = scan(
+        f"""class Handler(
+            externalIntent: Intent,
+            private val db: SQLiteDatabase,
+            query: String =
+                {receiver}.getStringExtra("q") ?: ""
+        ) {{
+            val stored: String = query
+            {statements[consumer]}
+        }}"""
+    )
+    # The source default is conditional, so neither construction nor the later
+    # stored-property read may acquire an unconditional source finding.
+    assert_default_boundary(report, 7)
+
+
+@pytest.mark.parametrize("source", [True, False], ids=["source-sql", "constant-sql"])
+def test_nonstored_sink_default_has_boundary_without_executing_its_side_effect(source: bool) -> None:
+    value = 'externalIntent.getStringExtra("q") ?: ""' if source else '"fixed"'
+    report = scan(
+        f"""class Handler(
+            externalIntent: Intent,
+            db: SQLiteDatabase,
+            ignored: Unit =
+                db.execSQL("SELECT " + ({value}))
+        )"""
+    )
+    assert_default_boundary(report, 7)
+    assert report["metadata"]["functions"]["observed"] == 0, report
+
+
+@pytest.mark.parametrize("value", ['"fixed"', "readQuery()"], ids=["constant", "unrelated-call"])
+def test_nonstored_constant_or_unrelated_default_stays_checked(value: str) -> None:
+    report = scan(
+        f"""fun readQuery(): String = "fixed"
+        class Handler(private val db: SQLiteDatabase, query: String = {value}) {{
+            val stored: String = query
+            init {{ db.execSQL("SELECT " + stored) }}
+            fun run() {{ db.execSQL("SELECT " + this.stored) }}
+        }}"""
+    )
+    assert not sql_findings(report), report
+    assert_checked(report)
+
+
+def test_explicit_argument_does_not_execute_default_or_publish_nonstored_parameter() -> None:
+    report = scan(
+        """class Handler(
+            externalIntent: Intent,
+            private val db: SQLiteDatabase,
+            query: String =
+                externalIntent.getStringExtra("q") ?: ""
+        ) {
+            val query: String = "fixed"
+            fun run() { db.execSQL("SELECT " + this.query) }
+        }
+        fun construct(intent: Intent, db: SQLiteDatabase): Handler =
+            Handler(intent, db, query = "fixed")"""
+    )
+    # The model reports declarations without constructor-call specialization:
+    # this explicit argument does not discharge the unused default boundary or
+    # the existing constructor-to-field mapping boundary.
+    assert_default_boundary(report, 7, ("constructor field mapping unavailable",))
 
 
 def test_existing_local_and_anonymous_init_execution_is_preserved() -> None:

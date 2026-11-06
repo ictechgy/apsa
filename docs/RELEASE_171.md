@@ -816,4 +816,6 @@ Eligible named top-level Kotlin class/object property initializers now participa
 
 A source-derived explicit project String-extension call whose receiver execution is unavailable now carries the existing receiver-flow precision reason at that call. It no longer silently leaves the affected native coverage checked. This is an honest bounded-model diagnostic, not execution of an extension body or recovery of its SQL finding. Safe constant and ordinary-call controls remain covered by their existing models.
 
+The receiver diagnostic also uses safe-call nonnull branches, explicit !! assertions before expression unwrapping and declaration-backed String fields on the current nominal, preserving shadowing and getter/delegate boundaries. Relevant nonstored primary-parameter defaults have a separate constructor-default precision reason even when copied into a stored property; defaults remain conditional and unexecuted, and nonstored parameters remain construction locals.
+
 Kotlin null literals now stay untainted. Indexed implicit-receiver property writes preserve their actual content data under the existing content-lambda model, including the HTML attributes-map case previously masked by erroneous null provenance. Bound maps and rebound receiver scopes retain their separate effects; this establishes source flow, not third-party escaping or exploitability.

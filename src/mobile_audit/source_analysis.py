@@ -14605,18 +14605,22 @@ class Analyzer:
 
         nominals: dict[int, Any] = {}
         for declaration in nodes:
-            if (
-                declaration.type == "class_parameter"
-                and any(child.type in {"val", "var"} for child in declaration.children)
-                and any(child.type == "=" for child in declaration.children)
+            if declaration.type == "class_parameter" and any(
+                child.type == "=" for child in declaration.children
             ):
                 # Default arguments run only when omitted by a constructor
                 # caller. This pass binds parameters; it cannot assume that a
-                # nonconstant default ran for every construction.
+                # nonconstant default ran for every construction. A default can
+                # affect construction even when its parameter is never a field.
                 expression = declaration.named_children[-1]
                 if modeled_boundary(expression) and self.constant(expression, Frame()) is None:
+                    stored = any(child.type in {"val", "var"} for child in declaration.children)
                     flow.partial(
-                        "Kotlin stored property initializer flow unavailable", self, node=declaration
+                        "Kotlin stored property initializer flow unavailable"
+                        if stored
+                        else "Kotlin constructor default argument flow unavailable",
+                        self,
+                        node=declaration if stored else expression,
                     )
             if declaration.type != "property_declaration":
                 continue

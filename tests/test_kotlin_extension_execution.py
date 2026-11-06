@@ -345,3 +345,414 @@ def test_receiver_boundary_restores_query_modes_after_proof_failure(monkeypatch)
     monkeypatch.setattr(NativeFlow, "call", observe)
     analyze_sources([("app/Extension.kt", _program(False))])
     assert seen
+
+
+def _position(source: str, expression: str) -> tuple[int, int, int]:
+    offset = source.index(expression)
+    return source.count("\n", 0, offset) + 1, offset - source.rfind("\n", 0, offset), offset
+
+
+def _actual_receiver_sources(monkeypatch, path: str, source: str) -> tuple[dict, set[tuple]]:
+    """Observe provenance on actual visits; no fabricated analyzer/frame facts."""
+    original = NativeFlow.call
+    origins = set()
+
+    def observe(flow, analyzer, call, frame, receiver, args):
+        if analyzer.path == path and call.name == "go":
+            for trace in receiver.traces:
+                point = analyzer.location(trace.source)
+                origins.add((point["path"], point["line"], point["column"], point["offset"]))
+        return original(flow, analyzer, call, frame, receiver, args)
+
+    monkeypatch.setattr(NativeFlow, "call", observe)
+    return analyze_sources([(path, source)]), origins
+
+
+def _assert_exact_boundary(
+    report: dict, path: str, source: str, invocation: str, *, other_reasons: tuple[str, ...] = ()
+) -> None:
+    native = _native(report)
+    assert _state(report) == "limited", report
+    assert not _sql(report), report
+    assert native["state"] == "partial"  # metadata summarizes all native limits
+    assert native["reasons"] == native["precision_reasons"] == sorted([REASON, *other_reasons])
+    assert native["budget_reasons"] == []
+    assert not native["partial_details_truncated"]
+    details = [detail for detail in native["partial_details"] if detail["reason"] == REASON]
+    assert len(details) == 1
+    detail = details[0]
+    line, column, _offset = _position(source, invocation)
+    assert {key: detail[key] for key in ("reason", "kind", "path", "line", "column", "call")} == {
+        "reason": REASON,
+        "kind": "precision",
+        "path": path,
+        "line": line,
+        "column": column,
+        "call": "go",
+    }
+    assert detail["scope"] == "file-call"
+    assert SQL in detail["rule_ids"]
+
+
+def _stored_program(
+    receiver: str,
+    *,
+    initializer: bool,
+    declared: str = "String",
+    value: str = INPUT,
+    extension: str = "String",
+    extra: str = "",
+    local: str = "",
+    safe: bool = False,
+) -> tuple[str, str]:
+    invocation = receiver + ("?." if safe else ".") + "go(db)"
+    context = "init" if initializer else "fun run()"
+    source = (
+        HEADER
+        + extra
+        + f'fun {extension}.go(db: SQLiteDatabase) {{ db.execSQL("SELECT " + this) }}\n'
+        + "class StoredReceiver(intent: Intent, val db: SQLiteDatabase) {\n"
+        + f"    val q: {declared} = {value}\n"
+        + f"    {context} {{ {local}{invocation} }}\n"
+        + "}\n"
+    )
+    return source, invocation
+
+
+@pytest.mark.parametrize("receiver", ["q", "this.q"])
+@pytest.mark.parametrize("initializer", [False, True], ids=["method", "init"])
+@pytest.mark.parametrize("declared", ["String", "Text"], ids=["explicit", "alias"])
+def test_stored_source_string_extension_has_exact_boundary(
+    receiver: str, initializer: bool, declared: str, monkeypatch
+) -> None:
+    source, invocation = _stored_program(
+        receiver,
+        initializer=initializer,
+        declared=declared,
+        extra="typealias Text = String\n" if declared == "Text" else "",
+    )
+    path = "app/StoredReceiver.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    other_reasons = (
+        (
+            "unresolved callable identity or argument signature",
+            *(("object alias identity unavailable",) if initializer else ()),
+        )
+        if declared == "Text"
+        else ()
+    )
+    _assert_exact_boundary(report, path, source, invocation, other_reasons=other_reasons)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+
+
+@pytest.mark.parametrize("receiver", ["q", "this.q"])
+@pytest.mark.parametrize("initializer", [False, True], ids=["method", "init"])
+def test_stored_nullable_source_safe_call_has_exact_boundary(
+    receiver: str, initializer: bool, monkeypatch
+) -> None:
+    source, invocation = _stored_program(
+        receiver,
+        initializer=initializer,
+        declared="String?",
+        value='intent.getStringExtra("q")',
+        safe=True,
+    )
+    path = "app/StoredNullable.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    _assert_exact_boundary(report, path, source, invocation)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+
+
+@pytest.mark.parametrize("local", [False, True], ids=["direct", "local"])
+def test_nullable_source_safe_call_has_exact_boundary(local: bool, monkeypatch) -> None:
+    receiver = "q" if local else 'intent.getStringExtra("q")'
+    invocation = receiver + "?.go(db)"
+    source = (
+        HEADER
+        + 'fun String.go(db: SQLiteDatabase) { db.execSQL("SELECT " + this) }\n'
+        + "fun run(intent: Intent, db: SQLiteDatabase) {\n"
+        + ('    val q: String? = intent.getStringExtra("q")\n' if local else "")
+        + f"    {invocation}\n"
+        + "}\n"
+    )
+    path = "app/SafeReceiver.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    _assert_exact_boundary(report, path, source, invocation)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+
+
+@pytest.mark.parametrize("receiver", ["q", "this.q"])
+@pytest.mark.parametrize("initializer", [False, True], ids=["method", "init"])
+def test_stored_constant_receiver_remains_checked(receiver: str, initializer: bool) -> None:
+    source, _invocation = _stored_program(receiver, initializer=initializer, value='"fixed"')
+    report = analyze_sources([("app/StoredConstant.kt", source)])
+    assert _state(report) == "checked", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == []
+
+
+@pytest.mark.parametrize("local", [False, True], ids=["direct", "local"])
+def test_constant_nullable_safe_call_remains_checked(local: bool) -> None:
+    expression = "q" if local else '("fixed" as String?)'
+    source = (
+        HEADER
+        + 'fun String.go(db: SQLiteDatabase) { db.execSQL("SELECT " + this) }\n'
+        + "fun run(db: SQLiteDatabase) {\n"
+        + ('    val q: String? = "fixed"\n' if local else "")
+        + f"    {expression}?.go(db)\n"
+        + "}\n"
+    )
+    report = analyze_sources([("app/SafeConstant.kt", source)])
+    assert _state(report) == "checked", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == []
+
+
+@pytest.mark.parametrize("receiver", ["q", "this.q"])
+@pytest.mark.parametrize(
+    ("declared", "extension", "safe"),
+    [("Any", "Any", False), ("Any?", "Any?", True), ("String?", "String?", False)],
+    ids=["stronger-Any", "stronger-nullable-Any", "nullable-without-safe-call"],
+)
+def test_stored_receiver_content_does_not_override_declared_type(
+    receiver: str, declared: str, extension: str, safe: bool, monkeypatch
+) -> None:
+    source, _invocation = _stored_program(
+        receiver, initializer=False, declared=declared, extension=extension, safe=safe
+    )
+    path = "app/StoredStrongerType.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+    assert _state(report) == "checked", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == []
+
+
+def test_local_any_shadow_precedes_same_named_stored_string(monkeypatch) -> None:
+    source, _invocation = _stored_program(
+        "q",
+        initializer=False,
+        extension="Any",
+        local="val q: Any = q; ",
+    )
+    path = "app/LocalShadow.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+    assert _state(report) == "checked", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == []
+
+
+def test_explicit_this_field_retains_ownership_despite_local_any_shadow(monkeypatch) -> None:
+    source, invocation = _stored_program("this.q", initializer=False, local='val q: Any = "fixed"; ')
+    path = "app/ExplicitField.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    _assert_exact_boundary(
+        report, path, source, invocation, other_reasons=("object alias identity unavailable",)
+    )
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+
+
+@pytest.mark.parametrize("receiver", ["q", "this.q"])
+def test_default_getter_with_custom_setter_retains_extension_boundary(receiver: str, monkeypatch) -> None:
+    source, invocation = _stored_program(receiver, initializer=False)
+    source = source.replace("val q: String", "var q: String").replace(
+        "    fun run()", "        set(value) { field = value }\n    fun run()"
+    )
+    path = "app/SetterOnly.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    _assert_exact_boundary(
+        report, path, source, invocation, other_reasons=("receiver field inventory unavailable",)
+    )
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+
+
+@pytest.mark.parametrize("access", ["get() = raw", "by lazy { raw }"], ids=["getter", "delegate"])
+def test_custom_property_read_does_not_supply_stored_receiver_proof(access: str, monkeypatch) -> None:
+    source = (
+        HEADER
+        + 'fun String.go(db: SQLiteDatabase) { db.execSQL("SELECT " + this) }\n'
+        + "class CustomRead(intent: Intent, val db: SQLiteDatabase) {\n"
+        + f"    val raw: String = {INPUT}\n"
+        + f"    val q: String {access}\n"
+        + "    fun run() { q.go(db) }\n"
+        + "}\n"
+    )
+    path = "app/CustomRead.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+    assert _state(report) == "limited", report
+    assert not _sql(report)
+    native = _native(report)
+    assert native["reasons"] == native["precision_reasons"] == ["receiver field inventory unavailable"]
+    assert native["budget_reasons"] == []
+    line, column, _offset = _position(source, "q.go(db)")
+    assert [
+        (detail["path"], detail["line"], detail["column"], detail["call"])
+        for detail in native["partial_details"]
+    ] == [(path, line, column, None)]
+
+
+def test_alias_of_this_does_not_expand_extension_field_proof_to_general_instances(monkeypatch) -> None:
+    source, _invocation = _stored_program(
+        "other.q", initializer=False, local="val other: StoredReceiver = this; "
+    )
+    path = "app/AliasedOwner.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+    assert _state(report) == "checked", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == []
+
+
+def test_unrelated_nominal_string_field_does_not_override_owned_any_field(monkeypatch) -> None:
+    source, _invocation = _stored_program(
+        "q",
+        initializer=False,
+        declared="Any",
+        extension="Any",
+        extra='class Unrelated { val q: String = "fixed" }\n',
+    )
+    path = "app/UnrelatedField.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+    assert _state(report) == "checked", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == []
+
+
+def test_source_nominal_named_string_does_not_gain_standard_field_receiver_identity(monkeypatch) -> None:
+    source, _invocation = _stored_program(
+        "q",
+        initializer=False,
+        value=f"String({INPUT})",
+        extra="class String(val raw: kotlin.String)\n",
+    )
+    path = "app/ShadowedString.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+    assert _state(report) == "limited", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == [
+        "constructor field mapping unavailable",
+        "reachable field ownership unavailable",
+        "source trace abstention",
+        "unresolved callable identity or argument signature",
+    ]
+    assert _native(report)["budget_reasons"] == []
+
+
+@pytest.mark.parametrize("receiver", ["q", "this.q"])
+def test_stored_boundary_proof_is_pure_during_actual_source_call(receiver: str, monkeypatch) -> None:
+    source, invocation = _stored_program(receiver, initializer=False, declared="String?", safe=True)
+    path = "app/PureStoredProof.kt"
+    original = NativeFlow.call
+    seen = []
+
+    def observe(flow, analyzer, call, frame, value, args):
+        if analyzer.path == path and call.name == "go" and value.traces:
+            before = (
+                flow.evaluations,
+                flow.partial_events,
+                repr(flow.reasons),
+                repr(flow.partial_details),
+                repr(frame),
+                repr(analyzer.visited_values),
+                analyzer.builder_label_queries,
+                analyzer.builder_label_candidates,
+                analyzer.builder_label_query_active,
+                analyzer.type_query_active,
+                flow.muted,
+                flow.type_hint_depth,
+            )
+
+            def forbidden(*args, **kwargs):
+                pytest.fail("stored receiver proof must read declarations and retained facts only")
+
+            with monkeypatch.context() as pure:
+                pure.setattr(Analyzer, "value", forbidden)
+                pure.setattr(Analyzer, "visit", forbidden)
+                pure.setattr(Analyzer, "known_value_type", forbidden)
+                pure.setattr(NativeFlow, "call", forbidden)
+                assert flow.kotlin_extension_receiver_unavailable(analyzer, call, value, frame)
+            assert before == (
+                flow.evaluations,
+                flow.partial_events,
+                repr(flow.reasons),
+                repr(flow.partial_details),
+                repr(frame),
+                repr(analyzer.visited_values),
+                analyzer.builder_label_queries,
+                analyzer.builder_label_candidates,
+                analyzer.builder_label_query_active,
+                analyzer.type_query_active,
+                flow.muted,
+                flow.type_hint_depth,
+            )
+            seen.append(True)
+        return original(flow, analyzer, call, frame, value, args)
+
+    monkeypatch.setattr(NativeFlow, "call", observe)
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    assert seen
+    _assert_exact_boundary(report, path, source, invocation)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+
+
+def _asserted_receiver_program(
+    binding: str,
+    *,
+    declared: str = "String?",
+    value: str = 'intent.getStringExtra("q")',
+    extension: str = "String",
+) -> tuple[str, str]:
+    if binding != "local":
+        return _stored_program(
+            "this.q!!" if binding.startswith("explicit-stored") else "q!!",
+            initializer=binding.endswith("-init"),
+            declared=declared,
+            value=value,
+            extension=extension,
+        )
+    invocation = "q!!.go(db)"
+    return (
+        HEADER
+        + f'fun {extension}.go(db: SQLiteDatabase) {{ db.execSQL("SELECT " + this) }}\n'
+        + "fun run(intent: Intent, db: SQLiteDatabase) {\n"
+        + f"    val q: {declared} = {value}\n"
+        + f"    {invocation}\n"
+        + "}\n",
+        invocation,
+    )
+
+
+@pytest.mark.parametrize(
+    "binding", ["stored", "explicit-stored", "stored-init", "explicit-stored-init", "local"]
+)
+def test_nullable_asserted_source_receiver_has_exact_boundary(binding: str, monkeypatch) -> None:
+    source, invocation = _asserted_receiver_program(binding)
+    path = "app/AssertedSource.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    _assert_exact_boundary(report, path, source, invocation)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+
+
+@pytest.mark.parametrize("binding", ["stored", "explicit-stored", "local"])
+def test_constant_nullable_assertion_remains_checked(binding: str, monkeypatch) -> None:
+    source, _invocation = _asserted_receiver_program(binding, value='"fixed"')
+    report, origins = _actual_receiver_sources(monkeypatch, "app/AssertedConstant.kt", source)
+    assert not origins
+    assert _state(report) == "checked", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == []
+
+
+@pytest.mark.parametrize("binding", ["stored", "explicit-stored", "local"])
+def test_nullable_assertion_does_not_override_stronger_any_receiver(binding: str, monkeypatch) -> None:
+    source, _invocation = _asserted_receiver_program(binding, declared="Any?", extension="Any")
+    path = "app/AssertedAny.kt"
+    report, origins = _actual_receiver_sources(monkeypatch, path, source)
+    assert origins == {(path, *_position(source, 'intent.getStringExtra("q")'))}
+    assert _state(report) == "checked", report
+    assert not _sql(report)
+    assert _native(report)["reasons"] == []

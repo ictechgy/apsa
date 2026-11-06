@@ -10,6 +10,7 @@ from typing import Any
 from .source_analysis import (
     ACCESSORS,
     ARCHIVE_ENTRY,
+    CLOSURES,
     COMMENTS,
     ENTRY_ITERATORS,
     FILE_SINKS,
@@ -66,6 +67,7 @@ REASON_KINDS = {
     "Kotlin scope import identity unavailable": "precision",
     "Kotlin project extension receiver flow unavailable": "precision",
     "Kotlin stored property initializer flow unavailable": "precision",
+    "Kotlin constructor default argument flow unavailable": "precision",
     "Kotlin custom builder extension effects unavailable": "precision",
     "Kotlin builder chain effects unavailable": "precision",
     "Swift inout writeback unavailable": "precision",
@@ -3445,6 +3447,83 @@ class NativeFlow:
             )
         )
 
+    def kotlin_extension_stored_string_receiver(
+        self, analyzer: Analyzer, receiver: Any, frame: Frame, *, nullable: bool
+    ) -> bool:
+        """Read an explicit stored field type only on the current nominal receiver.
+
+        This is an extension-boundary fact, not general member inference. A
+        lexical binding must identify storage in this class; getters, delegates,
+        another object's fields and nearer implicit receivers supply no proof.
+        """
+        if analyzer.function is None or not analyzer.same_execution_context(receiver):
+            return False
+        boundary = self.enclosing_scope(analyzer.function)
+        if boundary is None or boundary.kind != "nominal":
+            return False
+        current = receiver
+        for _ in range(64):
+            if current is None or current.type in CLOSURES:
+                return False
+            if current.type in FUNCTIONS:
+                name = _field(current, "name")
+                if name is not None and any(
+                    child.type == "." for child in current.children if child.end_byte <= name.start_byte
+                ):
+                    return False  # an extension function has a nearer this receiver
+            if current.id == analyzer.function.id:
+                break
+            current = current.parent
+        else:
+            return False
+        navigation = analyzer.navigation(receiver)
+        if navigation is not None:
+            base, name = navigation
+            if analyzer.text(base).strip() != "this":
+                return False
+            body = next((part for part in boundary.node.named_children if part.type == "class_body"), None)
+            binding = analyzer.reference_binding(
+                receiver, name, scope=body or boundary.node, stop=boundary.node, frame=frame
+            )
+        elif receiver.type in IDENTIFIERS:
+            name = analyzer.symbol_name(analyzer.text(receiver))
+            binding = analyzer.reference_binding(receiver, name, frame=frame)
+        else:
+            return False
+        if binding is None or name not in analyzer.field_types:
+            return False
+        origin, declared, _initializer = binding
+        if origin.type == "property_declaration":
+            body = origin.parent
+            if (
+                body is None
+                or body.type != "class_body"
+                or body.parent != boundary.node
+                or any(
+                    part.type in {"getter", "computed_property", "property_delegate"}
+                    for part in origin.named_children
+                )
+            ):
+                return False
+        elif origin.type == "class_parameter":
+            primary = origin.parent.parent if origin.parent is not None else None
+            if (
+                primary is None
+                or primary.type != "primary_constructor"
+                or primary.parent != boundary.node
+                or not any(part.type in {"val", "var"} for part in origin.children)
+            ):
+                return False
+        else:
+            return False
+        return bool(declared) and analyzer.library_reference_type(
+            declared,
+            origin,
+            "kotlin.String",
+            default_import=True,
+            require_nonnullable=not (nullable or analyzer.nonnull_expression(receiver)),
+        )
+
     def kotlin_extension_string_receiver(
         self, analyzer: Analyzer, receiver: Any, frame: Frame, *, nullable: bool = False, depth: int = 0
     ) -> bool:
@@ -3455,6 +3534,8 @@ class NativeFlow:
         by Elvis. Unknown call results cannot inherit String from tainted inputs.
         This query never evaluates the receiver or a source callable body.
         """
+        # Unwrapping removes !!; retain its nonnull execution-branch fact first.
+        nullable = nullable or analyzer.nonnull_expression(receiver)
         node = analyzer.unwrap(receiver, preserve_cast=True)
         if node is None or depth >= 8:
             return False
@@ -3467,6 +3548,8 @@ class NativeFlow:
                     analyzer, parts[1], frame, nullable=nullable, depth=depth + 1
                 )
         if analyzer.established_argument_type(node, frame, "kotlin.String", require_nonnullable=not nullable):
+            return True
+        if self.kotlin_extension_stored_string_receiver(analyzer, node, frame, nullable=nullable):
             return True
         # These input calls already produced a scalar String in Analyzer's
         # model. Read their visited result, without re-running their model or
@@ -3506,7 +3589,9 @@ class NativeFlow:
         self.muted += 1
         analyzer.type_query_active = True
         try:
-            if not self.kotlin_extension_string_receiver(analyzer, call.receiver, frame):
+            if not self.kotlin_extension_string_receiver(
+                analyzer, call.receiver, frame, nullable=analyzer.safe_receiver_access(call.node)
+            ):
                 return False
             # These signatures are already modeled as actual String members,
             # which precede a same-named extension in Kotlin dispatch.
