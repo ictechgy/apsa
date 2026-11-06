@@ -1497,11 +1497,12 @@ def test_a_declared_database_opener_keeps_its_sink_under_package_wildcards(extra
     assert sql["state"] == state
 
 
-def test_a_declared_database_opener_keeps_its_sink_when_the_callee_is_uncertain():
+def test_an_unrelated_property_keeps_a_declared_database_opener_certain():
     flags = ("app/Flags.kt", "package com.example.app\nobject Flags { var openDatabase = false }\n")
     report = analyze_sources([("app/Dao.kt", CACHED_DAO.replace("IMPORT", "")), flags])
     assert "AST-SQL-CONCAT" in {item["rule_id"] for item in report["findings"]}
-    assert "opener receiver identity unresolved" in report["metadata"]["native_flow"]["reasons"]
+    assert report["metadata"]["native_flow"]["reasons"] == []
+    assert next(row["state"] for row in report["coverage"] if row["rule_id"] == "AST-SQL-CONCAT") == "checked"
 
 
 # Round-11 review shapes: typealiases with modifiers or chains, where-clause and class

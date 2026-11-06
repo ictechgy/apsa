@@ -1,6 +1,6 @@
 # APSA
 
-**APSA 1.7.0.** See the [release scope and upgrade notes](docs/RELEASE_170.md).
+**APSA 1.7.1.** See the [release scope and upgrade notes](docs/RELEASE_171.md).
 [Release readiness](RELEASE_READINESS.md) separates local validation from the
 hosted publication and public installation gates.
 
@@ -304,12 +304,12 @@ OWASP mappings describe relevant checks; APSA does not certify MASVS compliance 
 
 Install **uv** on **macOS or Linux**. APSA targets **CPython 3.11 and 3.12**; not every host/Python combination has been tested (see the [support matrix](https://github.com/ictechgy/apsa/blob/main/docs/SUPPORTED_MATRIX.md)). The examples select Python 3.12, which uv can download if needed. Initial installation can use the network; scans can then use local inputs and cached intelligence.
 
-After the 1.7.0 publication gates pass, install it from
+After the 1.7.1 publication gates pass, install it from
 [PyPI](https://pypi.org/project/apsa/). Check [release readiness](RELEASE_READINESS.md)
 for publication status:
 
 ```sh
-uv tool install --python 3.12 apsa==1.7.0
+uv tool install --python 3.12 apsa==1.7.1
 apsa --version
 apsa doctor --json
 apsa demo --out ./apsa-demo
@@ -459,7 +459,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       persist-credentials: false
-  - uses: ictechgy/apsa@<commit-sha> # v1.7.0; pin the full release commit SHA
+  - uses: ictechgy/apsa@<commit-sha> # v1.7.1; pin the full release commit SHA
     with:
       path: android            # source folder, or a built APK/AAB/IPA in the workspace
       fail-on-incomplete: "true"

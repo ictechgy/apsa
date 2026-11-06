@@ -1,10 +1,11 @@
 # APSA 1.7.1
 
-Package version: `1.7.1` (pending). Rule version: pending.
+Package version: `1.7.1`. Rule version: `2026.11.06.apsa.171`.
 
 This release follows the 1.7.0 limits. It was developed and checked against
-source and fresh synthetic fixtures; no app code was executed and no device or
-credential service was contacted.
+source and fresh synthetic fixtures, including bounded compiler witnesses.
+Existing application code was not executed, and no device or credential service
+was contacted. Synthetic witnesses do not establish behavior on an Android device.
 
 ## Trailing lambdas and closures
 
@@ -832,3 +833,13 @@ Kotlin null literals now stay untainted. Indexed implicit-receiver property writ
 - Keep unique ordinary inert helpers and unrelated-package controls checked. A default boundary describes a conditional analysis limit rather than unconditional default execution or a vulnerability finding.
 - Add read-only lookup routing for receiver ownership, including represented typed iteration callbacks; preserve ordinary lookup caching and analysis budgets.
 - Retain unknown implicit `it` bindings during read-only lookup without entering callback-shape resolution or allocating its Frame. Keep ordinary callback resolution unchanged; this adds no implicit-`it` String inference.
+
+
+## Declared database returns, openers and remaining configuration fixes
+
+- Resolve database return aliases and source-type shadows in the declaring file, including represented wrappers and bounded nonnullable type parameters. Unknown return identity stays explicitly limited.
+- Exclude unreachable same-named opener candidates and keep Room/SupportSQLite return kinds separate from framework SQLiteDatabase guesses. Preserve real SQL effects in resolved project bodies and precise dispatch/companion/inheritance limitations.
+- Recognize represented explicit ContextWrapper ancestry while respecting source-class identity.
+- Keep local Kotlin constructor parameters from borrowing outer homonymous values during init analysis; constructor-argument propagation remains limited.
+- Account for API 22-and-older and API 23 cleartext policy when no Network Security Config exists, preserving modern defaults and unresolved-value coverage.
+- Keep declaration-only extension boundary queries from publishing owner, ancestry or enclosing-body caches, while ordinary dispatch retains caching.

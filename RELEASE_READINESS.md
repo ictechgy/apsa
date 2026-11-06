@@ -1,5 +1,13 @@
 # GitHub 공개 소스 — 2026-10-06
 
+## 1.7.1 candidate scope — 2026-11-06
+
+The candidate combines the trailing-lambda and initializer model changes with scoped database-return identity, reachable opener candidates, explicit Context ancestry, local constructor-parameter shadowing, read-only extension queries, and legacy cleartext policy without an NSC. General constructor-argument mapping, unavailable companion dispatch, and unrepresented type/receiver forms retain their documented precision limits.
+
+Publication requires the final immutable source snapshot to pass lint/type checks, focused and isolated full suites, bounded comparison contexts, package-content and clean-install checks, and independent code, architecture, adversarial and external review. The source version is 1.7.1; local validation does not publish a package or authorize a push. Existing tags must never be moved or reused.
+
+Earlier 1.7.0 evidence below remains historical context.
+
 ## 1.7.0 review corrections and CI semantics — 2026-11-01
 
 [Release scope and upgrade notes](docs/RELEASE_170.md) cover the `limited`

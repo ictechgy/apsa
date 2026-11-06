@@ -1,6 +1,6 @@
 {
   "name": "apsa",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Audit your own Android/iOS source, APK, AAB or IPA with APSA through MCP. Scans run locally; only the dependency_check and intelligence tools contact OSV or advisory feeds, when called.",
   "author": {
     "name": "ictechgy",
@@ -8,5 +8,12 @@
   },
   "homepage": "https://github.com/ictechgy/apsa",
   "repository": "https://github.com/ictechgy/apsa",
-  "keywords": ["security", "mobile", "android", "ios", "sarif", "owasp-masvs"]
+  "keywords": [
+    "security",
+    "mobile",
+    "android",
+    "ios",
+    "sarif",
+    "owasp-masvs"
+  ]
 }

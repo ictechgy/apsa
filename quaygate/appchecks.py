@@ -371,6 +371,8 @@ def audit_apk(apk: Apk, cert_runner=None) -> tuple:
         )
 
     target = _int_or_none(m.sdk.get("targetSdkVersion"))
+    # 선언이 없으면 Android 기본값 1. 정수가 아닌 값(프리뷰 코드명 등)은 None이다.
+    min_sdk = _int_or_none(m.sdk.get("minSdkVersion", 1))
     cleartext = _attr_bool(apk, m.app.get("usesCleartextTraffic"))
     nsc_ref = m.app.get("networkSecurityConfig")
     nsc_events, nsc_error = network_security.load(apk, m.app)
@@ -468,9 +470,14 @@ def audit_apk(apk: Apk, cert_runner=None) -> tuple:
                 )
             )
     else:
-        findings.append(_manifest_cleartext(cleartext, target))
-    # 선언이 없으면 Android 기본값 1. 정수가 아닌 값(프리뷰 코드명 등)은 None이다.
-    min_sdk = _int_or_none(m.sdk.get("minSdkVersion", 1))
+        if min_sdk is not None and min_sdk < 23:
+            findings.append(_unsupported_attribute_cleartext(cleartext, min_sdk))
+            if cleartext is UNKNOWN:
+                # API 22 이하의 허용은 확인됐지만, API 23+에 적용될 값은 아직 불명이다.
+                findings.append(_manifest_cleartext(cleartext, target))
+        else:
+            # NSC가 없어도 API 23의 기본값은 targetSdk와 무관하게 허용이다.
+            findings.append(_manifest_cleartext(cleartext, target, legacy_platform=min_sdk == 23))
     if nsc_ref and (min_sdk is None or min_sdk < 24):
         # API 23 이하 기기는 networkSecurityConfig를 무시하고 매니페스트 설정(또는 기본값)을 적용한다.
         legacy = _manifest_cleartext(

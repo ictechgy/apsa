@@ -2258,7 +2258,7 @@ class Analyzer:
         key = self.key(call.receiver)
         return (
             key in {"SQLiteDatabase", SQLITE_DATABASE}
-            or bool(re.search(r"\b(?:Context|Activity|Application|Service)\b", receiver.type_name))
+            or self.context_type(receiver.type_name, call.receiver) == "yes"
             or bool(re.fullmatch(r"(?i)(?:\w*context|ctx)(?:\(\))?", key or ""))
         )
 
@@ -2306,8 +2306,19 @@ class Analyzer:
         bound = (
             flow.value_binding(self, call, frame) is not None
             or flow.module_value_present(self, call.name, aliases=True)
-            or self.property_homonym(call.name)
+            or self.property_homonym(call.name, call.node)
         )
+        if (
+            candidates
+            and not bound
+            and not framework_import
+            and (call.name == "openDatabase" or arity not in {3, 4})
+            and all(self.not_database_return(target) for target in [*candidates, *targets])
+        ):
+            # Every source interpretation has a non-database result. Ordinary
+            # dispatch still follows the body or records its own exact limitation;
+            # it must not acquire an extra framework-opener interpretation.
+            return False
         if not targets:
             if not candidates and not bound and not (relevant and self.opener_reachable(call, frame)):
                 return True  # the framework opener: no source callable could run instead
@@ -2340,16 +2351,16 @@ class Analyzer:
         self.opener_prefers_framework = kind == "yes" and self.context_arguments(call, frame)
         return True
 
-    def property_homonym(self, name: str) -> bool:
-        """Whether any Java or Kotlin source declares a property or field of that name."""
+    def property_homonym(self, name: str, use: Any) -> bool:
+        """Whether a property/field of that name can be visible to this unqualified call."""
         flow = self.native_flow
         if flow is None:
             return False
-        cache: dict[str, bool] = flow.__dict__.setdefault("opener_property_names", {})
+        cache: dict[str, list[tuple[Any, Any]]] = flow.__dict__.setdefault("opener_property_names", {})
         if name not in cache:
-            found = False
+            found = []
             for analyzer, root, _nodes in flow.files:
-                if found or analyzer.language not in {"java", "kotlin"}:
+                if analyzer.language not in {"java", "kotlin"}:
                     continue
                 for node in _walk(root):
                     if node.type == "property_declaration":
@@ -2371,21 +2382,31 @@ class Analyzer:
                     else:
                         continue
                     if any(analyzer.text(item) == name for item in names):
-                        found = True
-                        break
+                        found.append((analyzer, node))
             cache[name] = found
-        return cache[name]
+        return any(
+            self.opener_declaration_visible(source, declaration, name, use)
+            for source, declaration in cache[name]
+        )
 
     def visible_member(self, target: Any, node: Any) -> bool:
-        """Whether a callable may be visible at `node`: a private member is visible only
-        inside its declaring class (Java: inside its top-level class)."""
-        if not target.analyzer.has_modifier(target.node, "private"):
-            return True
-        if target.analyzer.path != self.path:
+        """Whether a callable may be an implicit receiver's or lexical call target."""
+        flow = self.native_flow
+        return (
+            flow is not None
+            and flow.lexical_visible(self, target, Call(node, target.name, None, ()), allow_extensions=True)
+            and self.opener_declaration_visible(target.analyzer, target.node, target.name, node)
+        )
+
+    def opener_declaration_visible(self, source: Any, declaration: Any, name: str, node: Any) -> bool:
+        """Bound opener uncertainty to lexical owners, inherited members and imports."""
+        flow = self.native_flow
+        if flow is None:
+            return False
+        private = source.has_modifier(declaration, "private")
+        if private and source.path != self.path:
             return False  # private members, and Kotlin private top-level functions, are file-local
-        if not target.owner:
-            return True
-        declaring = target.node.parent
+        declaring = declaration.parent
         while declaring is not None and declaring.type not in {
             "class_declaration",
             "object_declaration",
@@ -2397,16 +2418,38 @@ class Analyzer:
         }:
             declaring = declaring.parent
         if declaring is None:
-            return True
-        if target.analyzer.language == "java":
+            namespace = flow.namespaces[id(source)]
+            identity = (namespace + "." if namespace else "") + name
+            return (
+                source.path == self.path
+                or namespace == flow.namespaces[id(self)]
+                or namespace + ".*" in self.imports
+                or identity in flow.imported_symbols(self, name)
+            )
+        # Kotlin's containing class can call its companion's private members.
+        if source.language == "kotlin" and declaring.type == "companion_object":
+            declaring = declaring.parent
+            while declaring is not None and declaring.type != "class_declaration":
+                declaring = declaring.parent
+            if declaring is None:
+                return True
+        if private and source.language == "java":
             while declaring.parent is not None and declaring.parent.type != "program":
                 declaring = declaring.parent
-        current = node
+        current = node if source.path == self.path else None
         while current is not None:
-            if current.start_byte == declaring.start_byte and current.end_byte == declaring.end_byte:
+            if current.id == declaring.id:
                 return True
             current = current.parent
-        return False
+        if private:
+            return False
+        owner = flow.owner(source, declaration)
+        if owner + "." + name in flow.imported_symbols(self, name):
+            return True
+        if self.receiver_in_scope(node):
+            return True  # the scope receiver's identity may be unavailable
+        ancestors = self.source_ancestors(node)
+        return ancestors is None or owner in ancestors
 
     def call_arity(self, call: Call) -> int:
         """Argument count of a call; a trailing lambda (a SAM argument) is one of its args."""
@@ -2514,6 +2557,25 @@ class Analyzer:
                 return True
             if current.type == "lambda_literal" and self.receiver_scope_lambda(current):
                 return True
+            if current.type == "lambda_literal":
+                declaration = current.parent
+                while declaration is not None and declaration.type not in {
+                    "property_declaration",
+                    "function_declaration",
+                    "class_declaration",
+                }:
+                    declaration = declaration.parent
+                if (
+                    declaration is not None
+                    and declaration.type == "property_declaration"
+                    and any(
+                        part.type == "function_type"
+                        and part.end_byte <= current.start_byte
+                        and any(child.type == "." for child in part.children)
+                        for part in _walk(declaration)
+                    )
+                ):
+                    return True  # a declared T.() -> R lambda may call T's members
             current = current.parent
         return False
 
@@ -2556,14 +2618,34 @@ class Analyzer:
         seen: set[int] = set()
         while pending:
             analyzer, nominal, depth = pending.pop()
-            if nominal.id in seen or depth >= 8:
+            if nominal.id in seen:
                 continue
+            if depth >= 8:
+                return None
             seen.add(nominal.id)
             references = NativeFlow.supertype_references(analyzer, nominal)
             if references is None:
                 return None
             for reference in references:
-                for owner in flow.class_owners(analyzer, reference, nominal.parent or nominal):
+                bases = flow.class_owners(analyzer, reference, nominal.parent or nominal)
+                if not bases:
+                    # class_owners deliberately stays in one source language. A
+                    # mixed Java/Kotlin base, or a source identity it cannot read,
+                    # must retain uncertainty instead of hiding a reachable method.
+                    root, _, suffix = reference.partition(".")
+                    imported = flow.imported_symbols(analyzer, root, classes=True)
+                    possible = {symbol + ("." + suffix if suffix else "") for symbol in imported}
+                    if not imported:
+                        namespace = flow.namespaces[id(analyzer)]
+                        possible.update({reference, namespace + "." + reference})
+                        possible.update(
+                            declaration[:-1] + reference
+                            for declaration in analyzer.imports
+                            if declaration.endswith(".*") and not declaration.startswith("static ")
+                        )
+                    if any(flow.class_definitions.get(identity) for identity in possible):
+                        return None
+                for owner in bases:
                     owners.add(owner)
                     for source, base in flow.class_definitions.get(owner, []):
                         pending.append((source, base, depth + 1))
@@ -2607,8 +2689,8 @@ class Analyzer:
         return True
 
     @staticmethod
-    def declared_return(target: Any) -> str:
-        """A project function's declared return type spelling, or "" when it declares none."""
+    def declared_return_node(target: Any) -> Any:
+        """The declared return syntax, excluding a Kotlin expression body's inferred type."""
         node = target.node
         declared = node.child_by_field_name("type") if target.analyzer.language == "java" else None
         if declared is None:
@@ -2616,59 +2698,175 @@ class Analyzer:
             for child in node.children:
                 if child.type in {"function_value_parameters", "formal_parameters"}:
                     after = True
-                elif after and child.type in {"user_type", "nullable_type"}:
+                elif after and child.type in {
+                    "user_type",
+                    "nullable_type",
+                    "parenthesized_type",
+                    "function_type",
+                    "non_nullable_type",
+                }:
                     declared = child
                     break
                 elif after and child.type in {"function_body", "block", "="}:
                     break
+        return declared
+
+    @staticmethod
+    def declared_return(target: Any) -> str:
+        """A project function's declared return type spelling, or "" when it declares none."""
+        declared = Analyzer.declared_return_node(target)
         return target.analyzer.text(declared) if declared is not None else ""
+
+    def database_return_identity(self, target: Any) -> bool | None:
+        """Declaration-scoped database, proven non-database, or unresolved return identity."""
+        source = target.analyzer
+        declared = self.declared_return_node(target)
+        if declared is None:
+            return False if self.return_known(target) else None
+        flow = self.native_flow
+        if flow is None:
+            return None
+        # These roots are local to return classification. In particular, adding
+        # SQLiteDatabase must not change the standard extension receiver model.
+        roots = KOTLIN_NONNULL_EXTENSION_ROOTS + (
+            (SQLITE_DATABASE, False),
+            ("kotlin.Unit", True),
+            ("kotlin.collections.MutableMap", True),
+            ("kotlin.collections.MutableSet", True),
+            ("java.lang.Void", True),
+            ("java.io.File", False),
+            ("java.util.List", False),
+            ("java.util.Map", False),
+            ("java.util.Set", False),
+            ("android.database.Cursor", False),
+            ("android.database.sqlite.SQLiteStatement", False),
+            ("android.database.sqlite.SQLiteQueryBuilder", False),
+            ("android.content.ContentValues", False),
+            ("android.content.Intent", False),
+            ("android.net.Uri", False),
+            ("android.os.Bundle", False),
+            ("androidx.sqlite.db.SupportSQLiteDatabase", False),
+            ("androidx.sqlite.db.SupportSQLiteOpenHelper", False),
+            ("androidx.room.RoomDatabase", False),
+        )
+        if source.language == "java":
+            roots = tuple((name, default) for name, default in roots if not name.startswith("kotlin."))
+        types = {
+            "user_type",
+            "nullable_type",
+            "parenthesized_type",
+            "function_type",
+            "non_nullable_type",
+            "type_identifier",
+            "scoped_type_identifier",
+            "generic_type",
+            "integral_type",
+            "floating_point_type",
+            "boolean_type",
+            "void_type",
+        }
+
+        def classify(node: Any, seen: frozenset[int]) -> bool | None:
+            if node.has_error or node.is_missing or len(seen) >= 16 or node.id in seen:
+                return None
+            seen = seen | {node.id}
+            if node.type == "function_type":
+                return False  # the function object, irrespective of its result type
+            if node.type in {"nullable_type", "parenthesized_type"}:
+                parts = [part for part in node.named_children if part.type in types]
+                return classify(parts[0], seen) if len(parts) == 1 else None
+            spelling = source.text(node)
+            if node.type == "non_nullable_type":
+                parts = [part for part in node.named_children if part.type in types]
+                if len(parts) != 2:
+                    return None
+                binding = flow.lexical_type(source, source.text(parts[0]), parts[0], cache=False)
+                canonical, _, unknown = self.reference_type_identity(
+                    source.text(parts[1]), parts[1], context=source, roots=roots, cache=False
+                )
+                if (
+                    binding is None
+                    or binding.type not in {"type_parameter", "type_constraint"}
+                    or canonical != "kotlin.Any"
+                    or unknown
+                ):
+                    return None
+                return classify(parts[0], seen)
+            if node.type not in types:
+                return None
+            if node.type in {"integral_type", "floating_point_type", "boolean_type", "void_type"}:
+                return False
+            binding = flow.lexical_type(source, spelling, node, cache=False)
+            if binding is not None and binding.type in {"type_parameter", "type_constraint"}:
+                if binding.id in seen or binding.parent is None or binding.parent.parent is None:
+                    return None
+                name = next(
+                    (
+                        part
+                        for part in binding.named_children
+                        if part.type in IDENTIFIERS | {"type_identifier"}
+                    ),
+                    None,
+                )
+                if name is None or source.symbol_name(source.text(name)) != spelling:
+                    return None
+                bounds = []
+                for group in binding.parent.parent.named_children:
+                    if group.type not in {"type_parameters", "type_constraints"}:
+                        continue
+                    for parameter in group.named_children:
+                        identifier = next(
+                            (
+                                part
+                                for part in parameter.named_children
+                                if part.type in IDENTIFIERS | {"type_identifier"}
+                            ),
+                            None,
+                        )
+                        if identifier is not None and source.symbol_name(
+                            source.text(identifier)
+                        ) == source.symbol_name(source.text(name)):
+                            for part in parameter.named_children:
+                                if part.id != identifier.id:
+                                    bounds.extend(
+                                        part.named_children if part.type == "type_bound" else [part]
+                                    )
+                results = [classify(bound, seen | {binding.id}) for bound in bounds]
+                if not results or None in results or True in results and False in results:
+                    return None
+                return all(results)
+            canonical, nominal, _unknown = self.reference_type_identity(
+                spelling, node, context=source, roots=roots, cache=False
+            )
+            if canonical == SQLITE_DATABASE:
+                return True
+            if (
+                nominal
+                or canonical
+                and canonical.rsplit(".", 1)[-1] in NON_DATABASE_RETURNS
+                or canonical
+                in {
+                    "androidx.sqlite.db.SupportSQLiteDatabase",
+                    "androidx.sqlite.db.SupportSQLiteOpenHelper",
+                    "androidx.room.RoomDatabase",
+                }
+            ):
+                return False
+            return None
+
+        return classify(declared, frozenset())
 
     def declares_database(self, target: Any) -> bool:
         """Whether a project function's declared return type is SQLiteDatabase: by name,
         through a Kotlin typealias of it, or as a type parameter bounded by it."""
-        name = re.sub(r"<.*|\s+|\?$", "", self.declared_return(target)).rsplit(".", 1)[-1]
-        if not name:
-            return False
-        if name == "SQLiteDatabase":
-            return True
-        # Type parameters of the function or its enclosing classes, bounded in their
-        # declaration or in a `where` clause.
-        scopes = [target.node]
-        current = target.node.parent
-        while current is not None:
-            if current.type in {"class_declaration", "interface_declaration", "object_declaration"}:
-                scopes.append(current)
-            current = current.parent
-        pattern = rf"\b{re.escape(name)}\s*(?::|extends)\s*[\w.]*SQLiteDatabase\b"
-        for scope in scopes:
-            for child in scope.named_children:
-                if child.type in {"type_parameters", "type_constraints"} and re.search(
-                    pattern, target.analyzer.text(child)
-                ):
-                    return True
-        return name in self.database_aliases()
+        return self.database_return_identity(target) is True
 
     def not_database_return(self, target: Any) -> bool:
         """Whether a function's return type is provably not SQLiteDatabase: Unit/void, a
         Kotlin block body without a declared type, a common non-database type, or a source
-        class (SQLiteDatabase is final). Aliases, type parameters and unknown library types
-        are not provable, so such a call stays a recorded guess."""
-        if not self.return_known(target):
-            return False
-        declared = self.declared_return(target)
-        if not declared:
-            return True  # a Kotlin block body returns Unit
-        name = re.sub(r"<.*|\s+|\?$", "", declared).rsplit(".", 1)[-1]
-        if name in NON_DATABASE_RETURNS:
-            return True
-        if name == "SQLiteDatabase" or name in self.database_aliases():
-            return False
-        flow = self.native_flow
-        return flow is not None and any(
-            source.language == target.analyzer.language and node.type != "type_alias"
-            for owner in flow.classes.get(name, set())
-            for source, node in flow.class_definitions.get(owner, [])
-        )
+        class (SQLiteDatabase is final). Unresolved aliases, bounds and library identities
+        stay recorded guesses."""
+        return self.database_return_identity(target) is False
 
     def return_known(self, target: Any) -> bool:
         """Whether a function's return type is stated: declared, or Unit for a Kotlin block
@@ -4692,9 +4890,88 @@ class Analyzer:
                     (call.node.start_byte, call.node.end_byte)
                 )
 
+    def visit_nested_initializer(
+        self,
+        node: Any,
+        frame: Frame,
+        guards: dict[GuardKey, set[str]],
+        conditions: list[Any],
+        parameters: list[tuple[str, str, Any]],
+    ) -> None:
+        """Keep a local class's own parameters distinct from captured outer locals.
+
+        The enclosing frame still supplies captures and retains their effects.
+        Actual constructor arguments are not mapped here; their existing
+        precision boundary remains at the constructor call.
+        """
+        names = {name for name, _kind, _parameter in parameters}
+        missing = object()
+        mappings = (
+            (frame, "values"),
+            (frame, "types"),
+            (frame, "constants"),
+            (self, "aliases"),
+            (self, "parameter_types"),
+        )
+        saved = [
+            (owner, attribute, {name: getattr(owner, attribute).get(name, missing) for name in names})
+            for owner, attribute in mappings
+        ]
+        previous_locals = frame.local_names & names
+
+        def shadowed_receiver(key: str) -> bool:
+            return key.split(".", 1)[0] in names
+
+        bridges = {key: value for key, value in frame.bridges.items() if shadowed_receiver(key[0])}
+        javascript = {key: value for key, value in frame.javascript.items() if shadowed_receiver(key)}
+        frame.bridges = {key: value for key, value in frame.bridges.items() if not shadowed_receiver(key[0])}
+        frame.javascript = {
+            key: value for key, value in frame.javascript.items() if not shadowed_receiver(key)
+        }
+        for name, kind, _parameter in parameters:
+            frame.values[name] = Value(type_name=kind)
+            frame.types[name] = kind
+            frame.local_names.add(name)
+            frame.constants.pop(name, None)
+            self.aliases.pop(name, None)
+            self.parameter_types[name] = kind
+        try:
+            for child in node.named_children:
+                self.visit(child, frame, guards, conditions)
+        finally:
+            for owner, attribute, previous in saved:
+                current = getattr(owner, attribute)
+                for name, value in previous.items():
+                    if value is missing:
+                        current.pop(name, None)
+                    else:
+                        current[name] = value
+            frame.local_names.difference_update(names)
+            frame.local_names.update(previous_locals)
+            frame.bridges = {
+                key: value for key, value in frame.bridges.items() if not shadowed_receiver(key[0])
+            }
+            frame.bridges.update(bridges)
+            frame.javascript = {
+                key: value for key, value in frame.javascript.items() if not shadowed_receiver(key)
+            }
+            frame.javascript.update(javascript)
+            self.active_guards = guards
+            if self.native_flow is not None:
+                self.native_flow.active_guards = guards
+                self.native_flow.active_conditions = conditions
+
     def visit(self, node: Any, frame: Frame, guards: dict[GuardKey, set[str]], conditions: list[Any]) -> None:
         self.active_guards = guards
         if node.type in COMMENTS or node.type in FUNCTIONS and not _nested_initializer(node):
+            return
+        if (
+            self.language == "kotlin"
+            and node.type == "anonymous_initializer"
+            and _nested_initializer(node)
+            and (parameters := self.parameters(node))
+        ):
+            self.visit_nested_initializer(node, frame, guards, conditions, parameters)
             return
         if node.type in CLOSURES:
             self.visit_closure(node, frame, guards, conditions)
@@ -9631,6 +9908,8 @@ class Analyzer:
         *,
         context: Analyzer,
         seen: frozenset[tuple[int, int]] = frozenset(),
+        roots: tuple[tuple[str, bool], ...] = KOTLIN_NONNULL_EXTENSION_ROOTS,
+        cache: bool = True,
     ) -> tuple[str, bool, frozenset[tuple[str, int, str]]]:
         """Pure standard/source classifier evidence; an unresolved name proves no exclusion."""
         root = re.sub(r"\s+", "", context.canonical_type_spelling(spelling)).rstrip("?!").partition("<")[0]
@@ -9638,8 +9917,9 @@ class Analyzer:
         flow = self.native_flow
         if not root or flow is None:
             return "", False, origin
-        binding = flow.lexical_type(context, root, use)
-        imported = flow.imported_symbols(context, root, classes=True)
+        query = {} if cache else {"cache": False}
+        binding = flow.lexical_type(context, root, use, **query)
+        imported = flow.imported_symbols(context, root, classes=True, **query)
         if binding is not None:
             if binding.type in {"type_alias", "typealias_declaration"}:
                 name = _field(binding, "name") or next(
@@ -9654,7 +9934,7 @@ class Analyzer:
                 nominal = binding.type in NOMINAL_DECLARATIONS and "." not in root
                 return "", nominal, frozenset() if nominal else origin
         else:
-            if flow.type_import_unresolved(context, root):
+            if flow.type_import_unresolved(context, root, **query):
                 return "", False, origin
             aliases = self.reference_type_aliases(context, root, imported)
         if aliases:
@@ -9677,14 +9957,14 @@ class Analyzer:
             if target is None or target.type not in {"user_type", "nullable_type", "type_identifier"}:
                 return "", False, origin | declaration
             canonical, nominal, unknown = self.reference_type_identity(
-                source.text(target), target, context=source, seen=seen | {key}
+                source.text(target), target, context=source, seen=seen | {key}, roots=roots, cache=cache
             )
             return canonical, nominal, unknown | declaration if unknown else unknown
-        if flow.class_owners(context, root, use):
+        if flow.class_owners(context, root, use, **query):
             return "", True, frozenset()
-        if flow.type_namespace_shadow(context, root, use) is not False:
+        if flow.type_namespace_shadow(context, root, use, **query) is not False:
             return "", False, origin
-        known = {qualified for qualified, _default in KOTLIN_NONNULL_EXTENSION_ROOTS} | {"kotlin.Nothing"}
+        known = {qualified for qualified, _default in roots} | {"kotlin.Nothing"}
         if root in known:
             return root, False, frozenset()
         if imported:
@@ -9694,9 +9974,7 @@ class Analyzer:
                 else ("", False, origin)
             )
         defaults = {
-            qualified
-            for qualified, default in KOTLIN_NONNULL_EXTENSION_ROOTS
-            if default and qualified.rsplit(".", 1)[-1] == root
+            qualified for qualified, default in roots if default and qualified.rsplit(".", 1)[-1] == root
         }
         if root == "Nothing":
             defaults.add("kotlin.Nothing")
@@ -10641,12 +10919,13 @@ class Analyzer:
             self.native_flow.type_hint_depth = depth
 
     def literal_string_argument_conflict(
-        self, source: Analyzer, function: Any, call: Call, *, frame: Frame | None = None
+        self, source: Analyzer, function: Any, call: Call, *, frame: Frame | None = None, cache: bool = True
     ) -> bool:
         """Reject String/lambda expressions only against proven incompatible final types."""
         flow = self.native_flow
         if flow is None or source.language != "kotlin":
             return False
+        query: dict[str, Any] = {} if cache else {"cache": False}
         bindings = self.bound_parameter_arguments(source, function, call)
         if bindings is None:
             return False
@@ -10664,6 +10943,7 @@ class Analyzer:
                         default_import=True,
                         context=source,
                         require_nonnullable=True,
+                        **query,
                     )
                     for kind in (
                         "Boolean",
@@ -10692,13 +10972,14 @@ class Analyzer:
                                 default_import=True,
                                 context=source,
                                 require_nonnullable=True,
+                                **query,
                             )
                             for qualified in KOTLIN_MODEL_TYPES["String"]
                         )
                     )
                     or primitive
                     and any(
-                        self.established_argument_type(argument, frame, qualified)
+                        self.established_argument_type(argument, frame, qualified, **query)
                         for argument in arguments
                         for qualified in KOTLIN_MODEL_TYPES["String"]
                     )
@@ -12437,7 +12718,7 @@ class Analyzer:
         return None
 
     def active_object_extension_visibility(
-        self, target: Any, call: Call, receivers: set[str], *, lexical: bool
+        self, target: Any, call: Call, receivers: set[str], *, lexical: bool, cache: bool = True
     ) -> bool | None:
         """Inspect ordered source-scope facts without inferring from the current this."""
         flow = self.native_flow
@@ -12468,7 +12749,8 @@ class Analyzer:
         unknown_owner = len(self.active_object_scopes) > 64 and matches(self.active_object_scopes[0])
         unknown_head = unknown_owner
         builder_nearer = False
-        lexical_owners = {flow.owner(self, body) for body in self.class_bodies(call.node)}
+        query = {} if cache else {"cache": False}
+        lexical_owners = {flow.owner(self, body, **query) for body in self.class_bodies(call.node, **query)}
         for fact in reversed(facts):
             if fact.builder_types:
                 builder_nearer = builder_nearer or bool(fact.builder_types & receivers)
@@ -12479,7 +12761,7 @@ class Analyzer:
             if not fact.owner:
                 unknown_head = unknown_head or not builder_nearer
                 continue
-            ancestry = flow.project_ancestry(fact.owner)
+            ancestry = flow.project_ancestry(fact.owner, **query)
             if not builder_nearer:
                 for ordinary in flow.by_name.get(call.name, ()):
                     if (
@@ -12571,14 +12853,18 @@ class Analyzer:
         source_owners: set[str] | None = None,
         standard_kind: str = "",
         callable_heads: set[int] | None = None,
+        cache: bool = True,
     ) -> bool:
         """A Kotlin project extension function of this name on one of these receiver types."""
         if self.native_flow is None:
             return False
+        # Optional boundary classification reads transient declaration views;
+        # ordinary dispatch keeps publishing its reusable lookup caches.
+        query: dict[str, Any] = {} if cache else {"cache": False}
         attribution_only = self.builder_label_query_active
         aliases = {
             name,
-            *(symbol.rsplit(".", 1)[-1] for symbol in self.native_flow.imported_symbols(self, name)),
+            *(symbol.rsplit(".", 1)[-1] for symbol in self.native_flow.imported_symbols(self, name, **query)),
         }
         for target in (
             target
@@ -12593,13 +12879,13 @@ class Analyzer:
             namespace = target.owner or self.native_flow.namespaces[id(target.analyzer)]
             if target.name != name and (
                 (namespace + "." if namespace else "") + target.name
-                not in self.native_flow.imported_symbols(self, name)
+                not in self.native_flow.imported_symbols(self, name, **query)
             ):
                 continue
             if (
                 target.analyzer.language != "kotlin"
                 or not target.analyzer.accepts_arguments(target.node, len(call.args))
-                or self.literal_string_argument_conflict(target.analyzer, target.node, call)
+                or self.literal_string_argument_conflict(target.analyzer, target.node, call, **query)
             ):
                 continue
             declared = _field(target.node, "name")
@@ -12684,15 +12970,16 @@ class Analyzer:
                     continue
                 if target.owner:
                     lexical_owners = {
-                        self.native_flow.owner(self, body) for body in self.class_bodies(call.node)
+                        self.native_flow.owner(self, body, **query)
+                        for body in self.class_bodies(call.node, **query)
                     }
                     classes = {
                         ancestor
                         for owner in lexical_owners
-                        for ancestor in self.native_flow.project_ancestry(owner)
+                        for ancestor in self.native_flow.project_ancestry(owner, **query)
                     }
                     scope_visibility = self.active_object_extension_visibility(
-                        target, call, receivers, lexical=target.owner in classes
+                        target, call, receivers, lexical=target.owner in classes, **query
                     )
                     if scope_visibility is False or (
                         "private" in self.native_flow.declaration_tokens(target.node)
@@ -12700,7 +12987,7 @@ class Analyzer:
                     ):
                         continue
                     uncertain_dispatch = scope_visibility is None
-                elif not self.native_flow.top_level_visible(self, target, name):
+                elif not self.native_flow.top_level_visible(self, target, name, **query):
                     continue
             if receiver is None:
                 if attribution_only:
@@ -12717,16 +13004,16 @@ class Analyzer:
                 not visible
                 and not nullable_receiver
                 and receivers & {"StringBuilder", "StringBuffer"}
-                and self.native_flow.class_owners(target.analyzer, spelling.rstrip("?"), receiver)
+                and self.native_flow.class_owners(target.analyzer, spelling.rstrip("?"), receiver, **query)
             ):
                 continue  # a supplied source nominal is not the standard builder receiver
             if source_owners is not None:
                 declared_owners = self.native_flow.class_owners(
-                    target.analyzer, spelling.rstrip("?"), receiver
+                    target.analyzer, spelling.rstrip("?"), receiver, **query
                 )
                 if declared_owners and not declared_owners & source_owners:
                     continue
-            binding = self.native_flow.lexical_type(target.analyzer, spelling, receiver)
+            binding = self.native_flow.lexical_type(target.analyzer, spelling, receiver, **query)
             parameter_receiver = binding is not None and binding.type in {"type_parameter", "type_constraint"}
             canonical = {
                 qualified
@@ -12743,11 +13030,12 @@ class Analyzer:
                         context=target.analyzer,
                         default_import=default_import,
                         require_nonnullable=True,
+                        **query,
                     )
                     for qualified, default_import in KOTLIN_NONNULL_EXTENSION_ROOTS
                 )
                 or not spelling.rstrip().endswith("?")
-                and self.native_flow.class_owners(target.analyzer, spelling, receiver)
+                and self.native_flow.class_owners(target.analyzer, spelling, receiver, **query)
             ):
                 continue  # a proven non-null extension cannot accept a nullable receiver
             if nullable_receiver:
@@ -12758,7 +13046,12 @@ class Analyzer:
                     for kind, types in KOTLIN_MODEL_TYPES.items()
                     if any(
                         self.library_reference_type(
-                            spelling, receiver, qualified, context=target.analyzer, default_import=True
+                            spelling,
+                            receiver,
+                            qualified,
+                            context=target.analyzer,
+                            default_import=True,
+                            **query,
                         )
                         for qualified in types
                     )
@@ -12781,7 +13074,8 @@ class Analyzer:
             compatible = (
                 self.builder_receiver_compatible(target.analyzer, receiver, receivers)
                 if attribution_only
-                else self.string_extension_receiver(target.analyzer, target.node, receiver) is not False
+                else self.string_extension_receiver(target.analyzer, target.node, receiver, **query)
+                is not False
                 if standard_string
                 else self.extension_bound_compatibility(
                     target.analyzer,
@@ -12795,7 +13089,12 @@ class Analyzer:
                 else bool(self.receiver_names(target.analyzer, target.node, receiver) & receivers)
                 or any(
                     self.library_reference_type(
-                        spelling, receiver, qualified, context=target.analyzer, default_import=True
+                        spelling,
+                        receiver,
+                        qualified,
+                        context=target.analyzer,
+                        default_import=True,
+                        **query,
                     )
                     for qualified in canonical
                 )
@@ -12813,8 +13112,11 @@ class Analyzer:
                 return True
         return False
 
-    def string_extension_receiver(self, source: Analyzer, function: Any, receiver: Any) -> bool | None:
+    def string_extension_receiver(
+        self, source: Analyzer, function: Any, receiver: Any, *, cache: bool = True
+    ) -> bool | None:
         """String's known supertypes, preserving Comparable's argument compatibility."""
+        query: dict[str, Any] = {} if cache else {"cache": False}
         parameters: dict[str, list[Any]] = {}
         for group in function.named_children:
             if group.type not in {"type_parameters", "type_constraints"}:
@@ -12854,14 +13156,22 @@ class Analyzer:
                     ("java.io.Serializable", False),
                 ]:
                     if self.library_reference_type(
-                        text, use, qualified, default_import=default, context=source
+                        text, use, qualified, default_import=default, context=source, **query
                     ):
                         return True
                 expanded: list[tuple[int, int]] = []
                 if not self.library_reference_type(
-                    text, use, "kotlin.Comparable", default_import=True, context=source, expanded=expanded
+                    text,
+                    use,
+                    "kotlin.Comparable",
+                    default_import=True,
+                    context=source,
+                    expanded=expanded,
+                    **query,
                 ):
-                    identity, nominal, origins = self.reference_type_identity(text, use, context=source)
+                    identity, nominal, origins = self.reference_type_identity(
+                        text, use, context=source, **query
+                    )
                     unknown.update(origins)
                     compatible = {
                         "kotlin.String",
@@ -12889,9 +13199,13 @@ class Analyzer:
                     return False
                 unknown.clear()  # the root proof succeeded; only argument uncertainty matters now
                 for kind in ("kotlin.String", "kotlin.Nothing"):
-                    if self.library_reference_type(argument, use, kind, default_import=True, context=source):
+                    if self.library_reference_type(
+                        argument, use, kind, default_import=True, context=source, **query
+                    ):
                         return True
-                identity, nominal, origins = self.reference_type_identity(argument, use, context=source)
+                identity, nominal, origins = self.reference_type_identity(
+                    argument, use, context=source, **query
+                )
                 unknown.update(origins)
                 compatible = {"kotlin.String", "java.lang.String", "kotlin.Nothing"}
                 return False if nominal or identity and identity not in compatible else None
@@ -12941,7 +13255,7 @@ class Analyzer:
                     return True
         return False
 
-    def class_bodies(self, node: Any) -> tuple[Any, ...]:
+    def class_bodies(self, node: Any, *, cache: bool = True) -> tuple[Any, ...]:
         """The class bodies around a node, innermost first.
 
         Each ancestor's answer is kept (tree-sitter's parent walk costs the depth), so the
@@ -12960,7 +13274,8 @@ class Analyzer:
         for ancestor in reversed(path):
             if ancestor.type == "class_body":
                 found = (ancestor, *found)
-            self.enclosing_bodies[(ancestor.start_byte, ancestor.end_byte, ancestor.type)] = found
+            if cache:
+                self.enclosing_bodies[(ancestor.start_byte, ancestor.end_byte, ancestor.type)] = found
         return found
 
     def body_functions(self, body: Any) -> dict[str, list[Any]]:
