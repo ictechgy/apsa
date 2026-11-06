@@ -251,7 +251,9 @@ def test_primary_stored_parameter_default_is_not_assumed_to_run(source: bool) ->
     assert not metadata["budget_reasons"], report
 
 
-def assert_default_boundary(report: dict, line: int, extra_precision: tuple[str, ...] = ()) -> None:
+def assert_default_boundary(
+    report: dict, line: int, extra_precision: tuple[str, ...] = (), *, path: str = "Construction.kt"
+) -> None:
     metadata = report["metadata"]["native_flow"]
     assert set(metadata["precision_reasons"]) == {DEFAULT_UNAVAILABLE, *extra_precision}, report
     assert not metadata["budget_reasons"], report
@@ -260,7 +262,7 @@ def assert_default_boundary(report: dict, line: int, extra_precision: tuple[str,
     assert len(details) == 1, report
     assert details[0]["reason"] == DEFAULT_UNAVAILABLE, report
     assert details[0]["kind"] == "precision", report
-    assert details[0]["path"] == "Construction.kt" and details[0]["line"] == line, report
+    assert details[0]["path"] == path and details[0]["line"] == line, report
     assert details[0]["column"] > 0, report
 
 
@@ -716,6 +718,79 @@ def test_nonstored_default_other_package_nonfunction_does_not_shadow_inert_helpe
     report = analyze_sources(files)
     assert not sql_findings(report), report
     assert_checked(report)
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reversed"])
+@pytest.mark.parametrize("package", ["", "sample"], ids=["empty-package", "named-package"])
+def test_nonstored_default_peer_java_classifier_keeps_identity_unavailable(
+    package: str, reverse: bool
+) -> None:
+    kotlin_prefix = f"package {package}\n" if package else ""
+    java_prefix = f"package {package};\n" if package else ""
+    files = [
+        (
+            "Main.kt",
+            kotlin_prefix + 'fun getStringExtra(key: Int): String = "fixed"\n'
+            'class Handler(ignored: Any = getStringExtra("q"))\n',
+        ),
+        (
+            "getStringExtra.java",
+            java_prefix + "import android.content.Intent;\n"
+            "public class getStringExtra { public getStringExtra(String key) { "
+            "new Intent().getStringExtra(key); } }\n",
+        ),
+    ]
+    # Only the Kotlin and Java project sources are admitted; no runtime driver
+    # or API stub participates in this declaration-only uncertainty check.
+    report = analyze_sources(list(reversed(files)) if reverse else files)
+    assert_default_boundary(report, 2 + bool(package), path="Main.kt")
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+    assert all(not item["parse_errors"] for item in report["metadata"]["files"]), report
+
+
+def test_nonstored_default_peer_java_record_keeps_identity_unavailable() -> None:
+    files = [
+        (
+            "Construction.kt",
+            'fun getStringExtra(key: Int): String = "fixed"\n'
+            'class Handler(ignored: Any = getStringExtra("q"))',
+        ),
+        (
+            "getStringExtra.java",
+            "import android.content.Intent;\n"
+            "public record getStringExtra(String key) { "
+            "public getStringExtra { new Intent().getStringExtra(key); } }",
+        ),
+    ]
+    report = analyze_sources(files)
+    assert_default_boundary(report, 2)
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+    assert all(not item["parse_errors"] for item in report["metadata"]["files"]), report
+
+
+@pytest.mark.parametrize("rival", ["unrelated-name", "unrelated-package", "import-leaf", "package-leaf"])
+def test_nonstored_default_unrelated_java_names_keep_inert_helper_checked(rival: str) -> None:
+    declarations = {
+        "unrelated-name": "public class Different { public Different(String key) {} }",
+        "unrelated-package": "package separate;\n"
+        "public class getStringExtra { public getStringExtra(String key) {} }",
+        "import-leaf": "import external.getStringExtra;\npublic class Different {}",
+        "package-leaf": "package getStringExtra;\npublic class Different {}",
+    }
+    files = [
+        (
+            "Construction.kt",
+            'fun getStringExtra(key: String): String = "fixed"\n'
+            'class Handler(ignored: Any = getStringExtra("q"))',
+        ),
+        ("Other.java", declarations[rival]),
+    ]
+    report = analyze_sources(files)
+    assert_checked(report)
+    assert not sql_findings(report), report
+    assert report["metadata"]["native_flow"]["reasons"] == [], report
+    assert report["metadata"]["native_flow"]["evaluations"] == 0, report
+    assert all(not item["parse_errors"] for item in report["metadata"]["files"]), report
 
 
 @pytest.mark.parametrize("peer", [False, True], ids=["same-file", "peer-file"])

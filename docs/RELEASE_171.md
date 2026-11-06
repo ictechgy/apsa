@@ -826,6 +826,7 @@ Kotlin null literals now stay untainted. Indexed implicit-receiver property writ
 ### Item2: preserve constructor-default candidate uncertainty
 
 - Include same-package cross-file classifiers, typealiases, objects and callable values before admitting an inert API-lookalike function; preserve empty-package and input-order parity.
+- Preserve uncertainty for a visible admitted top-level Java classifier, including a represented record, with the unqualified default call's name and package. This reads prepared JVM identity without executing Java constructors or ranking cross-language overloads; unrelated names/packages and Java import/package text keep inert Kotlin helpers checked.
 - Retain the conditional default precision boundary when an inapplicable member can yield to a visible extension function or callable extension property. Read the property's declared callable name, including grammar forms without a name field; do not execute its getter or rank overloads.
 - Include matching receiver-owned nonfunction declarations, including inner class constructors, before admitting an inert ordinary member. Preserve unrelated nested-name controls and conditional default behavior without executing the constructor.
 - Keep unique ordinary inert helpers and unrelated-package controls checked. A default boundary describes a conditional analysis limit rather than unconditional default execution or a vulnerability finding.

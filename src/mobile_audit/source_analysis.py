@@ -14707,6 +14707,20 @@ class Analyzer:
         if call.receiver is None:
             if import_conflict(call.name) or any(name == call.name for name, _kind, _node in parameters):
                 return False
+            namespace = flow.namespaces[id(self)]
+            classifier = (namespace + "." if namespace else "") + call.name
+            # A same-package Java classifier can select a constructor instead of
+            # the Kotlin function. Read its prepared identity without executing
+            # Java code or treating import/package text as a declaration.
+            if any(
+                source.language == "java"
+                and flow.namespaces[id(source)] == namespace
+                and declaration.parent is not None
+                and declaration.parent.type == "program"
+                and "private" not in flow.declaration_tokens(declaration)
+                for source, declaration in flow.class_definitions.get(classifier, ())
+            ):
+                return False
             # A declaration with the same leaf elsewhere is not identity proof.
             candidates = [
                 target
