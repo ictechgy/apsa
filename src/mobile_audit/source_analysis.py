@@ -2256,10 +2256,12 @@ class Analyzer:
         if call.receiver is None:
             return self.opener_database_type(call, receiver, frame)
         key = self.key(call.receiver)
+        context = self.context_type(receiver.type_name, call.receiver)
         return (
             key in {"SQLiteDatabase", SQLITE_DATABASE}
-            or self.context_type(receiver.type_name, call.receiver) == "yes"
-            or bool(re.fullmatch(r"(?i)(?:\w*context|ctx)(?:\(\))?", key or ""))
+            or context == "yes"
+            or context == "maybe"
+            and bool(re.fullmatch(r"(?i)(?:\w*context|ctx)(?:\(\))?", key or ""))
         )
 
     def opener_database_type(self, call: Call, receiver: Value, frame: Frame) -> bool:
@@ -3129,24 +3131,29 @@ class Analyzer:
     def context_type(self, spelling: str, node: Any, depth: int = 0) -> str:
         """Whether a type spelling names a Context: a source class by its ancestry, a
         framework Context type by name, a few common non-Context types, else unknown."""
-        name = re.sub(r"<.*|\?$|\s+", "", spelling or "").rsplit(".", 1)[-1]
+        root = re.sub(r"<.*|\?$|\s+", "", spelling or "")
+        name = root.rsplit(".", 1)[-1]
         if not name:
             return "maybe"
         flow = self.native_flow
         if flow is not None:
-            owners = flow.class_owners(self, name, node)
+            owners = flow.class_owners(self, root, node)
             if len(owners) == 1:
                 definitions = flow.class_definitions.get(next(iter(owners)), [])
                 if len(definitions) == 1:
                     source, base = definitions[0]
                     return source.class_context(base, depth)
-        imported = next(
-            (
-                declaration
-                for declaration in self.imports
-                if re.fullmatch(rf"[\w.]*\.{re.escape(name)}(?:\s+as\s+\w+)?", declaration)
-            ),
-            "",
+        imported = (
+            root
+            if "." in root
+            else next(
+                (
+                    declaration
+                    for declaration in self.imports
+                    if re.fullmatch(rf"[\w.]*\.{re.escape(name)}(?:\s+as\s+\w+)?", declaration)
+                ),
+                "",
+            )
         )
         if imported.startswith(("java.", "javax.", "kotlin.", "kotlinx.")) or name in NON_CONTEXT_TYPES:
             return "no"
@@ -7704,7 +7711,7 @@ class Analyzer:
     def known_value_type_result(
         self,
         node: Any,
-        frame: Frame,
+        frame: Frame | None,
         depth: int,
         receiver_kinds: dict[tuple[int, int, int, bool], str],
         *,
@@ -7743,6 +7750,8 @@ class Analyzer:
             return "Float" if text.lower().endswith("f") else "Double"
         if text in {"true", "false"}:
             return "Boolean"
+        if frame is None:
+            return ""  # A declaration query may inspect literals without an execution frame.
         if node.type in IDENTIFIERS:
             retained = self.visited_values.get((node.start_byte, node.end_byte, node.type))
             if retained is not None:
@@ -10807,7 +10816,7 @@ class Analyzer:
             return qualified in KOTLIN_MODEL_TYPES["String"]
         if node.type in NUMBERS:
             # This literal-only result path returns before call resolution.
-            kind = self.known_value_type_result(node, frame or Frame(), 0, {})
+            kind = self.known_value_type_result(node, (frame or Frame()) if cache else frame, 0, {})
             return qualified == "kotlin." + kind
         if self.text(node).strip() in {"true", "false"}:
             return qualified == "kotlin.Boolean"
@@ -10862,11 +10871,12 @@ class Analyzer:
         return qualified == "kotlin." + kind or kind == "String" and qualified == "java.lang.String"
 
     def established_call_arguments(
-        self, source: Analyzer, function: Any, call: Call, *, frame: Frame | None = None
+        self, source: Analyzer, function: Any, call: Call, *, frame: Frame | None = None, cache: bool = True
     ) -> bool:
         """Read exact final scalar argument facts without resolving expressions."""
         if self.native_flow is None or source.language != "kotlin":
             return False
+        query: dict[str, Any] = {} if cache else {"cache": False}
         bindings = self.bound_parameter_arguments(source, function, call)
         if bindings is None:
             return False
@@ -10905,12 +10915,15 @@ class Analyzer:
                             context=source,
                             default_import=True,
                             require_nonnullable=True,
+                            **query,
                         )
                     ),
                     "",
                 )
                 if not qualified or not all(
-                    self.established_argument_type(argument, frame, qualified, require_nonnullable=True)
+                    self.established_argument_type(
+                        argument, frame, qualified, require_nonnullable=True, **query
+                    )
                     for argument in arguments
                 ):
                     return False
@@ -12762,7 +12775,7 @@ class Analyzer:
                 unknown_head = unknown_head or not builder_nearer
                 continue
             ancestry = flow.project_ancestry(fact.owner, **query)
-            if not builder_nearer:
+            if not builder_nearer and call.receiver is None:
                 for ordinary in flow.by_name.get(call.name, ()):
                     if (
                         ordinary.owner not in ancestry
@@ -12774,10 +12787,12 @@ class Analyzer:
                     ):
                         continue
                     if self.literal_string_argument_conflict(
-                        ordinary.analyzer, ordinary.node, call, frame=Frame()
+                        ordinary.analyzer, ordinary.node, call, frame=Frame() if cache else None, **query
                     ):
                         continue
-                    if self.established_call_arguments(ordinary.analyzer, ordinary.node, call, frame=Frame()):
+                    if self.established_call_arguments(
+                        ordinary.analyzer, ordinary.node, call, frame=Frame() if cache else None, **query
+                    ):
                         return False
                     unknown_head = True
             if target.owner in ancestry:
