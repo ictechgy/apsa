@@ -3642,6 +3642,7 @@ class NativeFlow:
             "kotlin.String",
             default_import=True,
             require_nonnullable=not (nullable or analyzer.nonnull_expression(receiver)),
+            cache=False,
         )
 
     def kotlin_extension_string_receiver(
